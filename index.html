@@ -378,10 +378,12 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   #chron .stat b{font-size:12px}
   #cartouche{max-width:186px;padding:8px 10px;font-size:12.5px}
   #folio{padding:13px 12px 90px}
-  #bm-sheet{padding:36px 18px 48px}
-  #bm-art{max-width:52%}
-  #bm-reqs .req-row{font-size:13px}
-  #bm-reqs .req-row .req-amt{font-size:12px}
+  #bm-reqs .req-row{display:grid;grid-template-columns:20px 1fr;
+    grid-template-areas:"icon name" "icon amt";column-gap:8px;row-gap:1px;font-size:13px}
+  #bm-reqs .req-row img{grid-area:icon}
+  #bm-reqs .req-row .req-name{grid-area:name}
+  #bm-reqs .req-row .req-amt{grid-area:amt;text-align:right;font-size:12px;
+    white-space:normal;overflow-wrap:break-word}
 }
 </style>
 </head>
