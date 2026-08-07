@@ -1,0 +1,3583 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Четыре Знамени</title>
+<style>
+:root{
+  /* Стол: промасленный орех при свече, а не «тёмная тема» */
+  --wood-deep:#100c08;  --wood:#1c1610;  --wood-lit:#292013;
+  --leather:#241d16;    --leather-lit:#2f2619;
+  --rule:#3d3121;       --rule-soft:#2c241a;
+  /* Чернила и бумага */
+  --vellum:#ece2ca;     --vellum-dim:#a2967b;  --vellum-faint:#6f6551;
+  /* Металл и эмаль */
+  --gilt:#c2993c;       --gilt-hi:#e6c273;     --gilt-dim:#8a6d2c;
+  --garnet:#96323b;     --lapis:#3a5585;       --verdigris:#4d8168;
+  /* Ресурсы */
+  --r-food:#83a049; --r-wood:#9c6b3a; --r-stone:#8791a0; --r-gold:#d6ae40;
+  /* Расовые тинктуры */
+  --t-human:#d9b14b; --t-dwarf:#bb5730; --t-elf:#4c8d5e; --t-undead:#7d56a4;
+
+  --serif:"Palatino Linotype","Book Antiqua",Palatino,"Iowan Old Style","Hoefler Text",Georgia,serif;
+  --data:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden;background:var(--wood-deep);color:var(--vellum);
+  font-family:var(--serif);font-size:15px;line-height:1.5;-webkit-text-size-adjust:100%;
+  -webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer;padding:0}
+:focus-visible{outline:2px solid var(--gilt-hi);outline-offset:2px}
+::selection{background:rgba(194,153,60,.3)}
+
+/* Общая фактура дерева под всем интерфейсом */
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    repeating-linear-gradient(93deg,rgba(0,0,0,.16) 0 2px,transparent 2px 7px),
+    repeating-linear-gradient(88deg,rgba(255,236,190,.022) 0 1px,transparent 1px 13px),
+    radial-gradient(120% 90% at 50% -10%,rgba(255,214,140,.09),transparent 62%);
+  mix-blend-mode:overlay;opacity:.8}
+
+#app{position:relative;z-index:1;display:flex;flex-direction:column;height:100%}
+
+/* ─────────────── Верхний фриз ─────────────── */
+#banners{flex:0 0 auto;display:flex;height:3px}
+#banners i{flex:1;display:block}
+
+#top{flex:0 0 auto;display:flex;align-items:center;gap:0;
+  background:linear-gradient(180deg,var(--wood-lit),var(--wood) 70%,var(--wood-deep));
+  border-bottom:1px solid var(--rule);
+  box-shadow:0 2px 14px rgba(0,0,0,.55);padding:0 14px;min-height:56px}
+
+#crest{display:flex;align-items:baseline;gap:9px;padding-right:16px;margin-right:4px;
+  border-right:1px solid var(--rule-soft)}
+#crest .mark{font-size:19px;color:var(--gilt);line-height:1}
+#crest .ttl{font-size:15px;letter-spacing:.19em;text-transform:uppercase;color:var(--vellum);
+  font-variant:small-caps}
+
+#menu-btn{position:fixed;right:14px;bottom:14px;z-index:20;width:70px;height:70px;padding:0;
+  background:transparent;border:none;border-radius:50%;color:var(--gilt-hi);
+  display:flex;align-items:center;justify-content:center;overflow:hidden}
+#menu-btn:hover{color:var(--gilt)}
+#menu-btn img{width:100%;height:100%;object-fit:contain;pointer-events:none}
+#menu-btn span{display:none;font-size:19px} /* текстовый фолбэк, если картинки нет */
+
+.purse{display:flex;align-items:center;gap:16px;padding:0 14px;flex:1;min-width:0}
+.coin{display:flex;align-items:center;gap:7px}
+.coin .disc{width:22px;height:22px;border-radius:50%;flex:0 0 auto;object-fit:contain}
+.coin .amt{font-family:var(--data);font-size:14px;font-variant-numeric:tabular-nums;
+  letter-spacing:-.01em;color:var(--vellum)}
+.coin .rate{font-family:var(--data);font-size:10px;color:var(--vellum-faint);
+  display:block;letter-spacing:.02em;text-decoration:none}
+.coin .rate.neg{color:var(--garnet)}
+
+#chron{margin-left:auto;display:flex;align-items:center;gap:14px;padding-left:14px}
+#chron .stat{text-align:right;line-height:1.25}
+#chron .stat b{display:block;font-family:var(--data);font-size:13px;color:var(--gilt-hi);
+  font-variant-numeric:tabular-nums}
+#chron .stat s{display:block;text-decoration:none;font-size:9.5px;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--vellum-faint)}
+#tempo{appearance:none;background:var(--wood-deep);border:1px solid var(--rule);
+  color:var(--gilt);border-radius:2px;padding:5px 8px;font-family:var(--data);font-size:11px;
+  cursor:pointer}
+
+/* ─────────────── Основная область ─────────────── */
+#main{flex:1;display:flex;min-height:0}
+
+#chart{flex:1;position:relative;min-width:0;background:var(--wood-deep);overflow:hidden}
+#map{display:block;width:100%;height:100%;touch-action:none;cursor:crosshair}
+#map.grabbing{cursor:grabbing}
+/* Виньетка свечи: край стола уходит в темноту */
+#chart::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(125% 95% at 50% 45%,transparent 62%,rgba(8,5,2,.30) 100%);
+  box-shadow:inset 0 0 46px rgba(0,0,0,.34)}
+
+.plate{position:absolute;z-index:2;background:linear-gradient(180deg,rgba(38,30,21,.94),rgba(22,17,11,.95));
+  border:1px solid var(--rule);border-radius:2px;
+  box-shadow:0 4px 18px rgba(0,0,0,.6),inset 0 1px 0 rgba(226,196,133,.09)}
+
+#cartouche{left:14px;bottom:14px;max-width:270px;padding:11px 13px;font-size:13.5px}
+#cartouche .hd{font-variant:small-caps;letter-spacing:.13em;font-size:14px;color:var(--gilt-hi);
+  display:flex;align-items:center;gap:7px;margin-bottom:5px}
+#cartouche .co{display:flex;justify-content:space-between;gap:16px;font-size:12.5px;
+  color:var(--vellum-dim);padding:1.5px 0}
+#cartouche .co b{font-family:var(--data);color:var(--vellum);font-weight:400}
+#cartouche .hint{margin-top:7px;padding-top:6px;border-top:1px solid var(--rule-soft);
+  font-size:11.5px;color:var(--vellum-faint);font-style:italic}
+
+#minimap{right:14px;top:14px;width:146px;height:146px;padding:5px;cursor:pointer}
+#minimap canvas{display:block;width:100%;height:100%;image-rendering:auto;border-radius:1px}
+#mini-label{position:absolute;left:0;right:0;bottom:-17px;text-align:center;font-size:9px;
+  letter-spacing:.2em;text-transform:uppercase;color:var(--vellum-faint)}
+
+#tools{right:14px;bottom:14px;display:flex;flex-direction:column;gap:1px;overflow:hidden}
+#tools button{width:36px;height:34px;font-size:15px;color:var(--gilt);
+  border-bottom:1px solid var(--rule-soft);transition:background .15s,color .15s}
+#tools button:last-child{border-bottom:none}
+#tools button:hover{background:rgba(194,153,60,.14);color:var(--gilt-hi)}
+
+#key{left:14px;top:14px;padding:9px 12px;display:flex;flex-direction:column;gap:5px;
+  pointer-events:none;font-size:11.5px}
+#key .kl{font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--vellum-faint);
+  margin-bottom:1px}
+#key .kr{display:flex;align-items:center;gap:7px;color:var(--vellum-dim)}
+#key .sh{width:11px;height:13px;flex:0 0 auto}
+
+/* ─────────────── Переключение Город/Мир ─────────────── */
+#app.view-city #chart{display:none}
+#app.view-city #ledger{width:100%;flex:1;border-left:none;box-shadow:none}
+#app.view-city #ribbons{display:none}
+#app.view-world #ledger{display:none}
+#view-toggle{position:fixed;left:14px;bottom:14px;z-index:20;width:70px;height:70px;padding:0;
+  background:transparent;border:none;border-radius:50%;color:var(--gilt-hi);
+  display:flex;align-items:center;justify-content:center;overflow:hidden}
+#view-toggle img{width:100%;height:100%;object-fit:contain;pointer-events:none}
+#view-toggle span{display:none} /* текстовый фолбэк, если картинки нет */
+
+/* ─────────────── Выдвижное меню справа ─────────────── */
+#side-menu{position:fixed;bottom:90px;right:14px;z-index:19;display:none;flex-direction:column;
+  gap:2px;background:linear-gradient(180deg,var(--leather-lit),var(--leather) 30%,#1b1510);
+  border:1px solid var(--rule);border-radius:4px;box-shadow:0 8px 26px rgba(0,0,0,.6);
+  padding:6px;min-width:150px}
+#side-menu.open{display:flex}
+#side-menu button{display:flex;align-items:center;gap:10px;padding:9px 10px;background:transparent;
+  border:none;color:var(--vellum-dim);font-size:13px;font-variant:small-caps;letter-spacing:.06em;
+  text-align:left;border-radius:3px}
+#side-menu button:hover{background:rgba(194,153,60,.14);color:var(--gilt-hi)}
+#side-menu button img{width:22px;height:22px;object-fit:contain;flex:0 0 auto}
+
+#menu-modal{position:fixed;inset:0;z-index:25;display:none;background:rgba(8,5,2,.72);
+  overflow-y:auto}
+#menu-modal.open{display:block}
+#menu-modal-body{max-width:560px;margin:0 auto;padding:60px 16px 30px}
+#menu-modal-close{position:fixed;top:14px;right:14px;z-index:26;width:38px;height:38px;
+  border-radius:50%;background:rgba(22,17,11,.9);border:1px solid var(--gilt-dim);
+  color:var(--gilt-hi);font-size:22px;line-height:1}
+#menu-modal-close:hover{border-color:var(--gilt-hi)}
+
+/* ─────────────── Модалка здания (пергамент) ─────────────── */
+#building-modal{position:fixed;inset:0;z-index:27;display:none;background:rgba(8,5,2,.78);
+  align-items:center;justify-content:center;padding:20px}
+#building-modal.open{display:flex}
+#bm-sheet{position:relative;width:100%;max-width:520px;max-height:92vh;overflow-y:auto;
+  background-image:url(images/ui/parchment.jpg);background-size:100% 100%;
+  padding:42px 46px 60px;color:#2c2114;box-shadow:0 20px 60px rgba(0,0,0,.7);
+  display:flex;flex-direction:column}
+#bm-close{position:absolute;top:12px;right:14px;width:30px;height:30px;background:transparent;
+  border:none;color:#5a4530;font-size:22px;line-height:1}
+#bm-title{font-size:22px;font-variant:small-caps;letter-spacing:.08em;text-align:center;
+  margin-bottom:4px;color:#2c2114}
+#bm-sub{text-align:center;font-size:13px;color:#5a4530;margin-bottom:16px}
+#bm-art{display:block;max-width:64%;margin:0 auto 16px;filter:drop-shadow(0 6px 10px rgba(0,0,0,.35))}
+#bm-desc{font-size:13px;line-height:1.5;color:#3a2c1c;text-align:center;margin-bottom:18px;
+  font-style:italic}
+#bm-stats{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px}
+#bm-stats td{padding:5px 0;border-bottom:1px solid rgba(90,69,48,.25);color:#3a2c1c}
+#bm-stats td:last-child{text-align:right;font-family:var(--data)}
+#bm-reqs{margin-bottom:18px}
+#bm-reqs .req-row{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:14px}
+#bm-reqs .req-row img{width:20px;height:20px;object-fit:contain;flex:0 0 auto}
+#bm-reqs .req-row .req-name{flex:1;color:#3a2c1c;min-width:0}
+#bm-reqs .req-row .req-amt{font-family:var(--data);font-size:13px;white-space:nowrap;flex:0 0 auto}
+#bm-reqs .req-row .req-amt.short{color:#8a2f22}
+#bm-time{text-align:center;font-size:12.5px;color:#5a4530;margin-bottom:16px}
+#bm-btn{display:block;width:100%;margin-top:auto;padding:11px;background:linear-gradient(180deg,#3a2c1c,#241a10);
+  border:1px solid #6b5230;border-radius:3px;color:#e2c485;font-variant:small-caps;
+  letter-spacing:.1em;font-size:14px}
+#bm-btn:disabled{opacity:.5}
+
+/* ─────────────── Правая колонна ─────────────── */
+#ledger{width:400px;flex:0 0 400px;min-height:0;display:flex;flex-direction:column;
+  background:linear-gradient(180deg,var(--leather-lit),var(--leather) 22%,#1b1510);
+  border-left:1px solid var(--rule);box-shadow:-8px 0 26px rgba(0,0,0,.55)}
+
+#ribbons{flex:0 0 auto;display:flex;background:rgba(0,0,0,.28);
+  border-bottom:1px solid var(--rule);padding:0 6px}
+#ribbons button{flex:1;padding:11px 2px 9px;font-size:12px;letter-spacing:.11em;
+  font-variant:small-caps;color:var(--vellum-faint);position:relative;transition:color .18s}
+#ribbons button::after{content:"";position:absolute;left:16%;right:16%;bottom:0;height:2px;
+  background:var(--gilt);transform:scaleX(0);transition:transform .22s ease}
+#ribbons button:hover{color:var(--vellum-dim)}
+#ribbons button.on{color:var(--gilt-hi)}
+#ribbons button.on::after{transform:scaleX(1)}
+
+#folio{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:16px 15px 26px}
+#folio::-webkit-scrollbar{width:9px}
+#folio::-webkit-scrollbar-track{background:rgba(0,0,0,.25)}
+#folio::-webkit-scrollbar-thumb{background:var(--rule);border-radius:0}
+#folio::-webkit-scrollbar-thumb:hover{background:var(--gilt-dim)}
+
+/* Заголовок раздела — с виньеточной линейкой, как в старой книге */
+.rubric{display:flex;align-items:center;gap:11px;margin:26px 0 11px;
+  font-variant:small-caps;letter-spacing:.17em;font-size:13.5px;color:var(--gilt)}
+.rubric:first-child{margin-top:0}
+.rubric::after{content:"";flex:1;height:1px;
+  background:linear-gradient(90deg,var(--gilt-dim),transparent)}
+.rubric .n{font-family:var(--data);font-size:10px;color:var(--vellum-faint);letter-spacing:.05em}
+
+/* Запись реестра */
+.entry{background:linear-gradient(180deg,rgba(52,42,29,.5),rgba(30,24,16,.5));
+  border:1px solid var(--rule-soft);border-left:2px solid var(--rule);
+  padding:10px 12px;margin-bottom:7px;position:relative;transition:border-color .18s,background .18s}
+.entry:hover{border-left-color:var(--gilt-dim);background:linear-gradient(180deg,rgba(60,49,33,.55),rgba(34,27,18,.55))}
+.entry.hot{border-left-color:var(--gilt)}
+.entry.war{border-left-color:var(--garnet)}
+.entry.calm{border-left-color:var(--verdigris)}
+.entry .line{display:flex;align-items:center;gap:11px}
+.entry .fill{flex:1;min-width:0}
+.entry .title{font-size:14.5px;color:var(--vellum);display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.entry .note{font-size:12px;color:var(--vellum-dim);margin-top:2px;line-height:1.4}
+.entry .note em{font-style:normal;color:var(--vellum)}
+
+/* Карта города */
+#citymap-wrap{position:relative;width:100%;margin-bottom:14px;border-radius:6px;overflow:hidden;
+  box-shadow:0 8px 26px rgba(0,0,0,.6);border:1px solid var(--rule)}
+#citymap-wrap img.base{display:block;width:100%;height:auto;pointer-events:none;-webkit-user-drag:none}
+.cbuild{position:absolute;box-sizing:border-box;cursor:pointer;touch-action:none;
+  -webkit-tap-highlight-color:transparent;user-select:none}
+.cbuild .shape{position:absolute;inset:0;border:2px solid transparent;
+  background:transparent;box-sizing:border-box;transition:background .15s,border-color .15s}
+.cbuild:hover .shape{border-color:var(--gilt-hi);background:rgba(194,153,60,.18)}
+.cbuild.built .shape{border-color:transparent;background:transparent}
+.cbuild.built:hover .shape{border-color:var(--gilt-hi);background:rgba(194,153,60,.18)}
+.cbuild.locked .shape{border-color:transparent;cursor:not-allowed}
+.cbuild img.bimg{position:absolute;inset:6%;width:88%;height:88%;object-fit:contain;
+  pointer-events:none;filter:drop-shadow(0 3px 5px rgba(0,0,0,.6))}
+.cbuild .lvl{position:absolute;bottom:2px;right:4px;font-family:var(--data);font-size:10px;
+  color:var(--gilt-hi);background:rgba(0,0,0,.55);padding:0 3px;line-height:1.4;z-index:2}
+#citymap-toggle{display:flex;gap:8px;margin-bottom:10px}
+#citymap-toggle button{flex:1;padding:7px;font-size:12px;font-variant:small-caps;letter-spacing:.08em;
+  background:rgba(0,0,0,.25);border:1px solid var(--rule-soft);color:var(--vellum-dim)}
+#citymap-toggle button.on{color:var(--gilt-hi);border-color:var(--gilt-dim)}
+
+/* Кольцо уровня */
+.ring{flex:0 0 auto;width:34px;height:34px;position:relative;display:grid;place-items:center}
+.ring svg{position:absolute;inset:0;transform:rotate(-90deg)}
+.ring b{font-family:var(--data);font-size:12px;color:var(--gilt-hi);font-weight:400;
+  position:relative;z-index:1}
+
+.tag{font-family:var(--data);font-size:9.5px;letter-spacing:.09em;color:var(--vellum-faint);
+  border:1px solid var(--rule);padding:1px 5px;white-space:nowrap;text-transform:uppercase}
+.tag.gilt{color:var(--gilt);border-color:var(--gilt-dim)}
+.tag.war{color:var(--garnet);border-color:#5c2027}
+
+/* Цены — эмалевые точки и цифры моноширинно */
+.price{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;font-family:var(--data);font-size:11.5px}
+.price span{display:flex;align-items:center;gap:5px;color:var(--vellum-dim)}
+.price span::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--c);
+  box-shadow:0 0 0 1px rgba(0,0,0,.45)}
+.price span.short{color:var(--garnet)}
+
+/* Кнопка-печать */
+.seal{flex:0 0 auto;border:1px solid var(--gilt-dim);color:var(--gilt);padding:6px 13px;
+  font-size:12.5px;font-variant:small-caps;letter-spacing:.09em;white-space:nowrap;
+  background:linear-gradient(180deg,rgba(194,153,60,.11),rgba(194,153,60,.03));
+  transition:background .18s,color .18s,border-color .18s;position:relative;overflow:hidden}
+.seal:hover:not(:disabled){background:linear-gradient(180deg,rgba(194,153,60,.26),rgba(194,153,60,.1));
+  color:var(--gilt-hi);border-color:var(--gilt)}
+.seal:active:not(:disabled){transform:translateY(1px)}
+.seal:disabled{border-color:var(--rule-soft);color:var(--vellum-faint);cursor:default;background:none}
+.seal.blood{border-color:#5c2027;color:#c0525b;background:linear-gradient(180deg,rgba(150,50,59,.14),transparent)}
+.seal.blood:hover{background:rgba(150,50,59,.26);color:#dd7079;border-color:var(--garnet)}
+.seal.wide{width:100%;text-align:center;padding:9px}
+
+/* Ход работ */
+.progress{margin-top:8px;height:5px;background:rgba(0,0,0,.45);position:relative;
+  border:1px solid var(--rule-soft)}
+.progress i{position:absolute;inset:0 auto 0 0;
+  background:linear-gradient(90deg,var(--gilt-dim),var(--gilt-hi));
+  box-shadow:0 0 7px rgba(226,194,115,.4)}
+
+/* Табличка-реестр */
+.roll{width:100%;border-collapse:collapse;font-size:13px}
+.roll td{padding:4px 0;border-bottom:1px dotted var(--rule-soft);color:var(--vellum-dim)}
+.roll tr:last-child td{border-bottom:none}
+.roll td:last-child{text-align:right;font-family:var(--data);font-size:12.5px;color:var(--vellum);
+  font-variant-numeric:tabular-nums}
+.roll td.good:last-child{color:var(--verdigris)}
+.roll td.bad:last-child{color:var(--garnet)}
+
+/* Хроника */
+.chron-e{position:relative;padding:0 0 15px 20px;margin-left:4px;
+  border-left:1px solid var(--rule-soft)}
+.chron-e:last-child{border-left-color:transparent;padding-bottom:2px}
+.chron-e::before{content:"";position:absolute;left:-4.5px;top:5px;width:8px;height:8px;
+  border-radius:50%;background:var(--wood);border:1.5px solid var(--rule)}
+.chron-e.war::before{border-color:var(--garnet);background:#2a1315}
+.chron-e.good::before{border-color:var(--verdigris);background:#152420}
+.chron-e .when{font-family:var(--data);font-size:9.5px;letter-spacing:.12em;
+  color:var(--vellum-faint);text-transform:uppercase}
+.chron-e .what{font-size:13px;color:var(--vellum-dim);margin-top:1px}
+
+.hollow{text-align:center;padding:34px 18px;color:var(--vellum-faint);font-style:italic;font-size:13px}
+.hollow .big{display:block;font-size:26px;color:var(--rule);margin-bottom:8px;font-style:normal}
+
+/* Гербовый щит в списках */
+.shield{width:13px;height:16px;flex:0 0 auto;filter:drop-shadow(0 1px 1px rgba(0,0,0,.6))}
+
+/* ─────────────── Свиток (модальное окно) ─────────────── */
+#veil{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;
+  padding:18px;background:radial-gradient(70% 60% at 50% 40%,rgba(12,8,4,.72),rgba(6,4,2,.92))}
+#veil.open{display:flex;animation:fade .22s ease}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+#scroll{width:100%;max-width:560px;max-height:88vh;overflow-y:auto;
+  background:linear-gradient(180deg,var(--leather-lit),var(--leather) 30%,#1a140e);
+  border:1px solid var(--rule);border-top:2px solid var(--gilt-dim);
+  box-shadow:0 22px 70px rgba(0,0,0,.8);padding:20px 20px 18px;animation:rise .26s cubic-bezier(.2,.8,.3,1)}
+@keyframes rise{from{transform:translateY(14px);opacity:0}to{transform:none;opacity:1}}
+#scroll h2{margin:0 0 4px;font-size:20px;font-variant:small-caps;letter-spacing:.1em;color:var(--gilt-hi)}
+#scroll .lede{color:var(--vellum-dim);font-size:13px;margin-bottom:15px;
+  padding-bottom:12px;border-bottom:1px solid var(--rule-soft)}
+#scroll::-webkit-scrollbar{width:9px}
+#scroll::-webkit-scrollbar-thumb{background:var(--rule)}
+
+/* Ползунки набора войск */
+.levy{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px dotted var(--rule-soft)}
+.levy .nm{flex:1;min-width:0}
+.levy .nm .t{font-size:13.5px;display:flex;align-items:baseline;gap:7px}
+.levy .nm .s{font-size:11px;color:var(--vellum-faint);font-family:var(--data)}
+.levy input[type=range]{width:118px;flex:0 0 auto;accent-color:var(--gilt);height:18px}
+.levy input[type=number]{width:74px;flex:0 0 auto;background:rgba(0,0,0,.4);color:var(--vellum);
+  border:1px solid var(--rule);padding:4px 6px;font-family:var(--data);font-size:12.5px;text-align:right}
+.chips{display:flex;gap:6px;margin:12px 0}
+.chips .seal{flex:1;text-align:center;padding:5px 0;font-size:11.5px}
+
+.verdict{margin-top:13px;padding:11px 13px;border:1px solid var(--rule);
+  background:rgba(0,0,0,.28);display:flex;align-items:center;gap:11px}
+.verdict .vi{font-size:20px;line-height:1}
+.verdict .vt{font-size:14px;font-variant:small-caps;letter-spacing:.08em}
+.verdict .vs{font-size:11.5px;color:var(--vellum-faint);font-family:var(--data)}
+
+/* Оповещение */
+#herald{position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);z-index:80;
+  background:linear-gradient(180deg,var(--leather-lit),var(--wood));
+  border:1px solid var(--rule);border-left:3px solid var(--gilt);padding:11px 17px;
+  font-size:13.5px;box-shadow:0 10px 34px rgba(0,0,0,.7);opacity:0;pointer-events:none;
+  transition:opacity .25s,transform .25s;max-width:min(440px,86vw)}
+#herald.up{opacity:1;transform:translate(-50%,0)}
+
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.01ms!important;transition-duration:.01ms!important}
+}
+@media (max-width:900px){
+  #main{flex-direction:column}
+  #ledger{width:auto;flex:1 1 54%;border-left:none;border-top:1px solid var(--rule);
+    box-shadow:0 -8px 26px rgba(0,0,0,.55)}
+  #chart{flex:1 1 46%}
+  #key,#minimap{display:none}
+  #crest .ttl{display:none}
+  #top{min-height:50px;padding:0 9px}
+  #crest{padding-right:9px;margin-right:0}
+  .purse{gap:11px;padding:0 7px;flex:1}
+  .coin .disc{width:15px;height:15px}
+  .coin .amt{font-size:12.5px}
+  .coin .rate{font-size:9px}
+  #chron{gap:9px;padding-left:8px}
+  #chron .stat s{display:none}
+  #chron .stat b{font-size:12px}
+  #cartouche{max-width:186px;padding:8px 10px;font-size:12.5px}
+  #folio{padding:13px 12px 90px}
+}
+</style>
+</head>
+<body>
+<div id="app" class="view-city">
+  <div id="banners">
+    <i style="background:var(--t-human)"></i><i style="background:var(--t-dwarf)"></i>
+    <i style="background:var(--t-elf)"></i><i style="background:var(--t-undead)"></i>
+  </div>
+
+  <header id="top">
+    <div id="crest"><span class="mark">&#9884;</span><span class="ttl">Четыре Знамени</span></div>
+    <div class="purse" id="purse"></div>
+    <div id="chron" style="display:none">
+      <div class="stat"><b id="might">—</b><s>Сила</s></div>
+      <div class="stat"><b id="daytime">—</b><s>Хроника</s></div>
+      <select id="tempo" title="Ускорение времени — только для проверки">
+        <option value="1">×1</option><option value="10">×10</option>
+        <option value="60">×60</option><option value="600">×600</option>
+      </select>
+    </div>
+  </header>
+
+  <div id="main">
+    <div id="chart">
+      <canvas id="map"></canvas>
+      <div id="key" class="plate">
+        <span class="kl">Знамёна</span>
+        <span class="kr"><svg class="sh" viewBox="0 0 12 15"><path d="M1 1h10v8.2C11 12 6 14 6 14S1 12 1 9.2Z" fill="#d9b14b" stroke="#c2993c"/></svg>Люди</span>
+        <span class="kr"><svg class="sh" viewBox="0 0 12 15"><path d="M1 1h10v8.2C11 12 6 14 6 14S1 12 1 9.2Z" fill="#bb5730" stroke="#c2993c"/></svg>Гномы</span>
+        <span class="kr"><svg class="sh" viewBox="0 0 12 15"><path d="M1 1h10v8.2C11 12 6 14 6 14S1 12 1 9.2Z" fill="#4c8d5e" stroke="#c2993c"/></svg>Эльфы</span>
+        <span class="kr"><svg class="sh" viewBox="0 0 12 15"><path d="M1 1h10v8.2C11 12 6 14 6 14S1 12 1 9.2Z" fill="#7d56a4" stroke="#c2993c"/></svg>Нежить</span>
+      </div>
+      <div id="minimap" class="plate"><canvas id="mini"></canvas><span id="mini-label">Держава</span></div>
+      <div id="cartouche" class="plate"></div>
+      <div id="tools" class="plate">
+        <button id="t-in" title="Приблизить">+</button>
+        <button id="t-out" title="Отдалить">&minus;</button>
+        <button id="t-home" title="К своему городу">&#9884;</button>
+      </div>
+    </div>
+
+    <aside id="ledger">
+      <nav id="ribbons">
+        <button data-tab="city" class="on">Город</button>
+        <button data-tab="army">Войско</button>
+        <button data-tab="gen">Генерал</button>
+        <button data-tab="inv">Инвентарь</button>
+      </nav>
+      <div id="folio"></div>
+    </aside>
+  </div>
+</div>
+
+<button id="view-toggle" data-act="toggleview"><img src="images/ui/icon-world.png" alt="Мир"></button>
+<button id="menu-btn" data-act="togglemenu"><img src="images/ui/icon-menu.png" alt="Меню"><span>&#9776;</span></button>
+
+<nav id="side-menu">
+  <button data-menu="army"><img src="images/ui/icon-army.png" alt=""><span>Войско</span></button>
+  <button data-menu="gen"><img src="images/ui/icon-gen.png" alt=""><span>Генерал</span></button>
+  <button data-menu="inv"><img src="images/ui/icon-inv.png" alt=""><span>Инвентарь</span></button>
+</nav>
+<div id="menu-modal"><button id="menu-modal-close" data-act="closemenu">&times;</button><div id="menu-modal-body"></div></div>
+
+<div id="building-modal"><div id="bm-sheet">
+  <button id="bm-close" data-act="closebuilding">&times;</button>
+  <div id="bm-body"></div>
+</div></div>
+
+<div id="veil"><div id="scroll"></div></div>
+<div id="herald"></div>
+
+<script>
+"use strict";
+/* =========================================================================
+   БЛОК НАСТРОЕК. Всё, что влияет на баланс, собрано здесь.
+   Кривые взяты по форме из Rise of Kingdoms, шкала времени сжата в ~10 раз
+   (в RoK ратуша 25 ур. = 126 дней "в сухую", потому что рассчитано на
+   ускорители и помощь альянса; у нас ни того, ни другого нет).
+   ========================================================================= */
+const CFG = {
+  MAP: 100,                 // размер стороны карты
+  BOTS: 12,                 // количество ботов
+  TIME_COMPRESS: 10,        // во сколько раз быстрее RoK
+  BUILD_BASE: 45,           // сек: время постройки 1 уровня
+  BUILD_GROW: 1.36,         // множитель времени за уровень — пересчитан под 30 ур.
+                            // (было 1.42 под потолок 25; тот же множитель на 30 уровней
+                            // разогнал бы последний уровень до ~13.6 суток за раз)
+  COST_BASE: 200,           // базовая стоимость 1 уровня
+  COST_GROW: 1.58,
+  PROD_BASE: 60,            // единиц ресурса в час на 1 уровне
+  PROD_GROW: 1.52,
+  CAP_BASE: 4000,           // вместимость склада 1 ур.
+  CAP_GROW: 1.60,
+  BOT_THINK: 20*60,         // раз в сколько секунд бот пересматривает планы
+  BOT_HANDICAP: 0.80,       // РЕГУЛЯТОР СЛОЖНОСТИ: множитель производства ботов.
+                            // 1.0 — боты играют в полную силу и обгонят вас,
+                            // 0.8 — вы примерно на равных, 0.6 — заметно легче.
+  MAX_LEVEL: 30,             // 5 эпох по 6 уровней
+  BATTLE_PACE: 0.45,       // ниже — бои дольше и нагляднее
+  RESPAWN_CAMP: 45*60,      // респаун лагеря разбойников
+  NODE_RESPAWN: 60*60,
+  SHIELD_COST: [ [8*3600,1200], [24*3600,3000], [3*86400,7500] ], // длительность, цена в золоте
+  TELEPORT_BASE: 5000,      // цена телепорта, растёт с эпохой
+};
+
+/* ---- Расы -----------------------------------------------------------
+   У каждой расы — один фиксированный минус (её природа, действует
+   всегда, с эпохи 1) и пять способностей в RACE_EPOCHS, которые
+   открываются одна за другой по мере роста ратуши: эпоха ратуши N
+   открывает способность под номером N, все открытые складываются.
+   Пятая — «венец» расы, обычно требует новую боевую логику отдельно
+   (см. resolveBattle: firstStrike, counter, восстание из мёртвых).      */
+const RACES = {
+  human:  { name:"Люди",   color:"#d2b04c",
+    minus:{field:"prodGold", kind:"frac", value:-0.15,
+      desc:"Расточительность: двор проедает казну — золото добывается на 15% медленнее."},
+    desc:"Без крайностей: экономика и войско растут ровно, эпоха за эпохой." },
+  dwarf:  { name:"Гномы",  color:"#c1663a",
+    minus:{field:"march", kind:"mult", value:0.90,
+      desc:"Тяжёлая поступь: гномы не бегают — марш всех отрядов −10%."},
+    desc:"Копят под горой и держат стены: ресурсы и защита при обороне." },
+  elf:    { name:"Эльфы",  color:"#5a9f72",
+    minus:{field:"def", kind:"frac", value:-0.10,
+      desc:"Лёгкие доспехи: защита войск −10% — берут скоростью и точностью, не сталью."},
+    desc:"Быстрые меткие лучники в лёгкой броне." },
+  undead: { name:"Нежить", color:"#8f63b0",
+    minus:{field:"def", kind:"frac", value:-0.10,
+      desc:"Хрупкие кости: защита войск −10%."},
+    desc:"Экономики нет вовсе — нежить воюет, чтобы жить, и почти не нуждается в лазарете." },
+};
+const RACE_KEYS = ["human","dwarf","elf","undead"];
+
+/* ---- Эпохальные способности рас --------------------------------------
+   mods — действует всегда, как только открыта эпоха.
+   defMods — у пятой эпохи, действует ТОЛЬКО при обороне своего города,
+   поверх всего остального (kind:"add" — плюсом к тому, что уже есть;
+   kind:"abs" — заменяет значение поля целиком, не складывается).        */
+const RACE_EPOCHS = {
+  human: [
+    {title:"Скорость", desc:"Постройки возводятся на 5% быстрее.",
+      mods:[{field:"build",kind:"mult",value:1.05}]},
+    {title:"Хозяйство", desc:"Все виды ресурсов добываются на 5% быстрее.",
+      mods:[{field:"prodAll",kind:"frac",value:0.05}]},
+    {title:"Призыв", desc:"Обучение войск во всех зданиях — на 10% быстрее.",
+      mods:[{field:"trainSpeed",kind:"frac",value:0.10}]},
+    {title:"Подряды", desc:"Стоимость каждой постройки снижена на 10%.",
+      mods:[{field:"buildCostCut",kind:"frac",value:0.10}]},
+    {title:"Венец «Единство знамён»", desc:"Атака и защита всех войск +8%.",
+      mods:[{field:"atk",kind:"frac",value:0.08},{field:"def",kind:"frac",value:0.08}]},
+  ],
+  dwarf: [
+    {title:"Штрек", desc:"Добыча камня +10%.",
+      mods:[{field:"prodStone",kind:"frac",value:0.10}]},
+    {title:"Жила", desc:"Добыча золота +10%.",
+      mods:[{field:"prodGold",kind:"frac",value:0.10}]},
+    {title:"Стойкость", desc:"Защита войск +10%.",
+      mods:[{field:"def",kind:"frac",value:0.10}]},
+    {title:"Крепь", desc:"Эффективность крепостных стен при обороне +10%.",
+      mods:[{field:"wallBonus",kind:"frac",value:0.10}]},
+    {title:"Венец «Несокрушимые»",
+      desc:"При обороне города защита войск дополнительно +20%, и часть урона атакующих отражается контрударом гарнизона.",
+      mods:[],
+      defMods:[{field:"def",kind:"add",value:0.20},{field:"counter",kind:"add",value:0.15}]},
+  ],
+  elf: [
+    {title:"Опушка", desc:"Добыча еды +10%.",
+      mods:[{field:"prodFood",kind:"frac",value:0.10}]},
+    {title:"Роща", desc:"Добыча дерева +10%.",
+      mods:[{field:"prodWood",kind:"frac",value:0.10}]},
+    {title:"Лёгкий шаг", desc:"Скорость марша +10%.",
+      mods:[{field:"march",kind:"mult",value:1.10}]},
+    {title:"Твёрдая рука", desc:"Атака лучников +15%.",
+      mods:[{field:"archer",kind:"frac",value:0.15}]},
+    {title:"Венец «Первый выстрел»",
+      desc:"Лучники наносят урон по врагу ещё до начала общей схватки — один залп перед первым раундом боя.",
+      mods:[{field:"firstStrike",kind:"frac",value:1}]},
+  ],
+  undead: [
+    {title:"Восстание из мёртвых",
+      desc:"10% павших в этом бою поднимаются мертвецами с половиной характеристик погибшего тира и рода войск; держатся только до конца боя, потом исчезают без следа.",
+      mods:[{field:"raise",kind:"frac",value:0.10}]},
+    {title:"Дешёвое воскрешение", desc:"Подъём раненых в лазарете дешевле на 30% и вдвое быстрее.",
+      mods:[{field:"heal",kind:"mult",value:0.70},{field:"healSpeed",kind:"mult",value:0.5}]},
+    {title:"Милосердие", desc:"Доля погибших, что попадают в лазарет вместо гибели навсегда, растёт на 10%.",
+      mods:[{field:"mercy",kind:"frac",value:0.10}]},
+    {title:"Погост пробуждается", desc:"Доля восстающих мертвецов растёт до 25% павших.",
+      mods:[{field:"raise",kind:"frac",value:0.25}]},
+    {title:"Венец «Пробуждение кургана»",
+      desc:"При обороне города доля восстающих мертвецов растёт до 40% павших.",
+      mods:[],
+      defMods:[{field:"raise",kind:"abs",value:0.40}]},
+  ],
+};
+
+/* ---- Академия: дерево исследований, скопировано по духу с RoK, темп — свой.
+   Хозяйство готово целиком. Военное дерево и венцы рас — следующим заходом:
+   там нужна отдельная правка боевого расчёта (атака/защита по родам войск). */
+const RESEARCH_GROWTH=1.35, RESEARCH_WAVE={1:1,2:5,3:20,4:60};
+const ECO_TIME_BASE=381, MIL_TIME_BASE=320;
+function researchTime(branch,wave,lv){
+  const base = branch==="eco"?ECO_TIME_BASE:MIL_TIME_BASE;
+  return Math.round(base*RESEARCH_WAVE[wave]*Math.pow(RESEARCH_GROWTH,lv-1));
+}
+function researchCost(branch,wave,lv){
+  const t=researchTime(branch,wave,lv), base=t*4.44;   // та же пропорция цена/время, что у построек
+  return {food:Math.round(base*.9),wood:Math.round(base),stone:Math.round(base*.75),gold:Math.round(base*.25)};
+}
+const ACADEMY_TREE = {
+  eco: [
+    {id:"eco_stone0",name:"Горное дело",max:3,wave:1,branch:"eco",field:"prodStone",total:0.05},
+    {id:"eco_gold0",  name:"Промысел",   max:3,wave:1,branch:"eco",field:"prodGold", total:0.05},
+    {id:"eco_food1",  name:"Ирригация",  max:5,wave:1,branch:"eco",field:"prodFood", total:0.15},
+    {id:"eco_wood1",  name:"Лесное дело",max:5,wave:1,branch:"eco",field:"prodWood", total:0.15},
+    {id:"eco_build1", name:"Кладка",     max:5,wave:1,branch:"eco",field:"build",kind:"mult",total:0.15},
+    {id:"eco_stone1", name:"Резец",      max:5,wave:1,branch:"eco",field:"prodStone",total:0.15},
+    {id:"eco_gold1",  name:"Металлообработка",max:5,wave:1,branch:"eco",field:"prodGold",total:0.15},
+    {id:"eco_rsch1",  name:"Письменность",max:5,wave:1,branch:"eco",field:"researchSpeed",total:0.10},
+    {id:"eco_gfood1", name:"Серп",       max:5,wave:1,branch:"eco",field:"gatherFW",total:0.15},
+    {id:"eco_gwood1", name:"Топор",      max:5,wave:1,branch:"eco",field:"gatherFW",total:0.15},
+    {id:"eco_gstone1",name:"Тачка",      max:5,wave:1,branch:"eco",field:"gatherSG",total:0.15},
+    {id:"eco_ggold1", name:"Промывка",   max:5,wave:1,branch:"eco",field:"gatherSG",total:0.15},
+    {id:"eco_load1",  name:"Колесо",     max:5,wave:1,branch:"eco",field:"load",total:0.15},
+    {id:"eco_cap1",   name:"Многослойная кладка",max:5,wave:1,branch:"eco",field:"cap",total:0.15},
+    {id:"eco_crown_dwarf", name:"Венец: Родовые копи",  max:5,wave:4,branch:"eco",race:"dwarf",
+      effects:[{field:"prodStone",total:0.10},{field:"prodGold",total:0.10}]},
+    {id:"eco_crown_human", name:"Венец: Казённый оброк", max:5,wave:4,branch:"eco",race:"human", field:"prodGold", total:0.15},
+    {id:"eco_crown_elf",   name:"Венец: Дары рощи",      max:5,wave:4,branch:"eco",race:"elf",
+      effects:[{field:"prodFood",total:0.10},{field:"prodWood",total:0.10}]},
+    {id:"eco_crown_undead",name:"Венец: Голод погоста",  max:5,wave:4,branch:"eco",race:"undead",
+      effects:[{field:"raise",total:0.10},{field:"mercy",total:0.05}]},
+    {id:"eco_wood2",  name:"Лесопилка",  max:10,wave:2,branch:"eco",field:"prodWood",total:0.55},
+    {id:"eco_food2",  name:"Плуг",       max:10,wave:2,branch:"eco",field:"prodFood",total:0.55},
+    {id:"eco_gwood2", name:"Пилорама",   max:10,wave:2,branch:"eco",field:"gatherFW",total:0.35},
+    {id:"eco_build2", name:"Инженерия",  max:10,wave:2,branch:"eco",field:"build",kind:"mult",total:0.35},
+    {id:"eco_gfood2", name:"Коса",       max:10,wave:2,branch:"eco",field:"gatherFW",total:0.35},
+    {id:"eco_rsch2",  name:"Математика", max:10,wave:2,branch:"eco",field:"researchSpeed",total:0.15},
+    {id:"eco_gold2",  name:"Монетное дело",max:10,wave:2,branch:"eco",field:"prodGold",total:0.55},
+    {id:"eco_stone2", name:"Открытый разрез",max:10,wave:2,branch:"eco",field:"prodStone",total:0.55},
+    {id:"eco_ggold2", name:"Шахтное дело",max:10,wave:2,branch:"eco",field:"gatherSG",total:0.35},
+    {id:"eco_gall2",  name:"Механизация",max:10,wave:2,branch:"eco",field:"gather",total:0.25},
+    {id:"eco_gstone2",name:"Каменная пила",max:10,wave:2,branch:"eco",field:"gatherSG",total:0.35},
+    {id:"eco_load2",  name:"Повозка",    max:10,wave:2,branch:"eco",field:"load",total:0.25},
+  ],
+  mil: [
+    {id:"mil_atk_inf1",name:"Пехота, атака I",   max:5, wave:1,branch:"mil",field:"atkInf",total:0.10},
+    {id:"mil_atk_inf2",name:"Пехота, атака II",  max:10,wave:2,branch:"mil",field:"atkInf",total:0.20},
+    {id:"mil_atk_arc1",name:"Лучники, атака I",  max:5, wave:1,branch:"mil",field:"atkArc",total:0.10},
+    {id:"mil_atk_arc2",name:"Лучники, атака II", max:10,wave:2,branch:"mil",field:"atkArc",total:0.20},
+    {id:"mil_atk_cav1",name:"Кавалерия, атака I",max:5, wave:1,branch:"mil",field:"atkCav",total:0.10},
+    {id:"mil_atk_cav2",name:"Кавалерия, атака II",max:10,wave:2,branch:"mil",field:"atkCav",total:0.20},
+    {id:"mil_atk_sie1",name:"Осада, атака I",    max:5, wave:1,branch:"mil",field:"atkSie",total:0.10},
+    {id:"mil_atk_sie2",name:"Осада, атака II",   max:10,wave:2,branch:"mil",field:"atkSie",total:0.20},
+    {id:"mil_def_inf1",name:"Пехота, защита I",   max:5, wave:1,branch:"mil",field:"defInf",total:0.10},
+    {id:"mil_def_inf2",name:"Пехота, защита II",  max:10,wave:2,branch:"mil",field:"defInf",total:0.20},
+    {id:"mil_def_arc1",name:"Лучники, защита I",  max:5, wave:1,branch:"mil",field:"defArc",total:0.10},
+    {id:"mil_def_arc2",name:"Лучники, защита II", max:10,wave:2,branch:"mil",field:"defArc",total:0.20},
+    {id:"mil_def_cav1",name:"Кавалерия, защита I",max:5, wave:1,branch:"mil",field:"defCav",total:0.10},
+    {id:"mil_def_cav2",name:"Кавалерия, защита II",max:10,wave:2,branch:"mil",field:"defCav",total:0.20},
+    {id:"mil_def_sie1",name:"Осада, защита I",    max:5, wave:1,branch:"mil",field:"defSie",total:0.10},
+    {id:"mil_def_sie2",name:"Осада, защита II",   max:10,wave:2,branch:"mil",field:"defSie",total:0.20},
+    {id:"mil_atk_all1",name:"Атака войск I",  max:10,wave:2,branch:"mil",field:"atk",total:0.15},
+    {id:"mil_atk_all2",name:"Атака войск II", max:10,wave:3,branch:"mil",field:"atk",total:0.25},
+    {id:"mil_def_all1",name:"Защита войск I", max:10,wave:2,branch:"mil",field:"def",total:0.15},
+    {id:"mil_def_all2",name:"Защита войск II",max:10,wave:3,branch:"mil",field:"def",total:0.25},
+    {id:"mil_hp_all1", name:"Здоровье войск I", max:10,wave:2,branch:"mil",field:"hp",total:0.15},
+    {id:"mil_hp_all2", name:"Здоровье войск II",max:10,wave:3,branch:"mil",field:"hp",total:0.25},
+    {id:"mil_trainspd",name:"Дисциплина обучения",max:1,wave:1,branch:"mil",field:"trainSpeed",total:0.20},
+    {id:"mil_march1",  name:"Следопытство", max:5,wave:1,branch:"mil",field:"march",kind:"mult",total:0.15},
+    {id:"mil_march2",  name:"Картография",  max:5,wave:1,branch:"mil",field:"march",kind:"mult",total:0.15},
+    {id:"mil_scout1",  name:"Слежка",       max:5,wave:1,branch:"mil",field:"scoutBonus",total:5},
+    {id:"mil_scout2",  name:"Маскировка",   max:5,wave:1,branch:"mil",field:"scoutBonus",total:5},
+    {id:"mil_crown_dwarf", name:"Венец: Секира предков", max:5,wave:4,branch:"mil",race:"dwarf",
+      effects:[{field:"atkInf",total:0.15},{field:"defInf",total:0.15}]},
+    {id:"mil_crown_human", name:"Венец: Королевский указ",max:5,wave:4,branch:"mil",race:"human",
+      effects:[{field:"atkCav",total:0.15},{field:"defCav",total:0.15}]},
+    {id:"mil_crown_elf",   name:"Венец: Лунная тетива",  max:5,wave:4,branch:"mil",race:"elf",
+      effects:[{field:"atkArc",total:0.15},{field:"defArc",total:0.15}]},
+    {id:"mil_crown_undead",name:"Венец: Пир кургана",    max:5,wave:4,branch:"mil",race:"undead",
+      effects:[{field:"atkSie",total:0.15},{field:"defSie",total:0.15}]},
+    ...["inf","arc","cav","sie"].flatMap(t=>[2,3,4,5].map(tier=>({
+      id:"mil_tier_"+t+tier, name:({inf:"Пехота",arc:"Лучники",cav:"Кавалерия",sie:"Осада"}[t])+" T"+tier, max:1,
+      wave:tier-1, branch:"mil", unlock:{type:t,tier}
+    }))),
+  ],
+};
+function tierUnlockedFor(p,type){
+  let mx=1;
+  for(let t=2;t<=5;t++){ if((p.tech["mil_tier_"+type+t]||0)>=1) mx=t; else break }
+  return mx;
+}
+function findNode(id){
+  for(const arr of [ACADEMY_TREE.eco, ACADEMY_TREE.mil]) for(const n of arr) if(n.id===id) return n;
+  return null;
+}
+
+/* ---- Снаряжение: заимствовано из RoK (материалы, редкость, крафт), без чертежей —
+   редкость открывается эпохой города, а не удачей с ивентов. Два сквозных ордена
+   одинаковой суммарной силы на редкость — Бастион (стойкость) и Буря (напор). */
+const MATERIALS = {
+  ore:{name:"Железная руда"}, leather:{name:"Кожа"}, bone:{name:"Кость"}, ebony:{name:"Эбеновое дерево"},
+};
+const RARITY_NAMES = ["Обычная","Улучшенная","Отборная","Эпическая","Легендарная"];
+const GEAR_SLOTS = [
+  {id:"helmet",name:"Шлем",        mat:"ore",    cat:"armor"},
+  {id:"chest", name:"Грудь",       mat:"ore",    cat:"armor"},
+  {id:"gloves",name:"Перчатки",    mat:"leather",cat:"armor"},
+  {id:"pants", name:"Штаны",       mat:"leather",cat:"armor"},
+  {id:"boots", name:"Сапоги",      mat:"leather",cat:"armor"},
+  {id:"handL", name:"Левая рука",  mat:"ebony",  cat:"weapon"},
+  {id:"handR", name:"Правая рука", mat:"ebony",  cat:"weapon"},
+  {id:"acc1",  name:"Аксессуар I", mat:"bone",   cat:"acc"},
+  {id:"acc2",  name:"Аксессуар II",mat:"bone",   cat:"acc"},
+];
+const GEAR_NAMES = {
+  helmet:{bastion:["Простой шлем","Гарнизонный шлем","Шлем ветерана","Шлем несокрушимого","Венец Бастиона"],
+          storm:  ["Лёгкий шлем","Шлем разведчика","Шлем стремительного","Шлем бури","Корона Бури"]},
+  chest: {bastion:["Простой доспех","Гарнизонный панцирь","Панцирь ветерана","Панцирь несокрушимого","Кираса Бастиона"],
+          storm:  ["Лёгкий доспех","Доспех разведчика","Доспех стремительного","Панцирь бури","Панцирь Бури"]},
+  gloves:{bastion:["Простые перчатки","Гарнизонные наручи","Наручи ветерана","Наручи несокрушимого","Хватка Бастиона"],
+          storm:  ["Лёгкие перчатки","Перчатки разведчика","Перчатки стремительного","Перчатки бури","Когти Бури"]},
+  pants: {bastion:["Простые наколенники","Гарнизонные поножи","Поножи ветерана","Поножи несокрушимого","Опора Бастиона"],
+          storm:  ["Лёгкие наколенники","Наколенники разведчика","Наколенники стремительного","Поножи бури","Поножи Бури"]},
+  boots: {bastion:["Простые сапоги","Гарнизонные сапоги","Сапоги ветерана","Сапоги несокрушимого","Поступь Бастиона"],
+          storm:  ["Лёгкие сапоги","Сапоги разведчика","Сапоги стремительного","Сапоги бури","Шаг Бури"]},
+  handL: {bastion:["Простой щит","Гарнизонный щит","Щит ветерана","Щит несокрушимого","Стена Бастиона"],
+          storm:  ["Короткий кинжал","Кинжал разведчика","Кинжал стремительного","Кинжал бури","Клык Бури"]},
+  handR: {bastion:["Простой меч","Меч стражи","Меч ветерана","Меч несокрушимого","Меч Бастиона"],
+          storm:  ["Быстрый клинок","Клинок наскока","Клинок стремительного","Клинок бури","Клинок Бури"]},
+  acc1:  {bastion:["Простое кольцо","Кольцо стражи","Кольцо ветерана","Кольцо несокрушимого","Печать Бастиона"],
+          storm:  ["Походный амулет","Амулет разведчика","Амулет стремительного","Амулет бури","Клеймо Бури"]},
+  acc2:  {bastion:["Простой оберег","Оберег стражи","Оберег ветерана","Оберег несокрушимого","Реликвия Бастиона"],
+          storm:  ["Походная подвеска","Подвеска разведчика","Подвеска стремительного","Подвеска бури","Знак Бури"]},
+};
+function gearItemStats(cat,order,r){     // r = редкость 1..5
+  if(cat==="armor") return order==="bastion" ? {def:4*r,hp:6*r} : {def:2*r,hp:9*r};
+  if(cat==="weapon") return order==="bastion" ? {atk:4*r,def:3*r} : {atk:8*r};
+  return order==="bastion" ? {hp:4*r,def:2*r,atk:1*r} : {hp:2*r,atk:4*r,def:1*r};   // acc
+}
+function craftCost(mat,tier,r){          // r = редкость/тир материала 1..5 (индекс tier-1)
+  const gold=200*r*r;
+  const c={gold, food:Math.round(gold*0.3), wood:Math.round(gold*0.3)};
+  c[mat]=null; // материал расходуется отдельно (см. startCraftItem), не через обычные ресурсы
+  return c;
+}
+function findGearSlot(id){ return GEAR_SLOTS.find(s=>s.id===id) }
+function gearBonus(p){       // суммарный бонус всего надетого снаряжения
+  const out={atk:0,def:0,hp:0};
+  GEAR_SLOTS.forEach(s=>{
+    const it=p.gear&&p.gear[s.id]; if(!it) return;
+    const st=gearItemStats(s.cat,it.order,it.rarity);
+    out.atk+=st.atk||0; out.def+=st.def||0; out.hp+=st.hp||0;
+  });
+  return out;
+}
+
+/* ---- Уникальные генералы ---- */
+/* ---- Генералы: два архетипа на расу — углубляющий силу расы, и компенсирующий
+   минус расы взамен на часть другой её силы. Выбор фиксируется раз, при p.gen.id. */
+const GENERALS = {
+  human: [
+    { name:"Король Алдрик", role:"Военный",
+      bonus:"Атака войск +15%, защита войск +8%.",
+      apply:b=>{ b.atk+=.15; b.def+=.08; } },
+    { name:"Королева Астрид", role:"Хозяйство",
+      bonus:"Расточительность расы гасится в ноль (золото +15%), все ресурсы дополнительно +5%.",
+      apply:b=>{ b.prodGold+=.15; b.prodAll+=.05; } },
+  ],
+  dwarf: [
+    { name:"Дорвальд Каменный Трон", role:"Углубляющий",
+      bonus:"Защита войск +8%, эффективность стен при обороне +8%.",
+      apply:b=>{ b.def+=.08; b.wallBonus+=.08; } },
+    { name:"Гимрод Быстрая Секира", role:"Компенсирующий",
+      bonus:"Тяжёлая поступь гасится в ноль (марш обычный), но бонус стен при обороне снят целиком.",
+      apply:b=>{ b.march+=.10; b.wallBonus=0; } },
+  ],
+  elf: [
+    { name:"Тариэль Вечная", role:"Углубляющий",
+      bonus:"Атака лучников +15%, марш +5%.",
+      apply:b=>{ b.archer+=.15; b.march+=.05; } },
+    { name:"Ильвен Хрустальный Щит", role:"Компенсирующий",
+      bonus:"Лёгкие доспехи гасятся в ноль (защита обычная), но бонус атаки лучников снят целиком.",
+      apply:b=>{ b.def+=.10; b.archer=0; } },
+  ],
+  undead: [
+    { name:"Кармилла", role:"Углубляющий",
+      bonus:"Восстание из мёртвых +15%, милосердие +5%.",
+      apply:b=>{ b.raise+=.15; b.mercy+=.05; } },
+    { name:"Владислав фон Морвейн", role:"Компенсирующий",
+      bonus:"Хрупкие кости гасятся в ноль (защита обычная), но лечение не ускоряется — обычная скорость.",
+      apply:b=>{ b.def+=.10; b.healSpeed=1; } },
+  ],
+};
+const genOf = p => GENERALS[p.race][p.gen.id||0];
+
+/* ---- Дерево талантов: 3 ветки по 5 узлов, до 5 очков в узел ---- */
+const TALENTS = {
+  war: { name:"Война", nodes:[
+    {id:"w1",name:"Ярость",      per:.02, txt:"Атака войск +2%"},
+    {id:"w2",name:"Строй",       per:.02, txt:"Защита войск +2%"},
+    {id:"w3",name:"Выносливость",per:.02, txt:"Здоровье войск +2%"},
+    {id:"w4",name:"Охотник",     per:.05, txt:"Урон по разбойникам +5%"},
+    {id:"w5",name:"Милосердие",  per:.03, txt:"Потери убитыми −3% (идут в госпиталь)"},
+  ]},
+  dev: { name:"Развитие", nodes:[
+    {id:"d1",name:"Артель",      per:.03, txt:"Скорость строительства +3%"},
+    {id:"d2",name:"Пашня",       per:.04, txt:"Производство еды и дерева +4%"},
+    {id:"d3",name:"Рудокоп",     per:.04, txt:"Производство камня и золота +4%"},
+    {id:"d4",name:"Лазарет",     per:.05, txt:"Вместимость госпиталя +5%"},
+    {id:"d5",name:"Учёт",        per:.04, txt:"Вместимость склада +4%"},
+  ]},
+  gath:{ name:"Сбор", nodes:[
+    {id:"g1",name:"Обоз",        per:.04, txt:"Грузоподъёмность +4%"},
+    {id:"g2",name:"Скорость сбора",per:.04,txt:"Скорость сбора +4%"},
+    {id:"g3",name:"Дороги",      per:.03, txt:"Скорость марша +3%"},
+    {id:"g4",name:"Житница",     per:.05, txt:"Сбор еды и дерева +5%"},
+    {id:"g5",name:"Жила",        per:.05, txt:"Сбор камня и золота +5%"},
+  ]},
+};
+
+/* ---- Личное дерево генерала: Город/Армия. Отдельное от TALENTS выше —
+   не заменяет его, а тратит те же очки (1 за уровень, максимум 60), так что
+   вместе они не позволяют вкачать всё — придётся выбирать. */
+const GENERAL_TREE = {
+  city: { name:"Город", nodes:[
+    {id:"gt_c1",name:"Каменщики", per:.03,kind:"mult",field:"build",       max:5, txt:"Скорость стройки +3%"},
+    {id:"gt_c2",name:"Подрядчики",per:.03,kind:"add", field:"buildCostCut",max:5, txt:"Стоимость построек −3%"},
+    {id:"gt_c3",name:"Муштра",    per:.04,kind:"add", field:"trainSpeed",  max:5, txt:"Скорость обучения войск +4%"},
+    {id:"gt_c4",name:"Урожай",    per:.03,kind:"add", field:"prodAll",     max:5, txt:"Добыча всех ресурсов +3%"},
+    {id:"gt_c5",name:"Кладовые",  per:.03,kind:"add", field:"cap",         max:5, txt:"Вместимость защиты ресурсов +3%"},
+  ]},
+  army: { name:"Армия", nodes:[
+    {id:"gt_a1", name:"Стать",       per:.03,kind:"add", field:"genAtkMod",max:10,txt:"Атака полководца +3%"},
+    {id:"gt_a2", name:"Броня",       per:.03,kind:"add", field:"genDefMod",max:10,txt:"Защита полководца +3%"},
+    {id:"gt_a3", name:"Живучесть",   per:.03,kind:"add", field:"genHpMod", max:10,txt:"Здоровье полководца +3%"},
+    {id:"gt_a4", name:"Клич",        per:.02,kind:"add", field:"atk",      max:10,txt:"Атака войск +2%"},
+    {id:"gt_a5", name:"Оборона",     per:.02,kind:"add", field:"def",      max:10,txt:"Защита войск +2%"},
+    {id:"gt_a6", name:"Стойкость",   per:.02,kind:"add", field:"hp",       max:10,txt:"Здоровье войск +2%"},
+    {id:"gt_a7", name:"Марш",        per:.03,kind:"mult",field:"march",   max:5, txt:"Скорость марша +3%"},
+    {id:"gt_a8", name:"Обоз",        per:.03,kind:"add", field:"load",     max:5, txt:"Вместимость марша +3%"},
+    {id:"gt_a9", name:"Мародёрство", per:.05,kind:"add", field:"bandit",   max:5, txt:"Урон по разбойникам +5%"},
+    {id:"gt_a10",name:"Милосердие",  per:.03,kind:"add", field:"mercy",    max:5, txt:"Потери убитыми −3% (в лазарет)"},
+  ]},
+};
+
+/* ---- Здания ---- */
+const BUILDINGS = {
+  hall:    {name:"Ратуша",        max:30, req:null,  desc:"Задаёт потолок всех зданий и размер города"},
+  farm:    {name:"Ферма",         max:30, prod:"food", plots:4},
+  lumber:  {name:"Лесопилка",     max:30, prod:"wood", plots:4},
+  quarry:  {name:"Каменоломня",   max:30, prod:"stone", plots:4},
+  mine:    {name:"Золотая шахта", max:30, prod:"gold", plots:4},
+  store:   {name:"Склад",         max:30, desc:"Вместимость ресурсов"},
+  barracks:{name:"Казармы",       max:30, train:"inf"},
+  range:   {name:"Стрельбище",    max:30, train:"arc"},
+  stable:  {name:"Конюшня",       max:30, train:"cav"},
+  siege:   {name:"Мастерская",    max:30, train:"sie"},
+  hospital:{name:"Госпиталь",     max:30, desc:"Раненые вместо убитых"},
+  academy: {name:"Академия",      max:30, desc:"Исследования и открытие тиров"},
+  wall:    {name:"Стена",         max:30, desc:"Защита города при обороне"},
+  garrison:{name:"Гарнизон",      max:30, desc:"Доп. защита при осаде и предупреждение о марше врага"},
+  scout:   {name:"Разведка",      max:30, desc:"Раскрывает сведения о войсках противника"},
+  forge:   {name:"Горн",          max:30, desc:"Ковка снаряжения для полководца (механика в разработке)"},
+};
+const BKEYS = Object.keys(BUILDINGS);
+// Разметка карты города: координаты в % от изображения, bk — ключ здания (null = задел на будущее)
+const CITY_CELLS=[
+{n:"Ратуша",bk:"hall",x:42.8,y:10.49,w:14.16,h:16.83,ch:14},{n:"Лесопилка1",bk:"lumber",pl:0,x:59.32,y:13.8,w:7.24,h:6.86,ch:20},{n:"Лесопилка2",bk:"lumber",pl:1,x:67.22,y:14.66,w:7.3,h:5.82,ch:20},
+{n:"Лесопилка3",bk:"lumber",pl:2,x:59.33,y:20.92,w:7.82,h:6.2,ch:20},{n:"Лесопилка4",bk:"lumber",pl:3,x:67.1,y:20.66,w:10.65,h:6.42,ch:20},{n:"Золотая шахта1",bk:"mine",pl:0,x:59.5,y:28.17,w:9.19,h:5.04,ch:20},
+{n:"Золотая шахта2",bk:"mine",pl:1,x:69.42,y:28.17,w:9.82,h:5.49,ch:20},{n:"Золотая шахта3",bk:"mine",pl:2,x:59.46,y:34.07,w:9.64,h:4.64,ch:20},{n:"Золотая шахта4",bk:"mine",pl:3,x:69.74,y:33.86,w:10.6,h:5.21,ch:20},
+{n:"Госпиталь1",bk:"hospital",pl:0,x:60.35,y:40.67,w:10.12,h:5.82,ch:20},{n:"Госпиталь2",bk:"hospital",pl:1,x:71.15,y:40.67,w:10.37,h:6.12,ch:20},{n:"Госпиталь3",bk:"hospital",pl:2,x:60.1,y:46.87,w:10.26,h:5.43,ch:20},
+{n:"Госпиталь4",bk:"hospital",pl:3,x:71.21,y:46.87,w:10.71,h:5.62,ch:20},{n:"Ферма1",bk:"farm",pl:0,x:25.05,y:14.88,w:7.42,h:5.33,ch:20},{n:"Ферма2",bk:"farm",pl:1,x:32.69,y:13.68,w:8.08,h:6.62,ch:20},
+{n:"Ферма3",bk:"farm",pl:2,x:22.76,y:20.68,w:9.29,h:6.05,ch:20},{n:"Ферма4",bk:"farm",pl:3,x:32.22,y:20.68,w:8.33,h:6.14,ch:20},{n:"Каменоломня1",bk:"quarry",pl:0,x:21.39,y:27.89,w:9.68,h:5.18,ch:20},
+{n:"Каменоломня2",bk:"quarry",pl:1,x:31.82,y:27.93,w:9.22,h:5.22,ch:20},{n:"Каменоломня3",bk:"quarry",pl:2,x:20.53,y:33.61,w:10.27,h:4.8,ch:20},{n:"Каменоломня4",bk:"quarry",pl:3,x:31.45,y:33.61,w:9.12,h:4.88,ch:20},
+{n:"Склад",bk:"store",x:18.45,y:40.0,w:21.98,h:11.88,ch:14},{n:"Стрельбище",bk:"range",x:18.45,y:53.32,w:19.85,h:11.32,ch:14},{n:"Мастерская",bk:"siege",x:22.9,y:66.22,w:10.48,h:7.2,ch:17},
+{n:"Горн",bk:"forge",x:33.35,y:65.86,w:8.28,h:8.04,ch:17},{n:"Казармы",bk:"barracks",x:42.28,y:29.97,w:15.5,h:16.42,pill:1},{n:"Конюшня",bk:"stable",x:61.05,y:53.89,w:20.65,h:11.49,ch:14},
+{n:"Академия",bk:"academy",x:56.08,y:65.55,w:19.98,h:9.79,ch:14},{n:"Разведка",bk:"scout",x:57.22,y:75.82,w:9.96,h:4.84,ch:22},{n:"Гарнизон",bk:"garrison",x:30.13,y:74.74,w:11.69,h:5.36,ch:22},
+{n:"Ворота",bk:"wall",x:43.96,y:74.74,w:11.74,h:8.51,ch:12},{n:"Портал",bk:null,x:41.11,y:49.54,w:16.99,h:16.89,pill:1,future:1}
+];
+const cityShapeCss = c => c.pill ? "border-radius:50%;" :
+  (v=>`clip-path:polygon(${v}% 0%,${100-v}% 0%,100% ${v}%,100% ${100-v}%,${100-v}% 100%,${v}% 100%,0% ${100-v}%,0% ${v}%);`)(c.ch||18);
+const isMulti = bk => !!BUILDINGS[bk].plots;
+const plotUnlocked = (bk,idx,hall) => !isMulti(bk) || idx===0 || epochOf(hall)>=idx+1;   // участок N — с эпохи N
+const plotCap = lv => lv<=0?0:Math.round(storeCap(lv)*0.25);        // участок — только четверть защиты полноценного склада
+const lateSpeed = lv => Math.max(0, lv-25)*0.01;                    // +1%/уровень с 25 по 30 (макс. +5%)
+// Ратуша поднимается, только когда эти здания догнали её уровень.
+const HALL_REQ = ["wall","store","academy","barracks","hospital"];
+
+/* ---- Названия по расам и тирам --------------------------------------
+   Тир названия зависит НЕ от уровня самого здания, а от эпохи ратуши:
+   эпохи 1-2 -> тир 1, эпохи 3-4 -> тир 2, эпоха 5 -> тир 3.
+   У ратуши тиров 5, ровно по числу эпох (1:1).                          */
+const HALL_NAMES = {
+  human: ["Хутор","Деревня","Городок","Город-государство","Цитадель"],
+  dwarf: ["Рудничный посёлок","Застава","Крепость","Чертог","Великий чертог"],
+  elf:   ["Селение","Пристанище","Башня","Оплот","Шпиль"],
+  undead:["Мёртвое село","Осквернённая деревня","Зачумлённый городок","Проклятый город","Тёмная цитадель"],
+};
+const BUILDING_TIER_NAMES = {
+  farm: {
+    human: ["Поля","Ферма","Поместье"],
+    dwarf: ["Горная терраса","Пажить","Житницы предков"],
+    elf:   ["Опушка","Плодовый сад","Сады Вечного Лета"],
+    undead:["Погост","Костище","Поле костей"],
+  },
+  lumber: {
+    human: ["Делянка","Лесопилка","Заповедная пуща"],
+    dwarf: ["Вырубка","Лесопилка","Корабельный лес"],
+    elf:   ["Роща","Заповедная роща","Сердце леса"],
+    undead:["Мёртвая роща","Гиблый лес","Пуща Вечной Ночи"],
+  },
+  quarry: {
+    human: ["Каменоломня","Открытый карьер","Мраморные копи"],
+    dwarf: ["Штрек","Глубокий забой","Гранитные копи предков"],
+    elf:   ["Скальная терраса","Лунный карьер","Каменоломни лунного камня"],
+    undead:["Старый карьер","Разграбленные гробницы","Каменные склепы"],
+  },
+  mine: {
+    human: ["Золотая жила","Золотая шахта","Золотые копи"],
+    dwarf: ["Родовая жила","Глубокие копи","Кладовые предков"],
+    elf:   ["Золотоносная жила","Копи звёздного золота","Сокровищница Феникса"],
+    undead:["Проклятая жила","Расхищенная сокровищница","Клад проклятых королей"],
+  },
+  store: {
+    human: ["Амбар","Склад","Хранилище"],
+    dwarf: ["Каменная кладовая","Подгорное хранилище","Подгорная сокровищница"],
+    elf:   ["Древесная кладовая","Хрустальное хранилище","Хрустальные закрома"],
+    undead:["Подвал","Костяное хранилище","Сокровищница теней"],
+  },
+  hospital: {
+    human: ["Знахарский двор","Лазарет","Палаты милосердия"],
+    dwarf: ["Знахарский чертог","Лечебница","Чертог рунных целителей"],
+    elf:   ["Дом целителей","Чертог врачевания","Источник исцеления"],
+    undead:["Часовня скорби","Костница","Склеп воскрешения"],
+  },
+  barracks: {
+    human: ["Учебное поле","Плац","Казармы"],
+    dwarf: ["Дружинный двор","Оружейный двор","Чертог секироносцев"],
+    elf:   ["Учебные дворы","Копейные бараки","Чертог лунных стражей"],
+    undead:["Кладбище","Курган","Мавзолей"],
+  },
+  range: {
+    human: ["Стрельбище","Оружейная школа","Гильдия стрелков"],
+    dwarf: ["Стрелковый двор","Двор арбалетчиков","Гильдия арбалетчиков"],
+    elf:   ["Стрелковая поляна","Школа лучников","Гильдия Лунных Лучников"],
+    undead:["Стрельбище мертвецов","Двор костяных лучников","Гильдия костяных стрелков"],
+  },
+  stable: {
+    human: ["Конюшня","Конный двор","Орден конных латников"],
+    dwarf: ["Слесарный двор","Механический завод","Чертог изобретателей"],
+    elf:   ["Пастбище скакунов","Двор Лунных Наездников","Орден Лунных Наездников"],
+    undead:["Костяные стойла","Двор всадников тлена","Орден мёртвых наездников"],
+  },
+  siege: {
+    human: ["Плотницкий двор","Мастерская","Инженерная гильдия"],
+    dwarf: ["Кузница","Литейный двор","Гильдия механиков"],
+    elf:   ["Двор пращников","Двор баллист","Мастерская Звездочётов"],
+    undead:["Логово","Гнездовье упырей","Курган Ужасающих"],
+  },
+  academy: {
+    human: ["Конклав чародеев","Башня чародеев","Коллегия магов"],
+    dwarf: ["Кузня рун","Зал рунных умельцев","Чертог Хранителя Рун"],
+    elf:   ["Святилище магии","Башня провидцев","Коллегия хранителей знаний"],
+    undead:["Башня некроманта","Библиотека некроманта","Чертог тёмных искусств"],
+  },
+  wall: {
+    human: ["Частокол","Каменные стены","Бастионы"],
+    dwarf: ["Каменный вал","Крепостные стены","Несокрушимые бастионы"],
+    elf:   ["Плетень","Живые стены","Хрустальные бастионы"],
+    undead:["Костяной частокол","Гнилые стены","Кощунственный бастион"],
+  },
+  garrison: {
+    human: ["Караульный пост","Городская стража","Дозорная башня"],
+    dwarf: ["Дозорный пост","Гвардия чертога","Наблюдательная башня"],
+    elf:   ["Лесной дозор","Стража опушки","Дозорная вышка"],
+    undead:["Могильная стража","Дозор мертвецов","Сторожевая башня могильщиков"],
+  },
+  scout: {
+    human: ["Скаутский лагерь","Разведывательный пост","Шпионская башня"],
+    dwarf: ["Стан следопытов","Дозорный лагерь","Вышка соглядатаев"],
+    elf:   ["Дозор опушки","Пост следопытов","Вышка на исполинском древе"],
+    undead:["Стан упырей","Дозор вестников тьмы","Всевидящее око"],
+  },
+  forge: {
+    human: ["Кузня","Оружейная палата","Гильдия оружейников"],
+    dwarf: ["Наковальня","Горн оружейника","Чертог Мастера-Оружейника"],
+    elf:   ["Плетение доспехов","Огранка лунных клинков","Роща заговорённой стали"],
+    undead:["Костяной горн","Плавильня праха","Кузня проклятых клинков"],
+  },
+};
+function nameTier(epoch){ return epoch<=2?1 : epoch<=4?2 : 3 }
+function buildingName(bk,p){
+  const epoch=epochOf(p.b.hall);
+  if(bk==="hall") return HALL_NAMES[p.race][epoch-1];
+  const t=BUILDING_TIER_NAMES[bk];
+  if(!t) return BUILDINGS[bk].name;
+  return t[p.race][nameTier(epoch)-1];
+}
+
+/* ---- Войска: 4 рода × 5 тиров ----
+   Базовые числа в духе RoK (T4 конница ≈ 220 атк / 212 защ / 216 хп).      */
+const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];     // T1..T5
+const TROOP_TYPES = {
+  inf: {name:"Пехота",  atk:34, def:46, hp:44, load:6,  speed:1.00, beats:"arc", losesTo:"cav"},
+  arc: {name:"Лучники", atk:50, def:30, hp:36, load:8,  speed:1.10, beats:"cav", losesTo:"inf"},
+  cav: {name:"Конница", atk:46, def:34, hp:40, load:5,  speed:1.70, beats:"inf", losesTo:"arc"},
+  sie: {name:"Осадные", atk:24, def:20, hp:60, load:30, speed:0.60, beats:null,  losesTo:null},
+};
+const TKEYS = ["inf","arc","cav","sie"];
+/* ---- Расовые правки отдельных типов войск (не задевают базовые числа других рас) ----
+   У каждой расы — один «свой» тип войск: получает и стойкость к слому (ниже), и
+   +5% ко всем характеристикам на каждом тире. У осады нежити вместо стойкости —
+   полный иммунитет к слому (мертвецам нечего терять), и отдельно, по смыслу,
+   куда более резкая правка — это не строевая часть, а поднятые чудовища. */
+const RACE_TROOP_MOD = {
+  dwarf:  { inf: {atk:1.05, def:1.05, hp:1.05} },
+  human:  { cav: {atk:1.05, def:1.05, hp:1.05} },
+  elf:    { arc: {atk:1.05, def:1.05, hp:1.05} },
+  undead: { sie: {atk:2.20*1.05, def:1.05, hp:1.05, speed:1.20, load:0.80} },
+};
+const troopMod = (race,t,stat) => (RACE_TROOP_MOD[race]&&RACE_TROOP_MOD[race][t]&&RACE_TROOP_MOD[race][t][stat])||1;
+
+/* ---- Дисциплина: доля потерь типа войск (от его стартового числа в этом бою),
+   после которой он «дрогнул» — атака и защита −30% до конца боя, не раньше.
+   Порог растёт по тирам (элита держится дольше) и разный у родов войск. */
+const DISCIPLINE = {
+  inf: [65,72,78,84,90], arc:[40,48,55,62,70], cav:[55,60,65,70,78], sie:[75,78,81,84,88],
+};
+const RACE_DISCIPLINE_BONUS = { dwarf:{inf:15}, human:{cav:15}, elf:{arc:15}, undead:{sie:"immune"} };
+function disciplineThreshold(t,i,race){
+  const bonus=RACE_DISCIPLINE_BONUS[race]&&RACE_DISCIPLINE_BONUS[race][t];
+  if(bonus==="immune") return Infinity;
+  return (DISCIPLINE[t][i-1]+(bonus||0))/100;
+}
+const TIER_NAMES = {           // общий набор — служит запасным вариантом (разбойники и т.п.)
+  inf:["Ополченец","Мечник","Копейщик","Латник","Гвардеец"],
+  arc:["Лучник","Стрелок","Арбалетчик","Снайпер","Мастер лука"],
+  cav:["Всадник","Разведчик","Рыцарь","Кирасир","Паладин"],
+  sie:["Таран","Баллиста","Катапульта","Онагр","Требушет"],
+};
+/* ---- Расовые названия войск: у людей — тот же общий набор (плоская раса без
+   изысков), у трёх остальных — свой голос. Тир 5 каждой линии перекликается
+   с её же гильдией/чертогом 3-го тира соответствующего здания. */
+const UNIT_NAMES = {
+  inf: {
+    human: TIER_NAMES.inf,
+    dwarf: ["Щитоносец","Секирщик","Молотобоец","Хранитель врат","Секироносец Чертога"],
+    elf:   ["Лесной копейщик","Клинок рощи","Сумрачный боец","Танцующий меч","Лунный страж"],
+    undead:["Восставший","Гнилой латник","Костяной воин","Мертвяк-крушитель","Страж Мавзолея"],
+  },
+  arc: {
+    human: TIER_NAMES.arc,
+    dwarf: ["Дозорный стрелок","Арбалетчик","Тяжёлый застрельщик","Штурмовой стрелок","Мастер арбалетчиков"],
+    elf:   ["Лучник опушки","Следопыт-стрелок","Стрелок рощи","Меткий страж","Лунный Лучник"],
+    undead:["Иссохший стрелок","Костяной лучник","Меткий скелет","Мёртвый застрельщик","Мастер костяных стрелков"],
+  },
+  cav: {
+    human: TIER_NAMES.cav,
+    dwarf: ["Колёсный бегунок","Паровой таранщик","Механический наездник","Латный автоматон","Гордость Чертога изобретателей"],
+    elf:   ["Наездник","Всадник рощи","Быстрый скакун","Наездник бури","Лунный Наездник"],
+    undead:["Костяной всадник","Наездник тлена","Мёртвый кирасир","Всадник погибели","Наездник Ордена Мёртвых"],
+  },
+  sie: {
+    human: TIER_NAMES.sie,
+    dwarf: ["Пращевой воз","Литейная баллиста","Горная катапульта","Осадный бур","Механизм гильдии"],
+    elf:   ["Пращник","Баллистир","Наводчик баллисты","Небесный стрелок","Звездочёт"],
+    undead:["Упырь","Трупоед","Костолом","Ужасающий","Кошмар Кургана"],
+  },
+};
+const unitName = (t,i,race) => (UNIT_NAMES[t]&&UNIT_NAMES[t][race]?UNIT_NAMES[t][race][i-1]:TIER_NAMES[t][i-1]);
+const COUNTER_UP = 1.5, COUNTER_DOWN = 0.7;
+
+/* ---- Ресурсы ---- */
+const RES = ["food","wood","stone","gold"];
+const RES_NAME = {food:"Еда",wood:"Дерево",stone:"Камень",gold:"Золото"};
+const RES_COLOR = {food:"var(--food)",wood:"var(--wood)",stone:"var(--stone)",gold:"var(--gold)"};
+
+/* =========================================================================
+   ДВИЖОК. Никакого DOM ниже до раздела "ИНТЕРФЕЙС".
+   Мир детерминирован: одно и то же зерно + одно и то же время = один мир.
+   Ресурсы считаются лениво (по формуле от метки времени), события лежат
+   в очереди и обрабатываются только когда до них дошло время. Тиков нет.
+   ========================================================================= */
+
+function mulberry(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);
+  t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+let RNG = mulberry(1);
+const ri=(a,b)=>a+Math.floor(RNG()*(b-a+1));
+const pick=a=>a[Math.floor(RNG()*a.length)];
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+
+const buildTime = lv => CFG.BUILD_BASE*Math.pow(CFG.BUILD_GROW,lv-1);
+const buildCost = (lv,p) => {
+  const base = CFG.COST_BASE*Math.pow(CFG.COST_GROW,lv-1);
+  const cut = p ? (1-(bonuses(p).buildCostCut||0)) : 1;
+  return {food:Math.round(base*.9*cut),wood:Math.round(base*cut),stone:Math.round(base*.75*cut),gold:Math.round(base*.25*cut)};
+};
+const prodRate  = lv => lv<=0?0:CFG.PROD_BASE*Math.pow(CFG.PROD_GROW,lv-1);   // в час
+const storeCap  = lv => Math.round(CFG.CAP_BASE*Math.pow(CFG.CAP_GROW,Math.max(1,lv)-1));
+const troopStat = (type,tier,stat) => Math.round(TROOP_TYPES[type][stat]*TIER_MULT[tier-1]);
+const troopCost = (type,tier) => {
+  const b = 40*Math.pow(2.3,tier-1);
+  return {food:Math.round(b*1.2),wood:Math.round(b),stone:Math.round(b*.5),gold:Math.round(b*.15)};
+};
+const trainTime = (type,tier) => 8*Math.pow(1.9,tier-1);     // сек за 1 юнита
+const TRAIN_BLD = {inf:"barracks",arc:"range",cav:"stable",sie:"siege"};
+const trainCap = lv => 100 + lv*40;                            // максимум за один заказ
+const genXpNeed = lv => Math.round(120*Math.pow(1.18,lv-1));
+const epochOf   = hall => hall>=25?5 : hall>=19?4 : hall>=13?3 : hall>=7?2 : 1;   // 5 эпох × 6 уровней
+const citySize  = hall => Math.min(5, epochOf(hall));         // город растёт 1×1 → 5×5
+const marchSlots= hall => hall>=28?5 : hall>=22?4 : hall>=16?3 : hall>=10?2 : 1;
+const hospitalCap = lv => lv<=0?0:Math.round(300*Math.pow(1.55,lv-1));
+const maxWallHp = lv => 3000+lv*2500;
+function syncWall(p){
+  const mx=maxWallHp(p.b.wall);
+  if(p.wallHp==null) p.wallHp=mx;
+  const dt=(W.t-(p.wallAt||0))/3600;
+  if(dt>0 && W.t>(p.wallHitAt||-1e9)+2*3600) p.wallHp=Math.min(mx,p.wallHp+mx*0.03*dt);
+  p.wallHp=Math.min(p.wallHp,mx);
+  p.wallAt=W.t;
+}
+// тиры войск больше не привязаны к уровню академии напрямую — см. tierUnlockedFor() и ACADEMY_TREE.mil
+
+/* ---- Состояние мира ---- */
+let W = null;
+const key=(x,y)=>x+","+y;
+const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+const centerDist=p=>Math.hypot(p.x-CFG.MAP/2,p.y-CFG.MAP/2)/(CFG.MAP/2); // 0 центр → 1 край
+
+function newPlayer(id,race,x,y,isBot){
+  const aggr=.4+RNG()*.5;
+  const p={id,race,x,y,isBot,name:"",
+    res:{food:8000,wood:8000,stone:3000,gold:1500},resAt:0,
+    b:{},queues:[null,null],train:null,
+    troops:{},wounded:{},
+    gen:{lv:1,xp:0,pts:0,tal:{},id:isBot?(aggr>0.5?0:1):null}, gear:{}, tech:{}, rsch:null,
+    inventory:Object.fromEntries(GEAR_SLOTS.map(s=>[s.id,{bastion:[0,0,0,0,0],storm:[0,0,0,0,0]}])),
+    materials:{ore:[0,0,0,0,0],leather:[0,0,0,0,0],bone:[0,0,0,0,0],ebony:[0,0,0,0,0]}, craft:null,
+    shieldUntil:0, lostTo:null, power:0,
+    ai:{aggr, greed:.4+RNG()*.5, caution:.3+RNG()*.6, nextThink:0, target:null},
+  };
+  BKEYS.forEach(k=>p.b[k]=isMulti(k)?new Array(BUILDINGS[k].plots).fill(0):0);
+  p.b.hall=1; p.b.wall=1; p.b.farm[0]=1; p.b.lumber[0]=1; p.b.store=1;
+  TKEYS.forEach(t=>{p.troops[t]={};p.wounded[t]={};for(let i=1;i<=5;i++){p.troops[t][i]=0;p.wounded[t][i]=0}});
+  p.troops.inf[1]=200; p.troops.arc[1]=150;
+  return p;
+}
+
+const BOT_NAMES = {
+  human:["Вальдхейм","Остмарк","Ланфорд","Кернбург","Рейхольд","Дунмор"],
+  dwarf:["Кхаз-Дурум","Железный Кряж","Тангрим","Медная Падь","Каменный Зуб"],
+  elf:["Сильваниэль","Тихая Роща","Аэлендор","Лунный Предел","Тэрровен"],
+  undead:["Мортгард","Пепельный Курган","Некрополь Вар","Тлен","Хладная Длань"],
+};
+
+function genWorld(seed){
+  RNG = mulberry(seed);
+  W = { seed, t:0, born:Date.now(), map:{}, players:[], marches:[], events:[],
+        log:[], nextId:1, savedAt:Date.now() };
+
+  // Ресурсные точки: чем ближе к центру, тем богаче
+  const nodeCount = 900;
+  for(let i=0;i<nodeCount;i++){
+    const x=ri(0,CFG.MAP-1), y=ri(0,CFG.MAP-1);
+    if(W.map[key(x,y)]) continue;
+    const d=centerDist({x,y});
+    let lv = clamp(Math.round(5 - d*4 + (RNG()*1.6-0.8)),1,5);
+    const type = pick(RES);
+    W.map[key(x,y)] = {t:"node",x,y,res:type,lv,
+      amount: Math.round(6000*Math.pow(2.6,lv-1)), max: Math.round(6000*Math.pow(2.6,lv-1)),
+      busy:null};
+  }
+  // Разбойники: лагеря 1–15, форты 16–30
+  for(let i=0;i<520;i++){
+    const x=ri(0,CFG.MAP-1), y=ri(0,CFG.MAP-1);
+    if(W.map[key(x,y)]) continue;
+    const d=centerDist({x,y});
+    const raw = clamp(Math.round(30 - d*26 + (RNG()*8-4)),1,30);
+    const isFort = raw>15;
+    W.map[key(x,y)] = {t:isFort?"fort":"camp",x,y,lv:raw,
+      hp:1, power: banditPower(raw), busy:null};
+  }
+  // Города: игрок ближе к краю, боты рассыпаны
+  const spots=[];
+  const minGap=9;
+  function findSpot(minD,maxD){
+    for(let tries=0;tries<4000;tries++){
+      const x=ri(3,CFG.MAP-4), y=ri(3,CFG.MAP-4);
+      const d=centerDist({x,y});
+      if(d<minD||d>maxD) continue;
+      if(spots.some(s=>Math.hypot(s.x-x,s.y-y)<minGap)) continue;
+      spots.push({x,y}); return {x,y};
+    }
+    const x=ri(3,CFG.MAP-4),y=ri(3,CFG.MAP-4); spots.push({x,y}); return {x,y};
+  }
+  const ps = findSpot(.62,.9);
+  const me = newPlayer(W.nextId++, "human", ps.x, ps.y, false);
+  me.name="Ваш город";
+  me.shieldUntil = 3*86400;      // три дня защиты новичка
+  Object.assign(me.b,{hall:3,store:3,barracks:2,range:2,stable:1,hospital:3,academy:2,wall:2});
+  me.b.farm[0]=3; me.b.lumber[0]=3; me.b.quarry[0]=2; me.b.mine[0]=2;
+  W.players.push(me);
+  clearArea(ps.x,ps.y,1); W.map[key(ps.x,ps.y)]={t:"city",x:ps.x,y:ps.y,pid:me.id};
+
+  const used={};
+  for(let i=0;i<CFG.BOTS;i++){
+    const race = RACE_KEYS[i%4];
+    const s = findSpot(.15+RNG()*.15, .55+RNG()*.4);
+    const b = newPlayer(W.nextId++, race, s.x, s.y, true);
+    const pool = BOT_NAMES[race];
+    used[race]=(used[race]||0);
+    b.name = pool[used[race]%pool.length] + (used[race]>=pool.length?" II":"");
+    used[race]++;
+    // боты стартуют не с нуля, иначе мир мёртвый
+    const head = ri(2,5);
+    for(const k of ["hall","store","barracks","range","stable","hospital","academy","wall"])
+      b.b[k]=clamp(head+ri(-2,1),1,CFG.MAX_LEVEL);
+    for(const k of ["farm","lumber","quarry","mine"])
+      b.b[k][0]=clamp(head+ri(-2,1),1,CFG.MAX_LEVEL);   // на старте эпоха 1 — доступен только участок №1
+    b.b.hall = head;
+    TKEYS.forEach(t=>{b.troops[t][1]=ri(200,900)});
+    b.gen.lv = ri(3,10); b.gen.pts = b.gen.lv-1;
+    autoTalents(b);
+    b.res={food:20000,wood:20000,stone:9000,gold:4000}; 
+    W.players.push(b);
+    clearArea(s.x,s.y,1); W.map[key(s.x,s.y)]={t:"city",x:s.x,y:s.y,pid:b.id};
+    schedule(ri(0,CFG.BOT_THINK), "think", {pid:b.id});
+  }
+  logg("Мир создан. Зерно "+seed+". Городов: "+W.players.length+".", "good");
+  return W;
+}
+function clearArea(x,y,r){for(let i=-r;i<=r;i++)for(let j=-r;j<=r;j++)delete W.map[key(x+i,y+j)]}
+function banditPower(lv){
+  // Та же мерка, что и armyPower: иначе сравнение "потяну ли я этот лагерь"
+  // бессмысленно и для ботов, и для подсказок игроку.
+  return armyPower(banditArmy(lv), null);
+}
+
+/* ---- Очередь событий ------------------------------------------------- */
+function schedule(dt,type,data){
+  const ev={t:W.t+Math.max(0,dt),type,data,id:W.nextId++};
+  let i=W.events.length; while(i>0 && W.events[i-1].t>ev.t) i--;
+  W.events.splice(i,0,ev); return ev;
+}
+function unschedule(fn){ W.events=W.events.filter(e=>!fn(e)) }
+function logg(text,kind){ W.log.unshift({t:W.t,text,kind:kind||""}); if(W.log.length>300)W.log.pop() }
+
+/* ---- Ленивая экономика ------------------------------------------------ */
+function bonuses(p, defending){
+  const b={build:1, march:1, heal:1, healSpeed:1,
+    atk:0, def:0, hp:0, archer:0, raise:0, gather:0, load:0, hosp:0, cap:0,
+    prodFW:0, prodSG:0, bandit:0, mercy:0,
+    prodAll:0, prodFood:0, prodWood:0, prodStone:0, prodGold:0,
+    trainSpeed:0, buildCostCut:0, wallBonus:0, counter:0, firstStrike:0,
+    researchSpeed:0, scoutBonus:0,
+    atkInf:0, atkArc:0, atkCav:0, atkSie:0, defInf:0, defArc:0, defCav:0, defSie:0,
+    genAtkMod:0, genDefMod:0, genHpMod:0};
+  const race=RACES[p.race], mn=race.minus;
+  if(mn.kind==="mult") b[mn.field]*=mn.value; else b[mn.field]=(b[mn.field]||0)+mn.value;
+  const epoch=epochOf(p.b.hall), track=RACE_EPOCHS[p.race];
+  for(let i=0;i<epoch;i++){
+    (track[i].mods||[]).forEach(m=>{
+      if(m.kind==="mult") b[m.field]*=m.value; else b[m.field]=m.value;
+    });
+  }
+  if(defending && epoch>=5 && track[4].defMods){
+    track[4].defMods.forEach(m=>{
+      if(m.kind==="abs") b[m.field]=m.value; else b[m.field]=(b[m.field]||0)+m.value;
+    });
+  }
+  genOf(p).apply(b);
+  const T=p.gen.tal||{};
+  const g=id=>T[id]||0;
+  b.atk+=g("w1")*.02; b.def+=g("w2")*.02; b.hp+=g("w3")*.02;
+  b.bandit+=g("w4")*.05; b.mercy+=g("w5")*.03;
+  b.build*=1+g("d1")*.03; b.prodFW+=g("d2")*.04; b.prodSG+=g("d3")*.04;
+  b.hosp+=g("d4")*.05; b.cap+=g("d5")*.04;
+  b.load+=g("g1")*.04; b.gather+=g("g2")*.04; b.march*=1+g("g3")*.03;
+  b.gatherFW=g("g4")*.05; b.gatherSG=g("g5")*.05;
+  const tech=p.tech||{};
+  const multAcc={};
+  [ACADEMY_TREE.eco,ACADEMY_TREE.mil].forEach(arr=>arr.forEach(n=>{
+    const lv=tech[n.id]||0; if(!lv||n.unlock) return;
+    const list=n.effects||[{field:n.field,total:n.total,kind:n.kind}];
+    list.forEach(e=>{
+      const inc=e.total*(lv/n.max);
+      if(e.kind==="mult") multAcc[e.field]=(multAcc[e.field]||0)+inc;
+      else b[e.field]=(b[e.field]||0)+inc;
+    });
+  }));
+  Object.keys(multAcc).forEach(f=>b[f]*=(1+multAcc[f]));
+  const multAcc2={};
+  [GENERAL_TREE.city.nodes,GENERAL_TREE.army.nodes].forEach(arr=>arr.forEach(n=>{
+    const lv=T[n.id]||0; if(!lv) return;
+    const inc=n.per*lv;
+    if(n.kind==="mult") multAcc2[n.field]=(multAcc2[n.field]||0)+inc;
+    else b[n.field]=(b[n.field]||0)+inc;
+  }));
+  Object.keys(multAcc2).forEach(f=>b[f]*=(1+multAcc2[f]));
+  return b;
+}
+function production(p){ // единиц в час
+  const B=bonuses(p), out={};
+  const map={food:"farm",wood:"lumber",stone:"quarry",gold:"mine"};
+  const handicap = p.isBot ? CFG.BOT_HANDICAP : 1;
+  for(const r of RES){
+    let base=0; p.b[map[r]].forEach(lv=>{ if(lv>0) base+=prodRate(lv)*(1+lateSpeed(lv)); });
+    let v=base * ({food:1.25,wood:1.25,stone:0.90,gold:0.50}[r]) * handicap;
+    v*=1+B.prodAll;
+    v*=1+(r==="food"?B.prodFood:r==="wood"?B.prodWood:r==="stone"?B.prodStone:B.prodGold);
+    v*=1+((r==="food"||r==="wood")?B.prodFW:B.prodSG);
+    out[r]=v;
+  }
+  return out;   // Содержания армии нет: войска едят только при обучении и лечении.
+}
+function garrison(p){   // войск в городе — без потолка, просто для сводки
+  return countUnits(p.troops);
+}
+function capacity(p){    // теперь своя вместимость на каждый ресурс — склад + защита самих участков
+  const B=bonuses(p), base=Math.round(storeCap(p.b.store)*(1+B.cap));
+  const map={food:"farm",wood:"lumber",stone:"quarry",gold:"mine"};
+  const out={};
+  RES.forEach(r=>{ let extra=0; p.b[map[r]].forEach(lv=>extra+=plotCap(lv)); out[r]=base+extra; });
+  return out;
+}
+function syncRes(p){
+  const dt=(W.t-p.resAt)/3600; if(dt<=0){p.resAt=W.t;return}
+  const pr=production(p), cap=capacity(p);
+  for(const r of RES) p.res[r]=clamp(p.res[r]+pr[r]*dt, 0, r==="gold"?cap[r]*2:cap[r]);
+  p.resAt=W.t;
+}
+function canPay(p,c){ syncRes(p); return RES.every(r=>!c[r]||p.res[r]>=c[r]) }
+function pay(p,c){ syncRes(p); RES.forEach(r=>{if(c[r])p.res[r]-=c[r]}) }
+function gain(p,c){ syncRes(p); const cap=capacity(p);
+  RES.forEach(r=>{if(c[r])p.res[r]=Math.min(p.res[r]+c[r], r==="gold"?cap[r]*2:cap[r])}) }
+
+function power(p){
+  let v=0; BKEYS.forEach(k=>{
+    const lv=p.b[k];
+    if(Array.isArray(lv)) lv.forEach(l=>v+=Math.pow(l,2.1)*12); else v+=Math.pow(lv,2.1)*12;
+  });
+  TKEYS.forEach(t=>{for(let i=1;i<=5;i++) v+=p.troops[t][i]*TIER_MULT[i-1]*4});
+  W.marches.forEach(m=>{if(m.pid===p.id)TKEYS.forEach(t=>{for(let i=1;i<=5;i++)v+=(m.units[t][i]||0)*TIER_MULT[i-1]*4})});
+  v+=p.gen.lv*80;
+  return Math.round(v);
+}
+function armyPower(units,B,race){
+  const TYPE_ATK={inf:"atkInf",arc:"atkArc",cav:"atkCav",sie:"atkSie"};
+  const TYPE_DEF={inf:"defInf",arc:"defArc",cav:"defCav",sie:"defSie"};
+  let v=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++){
+    const n=units[t]&&units[t][i]||0; if(!n)continue;
+    let a=troopStat(t,i,"atk")*troopMod(race,t,"atk")*(1+(B&&B[TYPE_ATK[t]]||0));
+    if(t==="arc") a*=1+(B&&B.archer||0);
+    const d=troopStat(t,i,"def")*troopMod(race,t,"def")*(1+(B&&B[TYPE_DEF[t]]||0));
+    const hp=troopStat(t,i,"hp")*troopMod(race,t,"hp");
+    v+=n*(a*(1+(B?B.atk:0))+d*(1+(B?B.def:0))+hp*(1+(B?B.hp:0)));
+  }});
+  return Math.round(v/3);
+}
+function countUnits(u){let n=0;TKEYS.forEach(t=>{for(let i=1;i<=5;i++)n+=(u[t]&&u[t][i])||0});return n}
+function emptyUnits(){const u={};TKEYS.forEach(t=>{u[t]={};for(let i=1;i<=5;i++)u[t][i]=0});return u}
+function marchCapacity(p){
+  const B=bonuses(p);
+  return Math.round((3000+p.b.hall*1400+p.gen.lv*260)*(1+B.load*0));
+}
+
+/* =========================================================================
+   БОЙ. Автобой раундами, как в RoK: считаем, показываем лог.
+   Треугольник: пехота бьёт лучников, лучники — конницу, конница — пехоту.
+   Осадные слабы в поле, но везут груз и ломают стены.
+   ========================================================================= */
+function makeForce(units,p,opts){
+  const defending=!!(opts&&opts.defending);
+  const B=p?bonuses(p,defending):{atk:0,def:0,hp:0,archer:0,raise:0,bandit:0,mercy:0,counter:0,firstStrike:0};
+  const f={units:JSON.parse(JSON.stringify(units)),B,p,risen:emptyUnits(),
+           start:JSON.parse(JSON.stringify(units)), broken:emptyUnits(),
+           gen: (p&&p.gen&&p.gen.id!=null) ? genStats(p) : null,
+           wallDef:(opts&&opts.wall)||0, bandit:(opts&&opts.bandit)||false,
+           name:(opts&&opts.name)||(p?p.name:"Разбойники")};
+  return f;
+}
+function sideStats(f){
+  const s={};
+  const race=f.p&&f.p.race, B=f.B;
+  const TYPE_ATK={inf:"atkInf",arc:"atkArc",cav:"atkCav",sie:"atkSie"};
+  const TYPE_DEF={inf:"defInf",arc:"defArc",cav:"defCav",sie:"defSie"};
+  TKEYS.forEach(t=>{
+    let atk=0,def=0,hp=0,n=0;
+    const atkMod=1+(B[TYPE_ATK[t]]||0), defMod=1+(B[TYPE_DEF[t]]||0);
+    for(let i=1;i<=5;i++){
+      const c=f.units[t][i]||0;
+      const brk=f.broken&&f.broken[t][i]?0.70:1;
+      if(c){
+        let a=troopStat(t,i,"atk")*troopMod(race,t,"atk")*atkMod;
+        if(t==="arc") a*=1+(f.B.archer||0);
+        let d=troopStat(t,i,"def")*troopMod(race,t,"def")*defMod;
+        atk+=c*a*brk*(1+f.B.atk); def+=c*d*brk*(1+f.B.def);
+        hp +=c*troopStat(t,i,"hp")*troopMod(race,t,"hp")*(1+f.B.hp); n+=c;
+      }
+      // мертвецы нежити: половина характеристик того тира и рода войск, что погиб
+      const rc=f.risen&&f.risen[t][i]||0;
+      if(rc){
+        let ra=troopStat(t,i,"atk")*troopMod(race,t,"atk")*atkMod*0.5;
+        if(t==="arc") ra*=1+(f.B.archer||0);
+        atk+=rc*ra*(1+f.B.atk); def+=rc*troopStat(t,i,"def")*troopMod(race,t,"def")*defMod*0.5*(1+f.B.def);
+        hp +=rc*troopStat(t,i,"hp")*troopMod(race,t,"hp")*0.5*(1+f.B.hp); n+=rc;
+      }
+    }
+    s[t]={atk,def,hp,n};
+  });
+  s.totalHp=TKEYS.reduce((a,t)=>a+s[t].hp,0);
+  s.totalN =TKEYS.reduce((a,t)=>a+s[t].n,0);
+  return s;
+}
+function counterMult(from,to){
+  const T=TROOP_TYPES[from];
+  if(T.beats===to) return COUNTER_UP;
+  if(T.losesTo===to) return COUNTER_DOWN;
+  return 1;
+}
+function volleyDamage(att,defS,defWall){
+  // венец эльфов: один досрочный залп лучников до начала общей схватки, без ответа
+  if(!att.B.firstStrike) return null;
+  const c=att.units.arc; let atk=0,n=0;
+  for(let i=1;i<=5;i++){ const cnt=c[i]||0; if(!cnt)continue;
+    atk+=cnt*troopStat("arc",i,"atk")*(1+(att.B.archer||0))*(1+att.B.atk); n+=cnt; }
+  if(n<=0) return null;
+  const out={inf:0,arc:0,cav:0,sie:0};
+  TKEYS.forEach(dt=>{
+    if(defS[dt].n<=0) return;
+    const d=atk*counterMult("arc",dt)*(defS[dt].hp/Math.max(1,defS.totalHp));
+    const mitig=1+(defS[dt].def/Math.max(1,defS[dt].n))/70*defWall;
+    out[dt]=d*CFG.BATTLE_PACE/mitig;
+  });
+  return out;
+}
+function garrisonVolley(D,attS){
+  // гарнизон — не разведка, а сторожевая башня: сама бьёт атакующих до общей схватки
+  const lv = D.p && D.p.b.garrison || 0; if(lv<=0) return null;
+  const dmg = lv*900;
+  const out={inf:0,arc:0,cav:0,sie:0};
+  TKEYS.forEach(dt=>{
+    if(attS[dt].n<=0) return;
+    const share = dmg*(attS[dt].hp/Math.max(1,attS.totalHp));
+    const mitig = 1+(attS[dt].def/Math.max(1,attS[dt].n))/70;
+    out[dt]=share*CFG.BATTLE_PACE/mitig;
+  });
+  return out;
+}
+function generalDamage(f,defS){
+  // полководец — отдельный боец вне треугольника контр: бьёт по всем родам сразу
+  if(!f.gen||f.gen.hp<=0) return null;
+  const out={inf:0,arc:0,cav:0,sie:0};
+  TKEYS.forEach(dt=>{
+    if(defS[dt].n<=0) return;
+    const share=f.gen.atk*(defS[dt].hp/Math.max(1,defS.totalHp));
+    const mitig=1+(defS[dt].def/Math.max(1,defS[dt].n))/70;
+    out[dt]=share*CFG.BATTLE_PACE/mitig;
+  });
+  return out;
+}
+function damageToGeneral(f,enemyS){
+  // получает от всех родов войск противника, но как один боец под сильным прикрытием — не тонет в общем уроне армии
+  if(!f.gen||f.gen.hp<=0||enemyS.totalN<=0) return 0;
+  const avgAtk=TKEYS.reduce((s,t)=>s+enemyS[t].atk,0)/enemyS.totalN;
+  const mitig=1+f.gen.def/70;
+  return avgAtk*CFG.BATTLE_PACE*0.4/mitig;
+}
+function resolveBattle(A,D,ctx){
+  ctx=ctx||{};
+  const lossA=emptyUnits(), lossD=emptyUnits();
+  const lines=[];
+  let round=0;
+  const wallMul = 1 + (D.wallDef||0)*0.03*(1+(D.B.wallBonus||0));   // стена уровня 20 → +60% защиты обороне, у гномов ещё крепче
+
+  // Первый залп лучников (венец эльфов): без ответа, до первого раунда боя
+  const openA=volleyDamage(A,sideStats(D),wallMul); if(openA){ applyDamage(D,openA,lossD); raiseSkeletons(D,lossD); }
+  const openD=volleyDamage(D,sideStats(A),1);        if(openD){ applyDamage(A,openD,lossA); raiseSkeletons(A,lossA); }
+  // Залп гарнизона защитника — тоже до общей схватки
+  const openG=garrisonVolley(D,sideStats(A));        if(openG){ applyDamage(A,openG,lossA); raiseSkeletons(A,lossA); }
+  checkDiscipline(A,lossA); checkDiscipline(D,lossD);
+
+  while(round<60){
+    const sa=sideStats(A), sd=sideStats(D);
+    if(sa.totalN<=0||sd.totalN<=0) break;
+    round++;
+    const dmgTo=(att,attS,defS,defWall)=>{
+      const out={inf:0,arc:0,cav:0,sie:0};
+      TKEYS.forEach(dt=>{
+        if(defS[dt].n<=0) return;
+        let d=0;
+        TKEYS.forEach(at=>{ if(attS[at].n<=0)return;
+          d += attS[at].atk * counterMult(at,dt) * (defS[dt].hp/Math.max(1,defS.totalHp));
+        });
+        const mitig = 1 + (defS[dt].def/Math.max(1,defS[dt].n))/70 * defWall;
+        out[dt]=d*CFG.BATTLE_PACE/mitig;
+      });
+      return out;
+    };
+    const dA = dmgTo(A,sa,sd,wallMul);          // урон, наносимый атакующим
+    const dD = dmgTo(D,sd,sa,1);
+    applyDamage(D,dA,lossD);
+    applyDamage(A,dD,lossA);
+    // Полководцы — отдельные бойцы вне треугольника: бьют всех, получают ото всех, но смягчённо
+    const genDmgA=generalDamage(A,sd); if(genDmgA) applyDamage(D,genDmgA,lossD);
+    const genDmgD=generalDamage(D,sa); if(genDmgD) applyDamage(A,genDmgD,lossA);
+    if(A.gen) A.gen.hp=Math.max(0,A.gen.hp-damageToGeneral(A,sd));
+    if(D.gen) D.gen.hp=Math.max(0,D.gen.hp-damageToGeneral(D,sa));
+    // Венец гномов: часть урона атакующего отражается контрударом гарнизона
+    if(D.B.counter){
+      const totalDA=TKEYS.reduce((s2,t)=>s2+dA[t],0), extra=totalDA*D.B.counter;
+      if(extra>0){
+        const reflect={inf:0,arc:0,cav:0,sie:0};
+        TKEYS.forEach(t=>{ if(sa[t].n>0) reflect[t]=extra*(sa[t].hp/Math.max(1,sa.totalHp)); });
+        applyDamage(A,reflect,lossA);
+      }
+    }
+    const brokeA=checkDiscipline(A,lossA), brokeD=checkDiscipline(D,lossD);
+    if(brokeA.length) lines.push(A.name+": "+brokeA.join(", ")+" дрогнули — атака и защита −30% до конца боя.");
+    if(brokeD.length) lines.push(D.name+": "+brokeD.join(", ")+" дрогнули — атака и защита −30% до конца боя.");
+    if(round<=3||round%8===0){
+      lines.push("Раунд "+round+": "+A.name+" — "+countUnits(A.units).toLocaleString("ru")+
+                 ", "+D.name+" — "+countUnits(D.units).toLocaleString("ru"));
+    }
+    // Нежить поднимает павших прямо в бою
+    raiseSkeletons(A,lossA); raiseSkeletons(D,lossD);
+    if(countUnits(A.units)<=0||countUnits(D.units)<=0) break;
+    const ra=countUnits(A.units)/Math.max(1,ctx.startA||1);
+    if(ra<0.28 && !ctx.toDeath) break;          // атакующий отступает, потеряв 72%
+  }
+  const aliveA=countUnits(A.units), aliveD=countUnits(D.units);
+  const win = aliveA>0 && aliveD<=0 ? "A" : aliveD>0&&aliveA<=0 ? "D" : (aliveA>aliveD?"A":"D");
+  return {win, rounds:round, lossA, lossD, lines, aliveA, aliveD};
+}
+function applyDamage(f,dmg,loss){
+  const race=f.p&&f.p.race;
+  TKEYS.forEach(t=>{
+    let d=dmg[t]; if(d<=0)return;
+    // сначала гибнут живые бойцы, младшие тиры первыми
+    for(let i=1;i<=5&&d>0;i++){
+      const c=f.units[t][i]||0; if(!c)continue;
+      const ehp=troopStat(t,i,"hp")*troopMod(race,t,"hp")*(1+f.B.hp);
+      let kill=Math.min(c, Math.floor(d/ehp));
+      if(kill<=0 && d>ehp*0.5 && c>0) kill=1;
+      if(kill<=0) break;
+      f.units[t][i]-=kill; loss[t][i]+=kill; d-=kill*ehp;
+    }
+    // затем — поднятые мертвецы этого рода войск (хрупче: половина хп своего тира)
+    for(let i=1;i<=5&&d>0;i++){
+      const rc=f.risen&&f.risen[t][i]||0; if(!rc)continue;
+      const ehp=troopStat(t,i,"hp")*troopMod(race,t,"hp")*0.5*(1+f.B.hp);
+      let kill=Math.min(rc, Math.floor(d/ehp));
+      if(kill<=0 && d>ehp*0.5 && rc>0) kill=1;
+      if(kill<=0) break;
+      f.risen[t][i]-=kill; d-=kill*ehp;
+    }
+  });
+}
+function checkDiscipline(f,loss){
+  const race=f.p&&f.p.race, broke=[];
+  TKEYS.forEach(t=>{
+    for(let i=1;i<=5;i++){
+      if(f.broken[t][i]) continue;
+      const start=f.start&&f.start[t][i]||0; if(!start) continue;
+      const thr=disciplineThreshold(t,i,race); if(thr===Infinity) continue;
+      if((loss[t][i]||0)/start>thr){ f.broken[t][i]=1; broke.push(unitName(t,i,race)); }
+    }
+  });
+  return broke;
+}
+function raiseSkeletons(f,loss){
+  const rate=f.B.raise||0; if(rate<=0) return;
+  if(!f._raisedCum) f._raisedCum=emptyUnits();
+  TKEYS.forEach(t=>{
+    for(let i=1;i<=5;i++){
+      const dead=loss[t][i]||0; if(!dead)continue;
+      const should=Math.floor(dead*rate), already=f._raisedCum[t][i]||0;
+      if(should>already){ f.risen[t][i]=(f.risen[t][i]||0)+(should-already); f._raisedCum[t][i]=should; }
+    }
+  });
+}
+/* Раненые вместо убитых: часть потерь уходит в госпиталь */
+function splitLosses(p,loss,defending){
+  const B=bonuses(p);
+  const cap=Math.round(hospitalCap(p.b.hospital)*(1+B.hosp));
+  let inHosp=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) inHosp+=p.wounded[t][i]});
+  let base = defending?0.60:0.35;
+  base = Math.min(0.9, base + B.mercy);
+  let dead=0, hurt=0;
+  TKEYS.forEach(t=>{for(let i=1;i<=5;i++){
+    const n=loss[t][i]; if(!n)continue;
+    let w=Math.round(n*base);
+    const room=Math.max(0,cap-inHosp);
+    w=Math.min(w,room); inHosp+=w;
+    p.wounded[t][i]+=w; hurt+=w; dead+=n-w;
+  }});
+  return {dead,hurt};
+}
+
+/* =========================================================================
+   МАРШИ
+   ========================================================================= */
+function marchSpeed(p,units){
+  let s=99; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) if(units[t][i]>0) s=Math.min(s,TROOP_TYPES[t].speed*troopMod(p.race,t,"speed"))});
+  if(s>90) s=1;
+  return s*bonuses(p).march;      // клеток в минуту
+}
+function sendMarch(p,tx,ty,units,mode){
+  const n=countUnits(units); if(n<=0) return {err:"Нет войск"};
+  const busy=W.marches.filter(m=>m.pid===p.id).length;
+  if(busy>=marchSlots(p.b.hall)) return {err:"Все отряды заняты"};
+  TKEYS.forEach(t=>{for(let i=1;i<=5;i++){
+    if(units[t][i]>p.troops[t][i]) units[t][i]=p.troops[t][i];
+    p.troops[t][i]-=units[t][i];
+  }});
+  const d=Math.hypot(tx-p.x,ty-p.y);
+  const spd=marchSpeed(p,units);
+  const travel=Math.max(20, d/spd*60);
+  const m={id:W.nextId++,pid:p.id,mode,x0:p.x,y0:p.y,tx,ty,units,
+    t0:W.t,t1:W.t+travel,state:"go",carry:null,gatherEnd:0};
+  W.marches.push(m);
+  schedule(travel,"arrive",{mid:m.id});
+  // Оборонявшийся узнаёт о марше немедленно — боты «сидят в игре» 24/7
+  const tgt=W.map[key(tx,ty)];
+  if(tgt&&tgt.t==="city"){
+    const def=W.players.find(q=>q.id===tgt.pid);
+    if(def&&def.isBot) botAlarm(def,m);
+    else if(def&&!def.isBot&&def.b.garrison>0&&p.id!==def.id){
+      const lead=Math.min(travel*0.9, def.b.garrison*60);
+      schedule(Math.max(0,travel-lead),"warn",{pid:def.id,x:tx,y:ty,eta:Math.round(lead)});
+    }
+  }
+  return {ok:m};
+}
+function recallMarch(m){
+  if(m.state==="back") return;
+  const p=W.players.find(q=>q.id===m.pid);
+  const back=Math.max(15,Math.hypot(m.tx-p.x,m.ty-p.y)/marchSpeed(p,m.units)*60);
+  m.state="back"; m.t0=W.t; m.t1=W.t+back;
+  unschedule(e=>e.data&&e.data.mid===m.id);
+  schedule(back,"home",{mid:m.id});
+}
+function marchPos(m){
+  const f=clamp((W.t-m.t0)/Math.max(1,m.t1-m.t0),0,1);
+  const p=W.players.find(q=>q.id===m.pid);
+  if(m.state==="back") return {x:m.tx+(p.x-m.tx)*f, y:m.ty+(p.y-m.ty)*f};
+  if(m.state==="gather"||m.state==="siege") return {x:m.tx,y:m.ty};
+  return {x:m.x0+(m.tx-m.x0)*f, y:m.y0+(m.ty-m.y0)*f};
+}
+
+/* =========================================================================
+   ОБРАБОТКА СОБЫТИЙ
+   ========================================================================= */
+const EV = {
+  build(d){
+    const p=W.players.find(q=>q.id===d.pid); if(!p)return;
+    const q=p.queues[d.slot]; if(!q)return;
+    if(q.plot!=null) p.b[q.b][q.plot]=q.lv; else p.b[q.b]=q.lv;
+    p.queues[d.slot]=null;
+    if(!p.isBot) logg(buildingName(q.b,p)+(q.plot!=null?" (участок "+(q.plot+1)+")":"")+" достроена до "+q.lv+" уровня.","good");
+  },
+  train(d){
+    const p=W.players.find(q=>q.id===d.pid); if(!p||!p.train)return;
+    const T=p.train; p.troops[T.type][T.tier]+=T.n; p.train=null;
+    if(!p.isBot) logg("Обучено: "+unitName(T.type,T.tier,p.race)+" ×"+T.n.toLocaleString("ru"),"good");
+  },
+  research(d){
+    const p=W.players.find(q=>q.id===d.pid); if(!p||!p.rsch)return;
+    const R=p.rsch, n=findNode(R.id); p.tech[R.id]=R.lv; p.rsch=null;
+    if(n && !p.isBot) logg("Исследовано: "+n.name+" ур. "+R.lv+" из "+n.max+".","good");
+  },
+  craft(d){
+    const p=W.players.find(q=>q.id===d.pid); if(!p||!p.craft)return;
+    const c=p.craft;
+    if(c.kind==="material"){
+      p.materials[c.mat][0]=(p.materials[c.mat][0]||0)+c.n;
+      if(!p.isBot) logg("Добыто: "+MATERIALS[c.mat].name+" ×"+c.n+" ("+RARITY_NAMES[0].toLowerCase()+" качества).","good");
+    } else {
+      p.inventory[c.slot][c.order][c.rarity-1]=(p.inventory[c.slot][c.order][c.rarity-1]||0)+1;
+      if(!p.isBot) logg("Скован: "+GEAR_NAMES[c.slot][c.order][c.rarity-1]+" (на складе).","good");
+    }
+    p.craft=null;
+  },
+  warn(d){
+    const p=W.players.find(q=>q.id===d.pid); if(!p)return;
+    logg(buildingName("garrison",p)+" заметил вражеский марш — подход через "+fmtDur(d.eta)+".","war");
+    herald("Тревога! Враг замечен на подходе к вашим землям.");
+  },
+  heal(d){
+    const p=W.players.find(q=>q.id===d.pid); if(!p)return;
+    TKEYS.forEach(t=>{for(let i=1;i<=5;i++){p.troops[t][i]+=p.wounded[t][i];p.wounded[t][i]=0}});
+    if(!p.isBot) logg("Раненые вернулись в строй.","good");
+  },
+  arrive(d){ arriveMarch(W.marches.find(m=>m.id===d.mid)) },
+  gathered(d){ const m=W.marches.find(m=>m.id===d.mid); if(m) recallMarch(m) },
+  home(d){
+    const m=W.marches.find(m=>m.id===d.mid); if(!m)return;
+    const p=W.players.find(q=>q.id===m.pid);
+    TKEYS.forEach(t=>{for(let i=1;i<=5;i++)p.troops[t][i]+=m.units[t][i]});
+    if(m.carry){ gain(p,m.carry);
+      if(!p.isBot){
+        const s=RES.filter(r=>m.carry[r]>0).map(r=>RES_NAME[r]+" "+Math.round(m.carry[r]).toLocaleString("ru")).join(", ");
+        if(s) logg("Отряд вернулся с добычей: "+s,"good");
+      }
+    }
+    W.marches=W.marches.filter(x=>x.id!==m.id);
+  },
+  respawn(d){
+    if(W.map[key(d.x,d.y)]) return;
+    // новый лагерь появляется в другом месте
+    for(let i=0;i<80;i++){
+      const x=ri(0,CFG.MAP-1),y=ri(0,CFG.MAP-1);
+      if(W.map[key(x,y)]) continue;
+      const dd=centerDist({x,y});
+      const lv=clamp(Math.round(30-dd*26+(RNG()*8-4)),1,30);
+      W.map[key(x,y)]={t:lv>15?"fort":"camp",x,y,lv,power:banditPower(lv),busy:null};
+      return;
+    }
+  },
+  nodeback(d){
+    if(W.map[key(d.x,d.y)]) return;
+    for(let i=0;i<80;i++){
+      const x=ri(0,CFG.MAP-1),y=ri(0,CFG.MAP-1);
+      if(W.map[key(x,y)]) continue;
+      const dd=centerDist({x,y});
+      const lv=clamp(Math.round(5-dd*4+(RNG()*1.6-.8)),1,5);
+      const amt=Math.round(6000*Math.pow(2.6,lv-1));
+      W.map[key(x,y)]={t:"node",x,y,res:pick(RES),lv,amount:amt,max:amt,busy:null};
+      return;
+    }
+  },
+  think(d){
+    const p=W.players.find(q=>q.id===d.pid); if(!p||!p.isBot)return;
+    botThink(p);
+    schedule(CFG.BOT_THINK*(0.7+RNG()*0.6),"think",{pid:p.id});
+  },
+  alarm(d){   // разовая реакция на замеченный марш, без создания новой цепочки
+    const p=W.players.find(q=>q.id===d.pid); if(p&&p.isBot) botThink(p);
+  },
+};
+
+function arriveMarch(m){
+  if(!m) return;
+  const p=W.players.find(q=>q.id===m.pid);
+  const cell=W.map[key(m.tx,m.ty)];
+
+  if(!cell){ recallMarch(m); return; }
+
+  if(cell.t==="node" && m.mode==="gather"){
+    const B=bonuses(p);
+    let rate=(60+p.b.hall*22)*(1+B.gather);
+    rate*= (cell.res==="food"||cell.res==="wood") ? 1+(B.gatherFW||0) : 1+(B.gatherSG||0);
+    let load=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) load+=m.units[t][i]*TROOP_TYPES[t].load*TIER_MULT[i-1]*troopMod(p.race,t,"load")});
+    load=Math.round(load*(1+B.load));
+    const take=Math.min(load, cell.amount);
+    const secs=take/rate*3600;
+    m.state="gather"; m.t0=W.t; m.t1=W.t+secs;
+    cell.amount-=take; cell.busy=p.id;
+    m.carry={}; m.carry[cell.res]=take;
+    if(cell.amount<=0){ delete W.map[key(m.tx,m.ty)]; schedule(CFG.NODE_RESPAWN,"nodeback",{x:m.tx,y:m.ty}) }
+    schedule(secs,"gathered",{mid:m.id});
+    return;
+  }
+
+  if(cell.t==="camp"||cell.t==="fort"){
+    const B=bonuses(p);
+    const A=makeForce(m.units,p,{name:p.name});
+    const bandUnits=banditArmy(cell.lv);
+    const D=makeForce(bandUnits,null,{bandit:true,name:"Разбойники ур. "+cell.lv});
+    D.B={atk:0,def:0,hp:0,archer:0,raise:0};
+    A.B.atk += B.bandit;
+    const r=resolveBattle(A,D,{startA:countUnits(m.units)});
+    const sp=splitLosses(p,r.lossA,false);
+    if(r.win==="A"){
+      const xp=Math.round(40*Math.pow(1.22,cell.lv-1));
+      addXp(p,xp);
+      const loot={}; const lootBase=Math.round(1800*Math.pow(1.28,cell.lv-1));
+      RES.forEach(rr=>loot[rr]=Math.round(lootBase*(rr==="gold"?.25:rr==="stone"?.6:1)));
+      m.carry=loot;
+      delete W.map[key(m.tx,m.ty)];
+      schedule(CFG.RESPAWN_CAMP,"respawn",{x:m.tx,y:m.ty});
+      if(!p.isBot) logg("Разбитый лагерь ур. "+cell.lv+". Опыт +"+xp+", убито "+sp.dead+
+        ", ранено "+sp.hurt+".","war");
+    } else {
+      if(!p.isBot) logg("Отряд разбит лагерем ур. "+cell.lv+". Убито "+sp.dead+", ранено "+sp.hurt+".","war");
+    }
+    m.units=A.units; recallMarch(m); return;
+  }
+
+  if(cell.t==="city"){
+    const def=W.players.find(q=>q.id===cell.pid);
+    if(!def || def.id===p.id){ recallMarch(m); return }
+    if(W.t < def.shieldUntil){
+      if(!p.isBot) logg("Город под щитом мира — атака невозможна.","war");
+      recallMarch(m); return;
+    }
+    battleCity(p,def,m);
+    return;
+  }
+  recallMarch(m);
+}
+
+function banditArmy(lv){
+  const u=emptyUnits();
+  const tier=clamp(Math.ceil(lv/6),1,5);
+  const n=Math.round(90*Math.pow(1.235,lv-1)/TIER_MULT[tier-1]);
+  u.inf[tier]=Math.round(n*.45); u.arc[tier]=Math.round(n*.3);
+  u.cav[tier]=Math.round(n*.25);
+  return u;
+}
+function addXp(p,xp){
+  p.gen.xp+=xp;
+  while(p.gen.xp>=genXpNeed(p.gen.lv) && p.gen.lv<Math.min(60,epochOf(p.b.hall)*12)){
+    p.gen.xp-=genXpNeed(p.gen.lv); p.gen.lv++; p.gen.pts++;
+    if(!p.isBot) logg("Генерал достиг "+p.gen.lv+" уровня. Очко таланта доступно.","good");
+  }
+  if(p.isBot) autoTalents(p);
+}
+function autoTalents(p){
+  const aggr=(p.ai&&p.ai.aggr)||0.5;
+  const weight=id=>{
+    if(id==="gt_a1"||id==="gt_a2"||id==="gt_a3") return 10;              // личные статы — генерал теперь боец, это всегда ценно
+    if(["w1","w2","w3","gt_a4","gt_a5","gt_a6"].includes(id)) return 6+8*aggr;      // статы войск
+    if(["gt_c1","gt_c2","gt_c3","gt_c4","gt_c5","d1","d2","d3","d4","d5"].includes(id)) return 6+8*(1-aggr); // город/хозяйство
+    return 4;                                                            // марш/груз/мародёрство/милосердие
+  };
+  while(p.gen.pts>0){
+    const cands=[];
+    for(const bk in TALENTS) for(const n of TALENTS[bk].nodes) if((p.gen.tal[n.id]||0)<(n.max||5)) cands.push(n.id);
+    for(const bk in GENERAL_TREE) for(const n of GENERAL_TREE[bk].nodes) if((p.gen.tal[n.id]||0)<n.max) cands.push(n.id);
+    if(!cands.length) break;
+    cands.sort((a,b)=>weight(b)-weight(a));
+    const id=cands[0];
+    p.gen.tal[id]=(p.gen.tal[id]||0)+1; p.gen.pts--;
+  }
+}
+
+function battleCity(att,def,m){
+  const garrison=emptyUnits();
+  TKEYS.forEach(t=>{for(let i=1;i<=5;i++)garrison[t][i]=def.troops[t][i]});
+  const A=makeForce(m.units,att,{name:att.name});
+  const D=makeForce(garrison,def,{wall:def.b.wall+def.b.garrison*0.5,defending:true,name:def.name});
+  const r=resolveBattle(A,D,{startA:countUnits(m.units),toDeath:false});
+  const la=splitLosses(att,r.lossA,false);
+  const ld=splitLosses(def,r.lossD,true);
+  TKEYS.forEach(t=>{for(let i=1;i<=5;i++)def.troops[t][i]=D.units[t][i]});
+  m.units=A.units;
+
+  if(r.win==="A"){
+    syncRes(def);
+    const loot={}; let sum=0;
+    let carryCap=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++)carryCap+=m.units[t][i]*TROOP_TYPES[t].load*TIER_MULT[i-1]*troopMod(att.race,t,"load")});
+    const prot=capacity(def);
+    RES.forEach(rr=>{ const take=Math.min(Math.max(0,def.res[rr]-prot[rr]), carryCap/4); loot[rr]=Math.round(take); def.res[rr]-=take; sum+=take });
+    m.carry=loot;
+    addXp(att, Math.round(200+def.b.hall*60));
+    // Полный разгром бьёт по прочности стены; при обнулении — город переносится
+    if(countUnits(def.troops)<=0 && r.aliveA>0){
+      syncWall(def);
+      def.wallHp -= maxWallHp(def.b.wall)*0.34;
+      def.wallHitAt=W.t;
+      if(def.wallHp<=0){
+        relocate(def);
+        def.wallHp=maxWallHp(def.b.wall)*0.5;
+        if(!def.isBot) def.shieldUntil=Math.max(def.shieldUntil, W.t+8*3600);
+      }
+    }
+    logMsg(att,def,"Победа при "+def.name+". Захвачено "+Math.round(sum).toLocaleString("ru")+" ресурсов.",
+                   "Город атакован ("+att.name+"). Потери: "+ld.dead+" убито, "+ld.hurt+" ранено.");
+  } else {
+    logMsg(att,def,"Штурм "+def.name+" провалился. Убито "+la.dead+", ранено "+la.hurt+".",
+                   "Отражена атака "+att.name+". Убито "+ld.dead+", ранено "+ld.hurt+".");
+  }
+  if(!def.isBot||!att.isBot){/* nothing */}
+  recallMarch(m);
+}
+function logMsg(att,def,forAtt,forDef){
+  if(!att.isBot) logg(forAtt,"war");
+  if(!def.isBot) logg(forDef,"war");
+}
+function relocate(p){
+  // после разгрома город переносится туда, где меньше всего соседей
+  let best=null,bestScore=-1;
+  for(let i=0;i<400;i++){
+    const x=ri(4,CFG.MAP-5), y=ri(4,CFG.MAP-5);
+    if(W.map[key(x,y)]) continue;
+    let near=1e9;
+    W.players.forEach(q=>{ if(q.id!==p.id) near=Math.min(near,Math.hypot(q.x-x,q.y-y)) });
+    if(near>bestScore){ bestScore=near; best={x,y} }
+  }
+  if(!best) return;
+  delete W.map[key(p.x,p.y)];
+  p.x=best.x; p.y=best.y;
+  clearArea(p.x,p.y,1);
+  W.map[key(p.x,p.y)]={t:"city",x:p.x,y:p.y,pid:p.id};
+  if(!p.isBot) logg("Город разрушен и перенесён в безопасный край карты.","war");
+}
+
+/* =========================================================================
+   ИИ БОТОВ — utility AI.
+   Каждое возможное действие получает оценку по формулам. Бот делает то,
+   что набрало больше всего. Ни деревьев поведения, ни нейросетей: так
+   поведение остаётся объяснимым и правится одной цифрой.
+   Личность бота задают три числа: агрессия, жадность, осторожность.
+   ========================================================================= */
+function relation(a,b){
+  if(a.race===b.race) return 0.35;      // свои — мирно
+  return -0.35;                         // чужие расы одинаково враждебны, без случайного перекоса
+}
+function botAlarm(bot,incoming){
+  // Марш замечен в момент вылета. Бот реагирует как живой игрок: с паузой.
+  const react = 30+RNG()*240;
+  schedule(react,"alarm",{pid:bot.id});
+  bot.ai.threat = W.t + (incoming.t1-W.t);
+}
+function botThink(p){
+  syncRes(p);
+  const B=bonuses(p), acts=[];
+  const cap=capacity(p);
+  const pr=production(p);
+  const busyQ=p.queues.filter(Boolean).length;
+  const freeSlots=marchSlots(p.b.hall)-W.marches.filter(m=>m.pid===p.id).length;
+
+  /* --- стройка --- */
+  if(busyQ<2){
+    for(const bk of BKEYS){
+      const plots = isMulti(bk) ? p.b[bk].length : 1;
+      for(let pi=0; pi<plots; pi++){
+        if(isMulti(bk) && !plotUnlocked(bk,pi,p.b.hall)) continue;
+        const cur = isMulti(bk) ? p.b[bk][pi] : p.b[bk];
+        const lv=cur+1;
+        if(lv>CFG.MAX_LEVEL) continue;
+        if(bk!=="hall" && lv>p.b.hall) continue;
+        if(bk==="hall" && lv>1){
+          if(HALL_REQ.some(k=>p.b[k]<p.b.hall)) continue;   // ратуша ждёт ключевые здания
+        }
+        const c=buildCost(lv,p);
+        if(!RES.every(r=>p.res[r]>=(c[r]||0))) continue;
+        let sc=20;
+        if(bk==="hall") sc+=45;
+        if(BUILDINGS[bk].prod){ const r=BUILDINGS[bk].prod;
+          sc += 30*p.ai.greed + (p.res[r]<cap[r]*0.15?25:0);
+          if(isMulti(bk) && cur===0) sc+=15;    // новый участок выгоднее докачки старого
+        }
+        if(bk==="store" && RES.some(r=>p.res[r]>cap[r]*0.85)) sc+=40;
+        if(["barracks","range","stable"].includes(bk)) sc += 25*p.ai.aggr;
+        if(bk==="wall")     sc += 30*p.ai.caution;
+        if(bk==="garrison") sc += 26*p.ai.caution;
+        if(bk==="scout")    sc += 16;
+        if(bk==="hospital") sc += 22*p.ai.caution;
+        if(bk==="academy")  sc += 34;
+        sc -= cur*0.8;
+        acts.push({sc,run:()=>startBuild(p,bk,isMulti(bk)?pi:undefined)});
+      }
+    }
+  }
+  /* --- обучение --- */
+  if(!p.train){
+    const types=["inf","arc","cav","sie"].filter(t=>p.b[TRAIN_BLD[t]]>0);
+    if(types.length){
+      const t=types[Math.floor(RNG()*types.length)];
+      const tier=tierUnlockedFor(p,t);
+      const c=troopCost(t,tier);
+      // Бот копит на следующую ступень ратуши и тратит на войска только излишек.
+      // Раньше эту роль случайно играла проверка на еду.
+      const reserve=buildCost(p.b.hall+1,p);
+      // Если армия просела ниже критической, город бросает стройку и вооружается.
+      const desperate = countUnits(p.troops) < p.b.hall*80;
+      const keep = desperate ? 0 : 0.6;
+      const spare={}; RES.forEach(r=>spare[r]=Math.max(0,p.res[r]-reserve[r]*keep));
+      const affordable=Math.min(trainCap(p.b[TRAIN_BLD[t]]), Math.floor(Math.min(...RES.map(r=>c[r]?spare[r]/c[r]:1e9))*0.5));
+      if(affordable>=30){
+        let sc=25+40*p.ai.aggr;
+        if(countUnits(p.troops)<p.b.hall*180) sc+=35;
+        if(desperate) sc+=60;
+        acts.push({sc,run:()=>startTrain(p,t,tier,affordable)});
+      }
+    }
+  }
+  /* --- исследования --- */
+  if(!p.rsch && p.b.academy>0){
+    const pool=[...ACADEMY_TREE.eco,...ACADEMY_TREE.mil].filter(n=>{
+      if(n.race && n.race!==p.race) return false;
+      const cur=p.tech[n.id]||0; if(cur>=n.max) return false;
+      if(n.unlock){ if(n.unlock.tier>2 && !(p.tech["mil_tier_"+n.unlock.type+(n.unlock.tier-1)]>=1)) return false; }
+      const c=researchCost(n.branch,n.wave,cur+1);
+      return RES.every(r=>p.res[r]>=(c[r]||0));
+    });
+    if(pool.length){
+      const scored=pool.map(n=>{
+        let s=18+(n.unlock?40:0)+(n.race?15:0);
+        s+= n.branch==="mil" ? 8*p.ai.aggr : 8*(1-p.ai.aggr);
+        return {n,s};
+      }).sort((a,b)=>b.s-a.s);
+      acts.push({sc:scored[0].s, run:()=>startResearch(p,scored[0].n.id)});
+    }
+  }
+  /* --- снаряжение --- */
+  if(!p.craft && p.b.forge>0){
+    const curR=Math.min(5,epochOf(p.b.hall));
+    const order=p.ai.aggr>0.5?"storm":"bastion";
+    GEAR_SLOTS.forEach(s=>{
+      const stock=p.materials[s.mat];
+      let handled=false;
+      for(let t=curR-2;t>=0;t--){
+        if((stock[t]||0)>=4){ acts.push({sc:26,run:()=>upgradeMaterial(p,s.mat,t)}); handled=true; break; }
+      }
+      const haveEnough=(stock[curR-1]||0)>=1;
+      const cur=p.gear[s.id];
+      if(!haveEnough && !handled) acts.push({sc:14+8*p.ai.greed,run:()=>produceMaterial(p,s.mat)});
+      else if(haveEnough && (!cur||cur.rarity<curR)) acts.push({sc:22,run:()=>startCraftItem(p,s.id,order,curR)});
+    });
+    // надеть лучшее с собственного склада, если оно лучше того, что уже надето
+    GEAR_SLOTS.forEach(s=>{
+      const cur=p.gear[s.id];
+      let bestOrder=null,bestR=cur?cur.rarity:0;
+      ["bastion","storm"].forEach(o=>{
+        for(let r=5;r>=1;r--){ if((p.inventory[s.id][o][r-1]||0)>0 && r>bestR){ bestOrder=o; bestR=r; break } }
+      });
+      if(bestOrder) acts.push({sc:28,run:()=>equipItem(p,s.id,bestOrder,bestR)});
+    });
+  }
+  /* --- лечение --- */
+  let hurt=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++)hurt+=p.wounded[t][i]});
+  if(hurt>0){
+    const c=healCost(p);
+    if(RES.every(r=>p.res[r]>=(c[r]||0))) acts.push({sc:40+hurt/50,run:()=>doHeal(p)});
+  }
+  /* --- сбор ресурсов --- */
+  if(freeSlots>0){
+    const scarce=RES.slice().sort((a,b)=>(p.res[a]/cap[a])-(p.res[b]/cap[b]))[0];
+    const node=findNear(p,c=>c.t==="node"&&!c.busy, 30, c=>
+      (c.res===scarce?18:0)+c.lv*7-dist(p,c)*0.55);
+    if(node){
+      let sc=30+35*p.ai.greed+(p.res[scarce]<cap[scarce]*0.2?30:0);
+      acts.push({sc,run:()=>{ const u=pickArmy(p,0.45); if(countUnits(u)>0) sendMarch(p,node.x,node.y,u,"gather") }});
+    }
+  }
+  /* --- разбойники (прокачка генерала) --- */
+  if(freeSlots>0 && p.gen.lv<40){
+    // Сравниваем силу лагеря с тем отрядом, который реально уйдёт в бой,
+    // а не со всей армией — иначе ИИ переоценивает себя и теряет войска.
+    const sendable=armyPower(pickArmy(p,0.55),B,p.race);
+    const camp=findNear(p,c=>(c.t==="camp"||c.t==="fort")&&banditPower(c.lv)<sendable*0.55, 26,
+      c=>c.lv*4-dist(p,c)*0.7);
+    if(camp) acts.push({sc:44+22*(1-p.ai.greed)+(p.gen.lv<12?18:0),
+      run:()=>{ const u=pickArmy(p,0.55); if(countUnits(u)>0) sendMarch(p,camp.x,camp.y,u,"attack") }});
+  }
+  /* --- нападение на город --- */
+  if(freeSlots>0){
+    const my=armyPower(p.troops,B,p.race);
+    let best=null,bs=0;
+    W.players.forEach(q=>{
+      if(q.id===p.id) return;
+      if(W.t<q.shieldUntil) return;
+      const d=dist(p,q); if(d>34) return;
+      const their=armyPower(q.troops,bonuses(q),q.race)*(1+q.b.wall*0.03);
+      const ratio=my/Math.max(1,their);
+      if(ratio<1.35+p.ai.caution*0.9) return;
+      const rel=relation(p,q);
+      let sc = 26 + 46*p.ai.aggr + (ratio-1)*18 - d*0.55 - rel*55;
+      if(sc>bs){bs=sc;best=q}
+    });
+    if(best) acts.push({sc:bs,run:()=>{
+      const u=pickArmy(p,0.8); if(countUnits(u)>0) sendMarch(p,best.x,best.y,u,"attack") }});
+  }
+  /* --- страх: отозвать войска домой --- */
+  if(p.ai.threat && W.t<p.ai.threat){
+    const away=W.marches.filter(m=>m.pid===p.id&&m.state!=="back");
+    if(away.length) acts.push({sc:55*p.ai.caution+30,run:()=>away.forEach(recallMarch)});
+  }
+  /* --- щит, если страшно и есть золото --- */
+  if(p.ai.threat && W.t<p.ai.threat && W.t>p.shieldUntil && p.res.gold>3000){
+    acts.push({sc:48*p.ai.caution,run:()=>{ p.res.gold-=3000; p.shieldUntil=W.t+24*3600 }});
+  }
+
+  if(!acts.length) return;
+  acts.sort((a,b)=>b.sc-a.sc);
+  acts[0].run();
+  if(acts[1]&&acts[1].sc>acts[0].sc*0.85) acts[1].run();   // бот успевает делать два дела
+}
+function findNear(p,filter,radius,score){
+  let best=null,bs=-1e9;
+  for(const k in W.map){
+    const c=W.map[k];
+    if(dist(p,c)>radius) continue;
+    if(!filter(c)) continue;
+    const s=score(c);
+    if(s>bs){bs=s;best=c}
+  }
+  return best;
+}
+function pickArmy(p,frac){
+  const cap=marchCapacity(p), u=emptyUnits();
+  let room=cap;
+  for(let i=5;i>=1;i--) for(const t of TKEYS){
+    const have=Math.floor(p.troops[t][i]*frac); if(have<=0) continue;
+    const weight=TIER_MULT[i-1];
+    const n=Math.min(have, Math.floor(room/weight));
+    if(n>0){ u[t][i]=n; room-=n*weight }
+  }
+  return u;
+}
+
+/* --- действия, общие для игрока и ботов --- */
+function startBuild(p,bk,plot){
+  const multi=isMulti(bk);
+  if(multi && !plotUnlocked(bk,plot,p.b.hall)) return {err:"Участок откроется позже"};
+  const cur = multi ? p.b[bk][plot] : p.b[bk];
+  const lv=cur+1;
+  if(lv>CFG.MAX_LEVEL) return {err:"Максимальный уровень"};
+  if(bk!=="hall"&&lv>p.b.hall) return {err:"Требуется ратуша "+lv+" уровня"};
+  if(bk==="hall"){ const need=HALL_REQ.filter(k=>p.b[k]<p.b.hall);
+    if(need.length) return {err:"Сначала до "+p.b.hall+" ур.: "+need.map(k=>buildingName(k,p)).join(", ")} }
+  const slot=p.queues.findIndex(q=>!q);
+  if(slot<0) return {err:"Обе бригады заняты"};
+  const c=buildCost(lv,p);
+  if(!canPay(p,c)) return {err:"Не хватает ресурсов"};
+  pay(p,c);
+  const t=buildTime(lv)/bonuses(p).build;
+  p.queues[slot]={b:bk,lv,plot:multi?plot:null,t0:W.t,t1:W.t+t};
+  schedule(t,"build",{pid:p.id,slot});
+  return {ok:1};
+}
+function startTrain(p,type,tier,n){
+  if(p.train) return {err:"Казармы заняты"};
+  const blv=p.b[TRAIN_BLD[type]], cap=trainCap(blv);
+  if(n>cap) return {err:"За раз можно набрать не больше "+cap};
+  const c=troopCost(type,tier), tot={};
+  RES.forEach(r=>tot[r]=Math.round((c[r]||0)*n));
+  if(!canPay(p,tot)) return {err:"Не хватает ресурсов"};
+  pay(p,tot);
+  const t=trainTime(type,tier)*n/((1+p.b.hall*0.06)*(1+bonuses(p).trainSpeed)*(1+lateSpeed(blv)));
+  p.train={type,tier,n,t0:W.t,t1:W.t+t};
+  schedule(t,"train",{pid:p.id});
+  return {ok:1};
+}
+function startResearch(p,id){
+  if(p.rsch) return {err:"Академия занята"};
+  const n=findNode(id); if(!n) return {err:"Неизвестное исследование"};
+  if(n.race && n.race!==p.race) return {err:"Не для вашей расы"};
+  const cur=p.tech[id]||0;
+  if(cur>=n.max) return {err:"Уже на максимуме"};
+  if(n.unlock && n.unlock.tier>2 && !(p.tech["mil_tier_"+n.unlock.type+(n.unlock.tier-1)]>=1))
+    return {err:"Сначала откройте предыдущий тир"};
+  const lv=cur+1;
+  const c=researchCost(n.branch,n.wave,lv);
+  if(!canPay(p,c)) return {err:"Не хватает ресурсов"};
+  pay(p,c);
+  const t=researchTime(n.branch,n.wave,lv)/((1+bonuses(p).researchSpeed)*(1+lateSpeed(p.b.academy)));
+  p.rsch={id,lv,t0:W.t,t1:W.t+t};
+  schedule(t,"research",{pid:p.id});
+  return {ok:1};
+}
+function produceMaterial(p,mat){
+  if(p.craft) return {err:"Кузница занята"};
+  const n=5, cost={gold:100};
+  if(!canPay(p,cost)) return {err:"Не хватает золота"};
+  pay(p,cost);
+  const t=600/(1+lateSpeed(p.b.forge));
+  p.craft={kind:"material",mat,n,t0:W.t,t1:W.t+t};
+  schedule(t,"craft",{pid:p.id});
+  return {ok:1};
+}
+function upgradeMaterial(p,mat,tier){   // 4 штуки уровня tier (0..3) → 1 штука уровня tier+1
+  if((p.materials[mat][tier]||0)<4) return {err:"Нужно 4 штуки этого качества"};
+  p.materials[mat][tier]-=4; p.materials[mat][tier+1]=(p.materials[mat][tier+1]||0)+1;
+  return {ok:1};
+}
+function startCraftItem(p,slot,order,rarity){
+  if(p.craft) return {err:"Кузница занята"};
+  if(p.b.forge<=0) return {err:"Нужен горн"};
+  if(rarity>epochOf(p.b.hall)) return {err:"Такая редкость откроется позже"};
+  const s=findGearSlot(slot); if(!s) return {err:"Неизвестный слот"};
+  const tier=rarity-1;
+  if((p.materials[s.mat][tier]||0)<1) return {err:"Не хватает материала нужного качества"};
+  const c=craftCost(s.mat,tier,rarity);
+  if(!canPay(p,{gold:c.gold,food:c.food,wood:c.wood})) return {err:"Не хватает ресурсов"};
+  pay(p,{gold:c.gold,food:c.food,wood:c.wood});
+  p.materials[s.mat][tier]--;
+  const t=1800*rarity*rarity/(1+lateSpeed(p.b.forge));
+  p.craft={kind:"item",slot,order,rarity,t0:W.t,t1:W.t+t};
+  schedule(t,"craft",{pid:p.id});
+  return {ok:1};
+}
+function equipItem(p,slot,order,rarity){
+  const inv=p.inventory[slot][order];
+  if((inv[rarity-1]||0)<1) return {err:"Такого предмета нет на складе"};
+  const cur=p.gear[slot];
+  inv[rarity-1]--;
+  if(cur) p.inventory[slot][cur.order][cur.rarity-1]=(p.inventory[slot][cur.order][cur.rarity-1]||0)+1;
+  p.gear[slot]={order,rarity};
+  return {ok:1};
+}
+function unequipItem(p,slot){
+  const cur=p.gear[slot]; if(!cur) return {err:"Слот пуст"};
+  p.inventory[slot][cur.order][cur.rarity-1]=(p.inventory[slot][cur.order][cur.rarity-1]||0)+1;
+  p.gear[slot]=null;
+  return {ok:1};
+}
+function dismantleItem(p,slot,order,rarity){
+  const inv=p.inventory[slot][order];
+  if((inv[rarity-1]||0)<1) return {err:"Такого предмета нет на складе"};
+  inv[rarity-1]--;
+  const refund=Math.round(200*rarity*rarity*0.5);
+  p.res.gold=(p.res.gold||0)+refund;
+  return {ok:1,refund};
+}
+function healCost(p){
+  const k=bonuses(p).heal;
+  let n=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++)n+=p.wounded[t][i]*TIER_MULT[i-1]});
+  return {food:Math.round(n*12*k),wood:Math.round(n*9*k),gold:Math.round(n*1.5*k)};
+}
+function doHeal(p){
+  const c=healCost(p);
+  if(!canPay(p,c)) return {err:"Не хватает ресурсов на лечение"};
+  pay(p,c);
+  const t=Math.max(30, Math.sqrt(RES.reduce((a,r)=>a+(c[r]||0),0))*1.4*bonuses(p).healSpeed);
+  schedule(t,"heal",{pid:p.id});
+  return {ok:1};
+}
+
+/* =========================================================================
+   ХОД ВРЕМЕНИ. Догоняющая симуляция: сколько бы вас не было, движок
+   прокручивает очередь событий до текущего момента.
+   ========================================================================= */
+function advanceTo(target){
+  let guard=0;
+  while(W.events.length && W.events[0].t<=target){
+    if(++guard>200000) break;
+    const ev=W.events.shift();
+    W.t=ev.t;
+    const fn=EV[ev.type]; if(fn) fn(ev.data);
+  }
+  W.t=target;
+  W.players.forEach(syncRes);
+}
+
+/* =========================================================================
+   СОХРАНЕНИЕ. Работает и внутри Claude (window.storage), и локально
+   (localStorage), и просто в памяти, если нет ни того ни другого.
+   ========================================================================= */
+const Store={
+  async get(k){
+    try{ if(window.storage){const r=await window.storage.get(k);return r?r.value:null} }catch(e){}
+    try{ return localStorage.getItem(k) }catch(e){ return null }
+  },
+  async set(k,v){
+    try{ if(window.storage){await window.storage.set(k,v);return} }catch(e){}
+    try{ localStorage.setItem(k,v) }catch(e){}
+  },
+  async del(k){
+    try{ if(window.storage){await window.storage.delete(k);return} }catch(e){}
+    try{ localStorage.removeItem(k) }catch(e){}
+  }
+};
+const SAVE_KEY="fourbanners:save1";
+async function save(){
+  W.savedAt=Date.now();
+  try{ await Store.set(SAVE_KEY, JSON.stringify(W)) }catch(e){ console.warn("save failed",e) }
+}
+async function load(){
+  const raw=await Store.get(SAVE_KEY);
+  if(!raw) return false;
+  try{
+    const s=JSON.parse(raw);
+    if(!s||!s.players) return false;
+    W=s; RNG=mulberry(W.seed+Math.floor(W.t));
+    // догоняем реальное время, прошедшее с последнего захода
+    const away=Math.max(0,(Date.now()-W.savedAt)/1000);
+    if(away>60){
+      advanceTo(W.t+away);
+      logg("Пока вас не было, прошло "+fmtDur(away)+". Мир жил своей жизнью.","good");
+    }
+    return true;
+  }catch(e){ return false }
+}
+
+/* =========================================================================
+   ИНТЕРФЕЙС. Карта — не сетка клеток, а чертёж кампании на штабном столе.
+   Рельеф рисуется один раз в буфер и растягивается со сглаживанием: получается
+   мягкая размывка вместо пиксельных квадратов, и это дёшево.
+   ========================================================================= */
+const $=s=>document.querySelector(s);
+const me=()=>W.players[0];
+const RU=n=>Math.round(n).toLocaleString("ru-RU");
+function fmt(n){ n=Math.round(n);
+  if(Math.abs(n)>=1e9) return (n/1e9).toFixed(2)+" млрд";
+  if(Math.abs(n)>=1e6) return (n/1e6).toFixed(2)+" млн";
+  if(Math.abs(n)>=1e4) return (n/1e3).toFixed(1)+" тыс";
+  return RU(n) }
+function fmtDur(s){ s=Math.max(0,Math.round(s));
+  const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),x=s%60;
+  if(d) return d+" д "+h+" ч";
+  if(h) return h+" ч "+m+" мин";
+  if(m) return m+" мин "+x+" с";
+  return x+" с" }
+
+const TINCT={human:"#d9b14b",dwarf:"#bb5730",elf:"#4c8d5e",undead:"#7d56a4"};
+const RSHADE={food:"#83a049",wood:"#9c6b3a",stone:"#8791a0",gold:"#d6ae40"};
+// на карте те же ресурсы берём светлее: сепия под ними глушит цвет
+const RMAP  ={food:"#a8c96a",wood:"#c68d4e",stone:"#b3bcc9",gold:"#f0c757"};
+const GILT="#c2993c", GILT_HI="#e6c273", VELLUM="#ece2ca", GARNET="#96323b";
+
+const FONT=getComputedStyle(document.body).fontFamily;   // читаем один раз, не каждый кадр
+const cv=$("#map"), g=cv.getContext("2d");
+const mini=$("#mini"), mg=mini.getContext("2d");
+let view={x:0,y:0,z:8}, drag=null, sel=null, hover=null;
+let tab="city", tempo=1, lastReal=Date.now(), lastFolio="";
+
+/* ---- Рельеф в буфер ---------------------------------------------------- */
+let terrain=null;
+function hash2(x,y,s){ let h=x*374761393+y*668265263+s*1274126177;
+  h=Math.imul(h^(h>>>13),1274126177); return ((h^(h>>>16))>>>0)/4294967296 }
+function noise(x,y,s){
+  const xi=Math.floor(x), yi=Math.floor(y), xf=x-xi, yf=y-yi;
+  const u=xf*xf*(3-2*xf), v=yf*yf*(3-2*yf);
+  const a=hash2(xi,yi,s),b=hash2(xi+1,yi,s),c=hash2(xi,yi+1,s),d=hash2(xi+1,yi+1,s);
+  return (a*(1-u)+b*u)*(1-v)+(c*(1-u)+d*u)*v;
+}
+function ridge(x,y,s){ return 1-Math.abs(2*noise(x,y,s)-1) }   // излом шума даёт хребты
+function elevation(x,y,s){
+  let e = noise(x/23,y/23,s)*.42 + noise(x/11,y/11,s+9)*.24 + noise(x/5,y/5,s+21)*.10;
+  e += ridge(x/15,y/15,s+37)*.24;
+  return e<0?0:e>1?1:e;
+}
+const MIX=(a,b,t)=>[a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
+const DEEP=[28,40,52], SHOAL=[42,58,66], MARSH=[46,52,40], PLAIN=[60,63,42],
+      FIELD=[78,74,46], HILL=[92,82,52], CRAG=[112,100,74], PEAK=[146,136,112];
+
+function buildTerrain(){
+  const N=CFG.MAP, s=W.seed;
+  terrain=document.createElement("canvas"); terrain.width=N; terrain.height=N;
+  const t=terrain.getContext("2d"), img=t.createImageData(N,N);
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    const e=elevation(x,y,s);
+    const d=Math.hypot(x-N/2,y-N/2)/(N/2);
+    const heart=Math.pow(Math.max(0,1-d),1.4);      // сердце мира — земли богаче
+    let c;
+    if      (e<0.17) c=MIX(DEEP,SHOAL,e/0.17);
+    else if (e<0.22) c=MIX(SHOAL,MARSH,(e-0.17)/0.05);
+    else if (e<0.42) c=MIX(MARSH,PLAIN,(e-0.22)/0.20);
+    else if (e<0.58) c=MIX(PLAIN,FIELD,(e-0.42)/0.16);
+    else if (e<0.71) c=MIX(FIELD,HILL,(e-0.58)/0.13);
+    else if (e<0.83) c=MIX(HILL,CRAG,(e-0.71)/0.12);
+    else             c=MIX(CRAG,PEAK,(e-0.83)/0.17);
+    c=[c[0]*(1+heart*.30)+heart*16, c[1]*(1+heart*.20)+heart*7, c[2]*(1-heart*.10)];
+    const band=(e*14)%1;
+    if(e>0.24 && band<0.07) c=[c[0]*.84,c[1]*.84,c[2]*.86];    // горизонтали
+    if(e>0.165 && e<0.182)  c=[c[0]*.55,c[1]*.58,c[2]*.68];    // береговая линия
+    const lum=c[0]*.34+c[1]*.5+c[2]*.16;                       // выцветшая сепия,
+    c=[c[0]*.62+lum*.42, c[1]*.62+lum*.37, c[2]*.62+lum*.27];  // чтобы золото читалось
+    const i=(y*N+x)*4;
+    img.data[i]=c[0]; img.data[i+1]=c[1]; img.data[i+2]=c[2]; img.data[i+3]=255;
+  }
+  t.putImageData(img,0,0);
+}
+
+/* ---- Геометрия экрана ---- */
+function resize(){
+  const r=cv.parentElement.getBoundingClientRect(), dpr=Math.min(2,window.devicePixelRatio||1);
+  cv.width=Math.round(r.width*dpr); cv.height=Math.round(r.height*dpr);
+  g.setTransform(dpr,0,0,dpr,0,0); cv._w=r.width; cv._h=r.height;
+  const m=mini.getBoundingClientRect();
+  mini.width=Math.round(m.width*dpr); mini.height=Math.round(m.height*dpr);
+  mg.setTransform(dpr,0,0,dpr,0,0); mini._w=m.width; mini._h=m.height;
+}
+const SX=x=>(x-view.x)*view.z, SY=y=>(y-view.y)*view.z;
+function centerOn(x,y){ view.x=x-cv._w/2/view.z; view.y=y-cv._h/2/view.z; clampView() }
+function clampView(){
+  const pad=1.5;
+  view.x=Math.max(-pad,Math.min(CFG.MAP+pad-cv._w/view.z,view.x));
+  view.y=Math.max(-pad,Math.min(CFG.MAP+pad-cv._h/view.z,view.y));
+}
+
+/* ---- Гербовый щит ---- */
+function shield(c,cx,cy,w,h,fill,edge,lw){
+  c.beginPath();
+  const l=cx-w/2, r=cx+w/2, t=cy-h/2, b=cy+h/2, sh=t+h*0.58;
+  c.moveTo(l,t); c.lineTo(r,t); c.lineTo(r,sh);
+  c.quadraticCurveTo(r,b-h*0.06, cx,b); c.quadraticCurveTo(l,b-h*0.06, l,sh);
+  c.closePath();
+  c.fillStyle=fill; c.fill();
+  if(edge){ c.strokeStyle=edge; c.lineWidth=lw||1.2; c.stroke() }
+}
+/* ---- Значки ресурсных точек ---- */
+function glyph(c,kind,cx,cy,s,col){
+  c.save();
+  c.shadowColor="rgba(0,0,0,.75)"; c.shadowBlur=Math.max(2,s*.5); c.shadowOffsetY=1;
+  c.strokeStyle=col; c.fillStyle=col; c.lineWidth=Math.max(1.2,s*0.17); c.lineCap="round";
+  if(kind==="food"){                               // сноп
+    c.beginPath();
+    for(const a of [-0.42,0,0.42]){ c.moveTo(cx-Math.sin(a)*s*.5,cy+s*.55);
+      c.lineTo(cx+Math.sin(a)*s*.55,cy-s*.6) }
+    c.stroke();
+    c.beginPath(); c.moveTo(cx-s*.42,cy+s*.12); c.lineTo(cx+s*.42,cy+s*.12); c.stroke();
+  } else if(kind==="wood"){                        // дерево
+    c.beginPath(); c.moveTo(cx,cy-s*.65); c.lineTo(cx+s*.5,cy+s*.2);
+    c.lineTo(cx-s*.5,cy+s*.2); c.closePath(); c.fill();
+    c.beginPath(); c.moveTo(cx,cy+s*.2); c.lineTo(cx,cy+s*.62); c.stroke();
+  } else if(kind==="stone"){                       // глыба
+    c.beginPath(); c.moveTo(cx-s*.55,cy+s*.45); c.lineTo(cx-s*.3,cy-s*.4);
+    c.lineTo(cx+s*.25,cy-s*.55); c.lineTo(cx+s*.58,cy+s*.1);
+    c.lineTo(cx+s*.3,cy+s*.5); c.closePath(); c.fill();
+  } else {                                         // монета
+    c.beginPath(); c.arc(cx,cy,s*.52,0,7); c.fill();
+    c.shadowColor="transparent";
+    c.strokeStyle="rgba(0,0,0,.5)"; c.lineWidth=Math.max(1,s*.13);
+    c.beginPath(); c.arc(cx,cy,s*.27,0,7); c.stroke();
+  }
+  c.restore();
+}
+function camp(c,cx,cy,s,fort){
+  c.save();
+  c.shadowColor="rgba(0,0,0,.7)"; c.shadowBlur=Math.max(2,s*.45); c.shadowOffsetY=1;
+  if(fort){                                        // форт с зубцами
+    c.fillStyle="#7a6134"; c.strokeStyle="#4a3a1d"; c.lineWidth=1;
+    const w=s*1.05,h=s*.85;
+    c.beginPath(); c.rect(cx-w/2,cy-h/2+h*.22,w,h*.78); c.fill(); c.stroke();
+    for(let i=0;i<3;i++){ const bw=w/5;
+      c.beginPath(); c.rect(cx-w/2+i*bw*2,cy-h/2,bw,h*.3); c.fill(); c.stroke() }
+  } else {                                         // палатка
+    c.fillStyle="#6a5530"; c.strokeStyle="#42341a"; c.lineWidth=1;
+    c.beginPath(); c.moveTo(cx,cy-s*.6); c.lineTo(cx+s*.62,cy+s*.5);
+    c.lineTo(cx-s*.62,cy+s*.5); c.closePath(); c.fill(); c.stroke();
+  }
+  c.restore();
+}
+// подпись с тёмной подложкой — иначе цифры теряются на рельефе
+function tagText(c,txt,cx,cy,size,col){
+  c.font=size+"px ui-monospace,monospace"; c.textAlign="center";
+  const w=c.measureText(txt).width;
+  c.fillStyle="rgba(10,7,3,.62)";
+  c.fillRect(cx-w/2-3,cy-size*.82,w+6,size+3);
+  c.fillStyle=col; c.fillText(txt,cx,cy);
+}
+
+/* ---- Главная отрисовка ---- */
+function draw(){
+  const w=cv._w,h=cv._h,z=view.z;
+  g.clearRect(0,0,w,h);
+  g.fillStyle="#100c08"; g.fillRect(0,0,w,h);
+
+  // рельеф: растянутый буфер даёт мягкую акварельную заливку
+  g.imageSmoothingEnabled=true; g.imageSmoothingQuality="high";
+  g.drawImage(terrain, SX(0),SY(0), CFG.MAP*z, CFG.MAP*z);
+
+  const x0=Math.max(0,Math.floor(view.x)-1), x1=Math.min(CFG.MAP,Math.ceil(view.x+w/z)+1);
+  const y0=Math.max(0,Math.floor(view.y)-1), y1=Math.min(CFG.MAP,Math.ceil(view.y+h/z)+1);
+
+  // кольца областей — чем ближе к сердцу, тем богаче земли
+  g.save(); g.strokeStyle="rgba(226,196,133,.13)"; g.lineWidth=1; g.setLineDash([7,9]);
+  for(let k=1;k<=4;k++){
+    g.beginPath();
+    g.arc(SX(CFG.MAP/2),SY(CFG.MAP/2),(CFG.MAP/2)*(k/5)*z,0,7); g.stroke();
+  }
+  g.restore();
+
+  // сетка проступает только вблизи
+  if(z>=13){
+    g.strokeStyle="rgba(0,0,0,.16)"; g.lineWidth=1; g.beginPath();
+    for(let x=x0;x<=x1;x++){ g.moveTo(Math.round(SX(x))+.5,SY(y0)); g.lineTo(Math.round(SX(x))+.5,SY(y1)) }
+    for(let y=y0;y<=y1;y++){ g.moveTo(SX(x0),Math.round(SY(y))+.5); g.lineTo(SX(x1),Math.round(SY(y))+.5) }
+    g.stroke();
+  }
+  // граница обжитого мира
+  g.strokeStyle="rgba(226,196,133,.22)"; g.lineWidth=1.5;
+  g.strokeRect(SX(0),SY(0),CFG.MAP*z,CFG.MAP*z);
+
+  // объекты
+  const cities=[];
+  for(const k in W.map){
+    const o=W.map[k];
+    if(o.x<x0-2||o.x>x1+2||o.y<y0-2||o.y>y1+2) continue;
+    const cx=SX(o.x)+z/2, cy=SY(o.y)+z/2;
+    if(o.t==="node"){
+      if(z<7){ g.fillStyle=RMAP[o.res]; const s=Math.max(2,z*.34);
+        g.fillRect(cx-s/2,cy-s/2,s,s) }
+      else glyph(g,o.res,cx,cy,z*(0.30+o.lv*0.055),RMAP[o.res]);
+      if(z>=17) tagText(g,o.lv,cx,cy+z*.68,9,"rgba(236,226,202,.72)");
+    } else if(o.t==="camp"||o.t==="fort"){
+      if(z<6){ g.fillStyle=o.t==="fort"?"#8a6a3a":"#5f4d2c";
+        g.fillRect(cx-z*.2,cy-z*.2,z*.4,z*.4) }
+      else camp(g,cx,cy,z*(o.t==="fort"?.72:.55),o.t==="fort");
+      if(z>=13) tagText(g,o.lv,cx,cy+z*.82,z>=20?11:9,
+        o.t==="fort"?"#e8bd7a":"rgba(236,226,202,.8)");
+    } else if(o.t==="city") cities.push(o);
+  }
+
+  // марши: линия туши, по ней ползёт восковая печать
+  W.marches.forEach(m=>{
+    const p=W.players.find(q=>q.id===m.pid); if(!p) return;
+    const mine=!p.isBot;
+    const from = m.state==="back" ? {x:m.tx,y:m.ty} : {x:m.x0,y:m.y0};
+    const to   = m.state==="back" ? {x:p.x,y:p.y}   : {x:m.tx,y:m.ty};
+    const a=marchPos(m);
+    g.save();
+    g.strokeStyle = mine?"rgba(238,206,130,.62)":"rgba(196,74,84,.55)";
+    g.lineWidth=mine?1.9:1.5; g.setLineDash([5,6]); g.lineDashOffset=-(W.t*0.6)%11;
+    g.beginPath(); g.moveTo(SX(from.x)+z/2,SY(from.y)+z/2);
+    g.lineTo(SX(to.x)+z/2,SY(to.y)+z/2); g.stroke();
+    g.restore();
+    const px=SX(a.x)+z/2, py=SY(a.y)+z/2, rr=Math.max(3,z*.24);
+    g.fillStyle=mine?"#c2993c":"#8f2f38";
+    g.beginPath(); g.arc(px,py,rr,0,7); g.fill();
+    g.strokeStyle="rgba(0,0,0,.5)"; g.lineWidth=1; g.stroke();
+    g.strokeStyle=mine?"rgba(255,236,190,.75)":"rgba(255,190,190,.6)";
+    g.lineWidth=Math.max(1,rr*.28);
+    g.beginPath(); g.moveTo(px-rr*.4,py); g.lineTo(px+rr*.4,py);
+    g.moveTo(px,py-rr*.4); g.lineTo(px,py+rr*.4); g.stroke();
+  });
+
+  // города рисуем поверх всего
+  cities.forEach(o=>{
+    const p=W.players.find(q=>q.id===o.pid); if(!p) return;
+    const cx=SX(o.x)+z/2, cy=SY(o.y)+z/2;
+    const scale=z*(0.62+citySize(p.b.hall)*0.14);
+    const own=!p.isBot;
+    g.save();
+    g.shadowColor="rgba(0,0,0,.65)"; g.shadowBlur=z*.35; g.shadowOffsetY=z*.08;
+    shield(g,cx,cy,scale*.8,scale,TINCT[p.race],own?GILT_HI:"rgba(0,0,0,.55)",own?1.8:1.1);
+    g.restore();
+    if(own){                                  // своё знамя на древке
+      g.strokeStyle=GILT_HI; g.lineWidth=1.4;
+      g.beginPath(); g.moveTo(cx,cy-scale*.5); g.lineTo(cx,cy-scale*1.15); g.stroke();
+      g.fillStyle=GILT_HI;
+      g.beginPath(); g.moveTo(cx,cy-scale*1.15); g.lineTo(cx+scale*.5,cy-scale*1.0);
+      g.lineTo(cx,cy-scale*.85); g.closePath(); g.fill();
+    }
+    if(W.t<p.shieldUntil){                    // щит мира — стеклянный купол
+      g.strokeStyle="rgba(122,178,224,.85)"; g.lineWidth=1.4;
+      g.beginPath(); g.arc(cx,cy,scale*.95,Math.PI,0); g.stroke();
+      g.strokeStyle="rgba(122,178,224,.3)";
+      g.beginPath(); g.arc(cx,cy,scale*.95,0,Math.PI); g.stroke();
+    }
+    if(z>=10){
+      g.font="500 "+Math.min(13,Math.max(10,z*.42))+"px "+FONT;
+      g.textAlign="center";
+      const label=p.name;
+      const tw=g.measureText(label).width;
+      g.fillStyle="rgba(12,8,4,.6)";
+      g.fillRect(cx-tw/2-4,cy+scale*.62,tw+8,15);
+      g.fillStyle=own?GILT_HI:"rgba(236,226,202,.82)";
+      g.fillText(label,cx,cy+scale*.62+11);
+    }
+  });
+
+  // прицел под курсором и выбранная клетка
+  if(hover&&!drag){
+    g.strokeStyle="rgba(226,194,115,.4)"; g.lineWidth=1;
+    g.strokeRect(Math.round(SX(hover.x))+.5,Math.round(SY(hover.y))+.5,z,z);
+  }
+  if(sel){
+    const sx=SX(sel.x), sy=SY(sel.y), c=z*.34;
+    g.strokeStyle=GILT_HI; g.lineWidth=1.8;
+    g.beginPath();
+    g.moveTo(sx,sy+c); g.lineTo(sx,sy); g.lineTo(sx+c,sy);
+    g.moveTo(sx+z-c,sy); g.lineTo(sx+z,sy); g.lineTo(sx+z,sy+c);
+    g.moveTo(sx+z,sy+z-c); g.lineTo(sx+z,sy+z); g.lineTo(sx+z-c,sy+z);
+    g.moveTo(sx+c,sy+z); g.lineTo(sx,sy+z); g.lineTo(sx,sy+z-c);
+    g.stroke();
+  }
+  compass(w,h); scaleBar(w,h);
+}
+
+/* ---- Роза ветров и масштабная линейка ---- */
+function compass(w,h){
+  const cx=w/2, cy=34, R=17;
+  g.save(); g.translate(cx,cy);
+  g.strokeStyle="rgba(226,196,133,.42)"; g.lineWidth=1.2;
+  g.beginPath(); g.arc(0,0,R,0,7); g.stroke();
+  g.beginPath(); g.arc(0,0,R*.62,0,7); g.stroke();
+  for(let i=0;i<4;i++){
+    g.rotate(Math.PI/2);
+    g.fillStyle=i===3?"rgba(240,212,140,.95)":"rgba(226,196,133,.5)";
+    g.beginPath(); g.moveTo(0,-R); g.lineTo(R*.19,0); g.lineTo(0,R*.2); g.lineTo(-R*.19,0);
+    g.closePath(); g.fill();
+  }
+  g.restore();
+  g.fillStyle="rgba(226,194,115,.7)"; g.textAlign="center";
+  g.font="10px "+FONT;
+  g.fillText("С",cx,cy-R-5);
+}
+function scaleBar(w,h){
+  const target=110, cells=Math.max(1,Math.round(target/view.z)), px=cells*view.z;
+  const x=w/2-px/2, y=h-24;
+  g.strokeStyle="rgba(226,196,133,.4)"; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x,y-4); g.lineTo(x,y); g.lineTo(x+px,y); g.lineTo(x+px,y-4); g.stroke();
+  g.fillStyle="rgba(226,196,133,.55)"; g.textAlign="center";
+  g.font="10px ui-monospace,monospace";
+  g.fillText(cells+" клеток",x+px/2,y-8);
+}
+
+/* ---- Миникарта ---- */
+function drawMini(){
+  const w=mini._w,h=mini._h,s=Math.min(w,h)/CFG.MAP;
+  mg.clearRect(0,0,w,h);
+  mg.imageSmoothingEnabled=true;
+  // рельеф в таком масштабе почти чёрный — вытягиваем яркость
+  mg.filter="brightness(1.75) contrast(1.1) saturate(1.15)";
+  mg.drawImage(terrain,0,0,w,h);
+  mg.filter="none";
+  mg.strokeStyle="rgba(226,196,133,.3)"; mg.lineWidth=1; mg.strokeRect(.5,.5,w-1,h-1);
+  W.players.forEach(p=>{
+    const x=p.x*s, y=p.y*s, own=!p.isBot;
+    mg.beginPath(); mg.arc(x,y,own?4:3,0,7);
+    mg.fillStyle="rgba(0,0,0,.55)"; mg.fill();
+    mg.beginPath(); mg.arc(x,y,own?2.8:2,0,7);
+    mg.fillStyle=TINCT[p.race]; mg.fill();
+    if(own){ mg.strokeStyle=GILT_HI; mg.lineWidth=1.4; mg.stroke() }
+  });
+  mg.strokeStyle="rgba(226,194,115,.85)"; mg.lineWidth=1;
+  mg.strokeRect(view.x*s,view.y*s,(cv._w/view.z)*s,(cv._h/view.z)*s);
+}
+
+/* =========================================================================
+   ПАНЕЛИ. Правая колонна — канцелярская книга похода: рубрики, записи,
+   цены эмалевыми точками, цифры моноширинно.
+   ========================================================================= */
+function shieldSvg(race,w){
+  return "<svg class='shield' viewBox='0 0 12 15' style='width:"+(w||13)+"px'>"+
+    "<path d='M1 1h10v8.2C11 12 6 14 6 14S1 12 1 9.2Z' fill='"+TINCT[race]+
+    "' stroke='#c2993c' stroke-width='.8'/></svg>";
+}
+function ring(lv,max){
+  const f=Math.min(1,lv/(max||25)), C=2*Math.PI*14;
+  return "<div class='ring'><svg viewBox='0 0 34 34'>"+
+    "<circle cx='17' cy='17' r='14' fill='none' stroke='#3d3121' stroke-width='2.5'/>"+
+    "<circle cx='17' cy='17' r='14' fill='none' stroke='#c2993c' stroke-width='2.5'"+
+    " stroke-dasharray='"+(C*f).toFixed(1)+" "+C.toFixed(1)+"' stroke-linecap='butt'/>"+
+    "</svg><b>"+lv+"</b></div>";
+}
+function priceRow(p,c){
+  const out=RES.filter(r=>c[r]).map(r=>{
+    const short=p.res[r]<c[r];
+    return "<span class='"+(short?"short":"")+"' style='--c:"+RSHADE[r]+
+      "' title='"+RES_NAME[r]+"'>"+fmt(c[r])+"</span>";
+  }).join("");
+  return out?"<div class='price'>"+out+"</div>":"";
+}
+function rubric(text,note){
+  return "<div class='rubric'>"+text+(note?"<span class='n'>"+note+"</span>":"")+"</div>";
+}
+function hollow(mark,text){
+  return "<div class='hollow'><span class='big'>"+mark+"</span>"+text+"</div>";
+}
+
+/* ---- Верхняя строка: кошель и хроника ---- */
+function renderTop(){
+  const p=me(); syncRes(p);
+  const pr=production(p);
+  $("#purse").innerHTML = RES.map(r=>{
+    const v=pr[r];
+    return "<div class='coin' title='"+RES_NAME[r]+"'>"+
+      "<img class='disc' src='images/ui/res-"+r+".png' alt=''>"+
+      "<span><b class='amt'>"+fmt(p.res[r])+"</b>"+
+      "<s class='rate"+(v<0?" neg":"")+"'>"+(v<0?"−":"+")+fmt(Math.abs(v))+"/ч</s></span></div>";
+  }).join("");
+  $("#might").textContent=fmt(power(p));
+  const d=Math.floor(W.t/86400), hh=Math.floor(W.t%86400/3600), mm=Math.floor(W.t%3600/60);
+  $("#daytime").textContent="д."+(d+1)+" "+String(hh).padStart(2,"0")+":"+String(mm).padStart(2,"0");
+}
+
+/* ---- Картуш: что выбрано на карте ---- */
+let lastCart="";
+function renderCartouche(){
+  const el=$("#cartouche");
+  const put=h=>{ if(h!==lastCart){ lastCart=h; el.innerHTML=h } };
+  if(!sel){ put("<div class='hd'>Штабной стол</div>"+
+      "<div class='hint'>Выберите клетку на чертеже, чтобы рассмотреть её.</div>"); return }
+  const o=W.map[key(sel.x,sel.y)], p=me();
+  const coord="<span class='n' style='font-family:var(--data);font-size:10px;color:var(--vellum-faint)'>"+
+    sel.x+" · "+sel.y+"</span>";
+  if(!o){
+    put("<div class='hd'>Пустошь "+coord+"</div>"+
+      "<div class='hint'>Ни поселений, ни припасов. Земля ждёт хозяина.</div>"); return;
+  }
+  if(o.t==="node"){
+    put("<div class='hd'>"+RES_NAME[o.res]+" "+coord+"</div>"+
+      "<div class='co'><span>Богатство жилы</span><b>"+o.lv+" из 5</b></div>"+
+      "<div class='co'><span>Осталось</span><b>"+fmt(o.amount)+"</b></div>"+
+      "<div class='co'><span>Расстояние</span><b>"+Math.round(dist(p,o))+" кл.</b></div>"+
+      "<button class='seal wide' style='margin-top:9px' data-act='march' data-x='"+o.x+"' data-y='"+o.y+"'>Выслать обоз</button>");
+    return;
+  }
+  if(o.t==="camp"||o.t==="fort"){
+    const fp=banditPower(o.lv), my=armyPower(p.troops,bonuses(p),p.race);
+    const ok = my>fp*1.8?["Разгром без потерь","var(--verdigris)"]
+             : my>fp*1.1?["Победа с потерями","var(--gilt)"]
+             : my>fp*0.8?["Исход не ясен","var(--gilt)"]
+             : ["Отряд поляжет","var(--garnet)"];
+    put("<div class='hd'>"+(o.t==="fort"?"Форт":"Лагерь")+" разбойников "+coord+"</div>"+
+      "<div class='co'><span>Уровень</span><b>"+o.lv+"</b></div>"+
+      "<div class='co'><span>Сила заставы</span><b>"+fmt(fp)+"</b></div>"+
+      "<div class='co'><span>Ваше войско</span><b>"+fmt(my)+"</b></div>"+
+      "<div class='co'><span>Прогноз</span><b style='color:"+ok[1]+"'>"+ok[0]+"</b></div>"+
+      "<button class='seal wide' style='margin-top:9px' data-act='march' data-x='"+o.x+"' data-y='"+o.y+"'>Выступить</button>");
+    return;
+  }
+  if(o.t==="city"){
+    const q=W.players.find(z=>z.id===o.pid);
+    if(!q){ put("<div class='hd'>Руины</div>"); return }
+    const own=q.id===p.id;
+    let scout="";
+    if(!own){
+      const sl=p.b.scout||0;
+      if(sl<=0) scout="<div class='hint'>Постройте "+buildingName("scout",p).toLowerCase()+", чтобы узнать состав войск.</div>";
+      else {
+        const se=epochOf(sl), total=countUnits(q.troops);
+        if(se===1){
+          scout="<div class='co'><span>Войск (примерно)</span><b>~"+fmt(Math.round(total/100)*100)+"</b></div>";
+        } else if(se===2){
+          scout="<div class='co'><span>Войск (точно)</span><b>"+RU(total)+"</b></div>";
+        } else if(se===3){
+          scout=TKEYS.map(t=>{
+            const n=Object.values(q.troops[t]).reduce((a,b)=>a+b,0);
+            return "<div class='co'><span>"+TROOP_TYPES[t].name+"</span><b>"+RU(n)+"</b></div>";
+          }).join("");
+        } else {
+          scout=TKEYS.map(t=>{
+            const parts=[]; for(let i=1;i<=5;i++) if(q.troops[t][i]) parts.push(unitName(t,i,q.race)+" ×"+RU(q.troops[t][i]));
+            return parts.length?"<div class='co' style='display:block'><span>"+TROOP_TYPES[t].name+"</span><b style='display:block;text-align:left;font-size:11px'>"+parts.join(", ")+"</b></div>":"";
+          }).join("");
+          if(se===5){
+            scout+="<div class='co'><span>Полководец</span><b>"+GENERALS[q.race][q.gen.id||0].name+"</b></div>"+
+              "<div class='co'><span>Стена / гарнизон</span><b>"+q.b.wall+" / "+q.b.garrison+"</b></div>";
+          }
+        }
+      }
+    }
+    put("<div class='hd'>"+shieldSvg(q.race,14)+q.name+" "+coord+"</div>"+
+      "<div class='co'><span>Знамя</span><b>"+RACES[q.race].name+"</b></div>"+
+      "<div class='co'><span>Ратуша</span><b>"+q.b.hall+" · эпоха "+epochOf(q.b.hall)+"</b></div>"+
+      "<div class='co'><span>Сила</span><b>"+fmt(power(q))+"</b></div>"+
+      scout+
+      (own?"<div class='hint'>Ваша столица.</div>"
+          :(W.t<q.shieldUntil
+            ?"<div class='hint' style='color:#7ab2e0'>Под щитом мира ещё "+fmtDur(q.shieldUntil-W.t)+".</div>"
+            :"<button class='seal wide blood' style='margin-top:9px' data-act='march' data-x='"+o.x+"' data-y='"+o.y+"'>Идти войной</button>")));
+  }
+}
+
+/* ---- Город ---- */
+function cityCellLevel(p,c){
+  if(!c.bk) return -1; // задел на будущее, не активна
+  return c.pl!=null ? p.b[c.bk][c.pl] : p.b[c.bk];
+}
+function cityCellImg(c){
+  return c.bk ? "images/buildings/"+c.bk+(c.pl!=null?(c.pl+1):"")+".png" : "";
+}
+function renderCityMap(){
+  const p=me();
+  let h="<div id='citymap-wrap'><img class='base' src='map.jpg'>";
+  CITY_CELLS.forEach(c=>{
+    const lv=cityCellLevel(p,c);
+    if(c.bk===null){ // Портал — задел на будущее
+      h+="<div class='cbuild locked' style='left:"+c.x+"%;top:"+c.y+"%;width:"+c.w+"%;height:"+c.h+"%'>"+
+         "<div class='shape' style='"+cityShapeCss(c)+"'></div></div>";
+      return;
+    }
+    const built=lv>0, locked=c.bk!=="hall" && !built && (c.pl!=null && !plotUnlocked(c.bk,c.pl,p.b.hall));
+    h+="<div class='cbuild"+(built?" built":"")+(locked?" locked":"")+"' data-cell='"+CITY_CELLS.indexOf(c)+"' "+
+       "style='left:"+c.x+"%;top:"+c.y+"%;width:"+c.w+"%;height:"+c.h+"%'>"+
+       "<div class='shape' style='"+cityShapeCss(c)+"'></div>"+
+       (built?"<img class='bimg' src='"+cityCellImg(c)+"'>"+"<span class='lvl'>"+lv+"</span>":"")+
+       "</div>";
+  });
+  h+="</div>";
+  return h;
+}
+function buildingModalHtml(ci){
+  const p=me(), c=CITY_CELLS[ci];
+  if(!c||!c.bk) return "";
+  const lv=cityCellLevel(p,c), nx=lv+1, maxed=lv>=CFG.MAX_LEVEL;
+  let gated=c.bk!=="hall"&&nx>p.b.hall, gateTxt=gated?"нужна ратуша "+nx:"";
+  if(c.bk==="hall"){ const need=HALL_REQ.filter(k=>p.b[k]<p.b.hall);
+    if(need.length){ gated=true; gateTxt="сначала "+need.map(k=>buildingName(k,p).toLowerCase()+" до "+p.b.hall+" ур.").join(", "); } }
+  const locked=c.pl!=null && !plotUnlocked(c.bk,c.pl,p.b.hall);
+  if(locked){ gated=true; gateTxt="откроется на эпохе "+(c.pl+1); }
+  const cst=buildCost(nx,p), canGo=!maxed&&!gated;
+  const img=cityCellImg(c);
+  const desc=(BUILDINGS[c.bk]&&BUILDINGS[c.bk].desc)||"";
+  let h="<img id=\'bm-art\' src=\'"+img+"\'>";
+  h+="<div id=\'bm-title\'>"+buildingName(c.bk,p)+(c.pl!=null?" · участок "+(c.pl+1):"")+"</div>";
+  h+="<div id=\'bm-sub\'>уровень "+lv+(maxed?" (максимум)":" &rarr; "+nx)+"</div>";
+  if(desc) h+="<div id=\'bm-desc\'>"+desc+"</div>";
+  if(canGo){
+    h+="<div id=\'bm-reqs\'>"+RES.map(r=>{
+      const need=cst[r]||0; if(!need) return "";
+      const short=p.res[r]<need;
+      return "<div class=\'req-row\'><img src=\'images/ui/res-"+r+".png\'>"+
+        "<span class=\'req-name\'>"+RES_NAME[r]+"</span>"+
+        "<span class=\'req-amt"+(short?" short":"")+"\'>"+fmt(need)+" / "+fmt(p.res[r])+"</span></div>";
+    }).join("")+"</div>";
+    h+="<div id=\'bm-time\'>Время строительства: "+fmtDur(buildTime(nx)/bonuses(p).build)+"</div>";
+  } else if(gated){
+    h+="<div id=\'bm-time\'>"+gateTxt+"</div>";
+  }
+  const actionLabel = lv<=0?"Построить":"Улучшить";
+  h+="<button id=\'bm-btn\' data-act=\'build\' data-b=\'"+c.bk+"\' "+(c.pl!=null?"data-plot=\'"+c.pl+"\' ":"")+
+     (canGo?"":"disabled")+">"+(maxed?"Предел уровня":canGo?actionLabel:"Недоступно")+"</button>";
+  return h;
+}
+
+function foCity(){
+  const p=me(); syncRes(p);
+  const B=bonuses(p), cap=capacity(p), inField=W.marches.filter(m=>m.pid===p.id).length;
+  let h=rubric("Столица","эпоха "+epochOf(p.b.hall)+" из 5");
+  h+=renderCityMap();
+  h+="<div class='entry hot'><div class='line'>"+
+     "<div style='flex:0 0 auto'>"+shieldSvg(p.race,26)+"</div><div class='fill'>"+
+     "<div class='title'>"+RACES[p.race].name+"<span class='tag gilt'>"+
+     citySize(p.b.hall)+"×"+citySize(p.b.hall)+"</span></div>"+
+     "<div class='note'>"+RACES[p.race].desc+"</div></div></div>"+
+     "<table class='roll' style='margin-top:9px'>"+
+     "<tr><td>Войск в столице</td><td>"+RU(garrison(p))+"</td></tr>"+
+     "<tr><td>Отрядов в поле</td><td>"+inField+" из "+marchSlots(p.b.hall)+"</td></tr>"+
+     "<tr><td>Вместимость марша</td><td>"+fmt(marchCapacity(p))+"</td></tr>"+
+     "<tr><td>Хранилище</td><td>"+RES.map(r=>fmt(cap[r])).join(" · ")+"</td></tr>"+
+     "<tr><td>Доступный тир</td><td>"+TKEYS.map(t=>TROOP_TYPES[t].name+" T"+tierUnlockedFor(p,t)).join(" · ")+"</td></tr></table></div>";
+
+  h+=rubric("Черты расы");
+  const epoch=epochOf(p.b.hall), track=RACE_EPOCHS[p.race], minus=RACES[p.race].minus;
+  h+="<div class='entry war'><div class='line'><div class='fill'>"+
+     "<div class='title'>Природа расы<span class='tag'>всегда</span></div>"+
+     "<div class='note'>"+minus.desc+"</div></div></div></div>";
+  track.forEach((e,i)=>{
+    const unlocked=i<epoch;
+    h+="<div class='entry"+(unlocked?" hot":"")+"'><div class='line'><div class='fill'>"+
+       "<div class='title'>"+e.title+"<span class='tag"+(unlocked?" gilt":"")+"'>эпоха "+(i+1)+
+       (unlocked?" · открыто":" · закрыто")+"</span></div>"+
+       "<div class='note'>"+e.desc+"</div></div></div></div>";
+  });
+
+  h+=rubric("Строительные бригады");
+  p.queues.forEach((q,i)=>{
+    if(q){ const f=(W.t-q.t0)/Math.max(1,q.t1-q.t0);
+      h+="<div class='entry hot'><div class='line'>"+ring(q.lv,CFG.MAX_LEVEL)+"<div class='fill'>"+
+        "<div class='title'>"+buildingName(q.b,p)+"</div>"+
+        "<div class='note'>Готово через <em>"+fmtDur(q.t1-W.t)+"</em></div></div></div>"+
+        "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
+    } else h+="<div class='entry'><div class='note' style='margin:0'>Бригада "+(i+1)+" ждёт распоряжений</div></div>";
+  });
+
+  h+=rubric("Постройки");
+  for(const bk of BKEYS){
+    const Bd=BUILDINGS[bk], plotsN = isMulti(bk) ? p.b[bk].length : 1;
+    for(let pi=0; pi<plotsN; pi++){
+      const locked = isMulti(bk) && !plotUnlocked(bk,pi,p.b.hall);
+      const lv = isMulti(bk) ? p.b[bk][pi] : p.b[bk], nx=lv+1;
+      const maxed=lv>=CFG.MAX_LEVEL;
+      let gated=bk!=="hall"&&nx>p.b.hall, gateTxt=gated?"нужна ратуша "+nx:"";
+      if(bk==="hall"){ const need=HALL_REQ.filter(k=>p.b[k]<p.b.hall);
+        if(need.length){ gated=true; gateTxt="ждёт: "+need.map(k=>buildingName(k,p).toLowerCase()).join(", ") } }
+      if(locked){ gated=true; gateTxt="откроется на эпохе "+(pi+1); }
+      let note="";
+      if(Bd.prod) note="Даёт <em>"+fmt(prodRate(lv)*(1+lateSpeed(lv))*({food:1.25,wood:1.25,stone:.9,gold:.5}[Bd.prod]))+"</em> в час"+
+        (lv>0?" · защищает <em>"+fmt(plotCap(lv))+"</em>":"");
+      else if(bk==="store") note="Вмещает <em>"+fmt(storeCap(lv))+"</em>";
+      else if(bk==="hospital") note="Коек: <em>"+fmt(hospitalCap(lv))+"</em>";
+      else if(bk==="academy") note = lv<=0?"Пока не построена":"Тиры и статы войск — через исследования ниже";
+      else if(bk==="wall"){ syncWall(p);
+        note="Оборона <em>+"+(lv*3)+"%</em> · прочность <em>"+fmt(Math.round(p.wallHp))+"</em> из "+fmt(maxWallHp(lv));
+      }
+      else if(bk==="garrison") note = lv<=0?"Пока не построен"
+        :"Бьёт атакующих залпом до общей схватки (<em>"+fmt(lv*900)+"</em> урона), плюс защита стены +"+Math.round(lv*1.5)+"%, тревога за <em>"+fmtDur(Math.min(lv*60,3600))+"</em> до удара";
+      else if(bk==="scout"){ const se=epochOf(lv);
+        note = lv<=0?"Пока не построена"
+          : se===1?"Видно примерную силу войск"
+          : se===2?"Видно точную общую численность"
+          : se===3?"Видно состав войск по родам"
+          : se===4?"Видно точный состав войск по тирам"
+          : "Видно тиры, плюс полководец и уровень стены/гарнизона";
+      }
+      else if(bk==="forge") note = lv<=0?"Пока не построен"
+        :"Уровень готов принять ковку снаряжения — сама ковка появится отдельно";
+      else if(Bd.train) note="Готовит: "+TROOP_TYPES[Bd.train].name;
+      else if(bk==="hall") note="Отрядов <em>"+marchSlots(lv)+"</em>, эпоха <em>"+epochOf(lv)+"</em>";
+      const c=buildCost(nx,p), plotLabel = isMulti(bk) ? " · участок "+(pi+1) : "";
+      h+="<div class='entry'><div class='line'>"+ring(lv,CFG.MAX_LEVEL)+"<div class='fill'>"+
+        "<div class='title'>"+buildingName(bk,p)+plotLabel+(bk==="hall"?"<span class='tag gilt'>основа</span>":"")+"</div>"+
+        "<div class='note'>"+note+"</div>"+(maxed||locked?"":priceRow(p,c))+"</div>"+
+        "<button class='seal' data-act='build' data-b='"+bk+"' "+(isMulti(bk)?"data-plot='"+pi+"' ":"")+
+        (maxed||gated?"disabled":"")+">"+
+        (maxed?"предел":gated?gateTxt:"Возвести")+"</button></div>"+
+        (maxed||gated?"":"<div class='note' style='margin-top:5px;color:var(--vellum-faint)'>Срок работ: "+
+          fmtDur(buildTime(nx)/B.build)+"</div>")+"</div>";
+    }
+  }
+
+  const nodeEffectDesc=(n,lv,nx)=>{
+    if(n.unlock) return lv>=1?"Открыто":"Откроет T"+n.unlock.tier;
+    const list=n.effects||[{field:n.field,total:n.total}];
+    const now=list.map(e=>"+"+Math.round(e.total*(lv/n.max)*100)+"% "+e.field).join(", ");
+    const next=list.map(e=>"+"+Math.round(e.total*(nx/n.max)*100)+"% "+e.field).join(", ");
+    return "сейчас <em>"+now+"</em>"+(lv>=n.max?"":" · дальше <em>"+next+"</em>");
+  };
+  const renderTree=(arr,label)=>{
+    h+=rubric("Исследования: "+label,"академия ур. "+p.b.academy);
+    arr.filter(n=>!n.race||n.race===p.race).forEach(n=>{
+      const lv=p.tech[n.id]||0, maxed=lv>=n.max, nx=lv+1, gated=p.b.academy<=0;
+      const locked = !!(n.unlock && n.unlock.tier>2 && !(p.tech["mil_tier_"+n.unlock.type+(n.unlock.tier-1)]>=1));
+      const c = maxed||locked?null:researchCost(n.branch,n.wave,nx);
+      h+="<div class='entry"+(lv>0?" hot":"")+"'><div class='line'><div class='fill'>"+
+        "<div class='title'>"+n.name+(n.race?"<span class='tag gilt'>венец</span>":"")+
+        "<span class='tag"+(maxed?" gilt":"")+"'>"+lv+"/"+n.max+"</span></div>"+
+        "<div class='note'>"+nodeEffectDesc(n,lv,nx)+"</div>"+
+        (maxed||gated||locked?"":priceRow(p,c))+"</div>"+
+        "<button class='seal' data-act='research' data-id='"+n.id+"' "+(maxed||gated||locked||p.rsch?"disabled":"")+">"+
+        (maxed?"предел":gated?"нужна академия":locked?"нужен пред. тир":"Исследовать")+"</button></div>"+
+        (maxed||gated||locked?"":"<div class='note' style='margin-top:5px;color:var(--vellum-faint)'>Срок: "+
+          fmtDur(researchTime(n.branch,n.wave,nx)/((1+B.researchSpeed)*(1+lateSpeed(p.b.academy))))+"</div>")+"</div>";
+    });
+  };
+  if(p.rsch){
+    const rn=findNode(p.rsch.id), rf=(W.t-p.rsch.t0)/Math.max(1,p.rsch.t1-p.rsch.t0);
+    h+=rubric("Идёт исследование");
+    h+="<div class='entry hot'><div class='line'><div class='fill'>"+
+       "<div class='title'>"+rn.name+" → ур. "+p.rsch.lv+"</div>"+
+       "<div class='note'>Готово через <em>"+fmtDur(p.rsch.t1-W.t)+"</em></div></div></div>"+
+       "<div class='progress'><i style='width:"+(rf*100).toFixed(1)+"%'></i></div></div>";
+  }
+  renderTree(ACADEMY_TREE.eco,"Хозяйство");
+  renderTree(ACADEMY_TREE.mil,"Армия");
+  return h;
+}
+
+/* ---- Войско ---- */
+function foArmy(){
+  const p=me(); syncRes(p);
+  const B=bonuses(p);
+  let hurt=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++)hurt+=p.wounded[t][i]});
+  let h=rubric("Смотр войск",fmt(armyPower(p.troops,B,p.race))+" силы");
+  const rows=[];
+  TKEYS.forEach(t=>{ for(let i=1;i<=5;i++){ const n=p.troops[t][i]; if(n)
+    rows.push("<tr><td>"+unitName(t,i,p.race)+" · "+TROOP_TYPES[t].name.toLowerCase()+
+      "</td><td>"+RU(n)+"</td></tr>") } });
+  h+= rows.length ? "<div class='entry'><table class='roll'>"+rows.join("")+"</table></div>"
+                  : hollow("&#9876;","В столице пусто. Наберите ополчение ниже.");
+
+  if(hurt>0){
+    const c=healCost(p);
+    h+=rubric("Лазарет");
+    h+="<div class='entry war'><div class='line'><div class='fill'>"+
+      "<div class='title'>Раненых: "+RU(hurt)+"</div>"+
+      "<div class='note'>Коек: <em>"+fmt(hospitalCap(p.b.hospital)*(1+B.hosp))+"</em>"+
+      (B.heal<1?" · нежить поднимает своих втрое дешевле":"")+"</div>"+priceRow(p,c)+"</div>"+
+      "<button class='seal' data-act='heal'>Поднять</button></div></div>";
+  }
+
+  h+=rubric("Набор");
+  if(p.train){
+    const f=(W.t-p.train.t0)/Math.max(1,p.train.t1-p.train.t0);
+    h+="<div class='entry hot'><div class='line'><div class='fill'>"+
+      "<div class='title'>"+unitName(p.train.type,p.train.tier,p.race)+
+      "<span class='tag gilt'>×"+RU(p.train.n)+"</span></div>"+
+      "<div class='note'>Готовы через <em>"+fmtDur(p.train.t1-W.t)+"</em></div></div></div>"+
+      "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
+  } else {
+    TKEYS.forEach(t=>{
+      const maxT=tierUnlockedFor(p,t);
+      const bk={inf:"barracks",arc:"range",cav:"stable",sie:"siege"}[t];
+      if(p.b[bk]<1){
+        h+="<div class='entry'><div class='line'><div class='fill'><div class='title' style='color:var(--vellum-faint)'>"+
+          TROOP_TYPES[t].name+"</div><div class='note'>Нужна постройка: "+buildingName(bk,p).toLowerCase()+
+          "</div></div></div></div>"; return;
+      }
+      const c=troopCost(t,maxT);
+      const can=Math.floor(Math.min.apply(null,RES.map(r=>c[r]?p.res[r]/c[r]:1e9)));
+      const beats=TROOP_TYPES[t].beats;
+      h+="<div class='entry'><div class='line'><div class='fill'>"+
+        "<div class='title'>"+unitName(t,maxT,p.race)+"<span class='tag'>T"+maxT+"</span>"+
+        (beats?"<span class='tag'>бьёт "+TROOP_TYPES[beats].name.toLowerCase()+"</span>":"<span class='tag'>"+(p.race==="undead"&&t==="sie"?"чудовище":"осада")+"</span>")+"</div>"+
+        "<div class='note'>Атака <em>"+Math.round(troopStat(t,maxT,"atk")*troopMod(p.race,t,"atk"))+"</em> · защита <em>"+troopStat(t,maxT,"def")+
+        "</em> · здоровье <em>"+troopStat(t,maxT,"hp")+"</em><br>Груз "+
+        Math.round(TROOP_TYPES[t].load*TIER_MULT[maxT-1]*troopMod(p.race,t,"load"))+" · шаг "+(TROOP_TYPES[t].speed*troopMod(p.race,t,"speed")).toFixed(2)+
+        " · по средствам <em>"+fmt(can)+"</em></div>"+priceRow(p,c)+"</div>"+
+        "<button class='seal' data-act='train' data-t='"+t+"' data-tier='"+maxT+"' "+
+        (can<1?"disabled":"")+">Набрать</button></div></div>";
+    });
+  }
+
+  h+=rubric("Отряды в поле",W.marches.filter(m=>m.pid===p.id).length+" из "+marchSlots(p.b.hall));
+  const mine=W.marches.filter(m=>m.pid===p.id);
+  if(!mine.length) h+=hollow("&#9906;","Все войска дома. Выберите цель на чертеже.");
+  mine.forEach(m=>{
+    const st={go:"в пути",gather:"собирает",back:"возвращается"}[m.state]||m.state;
+    const load=m.carry?RES.filter(r=>m.carry[r]>0).map(r=>RES_NAME[r]+" "+fmt(m.carry[r])).join(", "):"";
+    h+="<div class='entry "+(m.state==="back"?"calm":"hot")+"'><div class='line'><div class='fill'>"+
+      "<div class='title'>"+RU(countUnits(m.units))+" воинов<span class='tag'>"+st+"</span></div>"+
+      "<div class='note'>Цель "+m.tx+" · "+m.ty+" — <em>"+fmtDur(m.t1-W.t)+"</em>"+
+      (load?"<br>Везут: "+load:"")+"</div></div>"+
+      (m.state!=="back"?"<button class='seal blood' data-act='recall' data-m='"+m.id+"'>Отозвать</button>":"")+
+      "</div></div>";
+  });
+  return h;
+}
+
+/* ---- Генерал ---- */
+function findTalentNode(id){
+  for(const bk in TALENTS) for(const n of TALENTS[bk].nodes) if(n.id===id) return n;
+  for(const bk in GENERAL_TREE) for(const n of GENERAL_TREE[bk].nodes) if(n.id===id) return n;
+  return null;
+}
+function genStats(p){
+  const lv=p.gen.lv, B=bonuses(p), g=Math.pow(lv,1.15);   // рост ускоряется с уровнем, не линейно
+  const gear=gearBonus(p);
+  return {
+    hp:  Math.round((100+12*g)*(1+B.genHpMod))+gear.hp,
+    atk: Math.round((20+3.2*g)*(1+B.genAtkMod))+gear.atk,
+    def: Math.round((15+2.4*g)*(1+B.genDefMod))+gear.def,
+  };
+}
+function foGen(){
+  const p=me();
+  if(p.gen.id==null){
+    let h=rubric("Выбор полководца","решение окончательное");
+    GENERALS[p.race].forEach((g,i)=>{
+      h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto'>"+shieldSvg(p.race,26)+"</div><div class='fill'>"+
+        "<div class='title'>"+g.name+"<span class='tag gilt'>"+g.role+"</span></div>"+
+        "<div class='note'>"+g.bonus+"</div></div></div>"+
+        "<button class='seal' data-act='pickgen' data-id='"+i+"'>Выбрать</button></div>";
+    });
+    return h;
+  }
+  const G=genOf(p), B=bonuses(p), S=genStats(p);
+  const need=genXpNeed(p.gen.lv), f=p.gen.xp/need, lvCap=Math.min(60,epochOf(p.b.hall)*12);
+  let h=rubric("Полководец");
+  h+="<div class='entry hot'><div class='line'>"+ring(p.gen.lv,60)+"<div class='fill'>"+
+    "<div class='title'>"+G.name+"<span class='tag gilt'>"+G.role+"</span></div><div class='note'>"+G.bonus+
+    (p.gen.pts>0?" · <em>очков к раздаче: "+p.gen.pts+"</em>":"")+
+    (p.gen.lv>=lvCap&&lvCap<60?" · потолок эпохи: "+lvCap:"")+"</div></div></div>"+
+    "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div>"+
+    "<div class='note' style='margin-top:5px'>Опыт "+RU(p.gen.xp)+" из "+RU(need)+
+    " — берётся с разбойничьих застав.</div></div>";
+
+  h+=rubric("Личные статы","участвует в бою наравне с войском");
+  h+="<div class='entry'><table class='roll'>"+
+    "<tr><td>Здоровье</td><td>"+RU(S.hp)+"</td></tr>"+
+    "<tr><td>Атака</td><td>"+RU(S.atk)+"</td></tr>"+
+    "<tr><td>Защита</td><td>"+RU(S.def)+"</td></tr></table></div>";
+
+  h+=rubric("Итог бонусов");
+  h+="<div class='entry'><table class='roll'>"+
+    "<tr><td>Атака войск</td><td class='"+(B.atk>0?"good":"")+"'>"+(B.atk>=0?"+":"")+(B.atk*100).toFixed(0)+"%</td></tr>"+
+    "<tr><td>Защита войск</td><td class='"+(B.def<0?"bad":B.def>0?"good":"")+"'>"+(B.def>=0?"+":"")+(B.def*100).toFixed(0)+"%</td></tr>"+
+    "<tr><td>Здоровье войск</td><td class='"+(B.hp>0?"good":"")+"'>+"+(B.hp*100).toFixed(0)+"%</td></tr>"+
+    "<tr><td>Скорость марша</td><td>×"+B.march.toFixed(2)+"</td></tr>"+
+    "<tr><td>Скорость стройки</td><td>×"+B.build.toFixed(2)+"</td></tr>"+
+    "<tr><td>Скорость сбора</td><td>+"+(B.gather*100).toFixed(0)+"%</td></tr>"+
+    "<tr><td>Поднятие павших</td><td class='"+(B.raise>0?"good":"")+"'>"+(B.raise*100).toFixed(0)+"%</td></tr>"+
+    "</table></div>";
+
+  for(const bk in GENERAL_TREE){
+    const br=GENERAL_TREE[bk];
+    let spent=0; br.nodes.forEach(n=>spent+=(p.gen.tal[n.id]||0));
+    const totalMax=br.nodes.reduce((a,n)=>a+n.max,0);
+    h+=rubric("Личное дерево: "+br.name, spent+" из "+totalMax);
+    br.nodes.forEach(n=>{
+      const v=p.gen.tal[n.id]||0, full=v>=n.max;
+      h+="<div class='entry"+(v>0?" hot":"")+"'><div class='line'><div class='fill'>"+
+        "<div class='title'>"+n.name+"<span class='tag"+(full?" gilt":"")+"'>"+v+"/"+n.max+"</span></div>"+
+        "<div class='note'>"+n.txt+" · сейчас <em>+"+(v*n.per*100).toFixed(0)+"%</em></div></div>"+
+        "<button class='seal' data-act='tal' data-id='"+n.id+"' "+
+        (p.gen.pts<=0||full?"disabled":"")+">Вложить</button></div></div>";
+    });
+  }
+
+  for(const bk in TALENTS){
+    const br=TALENTS[bk];
+    let spent=0; br.nodes.forEach(n=>spent+=(p.gen.tal[n.id]||0));
+    h+=rubric(br.name, spent+" из 25");
+    br.nodes.forEach(n=>{
+      const v=p.gen.tal[n.id]||0, full=v>=5;
+      h+="<div class='entry"+(v>0?" hot":"")+"'><div class='line'><div class='fill'>"+
+        "<div class='title'>"+n.name+"<span class='tag"+(full?" gilt":"")+"'>"+v+"/5</span></div>"+
+        "<div class='note'>"+n.txt+" · сейчас <em>+"+(v*n.per*100).toFixed(0)+"%</em></div></div>"+
+        "<button class='seal' data-act='tal' data-id='"+n.id+"' "+
+        (p.gen.pts<=0||full?"disabled":"")+">Вложить</button></div></div>";
+    });
+  }
+  return h;
+}
+
+function foInv(){
+  const p=me();
+  let h="";
+  h+=rubric("Снаряжение","горн ур. "+p.b.forge);
+  if(p.craft){
+    const cf=(W.t-p.craft.t0)/Math.max(1,p.craft.t1-p.craft.t0);
+    const title = p.craft.kind==="material" ? MATERIALS[p.craft.mat].name+" ×"+p.craft.n
+                : GEAR_NAMES[p.craft.slot][p.craft.order][p.craft.rarity-1];
+    h+="<div class='entry hot'><div class='line'><div class='fill'>"+
+       "<div class='title'>"+title+"</div><div class='note'>Готово через <em>"+fmtDur(p.craft.t1-W.t)+"</em></div></div></div>"+
+       "<div class='progress'><i style='width:"+(cf*100).toFixed(1)+"%'></i></div></div>";
+  }
+  const curRarity=Math.min(5,epochOf(p.b.hall));
+  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+st[k])).join(", ");
+  GEAR_SLOTS.forEach(s=>{
+    const it=p.gear[s.id];
+    h+="<div class='entry"+(it?" hot":"")+"'><div class='line'><div class='fill'>"+
+      "<div class='title'>"+s.name+(it?"<span class='tag gilt'>"+RARITY_NAMES[it.rarity-1]+"</span>":"")+"</div>"+
+      "<div class='note'>"+(it?GEAR_NAMES[s.id][it.order][it.rarity-1]+" · "+statTxt(gearItemStats(s.cat,it.order,it.rarity))
+        :"пусто")+"</div></div>"+
+      (it?"<button class='seal' data-act='unequip' data-slot='"+s.id+"'>Снять</button>":"")+"</div>";
+    ["bastion","storm"].forEach(order=>{
+      for(let r=1;r<=5;r++){
+        const cnt=p.inventory[s.id][order][r-1]||0; if(!cnt) continue;
+        h+="<div class='entry'><div class='line'><div class='fill'>"+
+          "<div class='title'>"+GEAR_NAMES[s.id][order][r-1]+"<span class='tag'>×"+cnt+"</span></div>"+
+          "<div class='note'>склад · "+statTxt(gearItemStats(s.cat,order,r))+"</div></div>"+
+          "<button class='seal' data-act='equip' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Надеть</button>"+
+          "<button class='seal' data-act='dismantle' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Разобрать</button></div>";
+      }
+    });
+    const haveMat=(p.materials[s.mat][curRarity-1]||0)>=1;
+    h+="<div class='entry'><div class='line'><div class='fill'>"+
+      "<div class='title'>Сковать "+RARITY_NAMES[curRarity-1].toLowerCase()+"</div>"+
+      "<div class='note'>нужен материал: "+MATERIALS[s.mat].name+" ("+RARITY_NAMES[curRarity-1]+")</div></div>"+
+      "<button class='seal' data-act='craft' data-slot='"+s.id+"' data-order='bastion' data-rarity='"+curRarity+"' "+
+      (p.craft||!haveMat?"disabled":"")+">Бастион</button>"+
+      "<button class='seal' data-act='craft' data-slot='"+s.id+"' data-order='storm' data-rarity='"+curRarity+"' "+
+      (p.craft||!haveMat?"disabled":"")+">Буря</button></div></div>";
+  });
+
+  h+=rubric("Материалы","добываются и сливаются в горне");
+  Object.keys(MATERIALS).forEach(mat=>{
+    const stock=p.materials[mat];
+    h+="<div class='entry'><div class='line'><div class='fill'>"+
+      "<div class='title'>"+MATERIALS[mat].name+"</div>"+
+      "<div class='note'>"+RARITY_NAMES.map((rn,i)=>rn.slice(0,3)+": "+(stock[i]||0)).join(" · ")+"</div></div>"+
+      "<button class='seal' data-act='matprod' data-mat='"+mat+"' "+(p.craft?"disabled":"")+">Добыть</button></div>"+
+      "<div class='line' style='margin-top:6px'>"+[0,1,2,3].map(t=>
+        "<button class='seal' data-act='matup' data-mat='"+mat+"' data-tier='"+t+"' "+
+        ((stock[t]||0)<4?"disabled":"")+" style='margin-right:4px'>4×"+RARITY_NAMES[t].slice(0,3)+"→"+RARITY_NAMES[t+1].slice(0,3)+"</button>"
+      ).join("")+"</div></div>";
+  });
+
+    return h;
+}
+
+/* ---- Держава: лавка и расклад сил ---- */
+function foWorld(){
+  const p=me(); syncRes(p);
+  let h=rubric("Лавка");
+  const sh=W.t<p.shieldUntil;
+  h+="<div class='entry"+(sh?" calm":"")+"'><div class='line'><div class='fill'>"+
+    "<div class='title'>Щит мира</div><div class='note'>"+
+    (sh?"Держится ещё <em>"+fmtDur(p.shieldUntil-W.t)+"</em>":"Не поставлен — город открыт для набегов")+
+    "</div></div></div>";
+  CFG.SHIELD_COST.forEach((s,i)=>{
+    h+="<div class='line' style='margin-top:7px'><div class='fill'><div class='note' style='margin:0'>"+
+      fmtDur(s[0])+"</div><div class='price'><span class='"+(p.res.gold<s[1]?"short":"")+
+      "' style='--c:"+RSHADE.gold+"'>"+fmt(s[1])+"</span></div></div>"+
+      "<button class='seal' data-act='shield' data-i='"+i+"' "+(p.res.gold<s[1]?"disabled":"")+">Поставить</button></div>";
+  });
+  h+="</div>";
+  const tp=Math.round(CFG.TELEPORT_BASE*Math.pow(2.2,epochOf(p.b.hall)-1));
+  h+="<div class='entry'><div class='line'><div class='fill'>"+
+    "<div class='title'>Перенос столицы</div>"+
+    "<div class='note'>Город уходит туда, где меньше соседей. Дорожает с каждой эпохой.</div>"+
+    priceRow(p,{gold:tp})+"</div>"+
+    "<button class='seal' data-act='tp' "+(p.res.gold<tp?"disabled":"")+">Перенести</button></div></div>";
+
+  h+=rubric("Расклад сил",W.players.length+" держав");
+  const list=W.players.slice().sort((a,b)=>power(b)-power(a));
+  const top=power(list[0])||1;
+  list.forEach((q,i)=>{
+    const own=q.id===p.id, d=own?0:Math.round(dist(p,q));
+    h+="<div class='entry"+(own?" hot":"")+"'><div class='line'>"+
+      "<div style='flex:0 0 auto;width:22px;text-align:center;font-family:var(--data);font-size:11px;color:var(--vellum-faint)'>"+
+      (i+1)+"</div><div style='flex:0 0 auto'>"+shieldSvg(q.race,17)+"</div><div class='fill'>"+
+      "<div class='title'>"+(own?"Ваш город":q.name)+
+      (W.t<q.shieldUntil?"<span class='tag'>под щитом</span>":"")+"</div>"+
+      "<div class='note'>"+RACES[q.race].name+" · ратуша "+q.b.hall+" · "+fmt(power(q))+
+      (d?" · "+d+" кл.":"")+"</div>"+
+      "<div class='progress' style='margin-top:6px'><i style='width:"+
+      (power(q)/top*100).toFixed(1)+"%;background:"+TINCT[q.race]+"'></i></div></div>"+
+      (own?"":"<button class='seal' data-act='look' data-x='"+q.x+"' data-y='"+q.y+"'>Найти</button>")+
+      "</div></div>";
+  });
+
+  h+=rubric("Управление");
+  h+="<div class='entry'><div class='line'>"+
+    "<button class='seal' data-act='save'>Записать</button>"+
+    "<button class='seal blood' data-act='reset'>Новый мир</button></div>"+
+    "<div class='note' style='margin-top:8px'>Летопись пишется сама каждые двадцать секунд. "+
+    "Мир не замирает, пока вкладка закрыта: при возвращении движок досчитывает пропущенное.</div></div>";
+  return h;
+}
+
+/* ---- Хроника ---- */
+function foLog(){
+  if(!W.log.length) return hollow("&#9998;","Летопись пока пуста.");
+  return rubric("Летопись",W.log.length+" записей")+
+    W.log.slice(0,90).map(e=>"<div class='chron-e "+(e.kind||"")+"'>"+
+      "<div class='when'>день "+(Math.floor(e.t/86400)+1)+", "+
+      String(Math.floor(e.t%86400/3600)).padStart(2,"0")+":"+
+      String(Math.floor(e.t%3600/60)).padStart(2,"0")+"</div>"+
+      "<div class='what'>"+e.text+"</div></div>").join("");
+}
+
+function renderFolio(){
+  const html = tab==="city"?foCity(): tab==="army"?foArmy(): tab==="gen"?foGen(): foInv();
+  if(html===lastFolio) return;                    // не перерисовываем зря
+  lastFolio=html;
+  const el=$("#folio"), st=el.scrollTop;
+  el.innerHTML=html; el.scrollTop=st;
+}
+
+/* =========================================================================
+   СВИТОК ОТПРАВКИ ВОЙСК
+   ========================================================================= */
+function openLevy(cx,cy){
+  const p=me(); syncRes(p);
+  const o=W.map[key(cx,cy)];
+  if(!o) return herald("На пустошь войско слать незачем.");
+  if(o.t==="city"&&o.pid===p.id) return herald("Это ваша столица.");
+  if(W.marches.filter(m=>m.pid===p.id).length>=marchSlots(p.b.hall))
+    return herald("Свободных отрядов нет. Отзовите марш или поднимите ратушу.");
+  if(o.t==="city"){
+    const q=W.players.find(z=>z.id===o.pid);
+    if(q&&W.t<q.shieldUntil) return herald("Город под щитом мира — приступить нельзя.");
+  }
+  const mode = o.t==="node"?"gather":"attack";
+  const capL = marchCapacity(p);
+  const st={};
+  TKEYS.forEach(t=>{for(let i=1;i<=5;i++) st[t+i]=0});
+  const auto=f=>{ const u=pickArmy(p,f); TKEYS.forEach(t=>{for(let i=1;i<=5;i++) st[t+i]=u[t][i]}) };
+  auto(1);
+
+  function paint(){
+    let weight=0,n=0;
+    TKEYS.forEach(t=>{for(let i=1;i<=5;i++){weight+=st[t+i]*TIER_MULT[i-1]; n+=st[t+i]}});
+    const over=weight>capL;
+    const u=emptyUnits(); TKEYS.forEach(t=>{for(let i=1;i<=5;i++)u[t][i]=st[t+i]});
+    const dd=Math.hypot(cx-p.x,cy-p.y), eta=n?dd/marchSpeed(p,u)*60:0;
+    let load=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++)load+=st[t+i]*TROOP_TYPES[t].load*TIER_MULT[i-1]*troopMod(p.race,t,"load")});
+    const mine=armyPower(u,bonuses(p),p.race);
+
+    let head = mode==="gather"?"Сбор припасов":"Военный поход";
+    let lede = o.t==="node" ? RES_NAME[o.res]+", жила "+o.lv+" уровня — "+fmt(o.amount)+" осталось"
+             : o.t==="city" ? "Столица "+(W.players.find(z=>z.id===o.pid)||{name:"?"}).name
+             : (o.t==="fort"?"Форт":"Лагерь")+" разбойников "+o.lv+" уровня";
+
+    let h="<h2>"+head+"</h2><div class='lede'>"+lede+" · клетка "+cx+" · "+cy+"</div>";
+    h+="<div class='chips'>"+
+       "<button class='seal' data-a='f25'>Четверть</button>"+
+       "<button class='seal' data-a='f50'>Половина</button>"+
+       "<button class='seal' data-a='f100'>Всё войско</button>"+
+       "<button class='seal' data-a='f0'>Сбросить</button></div>";
+    let any=false;
+    TKEYS.forEach(t=>{ for(let i=1;i<=5;i++){
+      const have=p.troops[t][i]; if(!have) continue; any=true;
+      h+="<div class='levy'><div class='nm'>"+
+        "<div class='t'>"+unitName(t,i,p.race)+"<span class='tag'>T"+i+"</span></div>"+
+        "<div class='s'>в столице "+RU(have)+"</div></div>"+
+        "<input type='range' min='0' max='"+have+"' value='"+st[t+i]+"' data-s='"+t+i+"'>"+
+        "<input type='number' min='0' max='"+have+"' value='"+st[t+i]+"' data-s='"+t+i+"'></div>";
+    }});
+    if(!any) h+="<div class='hollow'>Войск в столице нет.</div>";
+
+    h+="<table class='roll' style='margin-top:14px'>"+
+      "<tr><td>Выступает</td><td>"+RU(n)+"</td></tr>"+
+      "<tr><td>Место в отряде</td><td class='"+(over?"bad":"")+"'>"+fmt(weight)+" из "+fmt(capL)+"</td></tr>"+
+      "<tr><td>Поднимут груза</td><td>"+fmt(load)+"</td></tr>"+
+      "<tr><td>Дорога займёт</td><td>"+(n?fmtDur(eta):"—")+"</td></tr>"+
+      "<tr><td>Сила отряда</td><td>"+fmt(mine)+"</td></tr></table>";
+
+    if(o.t==="camp"||o.t==="fort"||o.t==="city"){
+      let foe, label;
+      if(o.t==="city"){ const q=W.players.find(z=>z.id===o.pid);
+        foe=q?armyPower(q.troops,bonuses(q),q.race)*(1+q.b.wall*0.03):0; label="Гарнизон и стены" }
+      else { foe=banditPower(o.lv); label="Сила заставы" }
+      const v = mine>foe*1.8?["&#9819;","Разгром без потерь","var(--verdigris)"]
+              : mine>foe*1.15?["&#9876;","Победа, но с кровью","var(--gilt)"]
+              : mine>foe*0.85?["&#9888;","Исход не ясен","var(--gilt)"]
+              : ["&#9760;","Отряд поляжет","var(--garnet)"];
+      h+="<div class='verdict' style='border-color:"+v[2]+"44'>"+
+         "<span class='vi' style='color:"+v[2]+"'>"+v[0]+"</span><div>"+
+         "<div class='vt' style='color:"+v[2]+"'>"+v[1]+"</div>"+
+         "<div class='vs'>"+label+": "+fmt(foe)+" против "+fmt(mine)+"</div></div></div>";
+    }
+    h+="<div class='chips' style='margin-top:16px;margin-bottom:0'>"+
+       "<button class='seal' data-a='go' "+(n<=0||over?"disabled":"")+">"+
+       (mode==="gather"?"Выслать обоз":"Выступить в поход")+"</button>"+
+       "<button class='seal' data-a='no'>Отставить</button></div>";
+    box.innerHTML=h;
+  }
+  const box=$("#scroll");
+  paint(); $("#veil").classList.add("open");
+
+  box.oninput=e=>{
+    const s=e.target.dataset.s; if(!s) return;
+    const t=s.slice(0,3), i=+s.slice(3);
+    st[s]=clamp(Math.round(+e.target.value||0),0,p.troops[t][i]);
+    paint();
+  };
+  box.onclick=e=>{
+    const b=e.target.closest("[data-a]"); if(!b) return;
+    const a=b.dataset.a;
+    if(a==="no") return closeScroll();
+    if(a==="f25"){auto(.25);return paint()}
+    if(a==="f50"){auto(.5); return paint()}
+    if(a==="f100"){auto(1); return paint()}
+    if(a==="f0"){TKEYS.forEach(t=>{for(let i=1;i<=5;i++)st[t+i]=0}); return paint()}
+    if(a==="go"){
+      const u=emptyUnits(); TKEYS.forEach(t=>{for(let i=1;i<=5;i++)u[t][i]=st[t+i]});
+      const r=sendMarch(p,cx,cy,u,mode);
+      if(r.err) return herald(r.err);
+      closeScroll(); tab="army"; syncRibbons(); lastFolio=""; renderFolio();
+      herald(mode==="gather"?"Обоз выступил.":"Войско выступило в поход.");
+    }
+  };
+}
+function closeScroll(){ $("#veil").classList.remove("open"); $("#scroll").innerHTML="" }
+let heraldT=null;
+function herald(msg){
+  const el=$("#herald"); el.textContent=msg; el.classList.add("up");
+  clearTimeout(heraldT); heraldT=setTimeout(()=>el.classList.remove("up"),2800);
+}
+function ask(title,def,max,cb){
+  const box=$("#scroll");
+  box.innerHTML="<h2>Сколько набрать?</h2><div class='lede'>"+title+"</div>"+
+    "<input id='qty' type='number' value='"+def+"' min='1' max='"+max+"' "+
+    "style='width:100%;background:rgba(0,0,0,.4);color:var(--vellum);border:1px solid var(--rule);"+
+    "padding:10px;font-family:var(--data);font-size:16px;text-align:right'>"+
+    "<div class='chips' style='margin-top:16px;margin-bottom:0'>"+
+    "<button class='seal' id='q-ok'>Набрать</button><button class='seal' id='q-no'>Отставить</button></div>";
+  box.oninput=null; box.onclick=null;
+  $("#veil").classList.add("open");
+  $("#qty").focus(); $("#qty").select();
+  $("#q-ok").onclick=()=>{ const v=clamp(Math.round(+$("#qty").value||0),1,max); closeScroll(); cb(v) };
+  $("#q-no").onclick=closeScroll;
+  $("#qty").onkeydown=e=>{ if(e.key==="Enter") $("#q-ok").click() };
+}
+
+/* =========================================================================
+   УПРАВЛЕНИЕ
+   ========================================================================= */
+function syncRibbons(){
+  document.querySelectorAll("#ribbons button").forEach(b=>b.classList.toggle("on",b.dataset.tab===tab));
+}
+document.querySelectorAll("#ribbons button").forEach(b=>{
+  b.onclick=()=>{ tab=b.dataset.tab; syncRibbons(); lastFolio=""; renderFolio() };
+});
+
+/* ---- Действия в реестре и картуше ---- */
+function handleAct(e){
+  const closeBtn=e.target.closest("[data-act='closemenu']");
+  if(closeBtn){ closeMenuModal(); return; }
+  const closeBm=e.target.closest("[data-act='closebuilding']");
+  if(closeBm){ closeBuildingModal(); return; }
+  const cell=e.target.closest("[data-cell]");
+  if(cell && !e.target.closest("[data-act]")){
+    openBuildingModal(+cell.dataset.cell);
+    return;
+  }
+  const b=e.target.closest("[data-act]"); if(!b) return;
+  const p=me(), a=b.dataset.act;
+  if(a==="build" && b.closest("#bm-body")){
+    const plot=b.dataset.plot!=null&&b.dataset.plot!==""?+b.dataset.plot:undefined;
+    const r=startBuild(p,b.dataset.b,plot);
+    herald(r.err||"Заложено.");
+    lastFolio=""; renderFolio();
+    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);
+    return;
+  }
+  if(a==="build"){
+    const plot=b.dataset.plot!=null&&b.dataset.plot!==""?+b.dataset.plot:undefined;
+    const r=startBuild(p,b.dataset.b,plot);
+    herald(r.err||(buildingName(b.dataset.b,p)+(plot!=null?" (участок "+(plot+1)+")":"")+" заложена."));
+  }
+  else if(a==="train"){
+    const t=b.dataset.t, tier=+b.dataset.tier, c=troopCost(t,tier);
+    const max=Math.min(trainCap(p.b[TRAIN_BLD[t]]), Math.floor(Math.min.apply(null,RES.map(r=>c[r]?p.res[r]/c[r]:1e9))));
+    if(max<1) return herald("Казна не потянет ни одного воина.");
+    ask(unitName(t,tier,p.race)+" — по средствам до "+RU(max),Math.min(max,500),max,n=>{
+      const r=startTrain(p,t,tier,n);
+      herald(r.err||("Набор начат: "+RU(n)+"."));
+      lastFolio=""; renderFolio();
+    });
+    return;
+  }
+  else if(a==="heal"){ const r=doHeal(p); herald(r.err||"Лазарет принялся за работу.") }
+  else if(a==="research"){
+    const r=startResearch(p,b.dataset.id);
+    herald(r.err||"Исследование начато.");
+  }
+  else if(a==="matprod"){
+    const r=produceMaterial(p,b.dataset.mat);
+    herald(r.err||"Добыча начата.");
+  }
+  else if(a==="matup"){
+    const r=upgradeMaterial(p,b.dataset.mat,+b.dataset.tier);
+    herald(r.err||"Материал улучшен.");
+    lastFolio=""; renderFolio();
+  }
+  else if(a==="craft"){
+    const r=startCraftItem(p,b.dataset.slot,b.dataset.order,+b.dataset.rarity);
+    herald(r.err||"Ковка начата.");
+  }
+  else if(a==="equip"){
+    const r=equipItem(p,b.dataset.slot,b.dataset.order,+b.dataset.rarity);
+    herald(r.err||"Надето."); lastFolio=""; renderFolio();
+  }
+  else if(a==="unequip"){
+    const r=unequipItem(p,b.dataset.slot);
+    herald(r.err||"Снято, отправлено на склад."); lastFolio=""; renderFolio();
+  }
+  else if(a==="dismantle"){
+    const r=dismantleItem(p,b.dataset.slot,b.dataset.order,+b.dataset.rarity);
+    herald(r.err||("Разобрано, возвращено золота: "+RU(r.refund)+".")); lastFolio=""; renderFolio();
+  }
+  else if(a==="tal"){
+    const id=b.dataset.id, node=findTalentNode(id), max=(node&&node.max)||5;
+    if(p.gen.pts>0&&(p.gen.tal[id]||0)<max){ p.gen.tal[id]=(p.gen.tal[id]||0)+1; p.gen.pts-- }
+  }
+  else if(a==="pickgen"){
+    if(p.gen.id==null){ p.gen.id=+b.dataset.id; herald("Выбран генерал: "+GENERALS[p.race][p.gen.id].name+".") }
+  }
+  else if(a==="recall"){ const m=W.marches.find(x=>x.id==b.dataset.m);
+    if(m){ recallMarch(m); herald("Отряд поворачивает домой.") } }
+  else if(a==="shield"){
+    const s=CFG.SHIELD_COST[+b.dataset.i];
+    if(p.res.gold>=s[1]){ p.res.gold-=s[1];
+      p.shieldUntil=Math.max(W.t,p.shieldUntil)+s[0];
+      logg("Поставлен щит мира на "+fmtDur(s[0])+".","good");
+      herald("Щит мира поставлен.") }
+  }
+  else if(a==="tp"){
+    const tp=Math.round(CFG.TELEPORT_BASE*Math.pow(2.2,epochOf(p.b.hall)-1));
+    if(p.res.gold>=tp){ p.res.gold-=tp; relocate(p); centerOn(p.x,p.y);
+      sel={x:p.x,y:p.y}; herald("Столица перенесена.") }
+  }
+  else if(a==="look"){
+    const x=+b.dataset.x, y=+b.dataset.y;
+    centerOn(x,y); sel={x,y}; renderCartouche(); herald("Чертёж наведён на цель.");
+  }
+  else if(a==="march"){ openLevy(+b.dataset.x,+b.dataset.y); return }
+  else if(a==="save"){ save().then(()=>herald("Летопись записана.")); return }
+  else if(a==="reset"){
+    if(confirm("Заложить новый мир? Всё нажитое исчезнет.")){
+      Store.del(SAVE_KEY).then(()=>{
+        genWorld(Date.now()&0xffffff); buildTerrain();
+        sel=null; centerOn(me().x,me().y);
+        lastFolio=""; renderFolio(); renderCartouche();
+        herald("Новый мир заложен.");
+      });
+    }
+    return;
+  }
+  lastFolio=""; renderFolio(); renderTop();
+  const modal=$("#menu-modal");
+  if(modal.classList.contains("open")){
+    const t=modal.dataset.tab;
+    $("#menu-modal-body").innerHTML = t==="army"?foArmy(): t==="gen"?foGen(): foInv();
+  }
+}
+$("#folio").addEventListener("click",handleAct);
+$("#cartouche").addEventListener("click",handleAct);
+function toggleView(){
+  const app=$("#app"), img=$("#view-toggle img");
+  const showingCity=app.classList.contains("view-city");
+  app.classList.toggle("view-city", !showingCity);
+  app.classList.toggle("view-world", showingCity);
+  img.src = showingCity ? "images/ui/icon-city.png" : "images/ui/icon-world.png";
+  img.alt = showingCity ? "Город" : "Мир";
+}
+function toggleMenu(){ $("#side-menu").classList.toggle("open"); }
+let buildingModalSel=-1;
+function openBuildingModal(ci){
+  buildingModalSel=ci;
+  $("#bm-body").innerHTML = buildingModalHtml(ci);
+  $("#building-modal").classList.add("open");
+}
+function closeBuildingModal(){ $("#building-modal").classList.remove("open"); buildingModalSel=-1; }
+$("#building-modal").addEventListener("click",e=>{ if(e.target.id==="building-modal") closeBuildingModal(); });
+$("#building-modal").addEventListener("click",handleAct);
+function openMenuModal(t){
+  $("#menu-modal").dataset.tab = t;
+  const html = t==="army"?foArmy(): t==="gen"?foGen(): foInv();
+  $("#menu-modal-body").innerHTML = html;
+  $("#menu-modal").classList.add("open");
+  $("#side-menu").classList.remove("open");
+}
+function closeMenuModal(){ $("#menu-modal").classList.remove("open"); }
+$("#menu-btn").addEventListener("click",toggleMenu);
+document.querySelectorAll("#side-menu button").forEach(b=>{
+  b.addEventListener("click",()=>openMenuModal(b.dataset.menu));
+});
+$("#menu-modal").addEventListener("click",e=>{ if(e.target.id==="menu-modal") closeMenuModal(); });
+$("#menu-modal").addEventListener("click",handleAct);
+$("#view-toggle").addEventListener("click",toggleView);
+
+/* ---- Чертёж: мышь, палец, колесо ---- */
+const ptr=e=>{ const r=cv.getBoundingClientRect(); return {x:e.clientX-r.left,y:e.clientY-r.top} };
+function cellAt(px,py){
+  const x=Math.floor(view.x+px/view.z), y=Math.floor(view.y+py/view.z);
+  return (x<0||y<0||x>=CFG.MAP||y>=CFG.MAP)?null:{x,y};
+}
+cv.addEventListener("pointerdown",e=>{
+  cv.setPointerCapture(e.pointerId);
+  const q=ptr(e); drag={x:q.x,y:q.y,vx:view.x,vy:view.y,moved:false};
+  cv.classList.add("grabbing");
+});
+cv.addEventListener("pointermove",e=>{
+  const q=ptr(e);
+  if(drag){
+    if(Math.abs(q.x-drag.x)+Math.abs(q.y-drag.y)>4) drag.moved=true;
+    view.x=drag.vx-(q.x-drag.x)/view.z; view.y=drag.vy-(q.y-drag.y)/view.z;
+    clampView();
+  } else hover=cellAt(q.x,q.y);
+});
+cv.addEventListener("pointerleave",()=>{ hover=null });
+cv.addEventListener("pointerup",e=>{
+  cv.classList.remove("grabbing");
+  if(drag&&!drag.moved){
+    const c=cellAt(ptr(e).x,ptr(e).y);
+    if(c){ sel=c; renderCartouche() }
+  }
+  drag=null;
+});
+cv.addEventListener("pointercancel",()=>{ drag=null; cv.classList.remove("grabbing") });
+cv.addEventListener("dblclick",e=>{
+  const c=cellAt(ptr(e).x,ptr(e).y);
+  if(c){ sel=c; renderCartouche();
+    const o=W.map[key(c.x,c.y)];
+    if(o&&!(o.t==="city"&&o.pid===me().id)) openLevy(c.x,c.y) }
+});
+cv.addEventListener("wheel",e=>{
+  e.preventDefault();
+  const q=ptr(e), wx=view.x+q.x/view.z, wy=view.y+q.y/view.z;
+  view.z=clamp(view.z*(e.deltaY<0?1.16:.862),3,40);
+  view.x=wx-q.x/view.z; view.y=wy-q.y/view.z; clampView();
+},{passive:false});
+
+function zoomAt(f){
+  const cx=view.x+cv._w/2/view.z, cy=view.y+cv._h/2/view.z;
+  view.z=clamp(view.z*f,3,40); centerOn(cx,cy);
+}
+$("#t-in").onclick=()=>zoomAt(1.35);
+$("#t-out").onclick=()=>zoomAt(1/1.35);
+$("#t-home").onclick=()=>{ centerOn(me().x,me().y); sel={x:me().x,y:me().y}; renderCartouche() };
+$("#tempo").onchange=e=>{ tempo=+e.target.value };
+
+/* Миникарта — щелчок переносит взгляд */
+mini.addEventListener("pointerdown",e=>{
+  const r=mini.getBoundingClientRect(), s=Math.min(r.width,r.height)/CFG.MAP;
+  centerOn((e.clientX-r.left)/s,(e.clientY-r.top)/s);
+});
+
+/* Клавиши */
+window.addEventListener("keydown",e=>{
+  if(e.target.tagName==="INPUT") return;
+  if(e.key==="Escape") closeScroll();
+  else if(e.key==="+"||e.key==="=") zoomAt(1.3);
+  else if(e.key==="-") zoomAt(1/1.3);
+  else if(e.key.toLowerCase()==="h"||e.key==="р") $("#t-home").click();
+  else {
+    const n=["city","army","gen","world","log"][+e.key-1];
+    if(n){ tab=n; syncRibbons(); lastFolio=""; renderFolio() }
+  }
+});
+$("#veil").onclick=e=>{ if(e.target.id==="veil") closeScroll() };
+window.addEventListener("resize",()=>{ resize(); clampView() });
+
+/* =========================================================================
+   ГЛАВНЫЙ ЦИКЛ
+   ========================================================================= */
+let sinceSave=0, sinceUi=0;
+function frame(){
+  const now=Date.now();
+  let dt=(now-lastReal)/1000; lastReal=now;
+  if(dt>0&&dt<3600){ advanceTo(W.t+dt*tempo); sinceSave+=dt; sinceUi+=dt }
+  draw(); drawMini();
+  if(sinceUi>1.0){ sinceUi=0; renderTop(); renderFolio(); renderCartouche() }
+  if(sinceSave>20){ sinceSave=0; save() }
+  requestAnimationFrame(frame);
+}
+document.addEventListener("visibilitychange",()=>{
+  if(document.hidden) save(); else lastReal=Date.now();
+});
+window.addEventListener("beforeunload",()=>{
+  try{ W.savedAt=Date.now(); localStorage.setItem(SAVE_KEY,JSON.stringify(W)) }catch(e){}
+});
+
+/* ---- Запуск ---- */
+(async function start(){
+  resize();
+  const ok=await load();
+  if(!ok) genWorld(Date.now()&0xffffff);
+  buildTerrain();
+  const p=me();
+  view.z=16; centerOn(p.x,p.y); sel={x:p.x,y:p.y};
+  syncRibbons(); renderTop(); renderFolio(); renderCartouche();
+  lastReal=Date.now();
+  requestAnimationFrame(frame);
+  setTimeout(()=>herald("Колесо прокрутки — приближение, двойной щелчок по цели — поход."),900);
+})();
+</script>
+</body>
+</html>
