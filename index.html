@@ -232,7 +232,9 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #bm-tree .rgroup:first-child{margin-top:0}
 #bm-tree .rnode{padding:8px 0;border-bottom:1px solid rgba(90,69,48,.18)}
 #bm-tree .rnode:last-child{border-bottom:none}
-#bm-tree .rnode-hd{display:flex;justify-content:space-between;gap:8px;align-items:baseline;
+#bm-tree .rnode-hd img.unit-thumb{width:26px;height:26px;border-radius:50%;object-fit:cover;
+  flex:0 0 auto;border:1px solid rgba(90,69,48,.4)}
+#bm-tree .rnode-hd{display:flex;justify-content:space-between;gap:8px;align-items:center;
   font-size:13px;color:#2c2114}
 #bm-tree .rnode-lv{font-family:var(--data);font-size:11px;color:#5a4530;white-space:nowrap}
 #bm-tree .rnode-lv.maxed{color:#3f6b3f}
@@ -3089,11 +3091,15 @@ function academyTreeHtml(p){
   h+="</div>";
   return h;
 }
+function unitThumb(p,t,i){
+  const headPos = t==="sie" ? "50% 40%" : "50% 20%";
+  return "<img class='unit-thumb' style='object-position:"+headPos+"' src='images/units/"+p.race+"-"+t+i+".png' alt=''>";
+}
 function trainInfoHtml(p,type){
   const T=p.train[type];
   if(T){
     return "<div id='bm-tree'><div class='rgroup'>"+(T.retrain?"Идёт переобучение":"Идёт набор")+"</div>"+
-       "<div class='rnode'><div class='rnode-hd'><b>"+unitName(T.type,T.tier,p.race)+"</b>"+
+       "<div class='rnode'><div class='rnode-hd'>"+unitThumb(p,T.type,T.tier)+"<b>"+unitName(T.type,T.tier,p.race)+"</b>"+
        "<span class='rnode-lv'>&times;"+RU(T.n)+"</span></div>"+
        "<div class='rnode-eff'>Готовы через <em>"+fmtDur(T.t1-W.t)+"</em></div></div></div>";
   }
@@ -3102,7 +3108,7 @@ function trainInfoHtml(p,type){
   const can=Math.floor(Math.min.apply(null,RES.map(r=>c[r]?p.res[r]/c[r]:1e9)));
   const beats=TROOP_TYPES[type].beats;
   let h="<div id='bm-tree'><div class='rgroup'>Набор</div>"+
-    "<div class='rnode'><div class='rnode-hd'><b>"+unitName(type,maxT,p.race)+"</b><span class='rnode-lv'>T"+maxT+"</span></div>"+
+    "<div class='rnode'><div class='rnode-hd'>"+unitThumb(p,type,maxT)+"<b>"+unitName(type,maxT,p.race)+"</b><span class='rnode-lv'>T"+maxT+"</span></div>"+
     "<div class='rnode-eff'>Атака <em>"+Math.round(troopStat(type,maxT,"atk")*troopMod(p.race,type,"atk"))+"</em> · защита <em>"+troopStat(type,maxT,"def")+
     "</em> · здоровье <em>"+troopStat(type,maxT,"hp")+"</em>"+
     (beats?" · бьёт "+TROOP_TYPES[beats].name.toLowerCase():"")+
@@ -3114,7 +3120,7 @@ function trainInfoHtml(p,type){
     const have=p.troops[type][i]; if(!have) continue;
     anyRetrain=true;
     const canR=retrainMax(p,type,i), cR=retrainCost(type,i,1);
-    retrainHtml+="<div class='rnode'><div class='rnode-hd'><b>"+unitName(type,i,p.race)+" &rarr; "+unitName(type,i+1,p.race)+"</b>"+
+    retrainHtml+="<div class='rnode'><div class='rnode-hd'>"+unitThumb(p,type,i)+"<b>"+unitName(type,i,p.race)+" &rarr; "+unitName(type,i+1,p.race)+"</b>"+
       "<span class='rnode-lv'>в строю "+RU(have)+"</span></div>"+
       "<div class='rnode-eff'>Доступно к переобучению: <em>"+fmt(canR)+"</em></div>"+
       "<div class='rnode-cost'>"+RES.filter(r=>cR[r]).map(r=>"<span class='"+(p.res[r]<cR[r]?"short":"")+"'>"+fmt(cR[r])+" "+RES_NAME[r]+"</span>").join("")+"</div>"+
@@ -3816,7 +3822,7 @@ function openRetrainModal(type,fromTier){
 function trainSheetHtml(){
   const p=me(), {type,tier,max,n,fromTier}=trainCtx, isRetrain=trainCtx.mode==="retrain";
   const busy=!!p.train[type], locked=busy||max<1;
-  let h="<img id='bm-art' src='images/buildings/"+TRAIN_BLD[type]+".png'>";
+  let h="<img id='bm-art' src='images/units/"+p.race+"-"+type+tier+".png'>";
   h+="<div id='bm-title'>"+(isRetrain?unitName(type,fromTier,p.race)+" &rarr; "+unitName(type,tier,p.race):unitName(type,tier,p.race))+"</div>";
   h+="<div id='bm-sub'>"+(isRetrain?"переобучение · в строю "+RU(p.troops[type][fromTier]||0):"набор в столице · тир "+tier)+"</div>";
   h+="<div id='bm-qty'><div class='cap'><span>Доступно максимум</span><b>"+RU(max)+"</b></div>"+
