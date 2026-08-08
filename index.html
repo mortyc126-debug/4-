@@ -272,7 +272,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .cbuild.built .shape{border-color:transparent;background:transparent}
 .cbuild.built:hover .shape{border-color:var(--gilt-hi);background:rgba(194,153,60,.18)}
 .cbuild.locked .shape{border-color:transparent;cursor:not-allowed}
-.cbuild img.bimg{position:absolute;inset:6%;width:88%;height:88%;object-fit:contain;
+.cbuild img.bimg{position:absolute;inset:2%;width:96%;height:96%;object-fit:contain;
   pointer-events:none;filter:drop-shadow(0 3px 5px rgba(0,0,0,.6))}
 .cbuild .lvl{position:absolute;bottom:2px;right:4px;font-family:var(--data);font-size:10px;
   color:var(--gilt-hi);background:rgba(0,0,0,.55);padding:0 3px;line-height:1.4;z-index:2}
@@ -890,6 +890,7 @@ const BUILDINGS = {
   garrison:{name:"Гарнизон",      max:30, desc:"Доп. защита при осаде и предупреждение о марше врага"},
   scout:   {name:"Разведка",      max:30, desc:"Раскрывает сведения о войсках противника"},
   forge:   {name:"Горн",          max:30, desc:"Ковка снаряжения для полководца (механика в разработке)"},
+  portal:  {name:"Портал",        max:30, desc:"Врата в иные земли (механика в разработке)"},
 };
 const BKEYS = Object.keys(BUILDINGS);
 // Разметка карты города: координаты в % от изображения, bk — ключ здания (null = задел на будущее)
@@ -904,7 +905,7 @@ const CITY_CELLS=[
 {n:"Склад",bk:"store",x:18.45,y:40.0,w:21.98,h:11.88,ch:14},{n:"Стрельбище",bk:"range",x:18.45,y:53.32,w:19.85,h:11.32,ch:14},{n:"Мастерская",bk:"siege",x:22.9,y:66.22,w:10.48,h:7.2,ch:17},
 {n:"Горн",bk:"forge",x:33.35,y:65.86,w:8.28,h:8.04,ch:17},{n:"Казармы",bk:"barracks",x:42.28,y:29.97,w:15.5,h:16.42,pill:1},{n:"Конюшня",bk:"stable",x:61.05,y:53.89,w:20.65,h:11.49,ch:14},
 {n:"Академия",bk:"academy",x:56.08,y:65.55,w:19.98,h:9.79,ch:14},{n:"Разведка",bk:"scout",x:57.22,y:75.82,w:9.96,h:4.84,ch:22},{n:"Гарнизон",bk:"garrison",x:30.13,y:74.74,w:11.69,h:5.36,ch:22},
-{n:"Ворота",bk:"wall",x:43.96,y:74.74,w:11.74,h:8.51,ch:12},{n:"Портал",bk:null,x:41.11,y:49.54,w:16.99,h:16.89,pill:1,future:1}
+{n:"Ворота",bk:"wall",x:43.96,y:74.74,w:11.74,h:8.51,ch:12},{n:"Портал",bk:"portal",x:41.11,y:49.54,w:16.99,h:16.89,pill:1}
 ];
 const cityShapeCss = c => c.pill ? "border-radius:50%;" :
   (v=>`clip-path:polygon(${v}% 0%,${100-v}% 0%,100% ${v}%,100% ${100-v}%,${100-v}% 100%,${v}% 100%,0% ${100-v}%,0% ${v}%);`)(c.ch||18);
@@ -2805,7 +2806,7 @@ function renderCityMap(){
     h+="<div class='cbuild"+(built?" built":"")+(locked?" locked":"")+"' data-cell='"+CITY_CELLS.indexOf(c)+"' "+
        "style='left:"+c.x+"%;top:"+c.y+"%;width:"+c.w+"%;height:"+c.h+"%'>"+
        "<div class='shape' style='"+cityShapeCss(c)+"'></div>"+
-       (built?"<img class='bimg' src='"+cityCellImg(c)+"'>"+"<span class='lvl'>"+lv+"</span>":"")+
+       (built?(c.bk!=="wall"?"<img class='bimg' src='"+cityCellImg(c)+"'>":"")+"<span class='lvl'>"+lv+"</span>":"")+
        "</div>";
   });
   h+="</div>";
