@@ -52,15 +52,15 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
 
 #crest{display:flex;align-items:baseline;gap:9px;padding-right:12px;margin-right:4px;
-  border-right:1px solid var(--rule-soft)}
-#crest .mark{font-size:19px;color:var(--gilt);line-height:1}
+  border-right:1px solid var(--rule-soft);cursor:pointer}
+#crest:hover .mark{color:var(--gilt-hi)}
+#crest .mark{font-size:19px;color:var(--gilt);line-height:1;transition:color .15s}
 #crest .ttl{display:none}
 
 #menu-btn{position:fixed;right:14px;bottom:14px;z-index:20;width:70px;height:70px;padding:0;
-  background:transparent;border:none;border-radius:50%;color:var(--gilt-hi);
-  display:flex;align-items:center;justify-content:center;overflow:hidden}
-#menu-btn:hover{color:var(--gilt)}
-#menu-btn img{width:100%;height:100%;object-fit:contain;pointer-events:none}
+  background-image:url(images/ui/icon-menu.png);background-size:175.82% 117.17%;
+  background-position:47.64% 61.2%;background-repeat:no-repeat;
+  border:none;border-radius:50%;color:var(--gilt-hi);overflow:hidden}
 #menu-btn span{display:none;font-size:19px} /* текстовый фолбэк, если картинки нет */
 
 .purse{display:flex;align-items:center;gap:16px;padding:0 14px;flex:1;min-width:0}
@@ -190,6 +190,25 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   border:1px solid #8a6d2c;border-radius:3px;padding:7px 6px;font-family:var(--data);
   font-size:14px;text-align:right;color:#2c2114}
 #bm-time{text-align:center;font-size:12.5px;color:#5a4530;margin-bottom:16px}
+#bm-tree{margin-bottom:16px}
+#bm-tree .rgroup{font-variant:small-caps;letter-spacing:.12em;font-size:12.5px;color:#6b5230;
+  margin:14px 0 6px;padding-bottom:3px;border-bottom:1px solid rgba(90,69,48,.35)}
+#bm-tree .rgroup:first-child{margin-top:0}
+#bm-tree .rnode{padding:8px 0;border-bottom:1px solid rgba(90,69,48,.18)}
+#bm-tree .rnode:last-child{border-bottom:none}
+#bm-tree .rnode-hd{display:flex;justify-content:space-between;gap:8px;align-items:baseline;
+  font-size:13px;color:#2c2114}
+#bm-tree .rnode-lv{font-family:var(--data);font-size:11px;color:#5a4530;white-space:nowrap}
+#bm-tree .rnode-lv.maxed{color:#3f6b3f}
+#bm-tree .rnode-eff{font-size:11.5px;color:#5a4530;margin-top:2px}
+#bm-tree .rnode-eff em{font-style:normal;color:#2c2114}
+#bm-tree .rnode-cost{display:flex;gap:10px;flex-wrap:wrap;margin-top:5px;
+  font-family:var(--data);font-size:11px;color:#5a4530}
+#bm-tree .rnode-cost .short{color:#8a2f22}
+#bm-tree .rnode-go{margin-top:6px;width:100%;padding:7px;background:rgba(58,44,28,.5);
+  border:1px solid rgba(107,82,48,.7);border-radius:3px;color:#2c2114;font-variant:small-caps;
+  letter-spacing:.08em;font-size:12.5px}
+#bm-tree .rnode-go:disabled{opacity:.5}
 #bm-btn{display:block;width:100%;margin-top:auto;padding:11px;
   background:linear-gradient(180deg,rgba(58,44,28,.55),rgba(36,26,16,.68));
   border:1px solid rgba(107,82,48,.85);border-radius:3px;color:#e2c485;font-variant:small-caps;
@@ -211,11 +230,8 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #ribbons button.on{color:var(--gilt-hi)}
 #ribbons button.on::after{transform:scaleX(1)}
 
-#folio{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:66px 15px 26px}
-#folio::-webkit-scrollbar{width:9px}
-#folio::-webkit-scrollbar-track{background:rgba(0,0,0,.25)}
-#folio::-webkit-scrollbar-thumb{background:var(--rule);border-radius:0}
-#folio::-webkit-scrollbar-thumb:hover{background:var(--gilt-dim)}
+#folio{flex:1;overflow:hidden;padding:0;position:relative;
+  display:flex;align-items:center;justify-content:center}
 
 /* Заголовок раздела — с виньеточной линейкой, как в старой книге */
 .rubric{display:flex;align-items:center;gap:11px;margin:26px 0 11px;
@@ -239,10 +255,13 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .entry .note{font-size:12px;color:var(--vellum-dim);margin-top:2px;line-height:1.4}
 .entry .note em{font-style:normal;color:var(--vellum)}
 
-/* Карта города */
-#citymap-wrap{position:relative;width:100%;margin-bottom:14px;border-radius:6px;overflow:hidden;
-  box-shadow:0 8px 26px rgba(0,0,0,.6);border:1px solid var(--rule)}
-#citymap-wrap img.base{display:block;width:100%;height:auto;pointer-events:none;-webkit-user-drag:none}
+/* Карта города — неподвижный полноэкранный фон, пропорция строго 841:1421,
+   чтобы координаты построек (в %) не съезжали относительно картинки */
+#citymap-wrap{position:relative;flex:0 0 auto;
+  width:min(100%, 59.18vh);aspect-ratio:841/1421;max-height:100%;
+  overflow:hidden;touch-action:none}
+#citymap-wrap img.base{display:block;width:100%;height:100%;object-fit:cover;
+  pointer-events:none;-webkit-user-drag:none}
 .cbuild{position:absolute;box-sizing:border-box;cursor:pointer;touch-action:none;
   -webkit-tap-highlight-color:transparent;user-select:none}
 .cbuild .shape{position:absolute;inset:0;border:2px solid transparent;
@@ -255,6 +274,23 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   pointer-events:none;filter:drop-shadow(0 3px 5px rgba(0,0,0,.6))}
 .cbuild .lvl{position:absolute;bottom:2px;right:4px;font-family:var(--data);font-size:10px;
   color:var(--gilt-hi);background:rgba(0,0,0,.55);padding:0 3px;line-height:1.4;z-index:2}
+
+/* Бригады (слева) и отряды в поле (справа) — плавающие столбцы поверх фона города */
+#brigades,#fieldarmy{position:absolute;top:70px;bottom:14px;display:flex;flex-direction:column;
+  gap:8px;z-index:5;overflow-y:auto;scrollbar-width:none}
+#brigades::-webkit-scrollbar,#fieldarmy::-webkit-scrollbar{display:none}
+#brigades{left:14px}
+#fieldarmy{right:14px}
+.slotcell{flex:0 0 auto;width:56px;height:56px;border-radius:6px;position:relative;cursor:pointer;
+  background:linear-gradient(180deg,rgba(38,30,21,.88),rgba(22,17,11,.9));
+  border:1px solid var(--rule);box-shadow:0 4px 14px rgba(0,0,0,.5)}
+.slotcell.empty{opacity:.32;cursor:default}
+.slotcell img{position:absolute;inset:9%;width:82%;height:82%;object-fit:contain;pointer-events:none;
+  filter:drop-shadow(0 2px 4px rgba(0,0,0,.6))}
+.slotcell .timer{position:absolute;top:2px;left:0;right:0;text-align:center;font-family:var(--data);
+  font-size:8.5px;color:var(--gilt-hi);text-shadow:0 1px 2px rgba(0,0,0,.9)}
+.slotcell .progress{position:absolute;left:0;right:0;bottom:0;margin:0;height:4px;border:none;
+  border-top:1px solid rgba(0,0,0,.5)}
 #citymap-toggle{display:flex;gap:8px;margin-bottom:10px}
 #citymap-toggle button{flex:1;padding:7px;font-size:12px;font-variant:small-caps;letter-spacing:.08em;
   background:rgba(0,0,0,.25);border:1px solid var(--rule-soft);color:var(--vellum-dim)}
@@ -385,7 +421,6 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   #chron .stat s{display:none}
   #chron .stat b{font-size:12px}
   #cartouche{max-width:186px;padding:8px 10px;font-size:12.5px}
-  #folio{padding:56px 12px 90px}
   #bm-reqs .req-row{display:grid;grid-template-columns:20px 1fr;
     grid-template-areas:"icon name" "icon amt";column-gap:8px;row-gap:1px;font-size:13px}
   #bm-reqs .req-row img{grid-area:icon}
@@ -447,7 +482,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 </div>
 
 <button id="view-toggle" data-act="toggleview"><img src="images/ui/icon-world.png" alt="Мир"></button>
-<button id="menu-btn" data-act="togglemenu"><img src="images/ui/icon-menu.png" alt="Меню"><span>&#9776;</span></button>
+<button id="menu-btn" data-act="togglemenu" aria-label="Меню"><span>&#9776;</span></button>
 
 <nav id="side-menu">
   <button data-menu="army"><img src="images/ui/icon-army.png" alt=""><span>Войско</span></button>
@@ -2776,6 +2811,102 @@ function renderCityMap(){
   h+="</div>";
   return h;
 }
+function cityCellIndexFor(bk,plot){
+  const key = plot==null ? null : plot;
+  return CITY_CELLS.findIndex(c=>c.bk===bk && (c.pl==null?null:c.pl)===key);
+}
+function renderBrigades(p){
+  let h="<div id='brigades'>";
+  p.queues.forEach(q=>{
+    if(q){
+      const f=(W.t-q.t0)/Math.max(1,q.t1-q.t0);
+      const img="images/buildings/"+q.b+(q.plot!=null?(q.plot+1):"")+".png";
+      const idx=cityCellIndexFor(q.b,q.plot);
+      h+="<div class='slotcell' data-act='opencell' data-idx='"+idx+"' "+
+         "title='"+buildingName(q.b,p)+" — готово через "+fmtDur(q.t1-W.t)+"'>"+
+         "<img src='"+img+"'><span class='timer'>"+fmtDur(q.t1-W.t)+"</span>"+
+         "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
+    } else h+="<div class='slotcell empty' title='Бригада свободна'></div>";
+  });
+  h+="</div>";
+  return h;
+}
+function renderFieldArmy(p){
+  const mine=W.marches.filter(m=>m.pid===p.id), slots=marchSlots(p.b.hall);
+  let h="<div id='fieldarmy'>";
+  for(let i=0;i<slots;i++){
+    const m=mine[i];
+    if(m){
+      const f=(W.t-m.t0)/Math.max(1,m.t1-m.t0);
+      const st={go:"в пути",gather:"собирает",back:"возвращается"}[m.state]||m.state;
+      h+="<div class='slotcell' data-act='marchinfo' data-m='"+m.id+"' "+
+         "title='"+RU(countUnits(m.units))+" воинов, "+st+" · цель "+m.tx+"·"+m.ty+"'>"+
+         "<img src='images/ui/icon-army.png'><span class='timer'>"+fmtDur(m.t1-W.t)+"</span>"+
+         "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
+    } else h+="<div class='slotcell empty' title='Место в поле свободно'></div>";
+  }
+  h+="</div>";
+  return h;
+}
+function hallInfoHtml(p){
+  const epoch=epochOf(p.b.hall), track=RACE_EPOCHS[p.race], minus=RACES[p.race].minus;
+  let h="<table id='bm-stats'><tr><td>Эпоха</td><td>"+epoch+" из 5</td></tr>"+
+    "<tr><td>Отрядов в поле</td><td>"+marchSlots(p.b.hall)+"</td></tr>"+
+    "<tr><td>Вместимость марша</td><td>"+fmt(marchCapacity(p))+"</td></tr></table>";
+  h+="<div id='bm-tree'><div class='rgroup'>Черты расы: "+RACES[p.race].name+"</div>"+
+    "<div class='rnode'><div class='rnode-hd'><b>Природа расы</b></div>"+
+    "<div class='rnode-eff'>"+minus.desc+"</div></div>";
+  track.forEach((e,i)=>{
+    const unlocked=i<epoch;
+    h+="<div class='rnode'><div class='rnode-hd'><b>"+e.title+"</b>"+
+       "<span class='rnode-lv"+(unlocked?" maxed":"")+"'>эпоха "+(i+1)+(unlocked?" · открыто":" · закрыто")+"</span></div>"+
+       "<div class='rnode-eff'>"+e.desc+"</div></div>";
+  });
+  h+="</div>";
+  return h;
+}
+function storeInfoHtml(p){
+  const cap=capacity(p);
+  return "<table id='bm-stats'>"+RES.map(r=>"<tr><td>"+RES_NAME[r]+"</td><td>"+fmt(cap[r])+"</td></tr>").join("")+"</table>";
+}
+function academyTreeHtml(p){
+  const B=bonuses(p);
+  const nodeEffectDesc=(n,lv,nx)=>{
+    if(n.unlock) return lv>=1?"Открыто":"Откроет T"+n.unlock.tier;
+    const list=n.effects||[{field:n.field,total:n.total}];
+    const now=list.map(e=>"+"+Math.round(e.total*(lv/n.max)*100)+"% "+e.field).join(", ");
+    const next=list.map(e=>"+"+Math.round(e.total*(nx/n.max)*100)+"% "+e.field).join(", ");
+    return "сейчас <em>"+now+"</em>"+(lv>=n.max?"":" · дальше <em>"+next+"</em>");
+  };
+  let h="<div id='bm-tree'>";
+  if(p.rsch){
+    const rn=findNode(p.rsch.id);
+    h+="<div class='rgroup'>Идёт исследование</div>"+
+       "<div class='rnode'><div class='rnode-hd'><b>"+rn.name+" &rarr; ур. "+p.rsch.lv+"</b></div>"+
+       "<div class='rnode-eff'>Готово через <em>"+fmtDur(p.rsch.t1-W.t)+"</em></div></div>";
+  }
+  const renderGroup=(arr,label)=>{
+    h+="<div class='rgroup'>"+label+"</div>";
+    arr.filter(n=>!n.race||n.race===p.race).forEach(n=>{
+      const lv=p.tech[n.id]||0, maxed=lv>=n.max, nx=lv+1, gated=p.b.academy<=0;
+      const locked=!!(n.unlock && n.unlock.tier>2 && !(p.tech["mil_tier_"+n.unlock.type+(n.unlock.tier-1)]>=1));
+      const c = maxed||locked||gated?null:researchCost(n.branch,n.wave,nx);
+      h+="<div class='rnode'><div class='rnode-hd'><b>"+n.name+(n.race?" · венец":"")+"</b>"+
+         "<span class='rnode-lv"+(maxed?" maxed":"")+"'>"+lv+"/"+n.max+"</span></div>"+
+         "<div class='rnode-eff'>"+nodeEffectDesc(n,lv,nx)+"</div>"+
+         (c?"<div class='rnode-cost'>"+RES.filter(r=>c[r]).map(r=>
+           "<span class='"+(p.res[r]<c[r]?"short":"")+"'>"+fmt(c[r])+" "+RES_NAME[r]+"</span>").join("")+"</div>":"")+
+         "<button class='rnode-go' data-act='research' data-id='"+n.id+"' "+(maxed||gated||locked||p.rsch?"disabled":"")+">"+
+         (maxed?"Предел":gated?"Нужна академия":locked?"Нужен пред. тир":
+           "Исследовать · "+fmtDur(researchTime(n.branch,n.wave,nx)/((1+B.researchSpeed)*(1+lateSpeed(p.b.academy)))))+
+         "</button></div>";
+    });
+  };
+  renderGroup(ACADEMY_TREE.eco,"Хозяйство");
+  renderGroup(ACADEMY_TREE.mil,"Армия");
+  h+="</div>";
+  return h;
+}
 function buildingModalHtml(ci){
   const p=me(), c=CITY_CELLS[ci];
   if(!c||!c.bk) return "";
@@ -2794,6 +2925,9 @@ function buildingModalHtml(ci){
   h+="<div id=\'bm-title\'>"+buildingName(c.bk,p)+(c.pl!=null?" · участок "+(c.pl+1):"")+"</div>";
   h+="<div id=\'bm-sub\'>уровень "+lv+(maxed?" (максимум)":" &rarr; "+nx)+"</div>";
   if(desc) h+="<div id=\'bm-desc\'>"+desc+"</div>";
+  if(c.bk==="hall") h+=hallInfoHtml(p);
+  else if(c.bk==="store") h+=storeInfoHtml(p);
+  else if(c.bk==="academy") h+=academyTreeHtml(p);
   if(canGo){
     h+="<div id=\'bm-reqs\'>"+RES.map(r=>{
       const need=cst[r]||0; if(!need) return "";
@@ -2814,129 +2948,26 @@ function buildingModalHtml(ci){
   return h;
 }
 
-function foCity(){
-  const p=me(); syncRes(p);
-  const B=bonuses(p), cap=capacity(p), inField=W.marches.filter(m=>m.pid===p.id).length;
-  let h=rubric("Столица");
-  h+=renderCityMap();
+/* ---- Профиль игрока — заглушка, полноценный экран доделаем позже.
+   Сюда со временем переедут: сводка по войскам, снаряжение генерала,
+   достижения и т.п. Пока только то, что раньше висело в карточке города. ---- */
+function foProfile(){
+  const p=me();
+  let h=rubric("Профиль","в разработке");
   h+="<div class='entry hot'><div class='line'>"+
      "<div style='flex:0 0 auto'>"+shieldSvg(p.race,26)+"</div><div class='fill'>"+
-     "<div class='title'>"+RACES[p.race].name+"<span class='tag gilt'>"+
-     citySize(p.b.hall)+"×"+citySize(p.b.hall)+"</span></div>"+
+     "<div class='title'>"+RACES[p.race].name+"</div>"+
      "<div class='note'>"+RACES[p.race].desc+"</div></div></div>"+
      "<table class='roll' style='margin-top:9px'>"+
-     "<tr><td>Войск в столице</td><td>"+RU(garrison(p))+"</td></tr>"+
-     "<tr><td>Отрядов в поле</td><td>"+inField+" из "+marchSlots(p.b.hall)+"</td></tr>"+
-     "<tr><td>Вместимость марша</td><td>"+fmt(marchCapacity(p))+"</td></tr>"+
-     "<tr><td>Хранилище</td><td>"+RES.map(r=>fmt(cap[r])).join(" · ")+"</td></tr>"+
-     "<tr><td>Доступный тир</td><td>"+TKEYS.map(t=>TROOP_TYPES[t].name+" T"+tierUnlockedFor(p,t)).join(" · ")+"</td></tr></table></div>";
+     "<tr><td>Войска в городе</td><td>"+RU(garrison(p))+"</td></tr></table></div>";
+  return h;
+}
 
-  h+=rubric("Черты расы");
-  const epoch=epochOf(p.b.hall), track=RACE_EPOCHS[p.race], minus=RACES[p.race].minus;
-  h+="<div class='entry war'><div class='line'><div class='fill'>"+
-     "<div class='title'>Природа расы<span class='tag'>всегда</span></div>"+
-     "<div class='note'>"+minus.desc+"</div></div></div></div>";
-  track.forEach((e,i)=>{
-    const unlocked=i<epoch;
-    h+="<div class='entry"+(unlocked?" hot":"")+"'><div class='line'><div class='fill'>"+
-       "<div class='title'>"+e.title+"<span class='tag"+(unlocked?" gilt":"")+"'>эпоха "+(i+1)+
-       (unlocked?" · открыто":" · закрыто")+"</span></div>"+
-       "<div class='note'>"+e.desc+"</div></div></div></div>";
-  });
-
-  h+=rubric("Строительные бригады");
-  p.queues.forEach((q,i)=>{
-    if(q){ const f=(W.t-q.t0)/Math.max(1,q.t1-q.t0);
-      h+="<div class='entry hot'><div class='line'>"+ring(q.lv,CFG.MAX_LEVEL)+"<div class='fill'>"+
-        "<div class='title'>"+buildingName(q.b,p)+"</div>"+
-        "<div class='note'>Готово через <em>"+fmtDur(q.t1-W.t)+"</em></div></div></div>"+
-        "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
-    } else h+="<div class='entry'><div class='note' style='margin:0'>Бригада "+(i+1)+" ждёт распоряжений</div></div>";
-  });
-
-  h+=rubric("Постройки");
-  for(const bk of BKEYS){
-    const Bd=BUILDINGS[bk], plotsN = isMulti(bk) ? p.b[bk].length : 1;
-    for(let pi=0; pi<plotsN; pi++){
-      const locked = isMulti(bk) && !plotUnlocked(bk,pi,p.b.hall);
-      const lv = isMulti(bk) ? p.b[bk][pi] : p.b[bk], nx=lv+1;
-      const maxed=lv>=CFG.MAX_LEVEL;
-      let gated=bk!=="hall"&&nx>p.b.hall, gateTxt=gated?"нужна ратуша "+nx:"";
-      if(bk==="hall"){ const need=HALL_REQ.filter(k=>p.b[k]<p.b.hall);
-        if(need.length){ gated=true; gateTxt="ждёт: "+need.map(k=>buildingName(k,p).toLowerCase()).join(", ") } }
-      if(locked){ gated=true; gateTxt="откроется на эпохе "+(pi+1); }
-      const plotKey = isMulti(bk) ? pi : null;
-      const queued = p.queues.find(q=>q && q.b===bk && q.plot===plotKey);
-      if(queued){ gated=true; gateTxt="в работе, готово через "+fmtDur(queued.t1-W.t); }
-      let note="";
-      if(Bd.prod) note="Даёт <em>"+fmt(prodRate(lv)*(1+lateSpeed(lv))*({food:1.25,wood:1.25,stone:.9,gold:.5}[Bd.prod]))+"</em> в час"+
-        (lv>0?" · защищает <em>"+fmt(plotCap(lv))+"</em>":"");
-      else if(bk==="store") note="Вмещает <em>"+fmt(storeCap(lv))+"</em>";
-      else if(bk==="hospital") note="Коек: <em>"+fmt(hospitalCap(lv))+"</em>";
-      else if(bk==="academy") note = lv<=0?"Пока не построена":"Тиры и статы войск — через исследования ниже";
-      else if(bk==="wall"){ syncWall(p);
-        note="Оборона <em>+"+(lv*3)+"%</em> · прочность <em>"+fmt(Math.round(p.wallHp))+"</em> из "+fmt(maxWallHp(lv));
-      }
-      else if(bk==="garrison") note = lv<=0?"Пока не построен"
-        :"Бьёт атакующих залпом до общей схватки (<em>"+fmt(lv*900)+"</em> урона), плюс защита стены +"+Math.round(lv*1.5)+"%, тревога за <em>"+fmtDur(Math.min(lv*60,3600))+"</em> до удара";
-      else if(bk==="scout"){ const se=epochOf(lv);
-        note = lv<=0?"Пока не построена"
-          : se===1?"Видно примерную силу войск"
-          : se===2?"Видно точную общую численность"
-          : se===3?"Видно состав войск по родам"
-          : se===4?"Видно точный состав войск по тирам"
-          : "Видно тиры, плюс полководец и уровень стены/гарнизона";
-      }
-      else if(bk==="forge") note = lv<=0?"Пока не построен"
-        :"Уровень готов принять ковку снаряжения — сама ковка появится отдельно";
-      else if(Bd.train) note="Готовит: "+TROOP_TYPES[Bd.train].name;
-      else if(bk==="hall") note="Отрядов <em>"+marchSlots(lv)+"</em>, эпоха <em>"+epochOf(lv)+"</em>";
-      const c=buildCost(nx,p), plotLabel = isMulti(bk) ? " · участок "+(pi+1) : "";
-      h+="<div class='entry'><div class='line'>"+ring(lv,CFG.MAX_LEVEL)+"<div class='fill'>"+
-        "<div class='title'>"+buildingName(bk,p)+plotLabel+(bk==="hall"?"<span class='tag gilt'>основа</span>":"")+"</div>"+
-        "<div class='note'>"+note+"</div>"+(maxed||locked?"":priceRow(p,c))+"</div>"+
-        "<button class='seal' data-act='build' data-b='"+bk+"' "+(isMulti(bk)?"data-plot='"+pi+"' ":"")+
-        (maxed||gated?"disabled":"")+">"+
-        (maxed?"предел":gated?gateTxt:"Возвести")+"</button></div>"+
-        (maxed||gated?"":"<div class='note' style='margin-top:5px;color:var(--vellum-faint)'>Срок работ: "+
-          fmtDur(buildTime(nx)/B.build)+"</div>")+"</div>";
-    }
-  }
-
-  const nodeEffectDesc=(n,lv,nx)=>{
-    if(n.unlock) return lv>=1?"Открыто":"Откроет T"+n.unlock.tier;
-    const list=n.effects||[{field:n.field,total:n.total}];
-    const now=list.map(e=>"+"+Math.round(e.total*(lv/n.max)*100)+"% "+e.field).join(", ");
-    const next=list.map(e=>"+"+Math.round(e.total*(nx/n.max)*100)+"% "+e.field).join(", ");
-    return "сейчас <em>"+now+"</em>"+(lv>=n.max?"":" · дальше <em>"+next+"</em>");
-  };
-  const renderTree=(arr,label)=>{
-    h+=rubric("Исследования: "+label,"академия ур. "+p.b.academy);
-    arr.filter(n=>!n.race||n.race===p.race).forEach(n=>{
-      const lv=p.tech[n.id]||0, maxed=lv>=n.max, nx=lv+1, gated=p.b.academy<=0;
-      const locked = !!(n.unlock && n.unlock.tier>2 && !(p.tech["mil_tier_"+n.unlock.type+(n.unlock.tier-1)]>=1));
-      const c = maxed||locked?null:researchCost(n.branch,n.wave,nx);
-      h+="<div class='entry"+(lv>0?" hot":"")+"'><div class='line'><div class='fill'>"+
-        "<div class='title'>"+n.name+(n.race?"<span class='tag gilt'>венец</span>":"")+
-        "<span class='tag"+(maxed?" gilt":"")+"'>"+lv+"/"+n.max+"</span></div>"+
-        "<div class='note'>"+nodeEffectDesc(n,lv,nx)+"</div>"+
-        (maxed||gated||locked?"":priceRow(p,c))+"</div>"+
-        "<button class='seal' data-act='research' data-id='"+n.id+"' "+(maxed||gated||locked||p.rsch?"disabled":"")+">"+
-        (maxed?"предел":gated?"нужна академия":locked?"нужен пред. тир":"Исследовать")+"</button></div>"+
-        (maxed||gated||locked?"":"<div class='note' style='margin-top:5px;color:var(--vellum-faint)'>Срок: "+
-          fmtDur(researchTime(n.branch,n.wave,nx)/((1+B.researchSpeed)*(1+lateSpeed(p.b.academy))))+"</div>")+"</div>";
-    });
-  };
-  if(p.rsch){
-    const rn=findNode(p.rsch.id), rf=(W.t-p.rsch.t0)/Math.max(1,p.rsch.t1-p.rsch.t0);
-    h+=rubric("Идёт исследование");
-    h+="<div class='entry hot'><div class='line'><div class='fill'>"+
-       "<div class='title'>"+rn.name+" → ур. "+p.rsch.lv+"</div>"+
-       "<div class='note'>Готово через <em>"+fmtDur(p.rsch.t1-W.t)+"</em></div></div></div>"+
-       "<div class='progress'><i style='width:"+(rf*100).toFixed(1)+"%'></i></div></div>";
-  }
-  renderTree(ACADEMY_TREE.eco,"Хозяйство");
-  renderTree(ACADEMY_TREE.mil,"Армия");
+function foCity(){
+  const p=me(); syncRes(p);
+  let h=renderCityMap();
+  h+=renderBrigades(p);
+  h+=renderFieldArmy(p);
   return h;
 }
 
@@ -3398,6 +3429,18 @@ function handleAct(e){
     closeBuildingModal(); lastFolio=""; renderFolio();
     return;
   }
+  else if(a==="opencell"){
+    const idx=+b.dataset.idx; if(idx>=0) openBuildingModal(idx);
+    return;
+  }
+  else if(a==="marchinfo"){
+    const m=W.marches.find(x=>x.id==b.dataset.m);
+    if(m){
+      const st={go:"в пути",gather:"собирает",back:"возвращается"}[m.state]||m.state;
+      herald(RU(countUnits(m.units))+" воинов · "+st+" · цель "+m.tx+"·"+m.ty+" · осталось "+fmtDur(m.t1-W.t));
+    }
+    return;
+  }
   else if(a==="heal"){ const r=doHeal(p); herald(r.err||"Лазарет принялся за работу.") }
   else if(a==="research"){
     const r=startResearch(p,b.dataset.id);
@@ -3470,7 +3513,7 @@ function handleAct(e){
   const modal=$("#menu-modal");
   if(modal.classList.contains("open")){
     const t=modal.dataset.tab;
-    $("#menu-modal-body").innerHTML = t==="army"?foArmy(): t==="gen"?foGen(): foInv();
+    $("#menu-modal-body").innerHTML = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): foInv();
   }
 }
 $("#folio").addEventListener("click",handleAct);
@@ -3555,7 +3598,7 @@ function updateTrainSheet(){
 }
 function openMenuModal(t){
   $("#menu-modal").dataset.tab = t;
-  const html = t==="army"?foArmy(): t==="gen"?foGen(): foInv();
+  const html = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): foInv();
   $("#menu-modal-body").innerHTML = html;
   $("#menu-modal").classList.add("open");
   $("#side-menu").classList.remove("open");
@@ -3580,7 +3623,7 @@ function refreshOpenModal(){
   const menu=$("#menu-modal");
   if(menu.classList.contains("open")){
     const t=menu.dataset.tab;
-    $("#menu-modal-body").innerHTML = t==="army"?foArmy(): t==="gen"?foGen(): foInv();
+    $("#menu-modal-body").innerHTML = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): foInv();
   }
 }
 $("#menu-btn").addEventListener("click",toggleMenu);
@@ -3590,6 +3633,7 @@ document.querySelectorAll("#side-menu button").forEach(b=>{
 $("#menu-modal").addEventListener("click",e=>{ if(e.target.id==="menu-modal") closeMenuModal(); });
 $("#menu-modal").addEventListener("click",handleAct);
 $("#view-toggle").addEventListener("click",toggleView);
+$("#crest").addEventListener("click",()=>openMenuModal("profile"));
 
 /* ---- Чертёж: мышь, палец, колесо ---- */
 const ptr=e=>{ const r=cv.getBoundingClientRect(); return {x:e.clientX-r.left,y:e.clientY-r.top} };
