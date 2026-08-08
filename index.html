@@ -279,6 +279,13 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   background:linear-gradient(90deg,var(--gilt-dim),transparent)}
 .rubric .n{font-family:var(--data);font-size:10px;color:var(--vellum-faint);letter-spacing:.05em}
 
+#inv-tabs{display:flex;gap:6px;margin-bottom:4px}
+#inv-tabs button{flex:1;padding:8px 3px;font-size:11.5px;text-align:center;
+  background:rgba(0,0,0,.25);border:1px solid var(--rule-soft);border-radius:4px;
+  color:var(--vellum-dim)}
+#inv-tabs button.on{background:rgba(194,153,60,.18);border-color:var(--gilt-dim);
+  color:var(--gilt-hi);font-weight:bold}
+
 /* Запись реестра */
 .entry{background:linear-gradient(180deg,rgba(52,42,29,.5),rgba(30,24,16,.5));
   border:1px solid var(--rule-soft);border-left:2px solid var(--rule);
@@ -1175,6 +1182,12 @@ const COUNTER_UP = 1.5, COUNTER_DOWN = 0.7;
 /* ---- Ресурсы ---- */
 const RES = ["food","wood","stone","gold"];
 const RES_NAME = {food:"Еда",wood:"Дерево",stone:"Камень",gold:"Золото"};
+const RES_DESC = {
+  food:"Идёт на стройку и содержание войск. Основной расход эпоху за эпохой.",
+  wood:"Идёт на стройку наравне с едой — почти любое здание просит и то, и другое.",
+  stone:"Нужен на поздних постройках и в исследованиях сильнее, чем еда с деревом.",
+  gold:"Казна: обучение бойцов с тира III, исследования и здания высоких уровней.",
+};
 const RES_COLOR = {food:"var(--food)",wood:"var(--wood)",stone:"var(--stone)",gold:"var(--gold)"};
 
 /* =========================================================================
@@ -2504,7 +2517,7 @@ const FONT=getComputedStyle(document.body).fontFamily;   // читаем оди�
 const cv=$("#map"), g=cv.getContext("2d");
 const mini=$("#mini"), mg=mini.getContext("2d");
 let view={x:0,y:0,z:8}, drag=null, sel=null, hover=null;
-let tab="city", tempo=1, lastReal=Date.now(), lastFolio="", academyTab="mil";
+let tab="city", tempo=1, lastReal=Date.now(), lastFolio="", academyTab="mil", invTab="res";
 
 /* ---- Рельеф в буфер ---------------------------------------------------- */
 let terrain=null;
@@ -3374,7 +3387,62 @@ function foGen(){
 
 function foInv(){
   const p=me();
-  let h="";
+  const tabsHtml="<div id='inv-tabs'>"+
+    [["res","Ресурсы"],["mat","Материалы"],["items","Предметы"],["gear","Снаряжение"]].map(([k,label])=>
+      "<button class='"+(invTab===k?"on":"")+"' data-act='invtab' data-t='"+k+"'>"+label+"</button>").join("")+
+    "</div>";
+
+  if(invTab==="res"){
+    let h=tabsHtml+rubric("Ресурсы");
+    RES.forEach(r=>{
+      h+="<div class='entry'><div class='line'><div style='flex:0 0 auto'>"+
+        "<img src='images/ui/res-"+r+".png' style='width:26px;height:26px;object-fit:contain'></div>"+
+        "<div class='fill'><div class='title'>"+RES_NAME[r]+"</div>"+
+        "<div class='note'>"+RES_DESC[r]+"</div></div>"+
+        "<div style='flex:0 0 auto;font-family:var(--data);font-size:14px'>"+fmt(p.res[r])+"</div></div></div>";
+    });
+    return h;
+  }
+
+  if(invTab==="mat"){
+    let h=tabsHtml+rubric("Материалы","добываются и сливаются в горне");
+    Object.keys(MATERIALS).forEach(mat=>{
+      const stock=p.materials[mat];
+      h+="<div class='entry'><div class='line'><div class='fill'>"+
+        "<div class='title'>"+MATERIALS[mat].name+"</div>"+
+        "<div class='note'>"+RARITY_NAMES.map((rn,i)=>rn.slice(0,3)+": "+(stock[i]||0)).join(" · ")+"</div></div>"+
+        "<button class='seal' data-act='matprod' data-mat='"+mat+"' "+(p.craft?"disabled":"")+">Добыть</button></div>"+
+        "<div class='line' style='margin-top:6px'>"+[0,1,2,3].map(t=>
+          "<button class='seal' data-act='matup' data-mat='"+mat+"' data-tier='"+t+"' "+
+          ((stock[t]||0)<4?"disabled":"")+" style='margin-right:4px'>4×"+RARITY_NAMES[t].slice(0,3)+"→"+RARITY_NAMES[t+1].slice(0,3)+"</button>"
+        ).join("")+"</div></div>";
+    });
+    return h;
+  }
+
+  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+st[k])).join(", ");
+
+  if(invTab==="items"){
+    let h=tabsHtml+rubric("Предметы","снаряжение на складе, ещё не надето");
+    let any=false;
+    GEAR_SLOTS.forEach(s=>{
+      ["bastion","storm"].forEach(order=>{
+        for(let r=1;r<=5;r++){
+          const cnt=p.inventory[s.id][order][r-1]||0; if(!cnt) continue;
+          any=true;
+          h+="<div class='entry'><div class='line'><div class='fill'>"+
+            "<div class='title'>"+GEAR_NAMES[s.id][order][r-1]+"<span class='tag'>×"+cnt+"</span></div>"+
+            "<div class='note'>"+s.name+" · "+statTxt(gearItemStats(s.cat,order,r))+"</div></div>"+
+            "<button class='seal' data-act='equip' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Надеть</button>"+
+            "<button class='seal' data-act='dismantle' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Разобрать</button></div>";
+        }
+      });
+    });
+    if(!any) h+=hollow("&#9884;","Склад снаряжения пуст.");
+    return h;
+  }
+
+  let h=tabsHtml;
   h+=rubric("Снаряжение","горн ур. "+p.b.forge);
   if(p.craft){
     const cf=(W.t-p.craft.t0)/Math.max(1,p.craft.t1-p.craft.t0);
@@ -3385,24 +3453,13 @@ function foInv(){
        "<div class='progress'><i style='width:"+(cf*100).toFixed(1)+"%'></i></div></div>";
   }
   const curRarity=Math.min(5,epochOf(p.b.hall));
-  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+st[k])).join(", ");
   GEAR_SLOTS.forEach(s=>{
     const it=p.gear[s.id];
     h+="<div class='entry"+(it?" hot":"")+"'><div class='line'><div class='fill'>"+
       "<div class='title'>"+s.name+(it?"<span class='tag gilt'>"+RARITY_NAMES[it.rarity-1]+"</span>":"")+"</div>"+
       "<div class='note'>"+(it?GEAR_NAMES[s.id][it.order][it.rarity-1]+" · "+statTxt(gearItemStats(s.cat,it.order,it.rarity))
         :"пусто")+"</div></div>"+
-      (it?"<button class='seal' data-act='unequip' data-slot='"+s.id+"'>Снять</button>":"")+"</div>";
-    ["bastion","storm"].forEach(order=>{
-      for(let r=1;r<=5;r++){
-        const cnt=p.inventory[s.id][order][r-1]||0; if(!cnt) continue;
-        h+="<div class='entry'><div class='line'><div class='fill'>"+
-          "<div class='title'>"+GEAR_NAMES[s.id][order][r-1]+"<span class='tag'>×"+cnt+"</span></div>"+
-          "<div class='note'>склад · "+statTxt(gearItemStats(s.cat,order,r))+"</div></div>"+
-          "<button class='seal' data-act='equip' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Надеть</button>"+
-          "<button class='seal' data-act='dismantle' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Разобрать</button></div>";
-      }
-    });
+      (it?"<button class='seal' data-act='unequip' data-slot='"+s.id+"'>Снять</button>":"")+"</div></div>";
     const haveMat=(p.materials[s.mat][curRarity-1]||0)>=1;
     h+="<div class='entry'><div class='line'><div class='fill'>"+
       "<div class='title'>Сковать "+RARITY_NAMES[curRarity-1].toLowerCase()+"</div>"+
@@ -3412,21 +3469,7 @@ function foInv(){
       "<button class='seal' data-act='craft' data-slot='"+s.id+"' data-order='storm' data-rarity='"+curRarity+"' "+
       (p.craft||!haveMat?"disabled":"")+">Буря</button></div></div>";
   });
-
-  h+=rubric("Материалы","добываются и сливаются в горне");
-  Object.keys(MATERIALS).forEach(mat=>{
-    const stock=p.materials[mat];
-    h+="<div class='entry'><div class='line'><div class='fill'>"+
-      "<div class='title'>"+MATERIALS[mat].name+"</div>"+
-      "<div class='note'>"+RARITY_NAMES.map((rn,i)=>rn.slice(0,3)+": "+(stock[i]||0)).join(" · ")+"</div></div>"+
-      "<button class='seal' data-act='matprod' data-mat='"+mat+"' "+(p.craft?"disabled":"")+">Добыть</button></div>"+
-      "<div class='line' style='margin-top:6px'>"+[0,1,2,3].map(t=>
-        "<button class='seal' data-act='matup' data-mat='"+mat+"' data-tier='"+t+"' "+
-        ((stock[t]||0)<4?"disabled":"")+" style='margin-right:4px'>4×"+RARITY_NAMES[t].slice(0,3)+"→"+RARITY_NAMES[t+1].slice(0,3)+"</button>"
-      ).join("")+"</div></div>";
-  });
-
-    return h;
+  return h;
 }
 
 /* ---- Держава: лавка и расклад сил ---- */
@@ -3731,6 +3774,12 @@ function handleAct(e){
   else if(a==="academytab"){
     academyTab=b.dataset.t;
     if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);
+  }
+  else if(a==="invtab"){
+    invTab=b.dataset.t;
+    lastFolio=""; renderFolio();
+    const menu=$("#menu-modal");
+    if(menu.classList.contains("open")&&menu.dataset.tab==="inv") $("#menu-modal-body").innerHTML=foInv();
   }
   else if(a==="recall"){ const m=W.marches.find(x=>x.id==b.dataset.m);
     if(m){ recallMarch(m); herald("Отряд поворачивает домой.") } }
