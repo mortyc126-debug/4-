@@ -45,24 +45,22 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #banners{flex:0 0 auto;display:flex;height:3px}
 #banners i{flex:1;display:block}
 
-#top{position:fixed;top:10px;left:10px;z-index:15;display:flex;align-items:center;gap:0;
+#top{position:fixed;top:10px;left:10px;z-index:15;display:flex;flex-direction:column;gap:7px;
   background:linear-gradient(180deg,rgba(41,32,19,.6),rgba(16,12,8,.62));
   border:1px solid rgba(61,49,33,.75);border-radius:5px;
-  box-shadow:0 6px 18px rgba(0,0,0,.5);padding:0 12px;min-height:44px;
-  backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);position:relative}
-#top-xp{position:absolute;left:1px;right:1px;bottom:-2px;height:2px;background:rgba(0,0,0,.4);
-  border-radius:0 0 4px 4px;overflow:hidden}
-#top-xp i{display:block;height:100%;background:linear-gradient(90deg,var(--gilt-dim),var(--gilt-hi));width:0%}
+  box-shadow:0 6px 18px rgba(0,0,0,.5);padding:8px 12px;
+  backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
 
-#crest{display:flex;align-items:center;gap:9px;padding-right:12px;margin-right:4px;
-  border-right:1px solid var(--rule-soft);cursor:pointer}
+#crest{display:flex;align-items:center;gap:10px;cursor:pointer}
 #crest:hover .mark{color:var(--gilt-hi)}
 #crest .mark{font-size:19px;color:var(--gilt);line-height:1;transition:color .15s}
-#crest .avatar{width:32px;height:32px;object-fit:contain;display:block}
-#crest .ttl{display:flex;flex-direction:column;line-height:1.2;white-space:nowrap}
-#crest .ttl b{font-size:12px;font-weight:normal;color:var(--vellum);max-width:96px;
+#crest .avatar{width:52px;height:52px;object-fit:contain;display:block}
+#crest .crest-info{display:flex;flex-direction:column;line-height:1.3;white-space:nowrap;gap:3px}
+#crest .crest-info b{font-size:14px;font-weight:normal;color:var(--vellum);max-width:150px;
   overflow:hidden;text-overflow:ellipsis}
-#crest .ttl s{font-size:10px;font-family:var(--data);color:var(--gilt-dim);text-decoration:none}
+#crest-power{display:flex;align-items:center;gap:5px;font-family:var(--data);font-size:14px;
+  color:var(--gilt-hi);font-weight:bold}
+#crest-power .ico{width:17px;height:17px;object-fit:contain}
 
 .profile-avatar-wrap{position:relative}
 .profile-avatar{width:52px;height:52px;object-fit:contain;display:block}
@@ -89,16 +87,15 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   border:none;border-radius:50%;color:var(--gilt-hi);overflow:hidden}
 #menu-btn span{display:none;font-size:19px} /* текстовый фолбэк, если картинки нет */
 
-.purse{display:flex;align-items:center;gap:16px;padding:0 14px;flex:0 0 auto}
-.coin{display:flex;align-items:center;gap:7px}
+.purse{display:flex;align-items:center;gap:16px;overflow-x:auto;scrollbar-width:none}
+.purse::-webkit-scrollbar{display:none}
+.coin{display:flex;align-items:center;gap:7px;flex:0 0 auto}
 .coin .disc{width:22px;height:22px;border-radius:50%;flex:0 0 auto;object-fit:contain}
 .coin .amt{font-family:var(--data);font-size:14px;font-variant-numeric:tabular-nums;
   letter-spacing:-.01em;color:var(--vellum)}
 .coin .rate{font-family:var(--data);font-size:10px;color:var(--vellum-faint);
   display:block;letter-spacing:.02em;text-decoration:none}
 .coin .rate.neg{color:var(--garnet)}
-#might-chip{padding-left:14px;border-left:1px solid var(--rule-soft);flex:0 0 auto}
-#might-chip .amt{color:var(--gilt-hi)}
 
 #chron{margin-left:auto;display:flex;align-items:center;gap:14px;padding-left:14px}
 #chron .stat{text-align:right;line-height:1.25}
@@ -441,6 +438,8 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .levy input[type=range]{width:118px;flex:0 0 auto;accent-color:var(--gilt);height:18px}
 .levy input[type=number]{width:74px;flex:0 0 auto;background:rgba(0,0,0,.4);color:var(--vellum);
   border:1px solid var(--rule);padding:4px 6px;font-family:var(--data);font-size:12.5px;text-align:right}
+#nick-input{background:rgba(0,0,0,.4);color:var(--vellum);border:1px solid var(--rule);
+  padding:7px 9px;font-family:var(--serif);font-size:13.5px;border-radius:3px}
 .chips{display:flex;gap:6px;margin:12px 0}
 .chips .seal{flex:1;text-align:center;padding:5px 0;font-size:11.5px}
 
@@ -467,17 +466,15 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
     box-shadow:0 -8px 26px rgba(0,0,0,.55)}
   #chart{flex:1 1 46%}
   #key,#minimap{display:none}
-  #top{top:8px;left:8px;min-height:38px;padding:0 9px;
-    max-width:calc(100vw - 16px);overflow-x:auto;scrollbar-width:none}
-  #top::-webkit-scrollbar{display:none}
-  #crest{padding-right:7px;margin-right:0;gap:6px}
-  #crest .ttl b{max-width:58px;font-size:11px}
-  #crest .ttl s{font-size:9px}
-  .purse{gap:6px;padding:0 6px;flex:0 0 auto}
+  #top{top:8px;left:8px;padding:7px 9px;max-width:calc(100vw - 16px)}
+  #crest{gap:7px}
+  #crest .avatar{width:40px;height:40px}
+  #crest .crest-info b{max-width:110px;font-size:12.5px}
+  #crest-power{font-size:12px}
+  .purse{gap:8px}
   .coin .disc{width:15px;height:15px}
   .coin .amt{font-size:12.5px}
   .coin .rate{font-size:9px}
-  #might-chip{padding-left:8px}
   #chron{gap:9px;padding-left:8px}
   #chron .stat s{display:none}
   #chron .stat b{font-size:12px}
@@ -499,14 +496,14 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   </div>
 
   <header id="top">
-    <div id="crest"><span class="mark">&#9884;</span><img id="crest-avatar" class="avatar" alt="" style="display:none">
-      <span class="ttl"><b id="crest-name">Новый лорд</b><s id="crest-lv"></s></span></div>
-    <div id="top-xp"><i id="top-xp-bar"></i></div>
-    <div class="purse" id="purse"></div>
-    <div class="coin" id="might-chip" title="Сила города">
-      <img class="disc" src="images/ui/icon-power.png" alt="">
-      <span><b class="amt" id="might">—</b></span>
+    <div id="crest">
+      <span class="mark">&#9884;</span><img id="crest-avatar" class="avatar" alt="" style="display:none">
+      <div class="crest-info">
+        <b id="crest-name">Безымянный лорд</b>
+        <span id="crest-power"><img class="ico" src="images/ui/icon-power.png" alt="">—</span>
+      </div>
     </div>
+    <div class="purse" id="purse"></div>
     <div id="chron" style="display:none">
       <div class="stat"><b id="daytime">—</b><s>Хроника</s></div>
       <select id="tempo" title="Ускорение времени — только для проверки">
@@ -1248,7 +1245,7 @@ const centerDist=p=>Math.hypot(p.x-CFG.MAP/2,p.y-CFG.MAP/2)/(CFG.MAP/2); // 0 ц
 
 function newPlayer(id,race,x,y,isBot){
   const aggr=.4+RNG()*.5;
-  const p={id,race,x,y,isBot,name:"",
+  const p={id,race,x,y,isBot,name:"",nick:"",
     res:{food:100000,wood:100000,stone:100000,gold:100000},resAt:0,
     b:{},queues:[null,null],train:{inf:null,arc:null,cav:null,sie:null},
     troops:{},wounded:{},
@@ -1315,6 +1312,7 @@ function genWorld(seed){
   const ps = findSpot(.62,.9);
   const me = newPlayer(W.nextId++, "human", ps.x, ps.y, false);
   me.name="Ваш город";
+  me.nick="Безымянный лорд";
   me.shieldUntil = 3*86400;      // три дня защиты новичка
   Object.assign(me.b,{hall:3,store:8,barracks:2,range:2,stable:1,academy:2,wall:2});
   me.b.farm[0]=3; me.b.lumber[0]=3; me.b.quarry[0]=2; me.b.mine[0]=2; me.b.hospital[0]=3;
@@ -2517,7 +2515,7 @@ const FONT=getComputedStyle(document.body).fontFamily;   // читаем оди�
 const cv=$("#map"), g=cv.getContext("2d");
 const mini=$("#mini"), mg=mini.getContext("2d");
 let view={x:0,y:0,z:8}, drag=null, sel=null, hover=null;
-let tab="city", tempo=1, lastReal=Date.now(), lastFolio="", academyTab="mil", invTab="res";
+let tab="city", tempo=1, lastReal=Date.now(), lastFolio="", academyTab="mil", invTab="res", genTab="overview";
 
 /* ---- Рельеф в буфер ---------------------------------------------------- */
 let terrain=null;
@@ -2873,16 +2871,8 @@ function renderTop(){
       "<span><b class='amt'>"+fmt(p.res[r])+"</b>"+
       "<s class='rate"+(v<0?" neg":"")+"'>"+(v<0?"−":"+")+fmt(Math.abs(v))+"/ч</s></span></div>";
   }).join("");
-  $("#might").textContent=fmt(power(p));
-  if(p.gen&&p.gen.id!=null){
-    $("#crest-name").textContent=genOf(p).name;
-    $("#crest-lv").textContent="Ур. "+p.gen.lv;
-    $("#top-xp-bar").style.width=(p.gen.xp/genXpNeed(p.gen.lv)*100).toFixed(1)+"%";
-  } else {
-    $("#crest-name").textContent="Новый лорд";
-    $("#crest-lv").textContent="выберите полководца";
-    $("#top-xp-bar").style.width="0%";
-  }
+  $("#crest-name").textContent=p.nick||"Безымянный лорд";
+  $("#crest-power").innerHTML="<img class='ico' src='images/ui/icon-power.png' alt=''>"+fmt(power(p));
   const avSrc=playerAvatarSrc(p);
   if(avSrc!==lastCrestAvatar){
     lastCrestAvatar=avSrc;
@@ -3060,13 +3050,27 @@ function storeInfoHtml(p){
   const cap=capacity(p);
   return "<table id='bm-stats'>"+RES.map(r=>"<tr><td>Защищено: "+RES_NAME[r]+"</td><td>"+fmt(cap[r])+"</td></tr>").join("")+"</table>";
 }
+const RESEARCH_FIELD_NAME = {
+  prodFood:"добыча еды", prodWood:"добыча дерева", prodStone:"добыча камня", prodGold:"добыча золота",
+  build:"скорость стройки", researchSpeed:"скорость исследований",
+  gatherFW:"сбор еды/дерева", gatherSG:"сбор камня/золота", gather:"скорость сбора",
+  load:"грузоподъёмность обозов", cap:"защита ресурсов",
+  raise:"поднятие из мёртвых", mercy:"милосердие",
+  atkInf:"атака пехоты", defInf:"защита пехоты",
+  atkArc:"атака лучников", defArc:"защита лучников",
+  atkCav:"атака конницы", defCav:"защита конницы",
+  atkSie:"атака осады", defSie:"защита осады",
+  atk:"атака войск", def:"защита войск", hp:"здоровье войск",
+  trainSpeed:"скорость обучения", march:"скорость марша", scoutBonus:"точность разведки",
+};
 function academyTreeHtml(p){
   const B=bonuses(p);
   const nodeEffectDesc=(n,lv,nx)=>{
     if(n.unlock) return lv>=1?"Открыто":"Откроет T"+n.unlock.tier;
     const list=n.effects||[{field:n.field,total:n.total}];
-    const now=list.map(e=>"+"+Math.round(e.total*(lv/n.max)*100)+"% "+e.field).join(", ");
-    const next=list.map(e=>"+"+Math.round(e.total*(nx/n.max)*100)+"% "+e.field).join(", ");
+    const fname=f=>RESEARCH_FIELD_NAME[f]||f;
+    const now=list.map(e=>"+"+Math.round(e.total*(lv/n.max)*100)+"% "+fname(e.field)).join(", ");
+    const next=list.map(e=>"+"+Math.round(e.total*(nx/n.max)*100)+"% "+fname(e.field)).join(", ");
     return "сейчас <em>"+now+"</em>"+(lv>=n.max?"":" · дальше <em>"+next+"</em>");
   };
   let h="<div id='bm-tree'>";
@@ -3206,6 +3210,10 @@ function foProfile(){
      shieldSvg(p.race,26)+"</div><div class='fill'>"+
      "<div class='title'>"+RACES[p.race].name+"</div>"+
      "<div class='note'>"+RACES[p.race].desc+"</div></div></div>"+
+     "<div class='line' style='margin-top:9px'>"+
+     "<input id='nick-input' type='text' maxlength='24' value='"+(p.nick||"").replace(/'/g,"&#39;")+"' "+
+     "placeholder='Ваш ник' style='flex:1;min-width:0'>"+
+     "<button class='seal' data-act='savenick'>Сохранить</button></div>"+
      "<table class='roll' style='margin-top:9px'>"+
      "<tr><td>Сила города</td><td>"+RU(power(p))+"</td></tr>"+
      "<tr><td>Войска в городе</td><td>"+RU(garrison(p))+"</td></tr></table></div>";
@@ -3332,9 +3340,45 @@ function foGen(){
     "<table class='roll' style='margin-top:9px'><tr><td>Сила полководца</td><td>"+RU(genPower)+"</td></tr></table>"+
     genSkillBadges(p)+
     "<div class='line' style='margin-top:9px'>"+
-    "<button class='seal' onclick=\"document.getElementById('gen-talents-anchor').scrollIntoView({behavior:'smooth'})\">Таланты</button>"+
-    "<button class='seal' data-act='opentab' data-tab='inv'>Экипировка</button>"+
+    "<button class='seal' data-act='gentab' data-t='talents'>Таланты</button>"+
+    "<button class='seal' data-act='opengear'>Экипировка</button>"+
     "</div></div>";
+
+  h+="<div id='inv-tabs'>"+
+    "<button class='"+(genTab==="overview"?"on":"")+"' data-act='gentab' data-t='overview'>Обзор</button>"+
+    "<button class='"+(genTab==="talents"?"on":"")+"' data-act='gentab' data-t='talents'>Таланты</button>"+
+    "</div>";
+
+  if(genTab==="talents"){
+    for(const bk in GENERAL_TREE){
+      const br=GENERAL_TREE[bk];
+      let spent=0; br.nodes.forEach(n=>spent+=(p.gen.tal[n.id]||0));
+      const totalMax=br.nodes.reduce((a,n)=>a+n.max,0);
+      h+=rubric("Личное дерево: "+br.name, spent+" из "+totalMax);
+      br.nodes.forEach(n=>{
+        const v=p.gen.tal[n.id]||0, full=v>=n.max;
+        h+="<div class='entry"+(v>0?" hot":"")+"'><div class='line'><div class='fill'>"+
+          "<div class='title'>"+n.name+"<span class='tag"+(full?" gilt":"")+"'>"+v+"/"+n.max+"</span></div>"+
+          "<div class='note'>"+n.txt+" · сейчас <em>+"+(v*n.per*100).toFixed(0)+"%</em></div></div>"+
+          "<button class='seal' data-act='tal' data-id='"+n.id+"' "+
+          (p.gen.pts<=0||full?"disabled":"")+">Вложить</button></div></div>";
+      });
+    }
+    for(const bk in TALENTS){
+      const br=TALENTS[bk];
+      let spent=0; br.nodes.forEach(n=>spent+=(p.gen.tal[n.id]||0));
+      h+=rubric(br.name, spent+" из 25");
+      br.nodes.forEach(n=>{
+        const v=p.gen.tal[n.id]||0, full=v>=5;
+        h+="<div class='entry"+(v>0?" hot":"")+"'><div class='line'><div class='fill'>"+
+          "<div class='title'>"+n.name+"<span class='tag"+(full?" gilt":"")+"'>"+v+"/5</span></div>"+
+          "<div class='note'>"+n.txt+" · сейчас <em>+"+(v*n.per*100).toFixed(0)+"%</em></div></div>"+
+          "<button class='seal' data-act='tal' data-id='"+n.id+"' "+
+          (p.gen.pts<=0||full?"disabled":"")+">Вложить</button></div></div>";
+      });
+    }
+    return h;
+  }
 
   h+=rubric("Личные статы","участвует в бою наравне с войском");
   h+="<div class='entry'><table class='roll'>"+
@@ -3352,36 +3396,6 @@ function foGen(){
     "<tr><td>Скорость сбора</td><td>+"+(B.gather*100).toFixed(0)+"%</td></tr>"+
     "<tr><td>Поднятие павших</td><td class='"+(B.raise>0?"good":"")+"'>"+(B.raise*100).toFixed(0)+"%</td></tr>"+
     "</table></div>";
-
-  h+="<div id='gen-talents-anchor'></div>";
-  for(const bk in GENERAL_TREE){
-    const br=GENERAL_TREE[bk];
-    let spent=0; br.nodes.forEach(n=>spent+=(p.gen.tal[n.id]||0));
-    const totalMax=br.nodes.reduce((a,n)=>a+n.max,0);
-    h+=rubric("Личное дерево: "+br.name, spent+" из "+totalMax);
-    br.nodes.forEach(n=>{
-      const v=p.gen.tal[n.id]||0, full=v>=n.max;
-      h+="<div class='entry"+(v>0?" hot":"")+"'><div class='line'><div class='fill'>"+
-        "<div class='title'>"+n.name+"<span class='tag"+(full?" gilt":"")+"'>"+v+"/"+n.max+"</span></div>"+
-        "<div class='note'>"+n.txt+" · сейчас <em>+"+(v*n.per*100).toFixed(0)+"%</em></div></div>"+
-        "<button class='seal' data-act='tal' data-id='"+n.id+"' "+
-        (p.gen.pts<=0||full?"disabled":"")+">Вложить</button></div></div>";
-    });
-  }
-
-  for(const bk in TALENTS){
-    const br=TALENTS[bk];
-    let spent=0; br.nodes.forEach(n=>spent+=(p.gen.tal[n.id]||0));
-    h+=rubric(br.name, spent+" из 25");
-    br.nodes.forEach(n=>{
-      const v=p.gen.tal[n.id]||0, full=v>=5;
-      h+="<div class='entry"+(v>0?" hot":"")+"'><div class='line'><div class='fill'>"+
-        "<div class='title'>"+n.name+"<span class='tag"+(full?" gilt":"")+"'>"+v+"/5</span></div>"+
-        "<div class='note'>"+n.txt+" · сейчас <em>+"+(v*n.per*100).toFixed(0)+"%</em></div></div>"+
-        "<button class='seal' data-act='tal' data-id='"+n.id+"' "+
-        (p.gen.pts<=0||full?"disabled":"")+">Вложить</button></div></div>";
-    });
-  }
   return h;
 }
 
@@ -3771,6 +3785,16 @@ function handleAct(e){
     if(p.gen.id==null){ p.gen.id=+b.dataset.id; herald("Выбран генерал: "+GENERALS[p.race][p.gen.id].name+".") }
   }
   else if(a==="opentab"){ openMenuModal(b.dataset.tab); }
+  else if(a==="opengear"){ invTab="gear"; openMenuModal("inv"); }
+  else if(a==="savenick"){
+    const inp=$("#nick-input");
+    if(inp){ const v=inp.value.trim().slice(0,24); p.nick=v||"Безымянный лорд"; herald("Ник сохранён."); renderTop(); }
+  }
+  else if(a==="gentab"){
+    genTab=b.dataset.t;
+    const menu=$("#menu-modal");
+    if(menu.classList.contains("open")&&menu.dataset.tab==="gen") $("#menu-modal-body").innerHTML=foGen();
+  }
   else if(a==="academytab"){
     academyTab=b.dataset.t;
     if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);
