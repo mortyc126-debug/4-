@@ -292,11 +292,6 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   overflow:hidden;touch-action:none}
 #citymap-wrap img.base{display:block;width:100%;height:100%;
   pointer-events:none;-webkit-user-drag:none}
-#city-banner{position:absolute;left:50%;bottom:3%;transform:translateX(-50%);z-index:3;
-  text-align:center;pointer-events:none;text-shadow:0 2px 6px rgba(0,0,0,.85)}
-#city-banner b{display:block;font-size:15px;letter-spacing:.05em;color:var(--gilt-hi)}
-#city-banner s{display:block;font-size:10.5px;font-family:var(--data);
-  color:var(--vellum-dim);text-decoration:none;margin-top:1px}
 .cbuild{position:absolute;box-sizing:border-box;cursor:pointer;touch-action:none;
   -webkit-tap-highlight-color:transparent;user-select:none}
 .cbuild .shape{position:absolute;inset:0;border:2px solid transparent;
@@ -2888,8 +2883,7 @@ let lastCart="";
 function renderCartouche(){
   const el=$("#cartouche");
   const put=h=>{ if(h!==lastCart){ lastCart=h; el.innerHTML=h } };
-  if(!sel){ const p0=me(); put("<div class='hd'>"+p0.name+"</div>"+
-      "<div class='co'><span>Ратуша</span><b>ур. "+p0.b.hall+"</b></div>"+
+  if(!sel){ put("<div class='hd'>Штабной стол</div>"+
       "<div class='hint'>Выберите клетку на чертеже, чтобы рассмотреть её.</div>"); return }
   const o=W.map[key(sel.x,sel.y)], p=me();
   const coord="<span class='n' style='font-family:var(--data);font-size:10px;color:var(--vellum-faint)'>"+
@@ -2973,8 +2967,7 @@ function cityCellImg(c){
 }
 function renderCityMap(){
   const p=me();
-  let h="<div id='citymap-wrap'><img class='base' src='map.jpg'>"+
-    "<div id='city-banner'><b>"+p.name+"</b><s>Ур. "+p.b.hall+" Ратуши</s></div>";
+  let h="<div id='citymap-wrap'><img class='base' src='map.jpg'>";
   CITY_CELLS.forEach(c=>{
     const lv=cityCellLevel(p,c);
     if(c.bk===null){ // Портал — задел на будущее
