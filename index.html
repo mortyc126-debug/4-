@@ -164,8 +164,10 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   background-image:url(images/ui/parchment.jpg);background-size:139.13% 107.84%;background-position:47.2% 46.8%;
   padding:44px 52px 60px;color:#2c2114;box-shadow:0 20px 60px rgba(0,0,0,.7);
   display:flex;flex-direction:column}
-#bm-close{position:absolute;top:12px;right:14px;width:30px;height:30px;background:transparent;
+#bm-close{position:absolute;top:12px;right:14px;width:30px;height:30px;
+  background:transparent url(images/ui/icon-close.png) center/contain no-repeat;
   border:none;color:#5a4530;font-size:22px;line-height:1}
+#bm-close span{display:none}
 #bm-title{font-size:22px;font-variant:small-caps;letter-spacing:.08em;text-align:center;
   margin-bottom:4px;color:#2c2114}
 #bm-sub{text-align:center;font-size:13px;color:#5a4530;margin-bottom:16px}
@@ -284,7 +286,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .slotcell{flex:0 0 auto;width:56px;height:56px;border-radius:6px;position:relative;cursor:pointer;
   background:linear-gradient(180deg,rgba(38,30,21,.88),rgba(22,17,11,.9));
   border:1px solid var(--rule);box-shadow:0 4px 14px rgba(0,0,0,.5)}
-.slotcell.empty{opacity:.32;cursor:default}
+.slotcell.empty{opacity:.7;cursor:default}
 .slotcell img{position:absolute;inset:9%;width:82%;height:82%;object-fit:contain;pointer-events:none;
   filter:drop-shadow(0 2px 4px rgba(0,0,0,.6))}
 .slotcell .timer{position:absolute;top:2px;left:0;right:0;text-align:center;font-family:var(--data);
@@ -492,7 +494,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 <div id="menu-modal"><button id="menu-modal-close" data-act="closemenu">&times;</button><div id="menu-modal-body"></div></div>
 
 <div id="building-modal"><div id="bm-sheet">
-  <button id="bm-close" data-act="closebuilding">&times;</button>
+  <button id="bm-close" data-act="closebuilding"><span>&times;</span></button>
   <div id="bm-body"></div>
 </div></div>
 
@@ -2820,31 +2822,27 @@ function renderBrigades(p){
   p.queues.forEach(q=>{
     if(q){
       const f=(W.t-q.t0)/Math.max(1,q.t1-q.t0);
-      const img="images/buildings/"+q.b+(q.plot!=null?(q.plot+1):"")+".png";
       const idx=cityCellIndexFor(q.b,q.plot);
       h+="<div class='slotcell' data-act='opencell' data-idx='"+idx+"' "+
          "title='"+buildingName(q.b,p)+" — готово через "+fmtDur(q.t1-W.t)+"'>"+
-         "<img src='"+img+"'><span class='timer'>"+fmtDur(q.t1-W.t)+"</span>"+
+         "<img src='images/ui/icon-build.png'><span class='timer'>"+fmtDur(q.t1-W.t)+"</span>"+
          "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
-    } else h+="<div class='slotcell empty' title='Бригада свободна'></div>";
+    } else h+="<div class='slotcell empty' title='Бригада свободна'><img src='images/ui/icon-free.png'></div>";
   });
   h+="</div>";
   return h;
 }
 function renderFieldArmy(p){
-  const mine=W.marches.filter(m=>m.pid===p.id), slots=marchSlots(p.b.hall);
+  const mine=W.marches.filter(m=>m.pid===p.id);
   let h="<div id='fieldarmy'>";
-  for(let i=0;i<slots;i++){
-    const m=mine[i];
-    if(m){
-      const f=(W.t-m.t0)/Math.max(1,m.t1-m.t0);
-      const st={go:"в пути",gather:"собирает",back:"возвращается"}[m.state]||m.state;
-      h+="<div class='slotcell' data-act='marchinfo' data-m='"+m.id+"' "+
-         "title='"+RU(countUnits(m.units))+" воинов, "+st+" · цель "+m.tx+"·"+m.ty+"'>"+
-         "<img src='images/ui/icon-army.png'><span class='timer'>"+fmtDur(m.t1-W.t)+"</span>"+
-         "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
-    } else h+="<div class='slotcell empty' title='Место в поле свободно'></div>";
-  }
+  mine.forEach(m=>{
+    const f=(W.t-m.t0)/Math.max(1,m.t1-m.t0);
+    const st={go:"в пути",gather:"собирает",back:"возвращается"}[m.state]||m.state;
+    h+="<div class='slotcell' data-act='marchinfo' data-m='"+m.id+"' "+
+       "title='"+RU(countUnits(m.units))+" воинов, "+st+" · цель "+m.tx+"·"+m.ty+"'>"+
+       "<img src='images/ui/icon-march.png'><span class='timer'>"+fmtDur(m.t1-W.t)+"</span>"+
+       "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
+  });
   h+="</div>";
   return h;
 }
