@@ -525,6 +525,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 <div id="veil"><div id="scroll"></div></div>
 <div id="herald"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 "use strict";
 /* =========================================================================
@@ -2366,19 +2367,54 @@ function advanceTo(target){
 }
 
 /* =========================================================================
-   СОХРАНЕНИЕ. Работает и внутри Claude (window.storage), и локально
-   (localStorage), и просто в памяти, если нет ни того ни другого.
+   СОХРАНЕНИЕ. Приоритет: облако (Supabase, по анонимному device_id) →
+   window.storage (внутри Claude) → localStorage → просто в памяти.
+   Регистрации и ников пока нет — это отдельный будущий блок; сейчас каждое
+   устройство синхронизируется само с собой через случайный UUID.
    ========================================================================= */
+const SUPABASE_URL="https://xzuwqgpwzlmpglnuijio.supabase.co";
+const SUPABASE_ANON_KEY="sb_publishable_OOPvf-dpPbzy4kqC4a88jg_kwgpqkQz";
+const sb=(window.supabase&&window.supabase.createClient)
+  ? window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY)
+  : null;
+function deviceId(){
+  try{
+    let id=localStorage.getItem("fourbanners:device");
+    if(!id){
+      id=(crypto.randomUUID?crypto.randomUUID():"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,c=>{
+        const r=Math.random()*16|0,v=c=="x"?r:(r&0x3|0x8); return v.toString(16);
+      }));
+      localStorage.setItem("fourbanners:device",id);
+    }
+    return id;
+  }catch(e){ return "anon" }
+}
+const DEVICE_ID=deviceId();
 const Store={
   async get(k){
+    if(sb){
+      try{
+        const {data,error}=await sb.from("saves").select("data")
+          .eq("device_id",DEVICE_ID).eq("save_key",k).maybeSingle();
+        if(!error&&data) return data.data;
+      }catch(e){}
+    }
     try{ if(window.storage){const r=await window.storage.get(k);return r?r.value:null} }catch(e){}
     try{ return localStorage.getItem(k) }catch(e){ return null }
   },
   async set(k,v){
+    if(sb){
+      try{
+        await sb.from("saves").upsert({device_id:DEVICE_ID,save_key:k,data:v,updated_at:new Date().toISOString()});
+      }catch(e){}
+    }
     try{ if(window.storage){await window.storage.set(k,v);return} }catch(e){}
     try{ localStorage.setItem(k,v) }catch(e){}
   },
   async del(k){
+    if(sb){
+      try{ await sb.from("saves").delete().eq("device_id",DEVICE_ID).eq("save_key",k) }catch(e){}
+    }
     try{ if(window.storage){await window.storage.delete(k);return} }catch(e){}
     try{ localStorage.removeItem(k) }catch(e){}
   }
