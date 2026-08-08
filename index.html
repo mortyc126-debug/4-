@@ -55,7 +55,13 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   border-right:1px solid var(--rule-soft);cursor:pointer}
 #crest:hover .mark{color:var(--gilt-hi)}
 #crest .mark{font-size:19px;color:var(--gilt);line-height:1;transition:color .15s}
+#crest .avatar{width:28px;height:28px;border-radius:50%;object-fit:cover;
+  border:1px solid var(--gilt);box-shadow:0 0 4px rgba(0,0,0,.4);display:block}
 #crest .ttl{display:none}
+
+.profile-avatar-wrap{position:relative}
+.profile-avatar{width:44px;height:44px;border-radius:50%;object-fit:cover;
+  border:1px solid var(--gilt);box-shadow:0 0 6px rgba(0,0,0,.4);display:block}
 
 #menu-btn{position:fixed;right:14px;bottom:14px;z-index:20;width:70px;height:70px;padding:0;
   background-image:url(images/ui/icon-menu.png);background-size:175.82% 117.17%;
@@ -455,7 +461,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   </div>
 
   <header id="top">
-    <div id="crest"><span class="mark">&#9884;</span><span class="ttl">Четыре Знамени</span></div>
+    <div id="crest"><span class="mark">&#9884;</span><img class="avatar" src="images/ui/avatar-lord.png" alt="" onload="this.previousElementSibling.style.display='none'" onerror="this.remove()"><span class="ttl">Четыре Знамени</span></div>
     <div class="purse" id="purse"></div>
     <div class="coin" id="might-chip" title="Сила города">
       <img class="disc" src="images/ui/icon-power.png" alt="">
@@ -519,6 +525,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 <div id="veil"><div id="scroll"></div></div>
 <div id="herald"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 "use strict";
 /* =========================================================================
@@ -911,7 +918,7 @@ const BUILDINGS = {
   lumber:  {name:"Лесопилка",     max:30, prod:"wood", plots:4},
   quarry:  {name:"Каменоломня",   max:30, prod:"stone", plots:4},
   mine:    {name:"Золотая шахта", max:30, prod:"gold", plots:4},
-  store:   {name:"Склад",         max:30, desc:"Вместимость ресурсов"},
+  store:   {name:"Склад",         max:30, desc:"Защищает ресурсы от разграбления при штурме города"},
   barracks:{name:"Казармы",       max:30, train:"inf"},
   range:   {name:"Стрельбище",    max:30, train:"arc"},
   stable:  {name:"Конюшня",       max:30, train:"cav"},
@@ -1392,8 +1399,9 @@ function capacity(p){    // теперь своя вместимость на к
 }
 function syncRes(p){
   const dt=(W.t-p.resAt)/3600; if(dt<=0){p.resAt=W.t;return}
-  const pr=production(p), cap=capacity(p);
-  for(const r of RES) p.res[r]=clamp(p.res[r]+pr[r]*dt, 0, r==="gold"?cap[r]*2:cap[r]);
+  const pr=production(p);
+  // склад не ограничивает накопление — он только защищает часть ресурсов при разграблении города (см. battleCity)
+  for(const r of RES) p.res[r]=Math.max(0, p.res[r]+pr[r]*dt);
   p.resAt=W.t;
 }
 function canPay(p,c){ syncRes(p); return RES.every(r=>!c[r]||p.res[r]>=c[r]) }
@@ -2359,19 +2367,54 @@ function advanceTo(target){
 }
 
 /* =========================================================================
-   СОХРАНЕНИЕ. Работает и внутри Claude (window.storage), и локально
-   (localStorage), и просто в памяти, если нет ни того ни другого.
+   СОХРАНЕНИЕ. Приоритет: облако (Supabase, по анонимному device_id) →
+   window.storage (внутри Claude) → localStorage → просто в памяти.
+   Регистрации и ников пока нет — это отдельный будущий блок; сейчас каждое
+   устройство синхронизируется само с собой через случайный UUID.
    ========================================================================= */
+const SUPABASE_URL="https://xzuwqgpwzlmpglnuijio.supabase.co";
+const SUPABASE_ANON_KEY="sb_publishable_OOPvf-dpPbzy4kqC4a88jg_kwgpqkQz";
+const sb=(window.supabase&&window.supabase.createClient)
+  ? window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY)
+  : null;
+function deviceId(){
+  try{
+    let id=localStorage.getItem("fourbanners:device");
+    if(!id){
+      id=(crypto.randomUUID?crypto.randomUUID():"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,c=>{
+        const r=Math.random()*16|0,v=c=="x"?r:(r&0x3|0x8); return v.toString(16);
+      }));
+      localStorage.setItem("fourbanners:device",id);
+    }
+    return id;
+  }catch(e){ return "anon" }
+}
+const DEVICE_ID=deviceId();
 const Store={
   async get(k){
+    if(sb){
+      try{
+        const {data,error}=await sb.from("saves").select("data")
+          .eq("device_id",DEVICE_ID).eq("save_key",k).maybeSingle();
+        if(!error&&data) return data.data;
+      }catch(e){}
+    }
     try{ if(window.storage){const r=await window.storage.get(k);return r?r.value:null} }catch(e){}
     try{ return localStorage.getItem(k) }catch(e){ return null }
   },
   async set(k,v){
+    if(sb){
+      try{
+        await sb.from("saves").upsert({device_id:DEVICE_ID,save_key:k,data:v,updated_at:new Date().toISOString()});
+      }catch(e){}
+    }
     try{ if(window.storage){await window.storage.set(k,v);return} }catch(e){}
     try{ localStorage.setItem(k,v) }catch(e){}
   },
   async del(k){
+    if(sb){
+      try{ await sb.from("saves").delete().eq("device_id",DEVICE_ID).eq("save_key",k) }catch(e){}
+    }
     try{ if(window.storage){await window.storage.delete(k);return} }catch(e){}
     try{ localStorage.removeItem(k) }catch(e){}
   }
@@ -2942,7 +2985,7 @@ function hallInfoHtml(p){
 }
 function storeInfoHtml(p){
   const cap=capacity(p);
-  return "<table id='bm-stats'>"+RES.map(r=>"<tr><td>"+RES_NAME[r]+"</td><td>"+fmt(cap[r])+"</td></tr>").join("")+"</table>";
+  return "<table id='bm-stats'>"+RES.map(r=>"<tr><td>Защищено: "+RES_NAME[r]+"</td><td>"+fmt(cap[r])+"</td></tr>").join("")+"</table>";
 }
 function academyTreeHtml(p){
   const B=bonuses(p);
@@ -3066,10 +3109,14 @@ function foProfile(){
   const p=me();
   let h=rubric("Профиль","в разработке");
   h+="<div class='entry hot'><div class='line'>"+
-     "<div style='flex:0 0 auto'>"+shieldSvg(p.race,26)+"</div><div class='fill'>"+
+     "<div style='flex:0 0 auto' class='profile-avatar-wrap'>"+
+     "<img class='profile-avatar' src='images/ui/avatar-lord.png' alt='' "+
+     "onload=\"this.nextElementSibling.style.display='none'\" onerror=\"this.remove()\">"+
+     shieldSvg(p.race,26)+"</div><div class='fill'>"+
      "<div class='title'>"+RACES[p.race].name+"</div>"+
      "<div class='note'>"+RACES[p.race].desc+"</div></div></div>"+
      "<table class='roll' style='margin-top:9px'>"+
+     "<tr><td>Сила города</td><td>"+RU(power(p))+"</td></tr>"+
      "<tr><td>Войска в городе</td><td>"+RU(garrison(p))+"</td></tr></table></div>";
   return h;
 }
