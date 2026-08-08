@@ -206,6 +206,11 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #bm-stats td{padding:5px 0;border-bottom:1px solid rgba(90,69,48,.25);color:#3a2c1c}
 #bm-stats td:last-child{text-align:right;font-family:var(--data)}
 #bm-opens{font-size:12.5px;text-align:center;color:#8a6d2c;margin-bottom:14px;font-weight:bold}
+#ac-tabs{display:flex;gap:6px;margin-bottom:10px}
+#ac-tabs button{flex:1;padding:7px 4px;font-size:12px;text-align:center;
+  background:rgba(90,69,48,.12);border:1px solid rgba(90,69,48,.3);border-radius:4px;
+  color:#5a4530}
+#ac-tabs button.on{background:rgba(138,109,44,.28);border-color:#8a6d2c;color:#2c2114;font-weight:bold}
 #bm-reqs{margin-bottom:18px}
 #bm-reqs .req-row{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:14px}
 #bm-reqs .req-row img{width:20px;height:20px;object-fit:contain;flex:0 0 auto}
@@ -2497,7 +2502,7 @@ const FONT=getComputedStyle(document.body).fontFamily;   // читаем оди�
 const cv=$("#map"), g=cv.getContext("2d");
 const mini=$("#mini"), mg=mini.getContext("2d");
 let view={x:0,y:0,z:8}, drag=null, sel=null, hover=null;
-let tab="city", tempo=1, lastReal=Date.now(), lastFolio="";
+let tab="city", tempo=1, lastReal=Date.now(), lastFolio="", academyTab="mil";
 
 /* ---- Рельеф в буфер ---------------------------------------------------- */
 let terrain=null;
@@ -3052,10 +3057,16 @@ function academyTreeHtml(p){
   let h="<div id='bm-tree'>";
   if(p.rsch){
     const rn=findNode(p.rsch.id);
+    const f=Math.min(1,(W.t-p.rsch.t0)/Math.max(1,p.rsch.t1-p.rsch.t0));
     h+="<div class='rgroup'>Идёт исследование</div>"+
        "<div class='rnode'><div class='rnode-hd'><b>"+rn.name+" &rarr; ур. "+p.rsch.lv+"</b></div>"+
+       "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div>"+
        "<div class='rnode-eff'>Готово через <em>"+fmtDur(p.rsch.t1-W.t)+"</em></div></div>";
   }
+  h+="<div id='ac-tabs'>"+
+    "<button class='"+(academyTab==="mil"?"on":"")+"' data-act='academytab' data-t='mil'>Военные</button>"+
+    "<button class='"+(academyTab==="eco"?"on":"")+"' data-act='academytab' data-t='eco'>Экономические</button>"+
+    "</div>";
   const renderGroup=(arr,label)=>{
     h+="<div class='rgroup'>"+label+"</div>";
     arr.filter(n=>!n.race||n.race===p.race).forEach(n=>{
@@ -3073,8 +3084,8 @@ function academyTreeHtml(p){
          "</button></div>";
     });
   };
-  renderGroup(ACADEMY_TREE.eco,"Хозяйство");
-  renderGroup(ACADEMY_TREE.mil,"Армия");
+  if(academyTab==="eco") renderGroup(ACADEMY_TREE.eco,"Хозяйство");
+  else renderGroup(ACADEMY_TREE.mil,"Армия");
   h+="</div>";
   return h;
 }
@@ -3711,6 +3722,10 @@ function handleAct(e){
     if(p.gen.id==null){ p.gen.id=+b.dataset.id; herald("Выбран генерал: "+GENERALS[p.race][p.gen.id].name+".") }
   }
   else if(a==="opentab"){ openMenuModal(b.dataset.tab); }
+  else if(a==="academytab"){
+    academyTab=b.dataset.t;
+    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);
+  }
   else if(a==="recall"){ const m=W.marches.find(x=>x.id==b.dataset.m);
     if(m){ recallMarch(m); herald("Отряд поворачивает домой.") } }
   else if(a==="shield"){
