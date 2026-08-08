@@ -63,6 +63,10 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .profile-avatar{width:44px;height:44px;border-radius:50%;object-fit:cover;
   border:1px solid var(--gilt);box-shadow:0 0 6px rgba(0,0,0,.4);display:block}
 
+.gen-portrait-wrap{position:relative}
+.gen-portrait{width:44px;height:44px;border-radius:50%;object-fit:cover;
+  border:1px solid var(--gilt);box-shadow:0 0 6px rgba(0,0,0,.4);display:block}
+
 #menu-btn{position:fixed;right:14px;bottom:14px;z-index:20;width:70px;height:70px;padding:0;
   background-image:url(images/ui/icon-menu.png);background-size:175.82% 117.17%;
   background-position:47.64% 61.2%;background-repeat:no-repeat;
@@ -3132,7 +3136,7 @@ function foCity(){
 /* ---- Войско ---- */
 function unitAvatarHtml(p,t,i){
   return "<span class='troop-avatar'>"+
-    "<img class='portrait' src='images/units/"+p.race+"-"+t+".png' alt=''>"+
+    "<img class='portrait' src='images/units/"+p.race+"-"+t+i+".png' alt=''>"+
     "<img class='class-badge' src='images/ui/class-"+t+".png' alt=''>"+
     "<img class='tier-badge' src='images/ui/tier-"+i+".png' alt=''>"+
     "</span>";
@@ -3193,12 +3197,17 @@ function genStats(p){
     def: Math.round((15+2.4*g)*(1+B.genDefMod))+gear.def,
   };
 }
+function genPortraitHtml(race,i){
+  return "<img class='gen-portrait' src='images/generals/"+race+"-"+(i+1)+".png' alt='' "+
+    "onload=\"if(this.nextElementSibling)this.nextElementSibling.style.display='none'\" onerror=\"this.remove()\">";
+}
 function foGen(){
   const p=me();
   if(p.gen.id==null){
     let h=rubric("Выбор полководца","решение окончательное");
     GENERALS[p.race].forEach((g,i)=>{
-      h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto'>"+shieldSvg(p.race,26)+"</div><div class='fill'>"+
+      h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
+        genPortraitHtml(p.race,i)+shieldSvg(p.race,26)+"</div><div class='fill'>"+
         "<div class='title'>"+g.name+"<span class='tag gilt'>"+g.role+"</span></div>"+
         "<div class='note'>"+g.bonus+"</div></div></div>"+
         "<button class='seal' data-act='pickgen' data-id='"+i+"'>Выбрать</button></div>";
@@ -3208,7 +3217,8 @@ function foGen(){
   const G=genOf(p), B=bonuses(p), S=genStats(p);
   const need=genXpNeed(p.gen.lv), f=p.gen.xp/need, lvCap=Math.min(60,epochOf(p.b.hall)*12);
   let h=rubric("Полководец");
-  h+="<div class='entry hot'><div class='line'>"+ring(p.gen.lv,60)+"<div class='fill'>"+
+  h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
+    genPortraitHtml(p.race,p.gen.id||0)+"</div>"+ring(p.gen.lv,60)+"<div class='fill'>"+
     "<div class='title'>"+G.name+"<span class='tag gilt'>"+G.role+"</span></div><div class='note'>"+G.bonus+
     (p.gen.pts>0?" · <em>очков к раздаче: "+p.gen.pts+"</em>":"")+
     (p.gen.lv>=lvCap&&lvCap<60?" · потолок эпохи: "+lvCap:"")+"</div></div></div>"+
