@@ -272,8 +272,8 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .cbuild.built .shape{border-color:transparent;background:transparent}
 .cbuild.built:hover .shape{border-color:var(--gilt-hi);background:rgba(194,153,60,.18)}
 .cbuild.locked .shape{border-color:transparent;cursor:not-allowed}
-.cbuild img.bimg{position:absolute;inset:6%;width:88%;height:88%;object-fit:contain;
-  pointer-events:none;filter:drop-shadow(0 3px 5px rgba(0,0,0,.6))}
+.cbuild img.bimg{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;
+  object-position:center;pointer-events:none;filter:drop-shadow(0 3px 5px rgba(0,0,0,.6))}
 .cbuild .lvl{position:absolute;bottom:2px;right:4px;font-family:var(--data);font-size:10px;
   color:var(--gilt-hi);background:rgba(0,0,0,.55);padding:0 3px;line-height:1.4;z-index:2}
 
@@ -503,20 +503,32 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 "use strict";
 /* =========================================================================
    БЛОК НАСТРОЕК. Всё, что влияет на баланс, собрано здесь.
-   Кривые взяты по форме из Rise of Kingdoms, шкала времени сжата в ~10 раз
-   (в RoK ратуша 25 ур. = 126 дней "в сухую", потому что рассчитано на
-   ускорители и помощь альянса; у нас ни того, ни другого нет).
+   Кривые взяты по форме из Rise of Kingdoms и откалиброваны по проверенным
+   цифрам реального RoK (без ускорителей и помощи альянса, которых тут нет):
+     — Ратуша 25 ур. в RoK = 126 дней 8 часов суммарно "в сухую" —
+       BUILD_BASE подобран так, чтобы 1→25 уровень в сумме давали ровно это
+       число (уровни 26-30 — наше собственное продолжение сверх RoK).
+     — Обучение T4-юнита в RoK = 100 сек за штуку — trainTime откалиброван
+       под эту точку, тиры 1-3 и 5 продолжают ту же кривую ×1.9 за тир.
+     — Для исследований прямых данных найти не удалось (сайты с таблицами
+       недоступны), масштаб взят тем же коэффициентом, что и у построек;
+       для проверки: топовые ветки экономики выходят на ~52 дня, что
+       совпадает с независимо найденным "some research times exceed 50
+       days" для верхних тиров.
+   Числа получаются очень долгими — это осознанный выбор: игра рассчитана
+   на будущее добавление ускорителей, а без них длительность должна быть
+   настоящей роковской, а не сокращённой.
    ========================================================================= */
 const CFG = {
   MAP: 100,                 // размер стороны карты
   BOTS: 12,                 // количество ботов
-  TIME_COMPRESS: 10,        // во сколько раз быстрее RoK
-  BUILD_BASE: 45,           // сек: время постройки 1 уровня
+  TIME_COMPRESS: 1,         // во сколько раз быстрее RoK (1 — как в RoK, без сжатия)
+  BUILD_BASE: 1803,         // сек: время постройки 1 уровня (откалибровано под 126д8ч на 25 ур.)
   BUILD_GROW: 1.36,         // множитель времени за уровень — пересчитан под 30 ур.
                             // (было 1.42 под потолок 25; тот же множитель на 30 уровней
                             // разогнал бы последний уровень до ~13.6 суток за раз)
-  COST_BASE: 200,           // базовая стоимость 1 уровня
-  COST_GROW: 1.58,
+  COST_BASE: 9126,          // базовая стоимость 1 уровня (откалибровано под RoK: ратуша 10 ур.=277.5к, 25 ур.=82.2М еды)
+  COST_GROW: 1.4614,
   PROD_BASE: 60,            // единиц ресурса в час на 1 уровне
   PROD_GROW: 1.52,
   CAP_BASE: 4000,           // вместимость склада 1 ур.
@@ -626,14 +638,14 @@ const RACE_EPOCHS = {
    Хозяйство готово целиком. Военное дерево и венцы рас — следующим заходом:
    там нужна отдельная правка боевого расчёта (атака/защита по родам войск). */
 const RESEARCH_GROWTH=1.35, RESEARCH_WAVE={1:1,2:5,3:20,4:60};
-const ECO_TIME_BASE=381, MIL_TIME_BASE=320;
+const ECO_TIME_BASE=15268, MIL_TIME_BASE=12823;
 function researchTime(branch,wave,lv){
   const base = branch==="eco"?ECO_TIME_BASE:MIL_TIME_BASE;
   return Math.round(base*RESEARCH_WAVE[wave]*Math.pow(RESEARCH_GROWTH,lv-1));
 }
 function researchCost(branch,wave,lv){
   const t=researchTime(branch,wave,lv), base=t*4.44;   // та же пропорция цена/время, что у построек
-  return {food:Math.round(base*.9),wood:Math.round(base),stone:Math.round(base*.75),gold:Math.round(base*.25)};
+  return {food:Math.round(base),wood:Math.round(base),stone:Math.round(base*.435),gold:0};
 }
 const ACADEMY_TREE = {
   eco: [
@@ -884,12 +896,13 @@ const BUILDINGS = {
   range:   {name:"Стрельбище",    max:30, train:"arc"},
   stable:  {name:"Конюшня",       max:30, train:"cav"},
   siege:   {name:"Мастерская",    max:30, train:"sie"},
-  hospital:{name:"Госпиталь",     max:30, desc:"Раненые вместо убитых"},
+  hospital:{name:"Госпиталь",     max:30, desc:"Раненые вместо убитых", plots:4},
   academy: {name:"Академия",      max:30, desc:"Исследования и открытие тиров"},
   wall:    {name:"Стена",         max:30, desc:"Защита города при обороне"},
   garrison:{name:"Гарнизон",      max:30, desc:"Доп. защита при осаде и предупреждение о марше врага"},
   scout:   {name:"Разведка",      max:30, desc:"Раскрывает сведения о войсках противника"},
   forge:   {name:"Горн",          max:30, desc:"Ковка снаряжения для полководца (механика в разработке)"},
+  portal:  {name:"Портал",        max:30, desc:"Врата в иные земли (механика в разработке)"},
 };
 const BKEYS = Object.keys(BUILDINGS);
 // Разметка карты города: координаты в % от изображения, bk — ключ здания (null = задел на будущее)
@@ -904,7 +917,7 @@ const CITY_CELLS=[
 {n:"Склад",bk:"store",x:18.45,y:40.0,w:21.98,h:11.88,ch:14},{n:"Стрельбище",bk:"range",x:18.45,y:53.32,w:19.85,h:11.32,ch:14},{n:"Мастерская",bk:"siege",x:22.9,y:66.22,w:10.48,h:7.2,ch:17},
 {n:"Горн",bk:"forge",x:33.35,y:65.86,w:8.28,h:8.04,ch:17},{n:"Казармы",bk:"barracks",x:42.28,y:29.97,w:15.5,h:16.42,pill:1},{n:"Конюшня",bk:"stable",x:61.05,y:53.89,w:20.65,h:11.49,ch:14},
 {n:"Академия",bk:"academy",x:56.08,y:65.55,w:19.98,h:9.79,ch:14},{n:"Разведка",bk:"scout",x:57.22,y:75.82,w:9.96,h:4.84,ch:22},{n:"Гарнизон",bk:"garrison",x:30.13,y:74.74,w:11.69,h:5.36,ch:22},
-{n:"Ворота",bk:"wall",x:43.96,y:74.74,w:11.74,h:8.51,ch:12},{n:"Портал",bk:null,x:41.11,y:49.54,w:16.99,h:16.89,pill:1,future:1}
+{n:"Ворота",bk:"wall",x:43.96,y:74.74,w:11.74,h:8.51,ch:12},{n:"Портал",bk:"portal",x:41.11,y:49.54,w:16.99,h:16.89,pill:1}
 ];
 const cityShapeCss = c => c.pill ? "border-radius:50%;" :
   (v=>`clip-path:polygon(${v}% 0%,${100-v}% 0%,100% ${v}%,100% ${100-v}%,${100-v}% 100%,${v}% 100%,0% ${100-v}%,0% ${v}%);`)(c.ch||18);
@@ -1122,23 +1135,27 @@ const buildTime = lv => CFG.BUILD_BASE*Math.pow(CFG.BUILD_GROW,lv-1);
 const buildCost = (lv,p) => {
   const base = CFG.COST_BASE*Math.pow(CFG.COST_GROW,lv-1);
   const cut = p ? (1-(bonuses(p).buildCostCut||0)) : 1;
-  return {food:Math.round(base*.9*cut),wood:Math.round(base*cut),stone:Math.round(base*.75*cut),gold:Math.round(base*.25*cut)};
+  // в RoK постройки не стоят золота — только еда/дерево/камень, дерево=еда, камень ~0.435 от них
+  return {food:Math.round(base*cut),wood:Math.round(base*cut),stone:Math.round(base*.435*cut),gold:0};
 };
 const prodRate  = lv => lv<=0?0:CFG.PROD_BASE*Math.pow(CFG.PROD_GROW,lv-1);   // в час
 const storeCap  = lv => Math.round(CFG.CAP_BASE*Math.pow(CFG.CAP_GROW,Math.max(1,lv)-1));
 const troopStat = (type,tier,stat) => Math.round(TROOP_TYPES[type][stat]*TIER_MULT[tier-1]);
 const troopCost = (type,tier) => {
   const b = 40*Math.pow(2.3,tier-1);
-  return {food:Math.round(b*1.2),wood:Math.round(b),stone:Math.round(b*.5),gold:Math.round(b*.15)};
+  return {food:Math.round(b*1.2),wood:Math.round(b),stone:Math.round(b*.5),gold:tier>=3?Math.round(b*.15):0};
 };
-const trainTime = (type,tier) => 8*Math.pow(1.9,tier-1);     // сек за 1 юнита
+const trainTime = (type,tier) => 14.58*Math.pow(1.9,tier-1);     // сек за 1 юнита (T4=100с — проверенная точка RoK)
 const TRAIN_BLD = {inf:"barracks",arc:"range",cav:"stable",sie:"siege"};
+const BLD_TRAIN = {barracks:"inf",range:"arc",stable:"cav",siege:"sie"};
 const trainCap = lv => 100 + lv*40;                            // максимум за один заказ
 const genXpNeed = lv => Math.round(120*Math.pow(1.18,lv-1));
 const epochOf   = hall => hall>=25?5 : hall>=19?4 : hall>=13?3 : hall>=7?2 : 1;   // 5 эпох × 6 уровней
 const citySize  = hall => Math.min(5, epochOf(hall));         // город растёт 1×1 → 5×5
 const marchSlots= hall => hall>=28?5 : hall>=22?4 : hall>=16?3 : hall>=10?2 : 1;
 const hospitalCap = lv => lv<=0?0:Math.round(300*Math.pow(1.55,lv-1));
+const totalHospitalCap = p => p.b.hospital.reduce((s,lv)=>s+hospitalCap(lv),0);
+const hallGateLevel = (p,k) => isMulti(k) ? p.b[k][0] : p.b[k];
 const maxWallHp = lv => 3000+lv*2500;
 function syncWall(p){
   const mx=maxWallHp(p.b.wall);
@@ -1160,7 +1177,7 @@ function newPlayer(id,race,x,y,isBot){
   const aggr=.4+RNG()*.5;
   const p={id,race,x,y,isBot,name:"",
     res:{food:8000,wood:8000,stone:3000,gold:1500},resAt:0,
-    b:{},queues:[null,null],train:null,
+    b:{},queues:[null,null],train:{inf:null,arc:null,cav:null,sie:null},
     troops:{},wounded:{},
     gen:{lv:1,xp:0,pts:0,tal:{},id:isBot?(aggr>0.5?0:1):null}, gear:{}, tech:{}, rsch:null,
     inventory:Object.fromEntries(GEAR_SLOTS.map(s=>[s.id,{bastion:[0,0,0,0,0],storm:[0,0,0,0,0]}])),
@@ -1226,8 +1243,8 @@ function genWorld(seed){
   const me = newPlayer(W.nextId++, "human", ps.x, ps.y, false);
   me.name="Ваш город";
   me.shieldUntil = 3*86400;      // три дня защиты новичка
-  Object.assign(me.b,{hall:3,store:3,barracks:2,range:2,stable:1,hospital:3,academy:2,wall:2});
-  me.b.farm[0]=3; me.b.lumber[0]=3; me.b.quarry[0]=2; me.b.mine[0]=2;
+  Object.assign(me.b,{hall:3,store:3,barracks:2,range:2,stable:1,academy:2,wall:2});
+  me.b.farm[0]=3; me.b.lumber[0]=3; me.b.quarry[0]=2; me.b.mine[0]=2; me.b.hospital[0]=3;
   W.players.push(me);
   clearArea(ps.x,ps.y,1); W.map[key(ps.x,ps.y)]={t:"city",x:ps.x,y:ps.y,pid:me.id};
 
@@ -1242,9 +1259,9 @@ function genWorld(seed){
     used[race]++;
     // боты стартуют не с нуля, иначе мир мёртвый
     const head = ri(2,5);
-    for(const k of ["hall","store","barracks","range","stable","hospital","academy","wall"])
+    for(const k of ["hall","store","barracks","range","stable","academy","wall"])
       b.b[k]=clamp(head+ri(-2,1),1,CFG.MAX_LEVEL);
-    for(const k of ["farm","lumber","quarry","mine"])
+    for(const k of ["farm","lumber","quarry","mine","hospital"])
       b.b[k][0]=clamp(head+ri(-2,1),1,CFG.MAX_LEVEL);   // на старте эпоха 1 — доступен только участок №1
     b.b.hall = head;
     TKEYS.forEach(t=>{b.troops[t][1]=ri(200,900)});
@@ -1611,7 +1628,7 @@ function raiseSkeletons(f,loss){
 /* Раненые вместо убитых: часть потерь уходит в госпиталь */
 function splitLosses(p,loss,defending){
   const B=bonuses(p);
-  const cap=Math.round(hospitalCap(p.b.hospital)*(1+B.hosp));
+  const cap=Math.round(totalHospitalCap(p)*(1+B.hosp));
   let inHosp=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) inHosp+=p.wounded[t][i]});
   let base = defending?0.60:0.35;
   base = Math.min(0.9, base + B.mercy);
@@ -1689,9 +1706,10 @@ const EV = {
     if(!p.isBot) logg(buildingName(q.b,p)+(q.plot!=null?" (участок "+(q.plot+1)+")":"")+" достроена до "+q.lv+" уровня.","good");
   },
   train(d){
-    const p=W.players.find(q=>q.id===d.pid); if(!p||!p.train)return;
-    const T=p.train; p.troops[T.type][T.tier]+=T.n; p.train=null;
-    if(!p.isBot) logg("Обучено: "+unitName(T.type,T.tier,p.race)+" ×"+T.n.toLocaleString("ru"),"good");
+    const p=W.players.find(q=>q.id===d.pid); if(!p)return;
+    const T=p.train[d.type]; if(!T)return;
+    p.troops[T.type][T.tier]+=T.n; p.train[d.type]=null;
+    if(!p.isBot) logg((T.retrain?"Переобучено: ":"Обучено: ")+unitName(T.type,T.tier,p.race)+" ×"+T.n.toLocaleString("ru"),"good");
   },
   research(d){
     const p=W.players.find(q=>q.id===d.pid); if(!p||!p.rsch)return;
@@ -1961,7 +1979,7 @@ function botThink(p){
         if(lv>CFG.MAX_LEVEL) continue;
         if(bk!=="hall" && lv>p.b.hall) continue;
         if(bk==="hall" && lv>1){
-          if(HALL_REQ.some(k=>p.b[k]<p.b.hall)) continue;   // ратуша ждёт ключевые здания
+          if(HALL_REQ.some(k=>hallGateLevel(p,k)<p.b.hall)) continue;   // ратуша ждёт ключевые здания
         }
         const c=buildCost(lv,p);
         if(!RES.every(r=>p.res[r]>=(c[r]||0))) continue;
@@ -1984,8 +2002,8 @@ function botThink(p){
     }
   }
   /* --- обучение --- */
-  if(!p.train){
-    const types=["inf","arc","cav","sie"].filter(t=>p.b[TRAIN_BLD[t]]>0);
+  {
+    const types=["inf","arc","cav","sie"].filter(t=>p.b[TRAIN_BLD[t]]>0 && !p.train[t]);
     if(types.length){
       const t=types[Math.floor(RNG()*types.length)];
       const tier=tierUnlockedFor(p,t);
@@ -2142,7 +2160,7 @@ function startBuild(p,bk,plot){
   const lv=cur+1;
   if(lv>CFG.MAX_LEVEL) return {err:"Максимальный уровень"};
   if(bk!=="hall"&&lv>p.b.hall) return {err:"Требуется ратуша "+lv+" уровня"};
-  if(bk==="hall"){ const need=HALL_REQ.filter(k=>p.b[k]<p.b.hall);
+  if(bk==="hall"){ const need=HALL_REQ.filter(k=>hallGateLevel(p,k)<p.b.hall);
     if(need.length) return {err:"Сначала до "+p.b.hall+" ур.: "+need.map(k=>buildingName(k,p)).join(", ")} }
   const slot=p.queues.findIndex(q=>!q);
   if(slot<0) return {err:"Обе бригады заняты"};
@@ -2164,7 +2182,7 @@ function trainMax(p,type,tier){
   return Math.max(0,Math.min(cap,afford));
 }
 function startTrain(p,type,tier,n){
-  if(p.train) return {err:"Казармы заняты"};
+  if(p.train[type]) return {err:"Здание уже занято набором"};
   const cap=trainCap(p.b[TRAIN_BLD[type]]);
   n=Math.round(n);
   if(n<1) return {err:"Наберите хотя бы одного воина"};
@@ -2174,8 +2192,45 @@ function startTrain(p,type,tier,n){
   if(!canPay(p,tot)) return {err:"Не хватает ресурсов"};
   pay(p,tot);
   const t=trainDuration(p,type,tier,n);
-  p.train={type,tier,n,t0:W.t,t1:W.t+t};
-  schedule(t,"train",{pid:p.id});
+  p.train[type]={type,tier,n,t0:W.t,t1:W.t+t};
+  schedule(t,"train",{pid:p.id,type});
+  return {ok:1};
+}
+/* Переобучение: старые воины идут в зачёт следующего тира — платим и ждём
+   только разницу между тирами, а не полную стоимость набора с нуля. */
+function retrainCost(type,fromTier,n){
+  const from=troopCost(type,fromTier), to=troopCost(type,fromTier+1), tot={};
+  RES.forEach(r=>tot[r]=Math.max(0,Math.round((to[r]-from[r])*n)));
+  return tot;
+}
+function retrainDuration(p,type,fromTier,n){
+  const delta=Math.max(1,trainTime(type,fromTier+1)-trainTime(type,fromTier));
+  const blv=p.b[TRAIN_BLD[type]];
+  return delta*n/((1+p.b.hall*0.06)*(1+bonuses(p).trainSpeed)*(1+lateSpeed(blv)));
+}
+function retrainMax(p,type,fromTier){
+  const have=p.troops[type][fromTier]||0;
+  const c=retrainCost(type,fromTier,1), cap=trainCap(p.b[TRAIN_BLD[type]]);
+  const afford=Math.floor(Math.min.apply(null,RES.map(r=>c[r]?p.res[r]/c[r]:1e9)));
+  return Math.max(0,Math.min(have,cap,afford));
+}
+function startRetrain(p,type,fromTier,n){
+  if(p.train[type]) return {err:"Здание уже занято набором"};
+  const maxT=tierUnlockedFor(p,type);
+  if(fromTier<1||fromTier+1>maxT) return {err:"Следующий тир ещё не открыт"};
+  n=Math.round(n);
+  if(n<1) return {err:"Выберите хотя бы одного воина"};
+  const have=p.troops[type][fromTier]||0;
+  if(n>have) return {err:"Недостаточно воинов этого тира"};
+  const cap=trainCap(p.b[TRAIN_BLD[type]]);
+  if(n>cap) return {err:"За раз можно переобучить не больше "+cap};
+  const c=retrainCost(type,fromTier,n);
+  if(!canPay(p,c)) return {err:"Не хватает ресурсов"};
+  pay(p,c);
+  p.troops[type][fromTier]-=n;
+  const t=retrainDuration(p,type,fromTier,n);
+  p.train[type]={type,tier:fromTier+1,n,t0:W.t,t1:W.t+t,retrain:true};
+  schedule(t,"train",{pid:p.id,type});
   return {ok:1};
 }
 function startResearch(p,id){
@@ -2805,7 +2860,7 @@ function renderCityMap(){
     h+="<div class='cbuild"+(built?" built":"")+(locked?" locked":"")+"' data-cell='"+CITY_CELLS.indexOf(c)+"' "+
        "style='left:"+c.x+"%;top:"+c.y+"%;width:"+c.w+"%;height:"+c.h+"%'>"+
        "<div class='shape' style='"+cityShapeCss(c)+"'></div>"+
-       (built?"<img class='bimg' src='"+cityCellImg(c)+"'>"+"<span class='lvl'>"+lv+"</span>":"")+
+       (built?(c.bk!=="wall"?"<img class='bimg' src='"+cityCellImg(c)+"'>":"")+"<span class='lvl'>"+lv+"</span>":"")+
        "</div>";
   });
   h+="</div>";
@@ -2903,12 +2958,47 @@ function academyTreeHtml(p){
   h+="</div>";
   return h;
 }
+function trainInfoHtml(p,type){
+  const T=p.train[type];
+  if(T){
+    return "<div id='bm-tree'><div class='rgroup'>"+(T.retrain?"Идёт переобучение":"Идёт набор")+"</div>"+
+       "<div class='rnode'><div class='rnode-hd'><b>"+unitName(T.type,T.tier,p.race)+"</b>"+
+       "<span class='rnode-lv'>&times;"+RU(T.n)+"</span></div>"+
+       "<div class='rnode-eff'>Готовы через <em>"+fmtDur(T.t1-W.t)+"</em></div></div></div>";
+  }
+  const maxT=tierUnlockedFor(p,type);
+  const c=troopCost(type,maxT);
+  const can=Math.floor(Math.min.apply(null,RES.map(r=>c[r]?p.res[r]/c[r]:1e9)));
+  const beats=TROOP_TYPES[type].beats;
+  let h="<div id='bm-tree'><div class='rgroup'>Набор</div>"+
+    "<div class='rnode'><div class='rnode-hd'><b>"+unitName(type,maxT,p.race)+"</b><span class='rnode-lv'>T"+maxT+"</span></div>"+
+    "<div class='rnode-eff'>Атака <em>"+Math.round(troopStat(type,maxT,"atk")*troopMod(p.race,type,"atk"))+"</em> · защита <em>"+troopStat(type,maxT,"def")+
+    "</em> · здоровье <em>"+troopStat(type,maxT,"hp")+"</em>"+
+    (beats?" · бьёт "+TROOP_TYPES[beats].name.toLowerCase():"")+
+    "<br>по средствам <em>"+fmt(can)+"</em></div>"+
+    "<div class='rnode-cost'>"+RES.filter(r=>c[r]).map(r=>"<span class='"+(p.res[r]<c[r]?"short":"")+"'>"+fmt(c[r])+" "+RES_NAME[r]+"</span>").join("")+"</div>"+
+    "<button class='rnode-go' data-act='train' data-t='"+type+"' data-tier='"+maxT+"' "+(can<1?"disabled":"")+">Набрать</button></div>";
+  let retrainHtml="", anyRetrain=false;
+  for(let i=1;i<maxT;i++){
+    const have=p.troops[type][i]; if(!have) continue;
+    anyRetrain=true;
+    const canR=retrainMax(p,type,i), cR=retrainCost(type,i,1);
+    retrainHtml+="<div class='rnode'><div class='rnode-hd'><b>"+unitName(type,i,p.race)+" &rarr; "+unitName(type,i+1,p.race)+"</b>"+
+      "<span class='rnode-lv'>в строю "+RU(have)+"</span></div>"+
+      "<div class='rnode-eff'>Доступно к переобучению: <em>"+fmt(canR)+"</em></div>"+
+      "<div class='rnode-cost'>"+RES.filter(r=>cR[r]).map(r=>"<span class='"+(p.res[r]<cR[r]?"short":"")+"'>"+fmt(cR[r])+" "+RES_NAME[r]+"</span>").join("")+"</div>"+
+      "<button class='rnode-go' data-act='retrain' data-t='"+type+"' data-tier='"+i+"' "+(canR<1?"disabled":"")+">Переобучить</button></div>";
+  }
+  if(anyRetrain) h+="<div class='rgroup'>Переобучение</div>"+retrainHtml;
+  h+="</div>";
+  return h;
+}
 function buildingModalHtml(ci){
   const p=me(), c=CITY_CELLS[ci];
   if(!c||!c.bk) return "";
   const lv=cityCellLevel(p,c), nx=lv+1, maxed=lv>=CFG.MAX_LEVEL;
   let gated=c.bk!=="hall"&&nx>p.b.hall, gateTxt=gated?"нужна ратуша "+nx:"";
-  if(c.bk==="hall"){ const need=HALL_REQ.filter(k=>p.b[k]<p.b.hall);
+  if(c.bk==="hall"){ const need=HALL_REQ.filter(k=>hallGateLevel(p,k)<p.b.hall);
     if(need.length){ gated=true; gateTxt="сначала "+need.map(k=>buildingName(k,p).toLowerCase()+" до "+p.b.hall+" ур.").join(", "); } }
   const locked=c.pl!=null && !plotUnlocked(c.bk,c.pl,p.b.hall);
   if(locked){ gated=true; gateTxt="откроется на эпохе "+(c.pl+1); }
@@ -2924,6 +3014,7 @@ function buildingModalHtml(ci){
   if(c.bk==="hall") h+=hallInfoHtml(p);
   else if(c.bk==="store") h+=storeInfoHtml(p);
   else if(c.bk==="academy") h+=academyTreeHtml(p);
+  else if(BLD_TRAIN[c.bk] && lv>0) h+=trainInfoHtml(p,BLD_TRAIN[c.bk]);
   if(canGo){
     h+="<div id=\'bm-reqs\'>"+RES.map(r=>{
       const need=cst[r]||0; if(!need) return "";
@@ -2978,48 +3069,16 @@ function foArmy(){
     rows.push("<tr><td>"+unitName(t,i,p.race)+" · "+TROOP_TYPES[t].name.toLowerCase()+
       "</td><td>"+RU(n)+"</td></tr>") } });
   h+= rows.length ? "<div class='entry'><table class='roll'>"+rows.join("")+"</table></div>"
-                  : hollow("&#9876;","В столице пусто. Наберите ополчение ниже.");
+                  : hollow("&#9876;","В столице пусто. Наберите войско в казармах, на стрельбище, в конюшне или мастерской на карте города.");
 
   if(hurt>0){
     const c=healCost(p);
     h+=rubric("Лазарет");
     h+="<div class='entry war'><div class='line'><div class='fill'>"+
       "<div class='title'>Раненых: "+RU(hurt)+"</div>"+
-      "<div class='note'>Коек: <em>"+fmt(hospitalCap(p.b.hospital)*(1+B.hosp))+"</em>"+
+      "<div class='note'>Коек: <em>"+fmt(totalHospitalCap(p)*(1+B.hosp))+"</em>"+
       (B.heal<1?" · нежить поднимает своих втрое дешевле":"")+"</div>"+priceRow(p,c)+"</div>"+
       "<button class='seal' data-act='heal'>Поднять</button></div></div>";
-  }
-
-  h+=rubric("Набор");
-  if(p.train){
-    const f=(W.t-p.train.t0)/Math.max(1,p.train.t1-p.train.t0);
-    h+="<div class='entry hot'><div class='line'><div class='fill'>"+
-      "<div class='title'>"+unitName(p.train.type,p.train.tier,p.race)+
-      "<span class='tag gilt'>×"+RU(p.train.n)+"</span></div>"+
-      "<div class='note'>Готовы через <em>"+fmtDur(p.train.t1-W.t)+"</em></div></div></div>"+
-      "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
-  } else {
-    TKEYS.forEach(t=>{
-      const maxT=tierUnlockedFor(p,t);
-      const bk={inf:"barracks",arc:"range",cav:"stable",sie:"siege"}[t];
-      if(p.b[bk]<1){
-        h+="<div class='entry'><div class='line'><div class='fill'><div class='title' style='color:var(--vellum-faint)'>"+
-          TROOP_TYPES[t].name+"</div><div class='note'>Нужна постройка: "+buildingName(bk,p).toLowerCase()+
-          "</div></div></div></div>"; return;
-      }
-      const c=troopCost(t,maxT);
-      const can=Math.floor(Math.min.apply(null,RES.map(r=>c[r]?p.res[r]/c[r]:1e9)));
-      const beats=TROOP_TYPES[t].beats;
-      h+="<div class='entry'><div class='line'><div class='fill'>"+
-        "<div class='title'>"+unitName(t,maxT,p.race)+"<span class='tag'>T"+maxT+"</span>"+
-        (beats?"<span class='tag'>бьёт "+TROOP_TYPES[beats].name.toLowerCase()+"</span>":"<span class='tag'>"+(p.race==="undead"&&t==="sie"?"чудовище":"осада")+"</span>")+"</div>"+
-        "<div class='note'>Атака <em>"+Math.round(troopStat(t,maxT,"atk")*troopMod(p.race,t,"atk"))+"</em> · защита <em>"+troopStat(t,maxT,"def")+
-        "</em> · здоровье <em>"+troopStat(t,maxT,"hp")+"</em><br>Груз "+
-        Math.round(TROOP_TYPES[t].load*TIER_MULT[maxT-1]*troopMod(p.race,t,"load"))+" · шаг "+(TROOP_TYPES[t].speed*troopMod(p.race,t,"speed")).toFixed(2)+
-        " · по средствам <em>"+fmt(can)+"</em></div>"+priceRow(p,c)+"</div>"+
-        "<button class='seal' data-act='train' data-t='"+t+"' data-tier='"+maxT+"' "+
-        (can<1?"disabled":"")+">Набрать</button></div></div>";
-    });
   }
 
   h+=rubric("Отряды в поле",W.marches.filter(m=>m.pid===p.id).length+" из "+marchSlots(p.b.hall));
@@ -3417,11 +3476,16 @@ function handleAct(e){
     openTrainModal(b.dataset.t,+b.dataset.tier);
     return;
   }
+  else if(a==="retrain"){
+    openRetrainModal(b.dataset.t,+b.dataset.tier);
+    return;
+  }
   else if(a==="traingo"){
     if(!trainCtx) return;
-    const r=startTrain(p,trainCtx.type,trainCtx.tier,trainCtx.n);
+    const isRetrain=trainCtx.mode==="retrain";
+    const r=isRetrain?startRetrain(p,trainCtx.type,trainCtx.fromTier,trainCtx.n):startTrain(p,trainCtx.type,trainCtx.tier,trainCtx.n);
     if(r.err){ herald(r.err); return; }
-    herald("Набор начат: "+RU(trainCtx.n)+".");
+    herald((isRetrain?"Переобучение начато: ":"Набор начат: ")+RU(trainCtx.n)+".");
     closeBuildingModal(); lastFolio=""; renderFolio();
     return;
   }
@@ -3541,32 +3605,41 @@ $("#building-modal").addEventListener("input",e=>{
   }
 });
 
-/* ---- Набор войск: карточка на пергаменте ---- */
+/* ---- Набор и переобучение войск: карточка на пергаменте ---- */
 let trainCtx=null;
 function openTrainModal(type,tier){
   const p=me();
   buildingModalSel=-1;
   const max=trainMax(p,type,tier);
-  trainCtx={type,tier,max,n:max,lastLocked:!!p.train||max<1};
+  trainCtx={type,tier,mode:"train",max,n:max,lastLocked:!!p.train[type]||max<1};
+  $("#bm-body").innerHTML = trainSheetHtml();
+  $("#building-modal").classList.add("open");
+  updateTrainSheet();
+}
+function openRetrainModal(type,fromTier){
+  const p=me();
+  buildingModalSel=-1;
+  const max=retrainMax(p,type,fromTier);
+  trainCtx={type,tier:fromTier+1,fromTier,mode:"retrain",max,n:max,lastLocked:!!p.train[type]||max<1};
   $("#bm-body").innerHTML = trainSheetHtml();
   $("#building-modal").classList.add("open");
   updateTrainSheet();
 }
 function trainSheetHtml(){
-  const p=me(), {type,tier,max,n}=trainCtx;
-  const busy=!!p.train, locked=busy||max<1;
+  const p=me(), {type,tier,max,n,fromTier}=trainCtx, isRetrain=trainCtx.mode==="retrain";
+  const busy=!!p.train[type], locked=busy||max<1;
   let h="<img id='bm-art' src='images/buildings/"+TRAIN_BLD[type]+".png'>";
-  h+="<div id='bm-title'>"+unitName(type,tier,p.race)+"</div>";
-  h+="<div id='bm-sub'>набор в столице · тир "+tier+"</div>";
+  h+="<div id='bm-title'>"+(isRetrain?unitName(type,fromTier,p.race)+" &rarr; "+unitName(type,tier,p.race):unitName(type,tier,p.race))+"</div>";
+  h+="<div id='bm-sub'>"+(isRetrain?"переобучение · в строю "+RU(p.troops[type][fromTier]||0):"набор в столице · тир "+tier)+"</div>";
   h+="<div id='bm-qty'><div class='cap'><span>Доступно максимум</span><b>"+RU(max)+"</b></div>"+
      "<div class='row'><input type='range' id='qty-range' min='0' max='"+max+"' value='"+n+"' "+(locked?"disabled":"")+">"+
      "<input type='number' id='qty-num' min='0' max='"+max+"' value='"+n+"' "+(locked?"disabled":"")+"></div></div>";
   if(busy){
     h+="<div id='bm-time'>Казармы заняты другим набором.</div>";
   } else if(max<1){
-    h+="<div id='bm-time'>Не хватает ресурсов ни на одного воина.</div>";
+    h+="<div id='bm-time'>"+(isRetrain?"Нет воинов этого тира или не хватает ресурсов на переобучение.":"Не хватает ресурсов ни на одного воина.")+"</div>";
   } else {
-    const c=troopCost(type,tier);
+    const c=isRetrain?retrainCost(type,fromTier,1):troopCost(type,tier);
     h+="<div id='bm-reqs'>"+RES.map(r=>{
       if(!c[r]) return "";
       return "<div class='req-row' data-r='"+r+"'><img src='images/ui/res-"+r+".png'>"+
@@ -3574,23 +3647,25 @@ function trainSheetHtml(){
     }).join("")+"</div>";
     h+="<div id='bm-time'></div>";
   }
-  h+="<button id='bm-btn' data-act='traingo' "+((busy||max<1||n<=0)?"disabled":"")+">Набрать</button>";
+  h+="<button id='bm-btn' data-act='traingo' "+((busy||max<1||n<=0)?"disabled":"")+">"+(isRetrain?"Переобучить":"Набрать")+"</button>";
   return h;
 }
 function updateTrainSheet(){
-  const p=me(), {type,tier,max,n}=trainCtx;
+  const p=me(), {type,tier,max,n,fromTier}=trainCtx, isRetrain=trainCtx.mode==="retrain";
   $("#qty-range").value=n; $("#qty-num").value=n;
-  const c=troopCost(type,tier);
+  const unitC=isRetrain?retrainCost(type,fromTier,1):troopCost(type,tier);
+  const totC=isRetrain?retrainCost(type,fromTier,n):null;
   RES.forEach(r=>{
-    if(!c[r]) return;
-    const need=Math.round(c[r]*n), short=p.res[r]<need;
+    if(!unitC[r]) return;
+    const need=isRetrain?totC[r]:Math.round(unitC[r]*n), short=p.res[r]<need;
     const el=document.querySelector("#bm-reqs [data-r='"+r+"'] .req-amt");
     if(el){ el.textContent=fmt(need)+" / "+fmt(p.res[r]); el.classList.toggle("short",short) }
   });
   if($("#bm-reqs")){
-    $("#bm-time").textContent = n>0 ? "Время набора: "+fmtDur(trainDuration(p,type,tier,n)) : "Выберите хотя бы одного воина.";
+    const dur=isRetrain?retrainDuration(p,type,fromTier,n):trainDuration(p,type,tier,n);
+    $("#bm-time").textContent = n>0 ? "Время "+(isRetrain?"переобучения: ":"набора: ")+fmtDur(dur) : "Выберите хотя бы одного воина.";
   }
-  $("#bm-btn").disabled = !!p.train || max<1 || n<=0;
+  $("#bm-btn").disabled = !!p.train[type] || max<1 || n<=0;
 }
 function openMenuModal(t){
   $("#menu-modal").dataset.tab = t;
@@ -3605,8 +3680,8 @@ function refreshOpenModal(){
   if($("#building-modal").classList.contains("open")){
     if(trainCtx){
       const p=me();
-      const newMax=trainMax(p,trainCtx.type,trainCtx.tier);
-      const newLocked=!!p.train||newMax<1;
+      const newMax=trainCtx.mode==="retrain"?retrainMax(p,trainCtx.type,trainCtx.fromTier):trainMax(p,trainCtx.type,trainCtx.tier);
+      const newLocked=!!p.train[trainCtx.type]||newMax<1;
       if(newLocked!==trainCtx.lastLocked){
         trainCtx.max=newMax; trainCtx.n=Math.min(trainCtx.n,newMax); trainCtx.lastLocked=newLocked;
         $("#bm-body").innerHTML=trainSheetHtml();
