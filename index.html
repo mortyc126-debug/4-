@@ -911,7 +911,7 @@ const BUILDINGS = {
   lumber:  {name:"Лесопилка",     max:30, prod:"wood", plots:4},
   quarry:  {name:"Каменоломня",   max:30, prod:"stone", plots:4},
   mine:    {name:"Золотая шахта", max:30, prod:"gold", plots:4},
-  store:   {name:"Склад",         max:30, desc:"Вместимость ресурсов"},
+  store:   {name:"Склад",         max:30, desc:"Защищает ресурсы от разграбления при штурме города"},
   barracks:{name:"Казармы",       max:30, train:"inf"},
   range:   {name:"Стрельбище",    max:30, train:"arc"},
   stable:  {name:"Конюшня",       max:30, train:"cav"},
@@ -1392,8 +1392,9 @@ function capacity(p){    // теперь своя вместимость на к
 }
 function syncRes(p){
   const dt=(W.t-p.resAt)/3600; if(dt<=0){p.resAt=W.t;return}
-  const pr=production(p), cap=capacity(p);
-  for(const r of RES) p.res[r]=clamp(p.res[r]+pr[r]*dt, 0, r==="gold"?cap[r]*2:cap[r]);
+  const pr=production(p);
+  // склад не ограничивает накопление — он только защищает часть ресурсов при разграблении города (см. battleCity)
+  for(const r of RES) p.res[r]=Math.max(0, p.res[r]+pr[r]*dt);
   p.resAt=W.t;
 }
 function canPay(p,c){ syncRes(p); return RES.every(r=>!c[r]||p.res[r]>=c[r]) }
@@ -2942,7 +2943,7 @@ function hallInfoHtml(p){
 }
 function storeInfoHtml(p){
   const cap=capacity(p);
-  return "<table id='bm-stats'>"+RES.map(r=>"<tr><td>"+RES_NAME[r]+"</td><td>"+fmt(cap[r])+"</td></tr>").join("")+"</table>";
+  return "<table id='bm-stats'>"+RES.map(r=>"<tr><td>Защищено: "+RES_NAME[r]+"</td><td>"+fmt(cap[r])+"</td></tr>").join("")+"</table>";
 }
 function academyTreeHtml(p){
   const B=bonuses(p);
