@@ -503,15 +503,17 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 "use strict";
 /* =========================================================================
    БЛОК НАСТРОЕК. Всё, что влияет на баланс, собрано здесь.
-   Кривые взяты по форме из Rise of Kingdoms, шкала времени сжата в ~10 раз
-   (в RoK ратуша 25 ур. = 126 дней "в сухую", потому что рассчитано на
-   ускорители и помощь альянса; у нас ни того, ни другого нет).
+   Кривые взяты по форме из Rise of Kingdoms. Раньше шкала времени была
+   сжата в ~10 раз для ускоренного тестирования; теперь строительство,
+   исследования и обучение войск идут в реальном, «роковском» темпе —
+   долго, порой по многу дней на верхних уровнях, без ускорителей и
+   помощи альянса, которых тут просто нет.
    ========================================================================= */
 const CFG = {
   MAP: 100,                 // размер стороны карты
   BOTS: 12,                 // количество ботов
-  TIME_COMPRESS: 10,        // во сколько раз быстрее RoK
-  BUILD_BASE: 45,           // сек: время постройки 1 уровня
+  TIME_COMPRESS: 1,         // во сколько раз быстрее RoK (1 — как в RoK, без сжатия)
+  BUILD_BASE: 450,          // сек: время постройки 1 уровня
   BUILD_GROW: 1.36,         // множитель времени за уровень — пересчитан под 30 ур.
                             // (было 1.42 под потолок 25; тот же множитель на 30 уровней
                             // разогнал бы последний уровень до ~13.6 суток за раз)
@@ -626,7 +628,7 @@ const RACE_EPOCHS = {
    Хозяйство готово целиком. Военное дерево и венцы рас — следующим заходом:
    там нужна отдельная правка боевого расчёта (атака/защита по родам войск). */
 const RESEARCH_GROWTH=1.35, RESEARCH_WAVE={1:1,2:5,3:20,4:60};
-const ECO_TIME_BASE=381, MIL_TIME_BASE=320;
+const ECO_TIME_BASE=3810, MIL_TIME_BASE=3200;
 function researchTime(branch,wave,lv){
   const base = branch==="eco"?ECO_TIME_BASE:MIL_TIME_BASE;
   return Math.round(base*RESEARCH_WAVE[wave]*Math.pow(RESEARCH_GROWTH,lv-1));
@@ -1132,7 +1134,7 @@ const troopCost = (type,tier) => {
   const b = 40*Math.pow(2.3,tier-1);
   return {food:Math.round(b*1.2),wood:Math.round(b),stone:Math.round(b*.5),gold:Math.round(b*.15)};
 };
-const trainTime = (type,tier) => 8*Math.pow(1.9,tier-1);     // сек за 1 юнита
+const trainTime = (type,tier) => 80*Math.pow(1.9,tier-1);     // сек за 1 юнита
 const TRAIN_BLD = {inf:"barracks",arc:"range",cav:"stable",sie:"siege"};
 const trainCap = lv => 100 + lv*40;                            // максимум за один заказ
 const genXpNeed = lv => Math.round(120*Math.pow(1.18,lv-1));
