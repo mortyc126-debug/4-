@@ -884,7 +884,7 @@ const BUILDINGS = {
   range:   {name:"Стрельбище",    max:30, train:"arc"},
   stable:  {name:"Конюшня",       max:30, train:"cav"},
   siege:   {name:"Мастерская",    max:30, train:"sie"},
-  hospital:{name:"Госпиталь",     max:30, desc:"Раненые вместо убитых"},
+  hospital:{name:"Госпиталь",     max:30, desc:"Раненые вместо убитых", plots:4},
   academy: {name:"Академия",      max:30, desc:"Исследования и открытие тиров"},
   wall:    {name:"Стена",         max:30, desc:"Защита города при обороне"},
   garrison:{name:"Гарнизон",      max:30, desc:"Доп. защита при осаде и предупреждение о марше врага"},
@@ -1140,6 +1140,8 @@ const epochOf   = hall => hall>=25?5 : hall>=19?4 : hall>=13?3 : hall>=7?2 : 1; 
 const citySize  = hall => Math.min(5, epochOf(hall));         // город растёт 1×1 → 5×5
 const marchSlots= hall => hall>=28?5 : hall>=22?4 : hall>=16?3 : hall>=10?2 : 1;
 const hospitalCap = lv => lv<=0?0:Math.round(300*Math.pow(1.55,lv-1));
+const totalHospitalCap = p => p.b.hospital.reduce((s,lv)=>s+hospitalCap(lv),0);
+const hallGateLevel = (p,k) => isMulti(k) ? p.b[k][0] : p.b[k];
 const maxWallHp = lv => 3000+lv*2500;
 function syncWall(p){
   const mx=maxWallHp(p.b.wall);
@@ -1227,8 +1229,8 @@ function genWorld(seed){
   const me = newPlayer(W.nextId++, "human", ps.x, ps.y, false);
   me.name="Ваш город";
   me.shieldUntil = 3*86400;      // три дня защиты новичка
-  Object.assign(me.b,{hall:3,store:3,barracks:2,range:2,stable:1,hospital:3,academy:2,wall:2});
-  me.b.farm[0]=3; me.b.lumber[0]=3; me.b.quarry[0]=2; me.b.mine[0]=2;
+  Object.assign(me.b,{hall:3,store:3,barracks:2,range:2,stable:1,academy:2,wall:2});
+  me.b.farm[0]=3; me.b.lumber[0]=3; me.b.quarry[0]=2; me.b.mine[0]=2; me.b.hospital[0]=3;
   W.players.push(me);
   clearArea(ps.x,ps.y,1); W.map[key(ps.x,ps.y)]={t:"city",x:ps.x,y:ps.y,pid:me.id};
 
@@ -1243,9 +1245,9 @@ function genWorld(seed){
     used[race]++;
     // боты стартуют не с нуля, иначе мир мёртвый
     const head = ri(2,5);
-    for(const k of ["hall","store","barracks","range","stable","hospital","academy","wall"])
+    for(const k of ["hall","store","barracks","range","stable","academy","wall"])
       b.b[k]=clamp(head+ri(-2,1),1,CFG.MAX_LEVEL);
-    for(const k of ["farm","lumber","quarry","mine"])
+    for(const k of ["farm","lumber","quarry","mine","hospital"])
       b.b[k][0]=clamp(head+ri(-2,1),1,CFG.MAX_LEVEL);   // на старте эпоха 1 — доступен только участок №1
     b.b.hall = head;
     TKEYS.forEach(t=>{b.troops[t][1]=ri(200,900)});
@@ -1612,7 +1614,7 @@ function raiseSkeletons(f,loss){
 /* Раненые вместо убитых: часть потерь уходит в госпиталь */
 function splitLosses(p,loss,defending){
   const B=bonuses(p);
-  const cap=Math.round(hospitalCap(p.b.hospital)*(1+B.hosp));
+  const cap=Math.round(totalHospitalCap(p)*(1+B.hosp));
   let inHosp=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) inHosp+=p.wounded[t][i]});
   let base = defending?0.60:0.35;
   base = Math.min(0.9, base + B.mercy);
@@ -1962,7 +1964,7 @@ function botThink(p){
         if(lv>CFG.MAX_LEVEL) continue;
         if(bk!=="hall" && lv>p.b.hall) continue;
         if(bk==="hall" && lv>1){
-          if(HALL_REQ.some(k=>p.b[k]<p.b.hall)) continue;   // ратуша ждёт ключевые здания
+          if(HALL_REQ.some(k=>hallGateLevel(p,k)<p.b.hall)) continue;   // ратуша ждёт ключевые здания
         }
         const c=buildCost(lv,p);
         if(!RES.every(r=>p.res[r]>=(c[r]||0))) continue;
@@ -2143,7 +2145,7 @@ function startBuild(p,bk,plot){
   const lv=cur+1;
   if(lv>CFG.MAX_LEVEL) return {err:"Максимальный уровень"};
   if(bk!=="hall"&&lv>p.b.hall) return {err:"Требуется ратуша "+lv+" уровня"};
-  if(bk==="hall"){ const need=HALL_REQ.filter(k=>p.b[k]<p.b.hall);
+  if(bk==="hall"){ const need=HALL_REQ.filter(k=>hallGateLevel(p,k)<p.b.hall);
     if(need.length) return {err:"Сначала до "+p.b.hall+" ур.: "+need.map(k=>buildingName(k,p)).join(", ")} }
   const slot=p.queues.findIndex(q=>!q);
   if(slot<0) return {err:"Обе бригады заняты"};
@@ -2909,7 +2911,7 @@ function buildingModalHtml(ci){
   if(!c||!c.bk) return "";
   const lv=cityCellLevel(p,c), nx=lv+1, maxed=lv>=CFG.MAX_LEVEL;
   let gated=c.bk!=="hall"&&nx>p.b.hall, gateTxt=gated?"нужна ратуша "+nx:"";
-  if(c.bk==="hall"){ const need=HALL_REQ.filter(k=>p.b[k]<p.b.hall);
+  if(c.bk==="hall"){ const need=HALL_REQ.filter(k=>hallGateLevel(p,k)<p.b.hall);
     if(need.length){ gated=true; gateTxt="сначала "+need.map(k=>buildingName(k,p).toLowerCase()+" до "+p.b.hall+" ур.").join(", "); } }
   const locked=c.pl!=null && !plotUnlocked(c.bk,c.pl,p.b.hall);
   if(locked){ gated=true; gateTxt="откроется на эпохе "+(c.pl+1); }
@@ -2986,7 +2988,7 @@ function foArmy(){
     h+=rubric("Лазарет");
     h+="<div class='entry war'><div class='line'><div class='fill'>"+
       "<div class='title'>Раненых: "+RU(hurt)+"</div>"+
-      "<div class='note'>Коек: <em>"+fmt(hospitalCap(p.b.hospital)*(1+B.hosp))+"</em>"+
+      "<div class='note'>Коек: <em>"+fmt(totalHospitalCap(p)*(1+B.hosp))+"</em>"+
       (B.heal<1?" · нежить поднимает своих втрое дешевле":"")+"</div>"+priceRow(p,c)+"</div>"+
       "<button class='seal' data-act='heal'>Поднять</button></div></div>";
   }
