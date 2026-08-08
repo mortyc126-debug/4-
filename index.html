@@ -3508,7 +3508,7 @@ function openTrainModal(type,tier){
   const p=me();
   buildingModalSel=-1;
   const max=trainMax(p,type,tier);
-  trainCtx={type,tier,max,n:max};
+  trainCtx={type,tier,max,n:max,lastLocked:!!p.train||max<1};
   $("#bm-body").innerHTML = trainSheetHtml();
   $("#building-modal").classList.add("open");
   updateTrainSheet();
@@ -3561,6 +3561,28 @@ function openMenuModal(t){
   $("#side-menu").classList.remove("open");
 }
 function closeMenuModal(){ $("#menu-modal").classList.remove("open"); }
+/* ---- Живое обновление открытых окошек раз в секунду, без переоткрытия ---- */
+function refreshOpenModal(){
+  if($("#building-modal").classList.contains("open")){
+    if(trainCtx){
+      const p=me();
+      const newMax=trainMax(p,trainCtx.type,trainCtx.tier);
+      const newLocked=!!p.train||newMax<1;
+      if(newLocked!==trainCtx.lastLocked){
+        trainCtx.max=newMax; trainCtx.n=Math.min(trainCtx.n,newMax); trainCtx.lastLocked=newLocked;
+        $("#bm-body").innerHTML=trainSheetHtml();
+      }
+      updateTrainSheet();
+    } else if(buildingModalSel>=0){
+      $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);
+    }
+  }
+  const menu=$("#menu-modal");
+  if(menu.classList.contains("open")){
+    const t=menu.dataset.tab;
+    $("#menu-modal-body").innerHTML = t==="army"?foArmy(): t==="gen"?foGen(): foInv();
+  }
+}
 $("#menu-btn").addEventListener("click",toggleMenu);
 document.querySelectorAll("#side-menu button").forEach(b=>{
   b.addEventListener("click",()=>openMenuModal(b.dataset.menu));
@@ -3650,7 +3672,7 @@ function frame(){
   let dt=(now-lastReal)/1000; lastReal=now;
   if(dt>0&&dt<3600){ advanceTo(W.t+dt*tempo); sinceSave+=dt; sinceUi+=dt }
   draw(); drawMini();
-  if(sinceUi>1.0){ sinceUi=0; renderTop(); renderFolio(); renderCartouche() }
+  if(sinceUi>1.0){ sinceUi=0; renderTop(); renderFolio(); renderCartouche(); refreshOpenModal() }
   if(sinceSave>20){ sinceSave=0; save() }
   requestAnimationFrame(frame);
 }
