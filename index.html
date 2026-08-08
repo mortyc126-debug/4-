@@ -205,6 +205,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #bm-stats{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px}
 #bm-stats td{padding:5px 0;border-bottom:1px solid rgba(90,69,48,.25);color:#3a2c1c}
 #bm-stats td:last-child{text-align:right;font-family:var(--data)}
+#bm-opens{font-size:12.5px;text-align:center;color:#8a6d2c;margin-bottom:14px;font-weight:bold}
 #bm-reqs{margin-bottom:18px}
 #bm-reqs .req-row{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:14px}
 #bm-reqs .req-row img{width:20px;height:20px;object-fit:contain;flex:0 0 auto}
@@ -3130,7 +3131,14 @@ function buildingModalHtml(ci){
   h+="<div id=\'bm-title\'>"+buildingName(c.bk,p)+(c.pl!=null?" · участок "+(c.pl+1):"")+"</div>";
   h+="<div id=\'bm-sub\'>уровень "+lv+(maxed?" (максимум)":" &rarr; "+nx)+"</div>";
   if(desc) h+="<div id=\'bm-desc\'>"+desc+"</div>";
-  if(c.bk==="hall") h+=hallInfoHtml(p);
+  if(!maxed && lv>0){
+    const term=l=>Math.pow(l,2.1)*12, curPow=power(p), nxPow=Math.round(curPow-term(lv)+term(nx));
+    h+="<table id=\'bm-stats\'><tr><td>Мощь города</td><td>"+fmt(curPow)+" &rarr; "+fmt(nxPow)+"</td></tr></table>";
+  }
+  if(c.bk==="hall"){
+    if(epochOf(nx)>epochOf(lv)) h+="<div id=\'bm-opens\'>Открывает: "+RACE_EPOCHS[p.race][epochOf(nx)-1].title+"</div>";
+    h+=hallInfoHtml(p);
+  }
   else if(c.bk==="store") h+=storeInfoHtml(p);
   else if(c.bk==="academy") h+=academyTreeHtml(p);
   else if(BLD_TRAIN[c.bk] && lv>0) h+=trainInfoHtml(p,BLD_TRAIN[c.bk]);
