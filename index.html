@@ -45,16 +45,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #banners{flex:0 0 auto;display:flex;height:3px}
 #banners i{flex:1;display:block}
 
-#top{flex:0 0 auto;display:flex;align-items:center;gap:0;
-  background:linear-gradient(180deg,var(--wood-lit),var(--wood) 70%,var(--wood-deep));
-  border-bottom:1px solid var(--rule);
-  box-shadow:0 2px 14px rgba(0,0,0,.55);padding:0 14px;min-height:56px}
+#top{position:fixed;top:10px;left:10px;z-index:15;display:flex;align-items:center;gap:0;
+  background:linear-gradient(180deg,rgba(41,32,19,.6),rgba(16,12,8,.62));
+  border:1px solid rgba(61,49,33,.75);border-radius:5px;
+  box-shadow:0 6px 18px rgba(0,0,0,.5);padding:0 12px;min-height:44px;
+  backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
 
-#crest{display:flex;align-items:baseline;gap:9px;padding-right:16px;margin-right:4px;
+#crest{display:flex;align-items:baseline;gap:9px;padding-right:12px;margin-right:4px;
   border-right:1px solid var(--rule-soft)}
 #crest .mark{font-size:19px;color:var(--gilt);line-height:1}
-#crest .ttl{font-size:15px;letter-spacing:.19em;text-transform:uppercase;color:var(--vellum);
-  font-variant:small-caps}
+#crest .ttl{display:none}
 
 #menu-btn{position:fixed;right:14px;bottom:14px;z-index:20;width:70px;height:70px;padding:0;
   background:transparent;border:none;border-radius:50%;color:var(--gilt-hi);
@@ -106,7 +106,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #cartouche .hint{margin-top:7px;padding-top:6px;border-top:1px solid var(--rule-soft);
   font-size:11.5px;color:var(--vellum-faint);font-style:italic}
 
-#minimap{right:14px;top:14px;width:146px;height:146px;padding:5px;cursor:pointer}
+#minimap{right:14px;top:66px;width:146px;height:146px;padding:5px;cursor:pointer}
 #minimap canvas{display:block;width:100%;height:100%;image-rendering:auto;border-radius:1px}
 #mini-label{position:absolute;left:0;right:0;bottom:-17px;text-align:center;font-size:9px;
   letter-spacing:.2em;text-transform:uppercase;color:var(--vellum-faint)}
@@ -117,7 +117,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #tools button:last-child{border-bottom:none}
 #tools button:hover{background:rgba(194,153,60,.14);color:var(--gilt-hi)}
 
-#key{left:14px;top:14px;padding:9px 12px;display:flex;flex-direction:column;gap:5px;
+#key{left:14px;top:66px;padding:9px 12px;display:flex;flex-direction:column;gap:5px;
   pointer-events:none;font-size:11.5px}
 #key .kl{font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--vellum-faint);
   margin-bottom:1px}
@@ -181,6 +181,14 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #bm-reqs .req-row .req-name{flex:1;color:#3a2c1c;min-width:0}
 #bm-reqs .req-row .req-amt{font-family:var(--data);font-size:13px;white-space:nowrap;flex:0 0 auto}
 #bm-reqs .req-row .req-amt.short{color:#8a2f22}
+#bm-qty{margin-bottom:16px}
+#bm-qty .cap{display:flex;justify-content:space-between;font-size:12px;color:#5a4530;margin-bottom:6px}
+#bm-qty .cap b{font-family:var(--data);color:#3a2c1c;font-weight:400}
+#bm-qty .row{display:flex;align-items:center;gap:10px}
+#bm-qty input[type=range]{flex:1;accent-color:#6b5230;height:20px}
+#bm-qty input[type=number]{width:78px;flex:0 0 auto;background:rgba(44,33,20,.08);
+  border:1px solid #8a6d2c;border-radius:3px;padding:7px 6px;font-family:var(--data);
+  font-size:14px;text-align:right;color:#2c2114}
 #bm-time{text-align:center;font-size:12.5px;color:#5a4530;margin-bottom:16px}
 #bm-btn{display:block;width:100%;margin-top:auto;padding:11px;
   background:linear-gradient(180deg,rgba(58,44,28,.55),rgba(36,26,16,.68));
@@ -203,7 +211,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #ribbons button.on{color:var(--gilt-hi)}
 #ribbons button.on::after{transform:scaleX(1)}
 
-#folio{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:16px 15px 26px}
+#folio{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:66px 15px 26px}
 #folio::-webkit-scrollbar{width:9px}
 #folio::-webkit-scrollbar-track{background:rgba(0,0,0,.25)}
 #folio::-webkit-scrollbar-thumb{background:var(--rule);border-radius:0}
@@ -367,8 +375,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
     box-shadow:0 -8px 26px rgba(0,0,0,.55)}
   #chart{flex:1 1 46%}
   #key,#minimap{display:none}
-  #crest .ttl{display:none}
-  #top{min-height:50px;padding:0 9px}
+  #top{top:8px;left:8px;min-height:38px;padding:0 9px}
   #crest{padding-right:9px;margin-right:0}
   .purse{gap:11px;padding:0 7px;flex:1}
   .coin .disc{width:15px;height:15px}
@@ -378,7 +385,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   #chron .stat s{display:none}
   #chron .stat b{font-size:12px}
   #cartouche{max-width:186px;padding:8px 10px;font-size:12.5px}
-  #folio{padding:13px 12px 90px}
+  #folio{padding:56px 12px 90px}
   #bm-reqs .req-row{display:grid;grid-template-columns:20px 1fr;
     grid-template-areas:"icon name" "icon amt";column-gap:8px;row-gap:1px;font-size:13px}
   #bm-reqs .req-row img{grid-area:icon}
@@ -2093,6 +2100,9 @@ function pickArmy(p,frac){
 function startBuild(p,bk,plot){
   const multi=isMulti(bk);
   if(multi && !plotUnlocked(bk,plot,p.b.hall)) return {err:"Участок откроется позже"};
+  const plotKey = multi ? plot : null;
+  if(p.queues.some(q=>q && q.b===bk && q.plot===plotKey))
+    return {err:"Эта постройка уже в работе у одной из бригад"};
   const cur = multi ? p.b[bk][plot] : p.b[bk];
   const lv=cur+1;
   if(lv>CFG.MAX_LEVEL) return {err:"Максимальный уровень"};
@@ -2109,15 +2119,26 @@ function startBuild(p,bk,plot){
   schedule(t,"build",{pid:p.id,slot});
   return {ok:1};
 }
+function trainDuration(p,type,tier,n){
+  const blv=p.b[TRAIN_BLD[type]];
+  return trainTime(type,tier)*n/((1+p.b.hall*0.06)*(1+bonuses(p).trainSpeed)*(1+lateSpeed(blv)));
+}
+function trainMax(p,type,tier){
+  const c=troopCost(type,tier), cap=trainCap(p.b[TRAIN_BLD[type]]);
+  const afford=Math.floor(Math.min.apply(null,RES.map(r=>c[r]?p.res[r]/c[r]:1e9)));
+  return Math.max(0,Math.min(cap,afford));
+}
 function startTrain(p,type,tier,n){
   if(p.train) return {err:"Казармы заняты"};
-  const blv=p.b[TRAIN_BLD[type]], cap=trainCap(blv);
+  const cap=trainCap(p.b[TRAIN_BLD[type]]);
+  n=Math.round(n);
+  if(n<1) return {err:"Наберите хотя бы одного воина"};
   if(n>cap) return {err:"За раз можно набрать не больше "+cap};
   const c=troopCost(type,tier), tot={};
   RES.forEach(r=>tot[r]=Math.round((c[r]||0)*n));
   if(!canPay(p,tot)) return {err:"Не хватает ресурсов"};
   pay(p,tot);
-  const t=trainTime(type,tier)*n/((1+p.b.hall*0.06)*(1+bonuses(p).trainSpeed)*(1+lateSpeed(blv)));
+  const t=trainDuration(p,type,tier,n);
   p.train={type,tier,n,t0:W.t,t1:W.t+t};
   schedule(t,"train",{pid:p.id});
   return {ok:1};
@@ -2764,7 +2785,9 @@ function buildingModalHtml(ci){
     if(need.length){ gated=true; gateTxt="сначала "+need.map(k=>buildingName(k,p).toLowerCase()+" до "+p.b.hall+" ур.").join(", "); } }
   const locked=c.pl!=null && !plotUnlocked(c.bk,c.pl,p.b.hall);
   if(locked){ gated=true; gateTxt="откроется на эпохе "+(c.pl+1); }
-  const cst=buildCost(nx,p), canGo=!maxed&&!gated;
+  const plotKey = c.pl!=null ? c.pl : null;
+  const queued = p.queues.find(q=>q && q.b===c.bk && q.plot===plotKey);
+  const cst=buildCost(nx,p), canGo=!maxed&&!gated&&!queued;
   const img=cityCellImg(c);
   const desc=(BUILDINGS[c.bk]&&BUILDINGS[c.bk].desc)||"";
   let h="<img id=\'bm-art\' src=\'"+img+"\'>";
@@ -2780,19 +2803,21 @@ function buildingModalHtml(ci){
         "<span class=\'req-amt"+(short?" short":"")+"\'>"+fmt(need)+" / "+fmt(p.res[r])+"</span></div>";
     }).join("")+"</div>";
     h+="<div id=\'bm-time\'>Время строительства: "+fmtDur(buildTime(nx)/bonuses(p).build)+"</div>";
+  } else if(queued){
+    h+="<div id=\'bm-time\'>Уже строится — готово через "+fmtDur(queued.t1-W.t)+"</div>";
   } else if(gated){
     h+="<div id=\'bm-time\'>"+gateTxt+"</div>";
   }
   const actionLabel = lv<=0?"Построить":"Улучшить";
   h+="<button id=\'bm-btn\' data-act=\'build\' data-b=\'"+c.bk+"\' "+(c.pl!=null?"data-plot=\'"+c.pl+"\' ":"")+
-     (canGo?"":"disabled")+">"+(maxed?"Предел уровня":canGo?actionLabel:"Недоступно")+"</button>";
+     (canGo?"":"disabled")+">"+(maxed?"Предел уровня":queued?"Уже строится":canGo?actionLabel:"Недоступно")+"</button>";
   return h;
 }
 
 function foCity(){
   const p=me(); syncRes(p);
   const B=bonuses(p), cap=capacity(p), inField=W.marches.filter(m=>m.pid===p.id).length;
-  let h=rubric("Столица","эпоха "+epochOf(p.b.hall)+" из 5");
+  let h=rubric("Столица");
   h+=renderCityMap();
   h+="<div class='entry hot'><div class='line'>"+
      "<div style='flex:0 0 auto'>"+shieldSvg(p.race,26)+"</div><div class='fill'>"+
@@ -2840,6 +2865,9 @@ function foCity(){
       if(bk==="hall"){ const need=HALL_REQ.filter(k=>p.b[k]<p.b.hall);
         if(need.length){ gated=true; gateTxt="ждёт: "+need.map(k=>buildingName(k,p).toLowerCase()).join(", ") } }
       if(locked){ gated=true; gateTxt="откроется на эпохе "+(pi+1); }
+      const plotKey = isMulti(bk) ? pi : null;
+      const queued = p.queues.find(q=>q && q.b===bk && q.plot===plotKey);
+      if(queued){ gated=true; gateTxt="в работе, готово через "+fmtDur(queued.t1-W.t); }
       let note="";
       if(Bd.prod) note="Даёт <em>"+fmt(prodRate(lv)*(1+lateSpeed(lv))*({food:1.25,wood:1.25,stone:.9,gold:.5}[Bd.prod]))+"</em> в час"+
         (lv>0?" · защищает <em>"+fmt(plotCap(lv))+"</em>":"");
@@ -3359,14 +3387,15 @@ function handleAct(e){
     herald(r.err||(buildingName(b.dataset.b,p)+(plot!=null?" (участок "+(plot+1)+")":"")+" заложена."));
   }
   else if(a==="train"){
-    const t=b.dataset.t, tier=+b.dataset.tier, c=troopCost(t,tier);
-    const max=Math.min(trainCap(p.b[TRAIN_BLD[t]]), Math.floor(Math.min.apply(null,RES.map(r=>c[r]?p.res[r]/c[r]:1e9))));
-    if(max<1) return herald("Казна не потянет ни одного воина.");
-    ask(unitName(t,tier,p.race)+" — по средствам до "+RU(max),Math.min(max,500),max,n=>{
-      const r=startTrain(p,t,tier,n);
-      herald(r.err||("Набор начат: "+RU(n)+"."));
-      lastFolio=""; renderFolio();
-    });
+    openTrainModal(b.dataset.t,+b.dataset.tier);
+    return;
+  }
+  else if(a==="traingo"){
+    if(!trainCtx) return;
+    const r=startTrain(p,trainCtx.type,trainCtx.tier,trainCtx.n);
+    if(r.err){ herald(r.err); return; }
+    herald("Набор начат: "+RU(trainCtx.n)+".");
+    closeBuildingModal(); lastFolio=""; renderFolio();
     return;
   }
   else if(a==="heal"){ const r=doHeal(p); herald(r.err||"Лазарет принялся за работу.") }
@@ -3457,13 +3486,73 @@ function toggleView(){
 function toggleMenu(){ $("#side-menu").classList.toggle("open"); }
 let buildingModalSel=-1;
 function openBuildingModal(ci){
+  trainCtx=null;
   buildingModalSel=ci;
   $("#bm-body").innerHTML = buildingModalHtml(ci);
   $("#building-modal").classList.add("open");
 }
-function closeBuildingModal(){ $("#building-modal").classList.remove("open"); buildingModalSel=-1; }
+function closeBuildingModal(){ $("#building-modal").classList.remove("open"); buildingModalSel=-1; trainCtx=null; }
 $("#building-modal").addEventListener("click",e=>{ if(e.target.id==="building-modal") closeBuildingModal(); });
 $("#building-modal").addEventListener("click",handleAct);
+$("#building-modal").addEventListener("input",e=>{
+  const s=e.target.id;
+  if((s==="qty-range"||s==="qty-num")&&trainCtx){
+    trainCtx.n=clamp(Math.round(+e.target.value||0),0,trainCtx.max);
+    updateTrainSheet();
+  }
+});
+
+/* ---- Набор войск: карточка на пергаменте ---- */
+let trainCtx=null;
+function openTrainModal(type,tier){
+  const p=me();
+  buildingModalSel=-1;
+  const max=trainMax(p,type,tier);
+  trainCtx={type,tier,max,n:max,lastLocked:!!p.train||max<1};
+  $("#bm-body").innerHTML = trainSheetHtml();
+  $("#building-modal").classList.add("open");
+  updateTrainSheet();
+}
+function trainSheetHtml(){
+  const p=me(), {type,tier,max,n}=trainCtx;
+  const busy=!!p.train, locked=busy||max<1;
+  let h="<img id='bm-art' src='images/buildings/"+TRAIN_BLD[type]+".png'>";
+  h+="<div id='bm-title'>"+unitName(type,tier,p.race)+"</div>";
+  h+="<div id='bm-sub'>набор в столице · тир "+tier+"</div>";
+  h+="<div id='bm-qty'><div class='cap'><span>Доступно максимум</span><b>"+RU(max)+"</b></div>"+
+     "<div class='row'><input type='range' id='qty-range' min='0' max='"+max+"' value='"+n+"' "+(locked?"disabled":"")+">"+
+     "<input type='number' id='qty-num' min='0' max='"+max+"' value='"+n+"' "+(locked?"disabled":"")+"></div></div>";
+  if(busy){
+    h+="<div id='bm-time'>Казармы заняты другим набором.</div>";
+  } else if(max<1){
+    h+="<div id='bm-time'>Не хватает ресурсов ни на одного воина.</div>";
+  } else {
+    const c=troopCost(type,tier);
+    h+="<div id='bm-reqs'>"+RES.map(r=>{
+      if(!c[r]) return "";
+      return "<div class='req-row' data-r='"+r+"'><img src='images/ui/res-"+r+".png'>"+
+        "<span class='req-name'>"+RES_NAME[r]+"</span><span class='req-amt'></span></div>";
+    }).join("")+"</div>";
+    h+="<div id='bm-time'></div>";
+  }
+  h+="<button id='bm-btn' data-act='traingo' "+((busy||max<1||n<=0)?"disabled":"")+">Набрать</button>";
+  return h;
+}
+function updateTrainSheet(){
+  const p=me(), {type,tier,max,n}=trainCtx;
+  $("#qty-range").value=n; $("#qty-num").value=n;
+  const c=troopCost(type,tier);
+  RES.forEach(r=>{
+    if(!c[r]) return;
+    const need=Math.round(c[r]*n), short=p.res[r]<need;
+    const el=document.querySelector("#bm-reqs [data-r='"+r+"'] .req-amt");
+    if(el){ el.textContent=fmt(need)+" / "+fmt(p.res[r]); el.classList.toggle("short",short) }
+  });
+  if($("#bm-reqs")){
+    $("#bm-time").textContent = n>0 ? "Время набора: "+fmtDur(trainDuration(p,type,tier,n)) : "Выберите хотя бы одного воина.";
+  }
+  $("#bm-btn").disabled = !!p.train || max<1 || n<=0;
+}
 function openMenuModal(t){
   $("#menu-modal").dataset.tab = t;
   const html = t==="army"?foArmy(): t==="gen"?foGen(): foInv();
@@ -3472,6 +3561,28 @@ function openMenuModal(t){
   $("#side-menu").classList.remove("open");
 }
 function closeMenuModal(){ $("#menu-modal").classList.remove("open"); }
+/* ---- Живое обновление открытых окошек раз в секунду, без переоткрытия ---- */
+function refreshOpenModal(){
+  if($("#building-modal").classList.contains("open")){
+    if(trainCtx){
+      const p=me();
+      const newMax=trainMax(p,trainCtx.type,trainCtx.tier);
+      const newLocked=!!p.train||newMax<1;
+      if(newLocked!==trainCtx.lastLocked){
+        trainCtx.max=newMax; trainCtx.n=Math.min(trainCtx.n,newMax); trainCtx.lastLocked=newLocked;
+        $("#bm-body").innerHTML=trainSheetHtml();
+      }
+      updateTrainSheet();
+    } else if(buildingModalSel>=0){
+      $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);
+    }
+  }
+  const menu=$("#menu-modal");
+  if(menu.classList.contains("open")){
+    const t=menu.dataset.tab;
+    $("#menu-modal-body").innerHTML = t==="army"?foArmy(): t==="gen"?foGen(): foInv();
+  }
+}
 $("#menu-btn").addEventListener("click",toggleMenu);
 document.querySelectorAll("#side-menu button").forEach(b=>{
   b.addEventListener("click",()=>openMenuModal(b.dataset.menu));
@@ -3561,7 +3672,7 @@ function frame(){
   let dt=(now-lastReal)/1000; lastReal=now;
   if(dt>0&&dt<3600){ advanceTo(W.t+dt*tempo); sinceSave+=dt; sinceUi+=dt }
   draw(); drawMini();
-  if(sinceUi>1.0){ sinceUi=0; renderTop(); renderFolio(); renderCartouche() }
+  if(sinceUi>1.0){ sinceUi=0; renderTop(); renderFolio(); renderCartouche(); refreshOpenModal() }
   if(sinceSave>20){ sinceSave=0; save() }
   requestAnimationFrame(frame);
 }
