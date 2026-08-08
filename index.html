@@ -1147,6 +1147,7 @@ const troopCost = (type,tier) => {
 };
 const trainTime = (type,tier) => 14.58*Math.pow(1.9,tier-1);     // сек за 1 юнита (T4=100с — проверенная точка RoK)
 const TRAIN_BLD = {inf:"barracks",arc:"range",cav:"stable",sie:"siege"};
+const BLD_TRAIN = {barracks:"inf",range:"arc",stable:"cav",siege:"sie"};
 const trainCap = lv => 100 + lv*40;                            // максимум за один заказ
 const genXpNeed = lv => Math.round(120*Math.pow(1.18,lv-1));
 const epochOf   = hall => hall>=25?5 : hall>=19?4 : hall>=13?3 : hall>=7?2 : 1;   // 5 эпох × 6 уровней
@@ -1176,7 +1177,7 @@ function newPlayer(id,race,x,y,isBot){
   const aggr=.4+RNG()*.5;
   const p={id,race,x,y,isBot,name:"",
     res:{food:8000,wood:8000,stone:3000,gold:1500},resAt:0,
-    b:{},queues:[null,null],train:null,
+    b:{},queues:[null,null],train:{inf:null,arc:null,cav:null,sie:null},
     troops:{},wounded:{},
     gen:{lv:1,xp:0,pts:0,tal:{},id:isBot?(aggr>0.5?0:1):null}, gear:{}, tech:{}, rsch:null,
     inventory:Object.fromEntries(GEAR_SLOTS.map(s=>[s.id,{bastion:[0,0,0,0,0],storm:[0,0,0,0,0]}])),
@@ -1705,8 +1706,9 @@ const EV = {
     if(!p.isBot) logg(buildingName(q.b,p)+(q.plot!=null?" (участок "+(q.plot+1)+")":"")+" достроена до "+q.lv+" уровня.","good");
   },
   train(d){
-    const p=W.players.find(q=>q.id===d.pid); if(!p||!p.train)return;
-    const T=p.train; p.troops[T.type][T.tier]+=T.n; p.train=null;
+    const p=W.players.find(q=>q.id===d.pid); if(!p)return;
+    const T=p.train[d.type]; if(!T)return;
+    p.troops[T.type][T.tier]+=T.n; p.train[d.type]=null;
     if(!p.isBot) logg((T.retrain?"Переобучено: ":"Обучено: ")+unitName(T.type,T.tier,p.race)+" ×"+T.n.toLocaleString("ru"),"good");
   },
   research(d){
@@ -2000,8 +2002,8 @@ function botThink(p){
     }
   }
   /* --- обучение --- */
-  if(!p.train){
-    const types=["inf","arc","cav","sie"].filter(t=>p.b[TRAIN_BLD[t]]>0);
+  {
+    const types=["inf","arc","cav","sie"].filter(t=>p.b[TRAIN_BLD[t]]>0 && !p.train[t]);
     if(types.length){
       const t=types[Math.floor(RNG()*types.length)];
       const tier=tierUnlockedFor(p,t);
@@ -2180,7 +2182,7 @@ function trainMax(p,type,tier){
   return Math.max(0,Math.min(cap,afford));
 }
 function startTrain(p,type,tier,n){
-  if(p.train) return {err:"Казармы заняты"};
+  if(p.train[type]) return {err:"Здание уже занято набором"};
   const cap=trainCap(p.b[TRAIN_BLD[type]]);
   n=Math.round(n);
   if(n<1) return {err:"Наберите хотя бы одного воина"};
@@ -2190,8 +2192,8 @@ function startTrain(p,type,tier,n){
   if(!canPay(p,tot)) return {err:"Не хватает ресурсов"};
   pay(p,tot);
   const t=trainDuration(p,type,tier,n);
-  p.train={type,tier,n,t0:W.t,t1:W.t+t};
-  schedule(t,"train",{pid:p.id});
+  p.train[type]={type,tier,n,t0:W.t,t1:W.t+t};
+  schedule(t,"train",{pid:p.id,type});
   return {ok:1};
 }
 /* Переобучение: старые воины идут в зачёт следующего тира — платим и ждём
@@ -2213,7 +2215,7 @@ function retrainMax(p,type,fromTier){
   return Math.max(0,Math.min(have,cap,afford));
 }
 function startRetrain(p,type,fromTier,n){
-  if(p.train) return {err:"Казармы заняты"};
+  if(p.train[type]) return {err:"Здание уже занято набором"};
   const maxT=tierUnlockedFor(p,type);
   if(fromTier<1||fromTier+1>maxT) return {err:"Следующий тир ещё не открыт"};
   n=Math.round(n);
@@ -2227,8 +2229,8 @@ function startRetrain(p,type,fromTier,n){
   pay(p,c);
   p.troops[type][fromTier]-=n;
   const t=retrainDuration(p,type,fromTier,n);
-  p.train={type,tier:fromTier+1,n,t0:W.t,t1:W.t+t,retrain:true};
-  schedule(t,"train",{pid:p.id});
+  p.train[type]={type,tier:fromTier+1,n,t0:W.t,t1:W.t+t,retrain:true};
+  schedule(t,"train",{pid:p.id,type});
   return {ok:1};
 }
 function startResearch(p,id){
@@ -2956,6 +2958,41 @@ function academyTreeHtml(p){
   h+="</div>";
   return h;
 }
+function trainInfoHtml(p,type){
+  const T=p.train[type];
+  if(T){
+    return "<div id='bm-tree'><div class='rgroup'>"+(T.retrain?"Идёт переобучение":"Идёт набор")+"</div>"+
+       "<div class='rnode'><div class='rnode-hd'><b>"+unitName(T.type,T.tier,p.race)+"</b>"+
+       "<span class='rnode-lv'>&times;"+RU(T.n)+"</span></div>"+
+       "<div class='rnode-eff'>Готовы через <em>"+fmtDur(T.t1-W.t)+"</em></div></div></div>";
+  }
+  const maxT=tierUnlockedFor(p,type);
+  const c=troopCost(type,maxT);
+  const can=Math.floor(Math.min.apply(null,RES.map(r=>c[r]?p.res[r]/c[r]:1e9)));
+  const beats=TROOP_TYPES[type].beats;
+  let h="<div id='bm-tree'><div class='rgroup'>Набор</div>"+
+    "<div class='rnode'><div class='rnode-hd'><b>"+unitName(type,maxT,p.race)+"</b><span class='rnode-lv'>T"+maxT+"</span></div>"+
+    "<div class='rnode-eff'>Атака <em>"+Math.round(troopStat(type,maxT,"atk")*troopMod(p.race,type,"atk"))+"</em> · защита <em>"+troopStat(type,maxT,"def")+
+    "</em> · здоровье <em>"+troopStat(type,maxT,"hp")+"</em>"+
+    (beats?" · бьёт "+TROOP_TYPES[beats].name.toLowerCase():"")+
+    "<br>по средствам <em>"+fmt(can)+"</em></div>"+
+    "<div class='rnode-cost'>"+RES.filter(r=>c[r]).map(r=>"<span class='"+(p.res[r]<c[r]?"short":"")+"'>"+fmt(c[r])+" "+RES_NAME[r]+"</span>").join("")+"</div>"+
+    "<button class='rnode-go' data-act='train' data-t='"+type+"' data-tier='"+maxT+"' "+(can<1?"disabled":"")+">Набрать</button></div>";
+  let retrainHtml="", anyRetrain=false;
+  for(let i=1;i<maxT;i++){
+    const have=p.troops[type][i]; if(!have) continue;
+    anyRetrain=true;
+    const canR=retrainMax(p,type,i), cR=retrainCost(type,i,1);
+    retrainHtml+="<div class='rnode'><div class='rnode-hd'><b>"+unitName(type,i,p.race)+" &rarr; "+unitName(type,i+1,p.race)+"</b>"+
+      "<span class='rnode-lv'>в строю "+RU(have)+"</span></div>"+
+      "<div class='rnode-eff'>Доступно к переобучению: <em>"+fmt(canR)+"</em></div>"+
+      "<div class='rnode-cost'>"+RES.filter(r=>cR[r]).map(r=>"<span class='"+(p.res[r]<cR[r]?"short":"")+"'>"+fmt(cR[r])+" "+RES_NAME[r]+"</span>").join("")+"</div>"+
+      "<button class='rnode-go' data-act='retrain' data-t='"+type+"' data-tier='"+i+"' "+(canR<1?"disabled":"")+">Переобучить</button></div>";
+  }
+  if(anyRetrain) h+="<div class='rgroup'>Переобучение</div>"+retrainHtml;
+  h+="</div>";
+  return h;
+}
 function buildingModalHtml(ci){
   const p=me(), c=CITY_CELLS[ci];
   if(!c||!c.bk) return "";
@@ -2977,6 +3014,7 @@ function buildingModalHtml(ci){
   if(c.bk==="hall") h+=hallInfoHtml(p);
   else if(c.bk==="store") h+=storeInfoHtml(p);
   else if(c.bk==="academy") h+=academyTreeHtml(p);
+  else if(BLD_TRAIN[c.bk] && lv>0) h+=trainInfoHtml(p,BLD_TRAIN[c.bk]);
   if(canGo){
     h+="<div id=\'bm-reqs\'>"+RES.map(r=>{
       const need=cst[r]||0; if(!need) return "";
@@ -3031,7 +3069,7 @@ function foArmy(){
     rows.push("<tr><td>"+unitName(t,i,p.race)+" · "+TROOP_TYPES[t].name.toLowerCase()+
       "</td><td>"+RU(n)+"</td></tr>") } });
   h+= rows.length ? "<div class='entry'><table class='roll'>"+rows.join("")+"</table></div>"
-                  : hollow("&#9876;","В столице пусто. Наберите ополчение ниже.");
+                  : hollow("&#9876;","В столице пусто. Наберите войско в казармах, на стрельбище, в конюшне или мастерской на карте города.");
 
   if(hurt>0){
     const c=healCost(p);
@@ -3041,60 +3079,6 @@ function foArmy(){
       "<div class='note'>Коек: <em>"+fmt(totalHospitalCap(p)*(1+B.hosp))+"</em>"+
       (B.heal<1?" · нежить поднимает своих втрое дешевле":"")+"</div>"+priceRow(p,c)+"</div>"+
       "<button class='seal' data-act='heal'>Поднять</button></div></div>";
-  }
-
-  h+=rubric("Набор");
-  if(p.train){
-    const f=(W.t-p.train.t0)/Math.max(1,p.train.t1-p.train.t0);
-    h+="<div class='entry hot'><div class='line'><div class='fill'>"+
-      "<div class='title'>"+unitName(p.train.type,p.train.tier,p.race)+
-      "<span class='tag gilt'>×"+RU(p.train.n)+"</span></div>"+
-      "<div class='note'>Готовы через <em>"+fmtDur(p.train.t1-W.t)+"</em></div></div></div>"+
-      "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
-  } else {
-    TKEYS.forEach(t=>{
-      const maxT=tierUnlockedFor(p,t);
-      const bk={inf:"barracks",arc:"range",cav:"stable",sie:"siege"}[t];
-      if(p.b[bk]<1){
-        h+="<div class='entry'><div class='line'><div class='fill'><div class='title' style='color:var(--vellum-faint)'>"+
-          TROOP_TYPES[t].name+"</div><div class='note'>Нужна постройка: "+buildingName(bk,p).toLowerCase()+
-          "</div></div></div></div>"; return;
-      }
-      const c=troopCost(t,maxT);
-      const can=Math.floor(Math.min.apply(null,RES.map(r=>c[r]?p.res[r]/c[r]:1e9)));
-      const beats=TROOP_TYPES[t].beats;
-      h+="<div class='entry'><div class='line'><div class='fill'>"+
-        "<div class='title'>"+unitName(t,maxT,p.race)+"<span class='tag'>T"+maxT+"</span>"+
-        (beats?"<span class='tag'>бьёт "+TROOP_TYPES[beats].name.toLowerCase()+"</span>":"<span class='tag'>"+(p.race==="undead"&&t==="sie"?"чудовище":"осада")+"</span>")+"</div>"+
-        "<div class='note'>Атака <em>"+Math.round(troopStat(t,maxT,"atk")*troopMod(p.race,t,"atk"))+"</em> · защита <em>"+troopStat(t,maxT,"def")+
-        "</em> · здоровье <em>"+troopStat(t,maxT,"hp")+"</em><br>Груз "+
-        Math.round(TROOP_TYPES[t].load*TIER_MULT[maxT-1]*troopMod(p.race,t,"load"))+" · шаг "+(TROOP_TYPES[t].speed*troopMod(p.race,t,"speed")).toFixed(2)+
-        " · по средствам <em>"+fmt(can)+"</em></div>"+priceRow(p,c)+"</div>"+
-        "<button class='seal' data-act='train' data-t='"+t+"' data-tier='"+maxT+"' "+
-        (can<1?"disabled":"")+">Набрать</button></div></div>";
-    });
-  }
-
-  h+=rubric("Переобучение");
-  if(p.train){
-    h+="<div class='entry'><div class='note' style='margin:0'>Казармы заняты набором — переобучение подождёт.</div></div>";
-  } else {
-    let anyRetrain=false;
-    TKEYS.forEach(t=>{
-      const maxT=tierUnlockedFor(p,t);
-      for(let i=1;i<maxT;i++){
-        const have=p.troops[t][i]; if(!have) continue;
-        anyRetrain=true;
-        const can=retrainMax(p,t,i), c=retrainCost(t,i,1);
-        h+="<div class='entry'><div class='line'><div class='fill'>"+
-          "<div class='title'>"+unitName(t,i,p.race)+"<span class='tag'>&rarr;</span>"+unitName(t,i+1,p.race)+
-          "<span class='tag'>в строю "+RU(have)+"</span></div>"+
-          "<div class='note'>Доступно к переобучению: <em>"+fmt(can)+"</em></div>"+priceRow(p,c)+"</div>"+
-          "<button class='seal' data-act='retrain' data-t='"+t+"' data-tier='"+i+"' "+(can<1?"disabled":"")+
-          ">Переобучить</button></div></div>";
-      }
-    });
-    if(!anyRetrain) h+="<div class='entry'><div class='note' style='margin:0'>Нет войск ниже верхнего открытого тира.</div></div>";
   }
 
   h+=rubric("Отряды в поле",W.marches.filter(m=>m.pid===p.id).length+" из "+marchSlots(p.b.hall));
@@ -3627,7 +3611,7 @@ function openTrainModal(type,tier){
   const p=me();
   buildingModalSel=-1;
   const max=trainMax(p,type,tier);
-  trainCtx={type,tier,mode:"train",max,n:max,lastLocked:!!p.train||max<1};
+  trainCtx={type,tier,mode:"train",max,n:max,lastLocked:!!p.train[type]||max<1};
   $("#bm-body").innerHTML = trainSheetHtml();
   $("#building-modal").classList.add("open");
   updateTrainSheet();
@@ -3636,14 +3620,14 @@ function openRetrainModal(type,fromTier){
   const p=me();
   buildingModalSel=-1;
   const max=retrainMax(p,type,fromTier);
-  trainCtx={type,tier:fromTier+1,fromTier,mode:"retrain",max,n:max,lastLocked:!!p.train||max<1};
+  trainCtx={type,tier:fromTier+1,fromTier,mode:"retrain",max,n:max,lastLocked:!!p.train[type]||max<1};
   $("#bm-body").innerHTML = trainSheetHtml();
   $("#building-modal").classList.add("open");
   updateTrainSheet();
 }
 function trainSheetHtml(){
   const p=me(), {type,tier,max,n,fromTier}=trainCtx, isRetrain=trainCtx.mode==="retrain";
-  const busy=!!p.train, locked=busy||max<1;
+  const busy=!!p.train[type], locked=busy||max<1;
   let h="<img id='bm-art' src='images/buildings/"+TRAIN_BLD[type]+".png'>";
   h+="<div id='bm-title'>"+(isRetrain?unitName(type,fromTier,p.race)+" &rarr; "+unitName(type,tier,p.race):unitName(type,tier,p.race))+"</div>";
   h+="<div id='bm-sub'>"+(isRetrain?"переобучение · в строю "+RU(p.troops[type][fromTier]||0):"набор в столице · тир "+tier)+"</div>";
@@ -3681,7 +3665,7 @@ function updateTrainSheet(){
     const dur=isRetrain?retrainDuration(p,type,fromTier,n):trainDuration(p,type,tier,n);
     $("#bm-time").textContent = n>0 ? "Время "+(isRetrain?"переобучения: ":"набора: ")+fmtDur(dur) : "Выберите хотя бы одного воина.";
   }
-  $("#bm-btn").disabled = !!p.train || max<1 || n<=0;
+  $("#bm-btn").disabled = !!p.train[type] || max<1 || n<=0;
 }
 function openMenuModal(t){
   $("#menu-modal").dataset.tab = t;
@@ -3697,7 +3681,7 @@ function refreshOpenModal(){
     if(trainCtx){
       const p=me();
       const newMax=trainCtx.mode==="retrain"?retrainMax(p,trainCtx.type,trainCtx.fromTier):trainMax(p,trainCtx.type,trainCtx.tier);
-      const newLocked=!!p.train||newMax<1;
+      const newLocked=!!p.train[trainCtx.type]||newMax<1;
       if(newLocked!==trainCtx.lastLocked){
         trainCtx.max=newMax; trainCtx.n=Math.min(trainCtx.n,newMax); trainCtx.lastLocked=newLocked;
         $("#bm-body").innerHTML=trainSheetHtml();
