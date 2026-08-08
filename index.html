@@ -527,8 +527,8 @@ const CFG = {
   BUILD_GROW: 1.36,         // множитель времени за уровень — пересчитан под 30 ур.
                             // (было 1.42 под потолок 25; тот же множитель на 30 уровней
                             // разогнал бы последний уровень до ~13.6 суток за раз)
-  COST_BASE: 200,           // базовая стоимость 1 уровня
-  COST_GROW: 1.58,
+  COST_BASE: 9126,          // базовая стоимость 1 уровня (откалибровано под RoK: ратуша 10 ур.=277.5к, 25 ур.=82.2М еды)
+  COST_GROW: 1.4614,
   PROD_BASE: 60,            // единиц ресурса в час на 1 уровне
   PROD_GROW: 1.52,
   CAP_BASE: 4000,           // вместимость склада 1 ур.
@@ -645,7 +645,7 @@ function researchTime(branch,wave,lv){
 }
 function researchCost(branch,wave,lv){
   const t=researchTime(branch,wave,lv), base=t*4.44;   // та же пропорция цена/время, что у построек
-  return {food:Math.round(base*.9),wood:Math.round(base),stone:Math.round(base*.75),gold:Math.round(base*.25)};
+  return {food:Math.round(base),wood:Math.round(base),stone:Math.round(base*.435),gold:0};
 }
 const ACADEMY_TREE = {
   eco: [
@@ -1135,7 +1135,8 @@ const buildTime = lv => CFG.BUILD_BASE*Math.pow(CFG.BUILD_GROW,lv-1);
 const buildCost = (lv,p) => {
   const base = CFG.COST_BASE*Math.pow(CFG.COST_GROW,lv-1);
   const cut = p ? (1-(bonuses(p).buildCostCut||0)) : 1;
-  return {food:Math.round(base*.9*cut),wood:Math.round(base*cut),stone:Math.round(base*.75*cut),gold:Math.round(base*.25*cut)};
+  // в RoK постройки не стоят золота — только еда/дерево/камень, дерево=еда, камень ~0.435 от них
+  return {food:Math.round(base*cut),wood:Math.round(base*cut),stone:Math.round(base*.435*cut),gold:0};
 };
 const prodRate  = lv => lv<=0?0:CFG.PROD_BASE*Math.pow(CFG.PROD_GROW,lv-1);   // в час
 const storeCap  = lv => Math.round(CFG.CAP_BASE*Math.pow(CFG.CAP_GROW,Math.max(1,lv)-1));
