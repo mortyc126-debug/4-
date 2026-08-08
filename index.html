@@ -283,16 +283,14 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #brigades::-webkit-scrollbar,#fieldarmy::-webkit-scrollbar{display:none}
 #brigades{left:14px}
 #fieldarmy{right:14px}
-.slotcell{flex:0 0 auto;width:56px;height:56px;border-radius:6px;position:relative;cursor:pointer;
-  background:linear-gradient(180deg,rgba(38,30,21,.88),rgba(22,17,11,.9));
-  border:1px solid var(--rule);box-shadow:0 4px 14px rgba(0,0,0,.5)}
-.slotcell.empty{opacity:.7;cursor:default}
-.slotcell img{position:absolute;inset:9%;width:82%;height:82%;object-fit:contain;pointer-events:none;
-  filter:drop-shadow(0 2px 4px rgba(0,0,0,.6))}
-.slotcell .timer{position:absolute;top:2px;left:0;right:0;text-align:center;font-family:var(--data);
-  font-size:8.5px;color:var(--gilt-hi);text-shadow:0 1px 2px rgba(0,0,0,.9)}
-.slotcell .progress{position:absolute;left:0;right:0;bottom:0;margin:0;height:4px;border:none;
-  border-top:1px solid rgba(0,0,0,.5)}
+.slotcell{flex:0 0 auto;width:56px;height:56px;position:relative;cursor:pointer}
+.slotcell.empty{opacity:.75;cursor:default}
+.slotcell img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none;
+  filter:drop-shadow(0 3px 6px rgba(0,0,0,.85))}
+.slotcell .timer{position:absolute;top:-3px;left:0;right:0;text-align:center;font-family:var(--data);
+  font-size:8.5px;color:var(--gilt-hi);text-shadow:0 1px 3px rgba(0,0,0,1),0 0 4px rgba(0,0,0,1)}
+.slotcell .progress{position:absolute;left:8%;right:8%;bottom:0;margin:0;height:3px;
+  background:rgba(0,0,0,.5);border:none;border-radius:2px}
 #citymap-toggle{display:flex;gap:8px;margin-bottom:10px}
 #citymap-toggle button{flex:1;padding:7px;font-size:12px;font-variant:small-caps;letter-spacing:.08em;
   background:rgba(0,0,0,.25);border:1px solid var(--rule-soft);color:var(--vellum-dim)}
