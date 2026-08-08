@@ -71,6 +71,8 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .coin .rate{font-family:var(--data);font-size:10px;color:var(--vellum-faint);
   display:block;letter-spacing:.02em;text-decoration:none}
 .coin .rate.neg{color:var(--garnet)}
+#might-chip{padding-left:14px;border-left:1px solid var(--rule-soft);flex:0 0 auto}
+#might-chip .amt{color:var(--gilt-hi)}
 
 #chron{margin-left:auto;display:flex;align-items:center;gap:14px;padding-left:14px}
 #chron .stat{text-align:right;line-height:1.25}
@@ -343,6 +345,18 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .roll td.good:last-child{color:var(--verdigris)}
 .roll td.bad:last-child{color:var(--garnet)}
 
+/* Строки войск — аватар с бейджами тира/класса вместо текстового дублирования */
+.troop-row{display:flex;align-items:center;gap:11px;padding:6px 0;border-bottom:1px dotted var(--rule-soft)}
+.troop-row:last-child{border-bottom:none}
+.troop-avatar{position:relative;width:38px;height:38px;flex:0 0 auto}
+.troop-avatar .portrait{width:100%;height:100%;border-radius:50%;object-fit:cover;
+  border:1px solid var(--rule);background:var(--wood-deep)}
+.troop-avatar .tier-badge{position:absolute;bottom:-3px;right:-3px;width:16px;height:16px;pointer-events:none}
+.troop-avatar .class-badge{position:absolute;top:-3px;left:-3px;width:14px;height:14px;
+  filter:drop-shadow(0 1px 2px rgba(0,0,0,.85));pointer-events:none}
+.troop-name{flex:1;font-size:13.5px;color:var(--vellum);min-width:0}
+.troop-count{font-family:var(--data);font-size:13px;color:var(--vellum-dim);font-variant-numeric:tabular-nums}
+
 /* Хроника */
 .chron-e{position:relative;padding:0 0 15px 20px;margin-left:4px;
   border-left:1px solid var(--rule-soft)}
@@ -411,12 +425,15 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
     box-shadow:0 -8px 26px rgba(0,0,0,.55)}
   #chart{flex:1 1 46%}
   #key,#minimap{display:none}
-  #top{top:8px;left:8px;min-height:38px;padding:0 9px}
-  #crest{padding-right:9px;margin-right:0}
-  .purse{gap:11px;padding:0 7px;flex:1}
+  #top{top:8px;left:8px;min-height:38px;padding:0 9px;
+    max-width:calc(100vw - 16px);overflow-x:auto;scrollbar-width:none}
+  #top::-webkit-scrollbar{display:none}
+  #crest{padding-right:7px;margin-right:0}
+  .purse{gap:8px;padding:0 6px;flex:1}
   .coin .disc{width:15px;height:15px}
   .coin .amt{font-size:12.5px}
   .coin .rate{font-size:9px}
+  #might-chip{padding-left:8px}
   #chron{gap:9px;padding-left:8px}
   #chron .stat s{display:none}
   #chron .stat b{font-size:12px}
@@ -440,8 +457,11 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   <header id="top">
     <div id="crest"><span class="mark">&#9884;</span><span class="ttl">Четыре Знамени</span></div>
     <div class="purse" id="purse"></div>
+    <div class="coin" id="might-chip" title="Сила города">
+      <img class="disc" src="images/ui/icon-power.png" alt="">
+      <span><b class="amt" id="might">—</b></span>
+    </div>
     <div id="chron" style="display:none">
-      <div class="stat"><b id="might">—</b><s>Сила</s></div>
       <div class="stat"><b id="daytime">—</b><s>Хроника</s></div>
       <select id="tempo" title="Ускорение времени — только для проверки">
         <option value="1">×1</option><option value="10">×10</option>
@@ -1176,7 +1196,7 @@ const centerDist=p=>Math.hypot(p.x-CFG.MAP/2,p.y-CFG.MAP/2)/(CFG.MAP/2); // 0 ц
 function newPlayer(id,race,x,y,isBot){
   const aggr=.4+RNG()*.5;
   const p={id,race,x,y,isBot,name:"",
-    res:{food:8000,wood:8000,stone:3000,gold:1500},resAt:0,
+    res:{food:100000,wood:100000,stone:100000,gold:100000},resAt:0,
     b:{},queues:[null,null],train:{inf:null,arc:null,cav:null,sie:null},
     troops:{},wounded:{},
     gen:{lv:1,xp:0,pts:0,tal:{},id:isBot?(aggr>0.5?0:1):null}, gear:{}, tech:{}, rsch:null,
@@ -1243,7 +1263,7 @@ function genWorld(seed){
   const me = newPlayer(W.nextId++, "human", ps.x, ps.y, false);
   me.name="Ваш город";
   me.shieldUntil = 3*86400;      // три дня защиты новичка
-  Object.assign(me.b,{hall:3,store:3,barracks:2,range:2,stable:1,academy:2,wall:2});
+  Object.assign(me.b,{hall:3,store:8,barracks:2,range:2,stable:1,academy:2,wall:2});
   me.b.farm[0]=3; me.b.lumber[0]=3; me.b.quarry[0]=2; me.b.mine[0]=2; me.b.hospital[0]=3;
   W.players.push(me);
   clearArea(ps.x,ps.y,1); W.map[key(ps.x,ps.y)]={t:"city",x:ps.x,y:ps.y,pid:me.id};
@@ -1264,10 +1284,11 @@ function genWorld(seed){
     for(const k of ["farm","lumber","quarry","mine","hospital"])
       b.b[k][0]=clamp(head+ri(-2,1),1,CFG.MAX_LEVEL);   // на старте эпоха 1 — доступен только участок №1
     b.b.hall = head;
+    b.b.store = Math.max(b.b.store,8);   // склад должен вмещать стартовые 100к, иначе они тут же обрежутся
     TKEYS.forEach(t=>{b.troops[t][1]=ri(200,900)});
     b.gen.lv = ri(3,10); b.gen.pts = b.gen.lv-1;
     autoTalents(b);
-    b.res={food:20000,wood:20000,stone:9000,gold:4000}; 
+    b.res={food:100000,wood:100000,stone:100000,gold:100000};
     W.players.push(b);
     clearArea(s.x,s.y,1); W.map[key(s.x,s.y)]={t:"city",x:s.x,y:s.y,pid:b.id};
     schedule(ri(0,CFG.BOT_THINK), "think", {pid:b.id});
@@ -1387,6 +1408,9 @@ function power(p){
   });
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++) v+=p.troops[t][i]*TIER_MULT[i-1]*4});
   W.marches.forEach(m=>{if(m.pid===p.id)TKEYS.forEach(t=>{for(let i=1;i<=5;i++)v+=(m.units[t][i]||0)*TIER_MULT[i-1]*4})});
+  [...ACADEMY_TREE.eco,...ACADEMY_TREE.mil].forEach(n=>{
+    const lv=p.tech[n.id]||0; if(lv) v+=lv*RESEARCH_WAVE[n.wave]*3;
+  });
   v+=p.gen.lv*80;
   return Math.round(v);
 }
@@ -3059,16 +3083,26 @@ function foCity(){
 }
 
 /* ---- Войско ---- */
+function unitAvatarHtml(p,t,i){
+  return "<span class='troop-avatar'>"+
+    "<img class='portrait' src='images/units/"+p.race+"-"+t+".png' alt=''>"+
+    "<img class='class-badge' src='images/ui/class-"+t+".png' alt=''>"+
+    "<img class='tier-badge' src='images/ui/tier-"+i+".png' alt=''>"+
+    "</span>";
+}
+function troopRowHtml(p,t,i,n){
+  return "<div class='troop-row'>"+unitAvatarHtml(p,t,i)+
+    "<span class='troop-name'>"+unitName(t,i,p.race)+"</span>"+
+    "<span class='troop-count'>"+RU(n)+"</span></div>";
+}
 function foArmy(){
   const p=me(); syncRes(p);
   const B=bonuses(p);
   let hurt=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++)hurt+=p.wounded[t][i]});
   let h=rubric("Смотр войск",fmt(armyPower(p.troops,B,p.race))+" силы");
   const rows=[];
-  TKEYS.forEach(t=>{ for(let i=1;i<=5;i++){ const n=p.troops[t][i]; if(n)
-    rows.push("<tr><td>"+unitName(t,i,p.race)+" · "+TROOP_TYPES[t].name.toLowerCase()+
-      "</td><td>"+RU(n)+"</td></tr>") } });
-  h+= rows.length ? "<div class='entry'><table class='roll'>"+rows.join("")+"</table></div>"
+  TKEYS.forEach(t=>{ for(let i=1;i<=5;i++){ const n=p.troops[t][i]; if(n) rows.push(troopRowHtml(p,t,i,n)) } });
+  h+= rows.length ? "<div class='entry troop-list'>"+rows.join("")+"</div>"
                   : hollow("&#9876;","В столице пусто. Наберите войско в казармах, на стрельбище, в конюшне или мастерской на карте города.");
 
   if(hurt>0){
