@@ -49,14 +49,20 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   background:linear-gradient(180deg,rgba(41,32,19,.6),rgba(16,12,8,.62));
   border:1px solid rgba(61,49,33,.75);border-radius:5px;
   box-shadow:0 6px 18px rgba(0,0,0,.5);padding:0 12px;min-height:44px;
-  backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
+  backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);position:relative}
+#top-xp{position:absolute;left:1px;right:1px;bottom:-2px;height:2px;background:rgba(0,0,0,.4);
+  border-radius:0 0 4px 4px;overflow:hidden}
+#top-xp i{display:block;height:100%;background:linear-gradient(90deg,var(--gilt-dim),var(--gilt-hi));width:0%}
 
-#crest{display:flex;align-items:baseline;gap:9px;padding-right:12px;margin-right:4px;
+#crest{display:flex;align-items:center;gap:9px;padding-right:12px;margin-right:4px;
   border-right:1px solid var(--rule-soft);cursor:pointer}
 #crest:hover .mark{color:var(--gilt-hi)}
 #crest .mark{font-size:19px;color:var(--gilt);line-height:1;transition:color .15s}
 #crest .avatar{width:32px;height:32px;object-fit:contain;display:block}
-#crest .ttl{display:none}
+#crest .ttl{display:flex;flex-direction:column;line-height:1.2;white-space:nowrap}
+#crest .ttl b{font-size:12px;font-weight:normal;color:var(--vellum);max-width:96px;
+  overflow:hidden;text-overflow:ellipsis}
+#crest .ttl s{font-size:10px;font-family:var(--data);color:var(--gilt-dim);text-decoration:none}
 
 .profile-avatar-wrap{position:relative}
 .profile-avatar{width:52px;height:52px;object-fit:contain;display:block}
@@ -69,13 +75,21 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .gen-figure{max-width:60%;max-height:220px;object-fit:contain;
   filter:drop-shadow(0 8px 14px rgba(0,0,0,.5))}
 
+.stars{color:var(--gilt);font-size:13px;letter-spacing:1px;margin:2px 0}
+.gen-skills{display:flex;gap:8px;margin-top:9px}
+.gen-skill{width:34px;height:34px;border-radius:50%;background:var(--wood-deep);
+  border:1px solid var(--rule);display:flex;flex-direction:column;align-items:center;
+  justify-content:center;line-height:1}
+.gen-skill b{color:var(--gilt);font-size:13px}
+.gen-skill s{text-decoration:none;font-family:var(--data);font-size:9px;color:var(--vellum-dim)}
+
 #menu-btn{position:fixed;right:14px;bottom:14px;z-index:20;width:70px;height:70px;padding:0;
   background-image:url(images/ui/icon-menu.png);background-size:175.82% 117.17%;
   background-position:47.64% 61.2%;background-repeat:no-repeat;
   border:none;border-radius:50%;color:var(--gilt-hi);overflow:hidden}
 #menu-btn span{display:none;font-size:19px} /* текстовый фолбэк, если картинки нет */
 
-.purse{display:flex;align-items:center;gap:16px;padding:0 14px;flex:1;min-width:0}
+.purse{display:flex;align-items:center;gap:16px;padding:0 14px;flex:0 0 auto}
 .coin{display:flex;align-items:center;gap:7px}
 .coin .disc{width:22px;height:22px;border-radius:50%;flex:0 0 auto;object-fit:contain}
 .coin .amt{font-family:var(--data);font-size:14px;font-variant-numeric:tabular-nums;
@@ -191,6 +205,12 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #bm-stats{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px}
 #bm-stats td{padding:5px 0;border-bottom:1px solid rgba(90,69,48,.25);color:#3a2c1c}
 #bm-stats td:last-child{text-align:right;font-family:var(--data)}
+#bm-opens{font-size:12.5px;text-align:center;color:#8a6d2c;margin-bottom:14px;font-weight:bold}
+#ac-tabs{display:flex;gap:6px;margin-bottom:10px}
+#ac-tabs button{flex:1;padding:7px 4px;font-size:12px;text-align:center;
+  background:rgba(90,69,48,.12);border:1px solid rgba(90,69,48,.3);border-radius:4px;
+  color:#5a4530}
+#ac-tabs button.on{background:rgba(138,109,44,.28);border-color:#8a6d2c;color:#2c2114;font-weight:bold}
 #bm-reqs{margin-bottom:18px}
 #bm-reqs .req-row{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:14px}
 #bm-reqs .req-row img{width:20px;height:20px;object-fit:contain;flex:0 0 auto}
@@ -212,7 +232,9 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #bm-tree .rgroup:first-child{margin-top:0}
 #bm-tree .rnode{padding:8px 0;border-bottom:1px solid rgba(90,69,48,.18)}
 #bm-tree .rnode:last-child{border-bottom:none}
-#bm-tree .rnode-hd{display:flex;justify-content:space-between;gap:8px;align-items:baseline;
+#bm-tree .rnode-hd img.unit-thumb{width:26px;height:26px;border-radius:50%;object-fit:cover;
+  flex:0 0 auto;border:1px solid rgba(90,69,48,.4)}
+#bm-tree .rnode-hd{display:flex;justify-content:space-between;gap:8px;align-items:center;
   font-size:13px;color:#2c2114}
 #bm-tree .rnode-lv{font-family:var(--data);font-size:11px;color:#5a4530;white-space:nowrap}
 #bm-tree .rnode-lv.maxed{color:#3f6b3f}
@@ -256,6 +278,13 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .rubric::after{content:"";flex:1;height:1px;
   background:linear-gradient(90deg,var(--gilt-dim),transparent)}
 .rubric .n{font-family:var(--data);font-size:10px;color:var(--vellum-faint);letter-spacing:.05em}
+
+#inv-tabs{display:flex;gap:6px;margin-bottom:4px}
+#inv-tabs button{flex:1;padding:8px 3px;font-size:11.5px;text-align:center;
+  background:rgba(0,0,0,.25);border:1px solid var(--rule-soft);border-radius:4px;
+  color:var(--vellum-dim)}
+#inv-tabs button.on{background:rgba(194,153,60,.18);border-color:var(--gilt-dim);
+  color:var(--gilt-hi);font-weight:bold}
 
 /* Запись реестра */
 .entry{background:linear-gradient(180deg,rgba(52,42,29,.5),rgba(30,24,16,.5));
@@ -360,10 +389,11 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 /* Строки войск — аватар с бейджами тира/класса вместо текстового дублирования */
 .troop-row{display:flex;align-items:center;gap:11px;padding:6px 0;border-bottom:1px dotted var(--rule-soft)}
 .troop-row:last-child{border-bottom:none}
-.troop-avatar{position:relative;width:38px;height:38px;flex:0 0 auto}
+.troop-avatar{position:relative;width:40px;height:40px;flex:0 0 auto;margin-bottom:6px}
 .troop-avatar .portrait{width:100%;height:100%;border-radius:50%;object-fit:cover;
   border:1px solid var(--rule);background:var(--wood-deep)}
-.troop-avatar .tier-badge{position:absolute;bottom:-3px;right:-3px;width:16px;height:16px;pointer-events:none}
+.troop-avatar .tier-badge{position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);
+  width:17px;height:17px;pointer-events:none;filter:drop-shadow(0 1px 2px rgba(0,0,0,.85))}
 .troop-avatar .class-badge{position:absolute;top:-3px;left:-3px;width:14px;height:14px;
   filter:drop-shadow(0 1px 2px rgba(0,0,0,.85));pointer-events:none}
 .troop-name{flex:1;font-size:13.5px;color:var(--vellum);min-width:0}
@@ -440,8 +470,10 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   #top{top:8px;left:8px;min-height:38px;padding:0 9px;
     max-width:calc(100vw - 16px);overflow-x:auto;scrollbar-width:none}
   #top::-webkit-scrollbar{display:none}
-  #crest{padding-right:7px;margin-right:0}
-  .purse{gap:8px;padding:0 6px;flex:1}
+  #crest{padding-right:7px;margin-right:0;gap:6px}
+  #crest .ttl b{max-width:58px;font-size:11px}
+  #crest .ttl s{font-size:9px}
+  .purse{gap:6px;padding:0 6px;flex:0 0 auto}
   .coin .disc{width:15px;height:15px}
   .coin .amt{font-size:12.5px}
   .coin .rate{font-size:9px}
@@ -467,7 +499,9 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   </div>
 
   <header id="top">
-    <div id="crest"><span class="mark">&#9884;</span><img id="crest-avatar" class="avatar" alt="" style="display:none"><span class="ttl">Четыре Знамени</span></div>
+    <div id="crest"><span class="mark">&#9884;</span><img id="crest-avatar" class="avatar" alt="" style="display:none">
+      <span class="ttl"><b id="crest-name">Новый лорд</b><s id="crest-lv"></s></span></div>
+    <div id="top-xp"><i id="top-xp-bar"></i></div>
     <div class="purse" id="purse"></div>
     <div class="coin" id="might-chip" title="Сила города">
       <img class="disc" src="images/ui/icon-power.png" alt="">
@@ -1148,6 +1182,12 @@ const COUNTER_UP = 1.5, COUNTER_DOWN = 0.7;
 /* ---- Ресурсы ---- */
 const RES = ["food","wood","stone","gold"];
 const RES_NAME = {food:"Еда",wood:"Дерево",stone:"Камень",gold:"Золото"};
+const RES_DESC = {
+  food:"Идёт на стройку и содержание войск. Основной расход эпоху за эпохой.",
+  wood:"Идёт на стройку наравне с едой — почти любое здание просит и то, и другое.",
+  stone:"Нужен на поздних постройках и в исследованиях сильнее, чем еда с деревом.",
+  gold:"Казна: обучение бойцов с тира III, исследования и здания высоких уровней.",
+};
 const RES_COLOR = {food:"var(--food)",wood:"var(--wood)",stone:"var(--stone)",gold:"var(--gold)"};
 
 /* =========================================================================
@@ -2477,7 +2517,7 @@ const FONT=getComputedStyle(document.body).fontFamily;   // читаем оди�
 const cv=$("#map"), g=cv.getContext("2d");
 const mini=$("#mini"), mg=mini.getContext("2d");
 let view={x:0,y:0,z:8}, drag=null, sel=null, hover=null;
-let tab="city", tempo=1, lastReal=Date.now(), lastFolio="";
+let tab="city", tempo=1, lastReal=Date.now(), lastFolio="", academyTab="mil", invTab="res";
 
 /* ---- Рельеф в буфер ---------------------------------------------------- */
 let terrain=null;
@@ -2834,6 +2874,15 @@ function renderTop(){
       "<s class='rate"+(v<0?" neg":"")+"'>"+(v<0?"−":"+")+fmt(Math.abs(v))+"/ч</s></span></div>";
   }).join("");
   $("#might").textContent=fmt(power(p));
+  if(p.gen&&p.gen.id!=null){
+    $("#crest-name").textContent=genOf(p).name;
+    $("#crest-lv").textContent="Ур. "+p.gen.lv;
+    $("#top-xp-bar").style.width=(p.gen.xp/genXpNeed(p.gen.lv)*100).toFixed(1)+"%";
+  } else {
+    $("#crest-name").textContent="Новый лорд";
+    $("#crest-lv").textContent="выберите полководца";
+    $("#top-xp-bar").style.width="0%";
+  }
   const avSrc=playerAvatarSrc(p);
   if(avSrc!==lastCrestAvatar){
     lastCrestAvatar=avSrc;
@@ -3023,10 +3072,16 @@ function academyTreeHtml(p){
   let h="<div id='bm-tree'>";
   if(p.rsch){
     const rn=findNode(p.rsch.id);
+    const f=Math.min(1,(W.t-p.rsch.t0)/Math.max(1,p.rsch.t1-p.rsch.t0));
     h+="<div class='rgroup'>Идёт исследование</div>"+
        "<div class='rnode'><div class='rnode-hd'><b>"+rn.name+" &rarr; ур. "+p.rsch.lv+"</b></div>"+
+       "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div>"+
        "<div class='rnode-eff'>Готово через <em>"+fmtDur(p.rsch.t1-W.t)+"</em></div></div>";
   }
+  h+="<div id='ac-tabs'>"+
+    "<button class='"+(academyTab==="mil"?"on":"")+"' data-act='academytab' data-t='mil'>Военные</button>"+
+    "<button class='"+(academyTab==="eco"?"on":"")+"' data-act='academytab' data-t='eco'>Экономические</button>"+
+    "</div>";
   const renderGroup=(arr,label)=>{
     h+="<div class='rgroup'>"+label+"</div>";
     arr.filter(n=>!n.race||n.race===p.race).forEach(n=>{
@@ -3044,16 +3099,20 @@ function academyTreeHtml(p){
          "</button></div>";
     });
   };
-  renderGroup(ACADEMY_TREE.eco,"Хозяйство");
-  renderGroup(ACADEMY_TREE.mil,"Армия");
+  if(academyTab==="eco") renderGroup(ACADEMY_TREE.eco,"Хозяйство");
+  else renderGroup(ACADEMY_TREE.mil,"Армия");
   h+="</div>";
   return h;
+}
+function unitThumb(p,t,i){
+  const headPos = t==="sie" ? "50% 40%" : "50% 20%";
+  return "<img class='unit-thumb' style='object-position:"+headPos+"' src='images/units/"+p.race+"-"+t+i+".png' alt=''>";
 }
 function trainInfoHtml(p,type){
   const T=p.train[type];
   if(T){
     return "<div id='bm-tree'><div class='rgroup'>"+(T.retrain?"Идёт переобучение":"Идёт набор")+"</div>"+
-       "<div class='rnode'><div class='rnode-hd'><b>"+unitName(T.type,T.tier,p.race)+"</b>"+
+       "<div class='rnode'><div class='rnode-hd'>"+unitThumb(p,T.type,T.tier)+"<b>"+unitName(T.type,T.tier,p.race)+"</b>"+
        "<span class='rnode-lv'>&times;"+RU(T.n)+"</span></div>"+
        "<div class='rnode-eff'>Готовы через <em>"+fmtDur(T.t1-W.t)+"</em></div></div></div>";
   }
@@ -3062,7 +3121,7 @@ function trainInfoHtml(p,type){
   const can=Math.floor(Math.min.apply(null,RES.map(r=>c[r]?p.res[r]/c[r]:1e9)));
   const beats=TROOP_TYPES[type].beats;
   let h="<div id='bm-tree'><div class='rgroup'>Набор</div>"+
-    "<div class='rnode'><div class='rnode-hd'><b>"+unitName(type,maxT,p.race)+"</b><span class='rnode-lv'>T"+maxT+"</span></div>"+
+    "<div class='rnode'><div class='rnode-hd'>"+unitThumb(p,type,maxT)+"<b>"+unitName(type,maxT,p.race)+"</b><span class='rnode-lv'>T"+maxT+"</span></div>"+
     "<div class='rnode-eff'>Атака <em>"+Math.round(troopStat(type,maxT,"atk")*troopMod(p.race,type,"atk"))+"</em> · защита <em>"+troopStat(type,maxT,"def")+
     "</em> · здоровье <em>"+troopStat(type,maxT,"hp")+"</em>"+
     (beats?" · бьёт "+TROOP_TYPES[beats].name.toLowerCase():"")+
@@ -3074,7 +3133,7 @@ function trainInfoHtml(p,type){
     const have=p.troops[type][i]; if(!have) continue;
     anyRetrain=true;
     const canR=retrainMax(p,type,i), cR=retrainCost(type,i,1);
-    retrainHtml+="<div class='rnode'><div class='rnode-hd'><b>"+unitName(type,i,p.race)+" &rarr; "+unitName(type,i+1,p.race)+"</b>"+
+    retrainHtml+="<div class='rnode'><div class='rnode-hd'>"+unitThumb(p,type,i)+"<b>"+unitName(type,i,p.race)+" &rarr; "+unitName(type,i+1,p.race)+"</b>"+
       "<span class='rnode-lv'>в строю "+RU(have)+"</span></div>"+
       "<div class='rnode-eff'>Доступно к переобучению: <em>"+fmt(canR)+"</em></div>"+
       "<div class='rnode-cost'>"+RES.filter(r=>cR[r]).map(r=>"<span class='"+(p.res[r]<cR[r]?"short":"")+"'>"+fmt(cR[r])+" "+RES_NAME[r]+"</span>").join("")+"</div>"+
@@ -3102,7 +3161,14 @@ function buildingModalHtml(ci){
   h+="<div id=\'bm-title\'>"+buildingName(c.bk,p)+(c.pl!=null?" · участок "+(c.pl+1):"")+"</div>";
   h+="<div id=\'bm-sub\'>уровень "+lv+(maxed?" (максимум)":" &rarr; "+nx)+"</div>";
   if(desc) h+="<div id=\'bm-desc\'>"+desc+"</div>";
-  if(c.bk==="hall") h+=hallInfoHtml(p);
+  if(!maxed && lv>0){
+    const term=l=>Math.pow(l,2.1)*12, curPow=power(p), nxPow=Math.round(curPow-term(lv)+term(nx));
+    h+="<table id=\'bm-stats\'><tr><td>Мощь города</td><td>"+fmt(curPow)+" &rarr; "+fmt(nxPow)+"</td></tr></table>";
+  }
+  if(c.bk==="hall"){
+    if(epochOf(nx)>epochOf(lv)) h+="<div id=\'bm-opens\'>Открывает: "+RACE_EPOCHS[p.race][epochOf(nx)-1].title+"</div>";
+    h+=hallInfoHtml(p);
+  }
   else if(c.bk==="store") h+=storeInfoHtml(p);
   else if(c.bk==="academy") h+=academyTreeHtml(p);
   else if(BLD_TRAIN[c.bk] && lv>0) h+=trainInfoHtml(p,BLD_TRAIN[c.bk]);
@@ -3156,8 +3222,9 @@ function foCity(){
 
 /* ---- Войско ---- */
 function unitAvatarHtml(p,t,i){
+  const headPos = t==="sie" ? "50% 40%" : "50% 20%";
   return "<span class='troop-avatar'>"+
-    "<img class='portrait' src='images/units/"+p.race+"-"+t+i+".png' alt=''>"+
+    "<img class='portrait' style='object-position:"+headPos+"' src='images/units/"+p.race+"-"+t+i+".png' alt=''>"+
     "<img class='class-badge' src='images/ui/class-"+t+".png' alt=''>"+
     "<img class='tier-badge' src='images/ui/tier-"+i+".png' alt=''>"+
     "</span>";
@@ -3226,6 +3293,13 @@ function genFigureHtml(race,i){
   return "<img class='gen-figure' src='images/generals/"+race+"-"+(i+1)+".png' alt='' "+
     "onerror=\"this.parentElement.style.display='none'\">";
 }
+function genSkillBadges(p){
+  const branches=[["Г",GENERAL_TREE.city],["А",GENERAL_TREE.army],["В",TALENTS.war],["Р",TALENTS.dev],["С",TALENTS.gath]];
+  return "<div class='gen-skills'>"+branches.map(([letter,br])=>{
+    let spent=0; br.nodes.forEach(n=>spent+=(p.gen.tal[n.id]||0));
+    return "<span class='gen-skill' title='"+br.name+"'><b>"+letter+"</b><s>"+spent+"</s></span>";
+  }).join("")+"</div>";
+}
 function foGen(){
   const p=me();
   if(p.gen.id==null){
@@ -3241,16 +3315,26 @@ function foGen(){
   }
   const G=genOf(p), B=bonuses(p), S=genStats(p);
   const need=genXpNeed(p.gen.lv), f=p.gen.xp/need, lvCap=Math.min(60,epochOf(p.b.hall)*12);
+  const stars=Math.min(5,1+Math.floor(p.gen.lv/12));
+  const genPower=p.gen.lv*80;
   let h="<div class='gen-figure-wrap'>"+genFigureHtml(p.race,p.gen.id||0)+"</div>";
   h+=rubric("Полководец");
   h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
     genPortraitHtml(p.race,p.gen.id||0)+"</div>"+ring(p.gen.lv,60)+"<div class='fill'>"+
-    "<div class='title'>"+G.name+"<span class='tag gilt'>"+G.role+"</span></div><div class='note'>"+G.bonus+
+    "<div class='title'>"+G.name+"<span class='tag gilt'>"+G.role+"</span></div>"+
+    "<div class='stars'>"+"&#9733;".repeat(stars)+"&#9734;".repeat(5-stars)+"</div>"+
+    "<div class='note'>"+G.bonus+
     (p.gen.pts>0?" · <em>очков к раздаче: "+p.gen.pts+"</em>":"")+
     (p.gen.lv>=lvCap&&lvCap<60?" · потолок эпохи: "+lvCap:"")+"</div></div></div>"+
     "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div>"+
     "<div class='note' style='margin-top:5px'>Опыт "+RU(p.gen.xp)+" из "+RU(need)+
-    " — берётся с разбойничьих застав.</div></div>";
+    " — берётся с разбойничьих застав.</div>"+
+    "<table class='roll' style='margin-top:9px'><tr><td>Сила полководца</td><td>"+RU(genPower)+"</td></tr></table>"+
+    genSkillBadges(p)+
+    "<div class='line' style='margin-top:9px'>"+
+    "<button class='seal' onclick=\"document.getElementById('gen-talents-anchor').scrollIntoView({behavior:'smooth'})\">Таланты</button>"+
+    "<button class='seal' data-act='opentab' data-tab='inv'>Экипировка</button>"+
+    "</div></div>";
 
   h+=rubric("Личные статы","участвует в бою наравне с войском");
   h+="<div class='entry'><table class='roll'>"+
@@ -3269,6 +3353,7 @@ function foGen(){
     "<tr><td>Поднятие павших</td><td class='"+(B.raise>0?"good":"")+"'>"+(B.raise*100).toFixed(0)+"%</td></tr>"+
     "</table></div>";
 
+  h+="<div id='gen-talents-anchor'></div>";
   for(const bk in GENERAL_TREE){
     const br=GENERAL_TREE[bk];
     let spent=0; br.nodes.forEach(n=>spent+=(p.gen.tal[n.id]||0));
@@ -3302,7 +3387,62 @@ function foGen(){
 
 function foInv(){
   const p=me();
-  let h="";
+  const tabsHtml="<div id='inv-tabs'>"+
+    [["res","Ресурсы"],["mat","Материалы"],["items","Предметы"],["gear","Снаряжение"]].map(([k,label])=>
+      "<button class='"+(invTab===k?"on":"")+"' data-act='invtab' data-t='"+k+"'>"+label+"</button>").join("")+
+    "</div>";
+
+  if(invTab==="res"){
+    let h=tabsHtml+rubric("Ресурсы");
+    RES.forEach(r=>{
+      h+="<div class='entry'><div class='line'><div style='flex:0 0 auto'>"+
+        "<img src='images/ui/res-"+r+".png' style='width:26px;height:26px;object-fit:contain'></div>"+
+        "<div class='fill'><div class='title'>"+RES_NAME[r]+"</div>"+
+        "<div class='note'>"+RES_DESC[r]+"</div></div>"+
+        "<div style='flex:0 0 auto;font-family:var(--data);font-size:14px'>"+fmt(p.res[r])+"</div></div></div>";
+    });
+    return h;
+  }
+
+  if(invTab==="mat"){
+    let h=tabsHtml+rubric("Материалы","добываются и сливаются в горне");
+    Object.keys(MATERIALS).forEach(mat=>{
+      const stock=p.materials[mat];
+      h+="<div class='entry'><div class='line'><div class='fill'>"+
+        "<div class='title'>"+MATERIALS[mat].name+"</div>"+
+        "<div class='note'>"+RARITY_NAMES.map((rn,i)=>rn.slice(0,3)+": "+(stock[i]||0)).join(" · ")+"</div></div>"+
+        "<button class='seal' data-act='matprod' data-mat='"+mat+"' "+(p.craft?"disabled":"")+">Добыть</button></div>"+
+        "<div class='line' style='margin-top:6px'>"+[0,1,2,3].map(t=>
+          "<button class='seal' data-act='matup' data-mat='"+mat+"' data-tier='"+t+"' "+
+          ((stock[t]||0)<4?"disabled":"")+" style='margin-right:4px'>4×"+RARITY_NAMES[t].slice(0,3)+"→"+RARITY_NAMES[t+1].slice(0,3)+"</button>"
+        ).join("")+"</div></div>";
+    });
+    return h;
+  }
+
+  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+st[k])).join(", ");
+
+  if(invTab==="items"){
+    let h=tabsHtml+rubric("Предметы","снаряжение на складе, ещё не надето");
+    let any=false;
+    GEAR_SLOTS.forEach(s=>{
+      ["bastion","storm"].forEach(order=>{
+        for(let r=1;r<=5;r++){
+          const cnt=p.inventory[s.id][order][r-1]||0; if(!cnt) continue;
+          any=true;
+          h+="<div class='entry'><div class='line'><div class='fill'>"+
+            "<div class='title'>"+GEAR_NAMES[s.id][order][r-1]+"<span class='tag'>×"+cnt+"</span></div>"+
+            "<div class='note'>"+s.name+" · "+statTxt(gearItemStats(s.cat,order,r))+"</div></div>"+
+            "<button class='seal' data-act='equip' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Надеть</button>"+
+            "<button class='seal' data-act='dismantle' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Разобрать</button></div>";
+        }
+      });
+    });
+    if(!any) h+=hollow("&#9884;","Склад снаряжения пуст.");
+    return h;
+  }
+
+  let h=tabsHtml;
   h+=rubric("Снаряжение","горн ур. "+p.b.forge);
   if(p.craft){
     const cf=(W.t-p.craft.t0)/Math.max(1,p.craft.t1-p.craft.t0);
@@ -3313,24 +3453,13 @@ function foInv(){
        "<div class='progress'><i style='width:"+(cf*100).toFixed(1)+"%'></i></div></div>";
   }
   const curRarity=Math.min(5,epochOf(p.b.hall));
-  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+st[k])).join(", ");
   GEAR_SLOTS.forEach(s=>{
     const it=p.gear[s.id];
     h+="<div class='entry"+(it?" hot":"")+"'><div class='line'><div class='fill'>"+
       "<div class='title'>"+s.name+(it?"<span class='tag gilt'>"+RARITY_NAMES[it.rarity-1]+"</span>":"")+"</div>"+
       "<div class='note'>"+(it?GEAR_NAMES[s.id][it.order][it.rarity-1]+" · "+statTxt(gearItemStats(s.cat,it.order,it.rarity))
         :"пусто")+"</div></div>"+
-      (it?"<button class='seal' data-act='unequip' data-slot='"+s.id+"'>Снять</button>":"")+"</div>";
-    ["bastion","storm"].forEach(order=>{
-      for(let r=1;r<=5;r++){
-        const cnt=p.inventory[s.id][order][r-1]||0; if(!cnt) continue;
-        h+="<div class='entry'><div class='line'><div class='fill'>"+
-          "<div class='title'>"+GEAR_NAMES[s.id][order][r-1]+"<span class='tag'>×"+cnt+"</span></div>"+
-          "<div class='note'>склад · "+statTxt(gearItemStats(s.cat,order,r))+"</div></div>"+
-          "<button class='seal' data-act='equip' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Надеть</button>"+
-          "<button class='seal' data-act='dismantle' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Разобрать</button></div>";
-      }
-    });
+      (it?"<button class='seal' data-act='unequip' data-slot='"+s.id+"'>Снять</button>":"")+"</div></div>";
     const haveMat=(p.materials[s.mat][curRarity-1]||0)>=1;
     h+="<div class='entry'><div class='line'><div class='fill'>"+
       "<div class='title'>Сковать "+RARITY_NAMES[curRarity-1].toLowerCase()+"</div>"+
@@ -3340,21 +3469,7 @@ function foInv(){
       "<button class='seal' data-act='craft' data-slot='"+s.id+"' data-order='storm' data-rarity='"+curRarity+"' "+
       (p.craft||!haveMat?"disabled":"")+">Буря</button></div></div>";
   });
-
-  h+=rubric("Материалы","добываются и сливаются в горне");
-  Object.keys(MATERIALS).forEach(mat=>{
-    const stock=p.materials[mat];
-    h+="<div class='entry'><div class='line'><div class='fill'>"+
-      "<div class='title'>"+MATERIALS[mat].name+"</div>"+
-      "<div class='note'>"+RARITY_NAMES.map((rn,i)=>rn.slice(0,3)+": "+(stock[i]||0)).join(" · ")+"</div></div>"+
-      "<button class='seal' data-act='matprod' data-mat='"+mat+"' "+(p.craft?"disabled":"")+">Добыть</button></div>"+
-      "<div class='line' style='margin-top:6px'>"+[0,1,2,3].map(t=>
-        "<button class='seal' data-act='matup' data-mat='"+mat+"' data-tier='"+t+"' "+
-        ((stock[t]||0)<4?"disabled":"")+" style='margin-right:4px'>4×"+RARITY_NAMES[t].slice(0,3)+"→"+RARITY_NAMES[t+1].slice(0,3)+"</button>"
-      ).join("")+"</div></div>";
-  });
-
-    return h;
+  return h;
 }
 
 /* ---- Держава: лавка и расклад сил ---- */
@@ -3655,6 +3770,17 @@ function handleAct(e){
   else if(a==="pickgen"){
     if(p.gen.id==null){ p.gen.id=+b.dataset.id; herald("Выбран генерал: "+GENERALS[p.race][p.gen.id].name+".") }
   }
+  else if(a==="opentab"){ openMenuModal(b.dataset.tab); }
+  else if(a==="academytab"){
+    academyTab=b.dataset.t;
+    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);
+  }
+  else if(a==="invtab"){
+    invTab=b.dataset.t;
+    lastFolio=""; renderFolio();
+    const menu=$("#menu-modal");
+    if(menu.classList.contains("open")&&menu.dataset.tab==="inv") $("#menu-modal-body").innerHTML=foInv();
+  }
   else if(a==="recall"){ const m=W.marches.find(x=>x.id==b.dataset.m);
     if(m){ recallMarch(m); herald("Отряд поворачивает домой.") } }
   else if(a==="shield"){
@@ -3745,7 +3871,7 @@ function openRetrainModal(type,fromTier){
 function trainSheetHtml(){
   const p=me(), {type,tier,max,n,fromTier}=trainCtx, isRetrain=trainCtx.mode==="retrain";
   const busy=!!p.train[type], locked=busy||max<1;
-  let h="<img id='bm-art' src='images/buildings/"+TRAIN_BLD[type]+".png'>";
+  let h="<img id='bm-art' src='images/units/"+p.race+"-"+type+tier+".png'>";
   h+="<div id='bm-title'>"+(isRetrain?unitName(type,fromTier,p.race)+" &rarr; "+unitName(type,tier,p.race):unitName(type,tier,p.race))+"</div>";
   h+="<div id='bm-sub'>"+(isRetrain?"переобучение · в строю "+RU(p.troops[type][fromTier]||0):"набор в столице · тир "+tier)+"</div>";
   h+="<div id='bm-qty'><div class='cap'><span>Доступно максимум</span><b>"+RU(max)+"</b></div>"+
