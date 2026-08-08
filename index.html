@@ -272,8 +272,8 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .cbuild.built .shape{border-color:transparent;background:transparent}
 .cbuild.built:hover .shape{border-color:var(--gilt-hi);background:rgba(194,153,60,.18)}
 .cbuild.locked .shape{border-color:transparent;cursor:not-allowed}
-.cbuild img.bimg{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;
-  pointer-events:none;filter:drop-shadow(0 3px 5px rgba(0,0,0,.6))}
+.cbuild img.bimg{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;
+  object-position:center;pointer-events:none;filter:drop-shadow(0 3px 5px rgba(0,0,0,.6))}
 .cbuild .lvl{position:absolute;bottom:2px;right:4px;font-family:var(--data);font-size:10px;
   color:var(--gilt-hi);background:rgba(0,0,0,.55);padding:0 3px;line-height:1.4;z-index:2}
 
