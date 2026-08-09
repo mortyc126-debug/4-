@@ -51,16 +51,21 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   box-shadow:0 6px 18px rgba(0,0,0,.5);padding:8px 12px;
   backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
 
-#crest{display:flex;align-items:center;gap:10px;cursor:pointer}
+#crest{display:flex;align-items:center;cursor:pointer}
 #crest:hover .mark{color:var(--gilt-hi)}
-#crest .mark{font-size:19px;color:var(--gilt);line-height:1;transition:color .15s}
-#crest .avatar{width:52px;height:52px;object-fit:contain;display:block}
-#crest .crest-info{display:flex;flex-direction:column;line-height:1.3;white-space:nowrap;gap:3px}
-#crest .crest-info b{font-size:14px;font-weight:normal;color:var(--vellum);max-width:150px;
-  overflow:hidden;text-overflow:ellipsis}
-#crest-power{display:flex;align-items:center;gap:5px;font-family:var(--data);font-size:14px;
-  color:var(--gilt-hi);font-weight:bold}
-#crest-power .ico{width:17px;height:17px;object-fit:contain}
+#crest .mark{font-size:19px;color:var(--gilt);line-height:1;transition:color .15s;
+  width:60px;text-align:center;flex:0 0 auto}
+#crest .avatar{width:64px;height:64px;object-fit:contain;display:block;flex:0 0 auto;
+  position:relative;z-index:2;margin-right:-16px;filter:drop-shadow(0 2px 6px rgba(0,0,0,.7))}
+#crest .crest-card{display:flex;flex-direction:column;align-items:flex-start;gap:4px;
+  min-width:0;flex:1;background:rgba(0,0,0,.32);border:1px solid var(--rule-soft);
+  border-radius:6px;padding:6px 10px 6px 22px}
+#crest .crest-card b{font-size:13.5px;font-weight:normal;color:var(--vellum);max-width:170px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#crest-power{display:flex;align-items:center;gap:5px;font-family:var(--data);font-size:12.5px;
+  color:var(--gilt-hi);font-weight:bold;background:rgba(0,0,0,.35);
+  border:1px solid var(--gilt-dim);border-radius:4px;padding:2px 7px}
+#crest-power .ico{width:14px;height:14px;object-fit:contain}
 
 .profile-avatar-wrap{position:relative}
 .profile-avatar{width:52px;height:52px;object-fit:contain;display:block}
@@ -68,9 +73,9 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .gen-portrait-wrap{position:relative}
 .gen-portrait{width:44px;height:44px;object-fit:contain;display:block}
 
-.gen-figure-wrap{width:100%;max-height:220px;display:flex;justify-content:center;
+.gen-figure-wrap{width:100%;max-height:320px;display:flex;justify-content:center;
   overflow:hidden;margin-bottom:6px}
-.gen-figure{max-width:60%;max-height:220px;object-fit:contain;
+.gen-figure{max-width:95%;max-height:320px;object-fit:contain;
   filter:drop-shadow(0 8px 14px rgba(0,0,0,.5))}
 
 .stars{color:var(--gilt);font-size:13px;letter-spacing:1px;margin:2px 0}
@@ -386,12 +391,12 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 /* Строки войск — аватар с бейджами тира/класса вместо текстового дублирования */
 .troop-row{display:flex;align-items:center;gap:11px;padding:6px 0;border-bottom:1px dotted var(--rule-soft)}
 .troop-row:last-child{border-bottom:none}
-.troop-avatar{position:relative;width:40px;height:40px;flex:0 0 auto;margin-bottom:6px}
+.troop-avatar{position:relative;width:48px;height:48px;flex:0 0 auto;margin-bottom:9px}
 .troop-avatar .portrait{width:100%;height:100%;border-radius:50%;object-fit:cover;
   border:1px solid var(--rule);background:var(--wood-deep)}
-.troop-avatar .tier-badge{position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);
-  width:17px;height:17px;pointer-events:none;filter:drop-shadow(0 1px 2px rgba(0,0,0,.85))}
-.troop-avatar .class-badge{position:absolute;top:-3px;left:-3px;width:14px;height:14px;
+.troop-avatar .tier-badge{position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);
+  width:24px;height:24px;pointer-events:none;filter:drop-shadow(0 1px 2px rgba(0,0,0,.85))}
+.troop-avatar .class-badge{position:absolute;top:-4px;left:-4px;width:20px;height:20px;
   filter:drop-shadow(0 1px 2px rgba(0,0,0,.85));pointer-events:none}
 .troop-name{flex:1;font-size:13.5px;color:var(--vellum);min-width:0}
 .troop-count{font-family:var(--data);font-size:13px;color:var(--vellum-dim);font-variant-numeric:tabular-nums}
@@ -467,14 +472,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   #chart{flex:1 1 46%}
   #key,#minimap{display:none}
   #top{top:8px;left:8px;padding:7px 9px;max-width:calc(100vw - 16px)}
-  #crest{gap:7px}
-  #crest .avatar{width:40px;height:40px}
-  #crest .crest-info b{max-width:110px;font-size:12.5px}
-  #crest-power{font-size:12px}
-  .purse{gap:8px}
+  #crest .avatar{width:52px;height:52px;margin-right:-14px}
+  #crest .crest-card{padding:5px 8px 5px 18px}
+  #crest .crest-card b{max-width:130px;font-size:12px}
+  #crest-power{font-size:11px}
+  #crest-power .ico{width:12px;height:12px}
+  .purse{gap:7px}
+  .coin{gap:5px}
   .coin .disc{width:15px;height:15px}
-  .coin .amt{font-size:12.5px}
-  .coin .rate{font-size:9px}
+  .coin .amt{font-size:11.5px}
+  .coin .rate{font-size:8.5px}
   #chron{gap:9px;padding-left:8px}
   #chron .stat s{display:none}
   #chron .stat b{font-size:12px}
@@ -498,7 +505,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   <header id="top">
     <div id="crest">
       <span class="mark">&#9884;</span><img id="crest-avatar" class="avatar" alt="" style="display:none">
-      <div class="crest-info">
+      <div class="crest-card">
         <b id="crest-name">Безымянный лорд</b>
         <span id="crest-power"><img class="ico" src="images/ui/icon-power.png" alt="">—</span>
       </div>
@@ -3343,7 +3350,6 @@ function foGen(){
     "<table class='roll' style='margin-top:9px'><tr><td>Сила полководца</td><td>"+RU(genPower)+"</td></tr></table>"+
     genSkillBadges(p)+
     "<div class='line' style='margin-top:9px'>"+
-    "<button class='seal' data-act='gentab' data-t='talents'>Таланты</button>"+
     "<button class='seal' data-act='opengear'>Экипировка</button>"+
     "</div></div>";
 
@@ -3962,7 +3968,9 @@ function refreshOpenModal(){
     }
   }
   const menu=$("#menu-modal");
-  if(menu.classList.contains("open")){
+  const typingInModal = document.activeElement && $("#menu-modal-body").contains(document.activeElement) &&
+    (document.activeElement.tagName==="INPUT"||document.activeElement.tagName==="TEXTAREA");
+  if(menu.classList.contains("open") && !typingInModal){
     const t=menu.dataset.tab;
     $("#menu-modal-body").innerHTML = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): foInv();
   }
