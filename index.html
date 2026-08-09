@@ -247,6 +247,23 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   border:1px solid #8a6d2c;border-radius:3px;padding:7px 6px;font-family:var(--data);
   font-size:14px;text-align:right;color:#2c2114}
 #bm-time{text-align:center;font-size:12.5px;color:#5a4530;margin-bottom:16px}
+#uc-track{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:0;
+  margin:0 -22px;padding:0 22px;scrollbar-width:none}
+#uc-track::-webkit-scrollbar{display:none}
+.uc-card{flex:0 0 100%;scroll-snap-align:center;padding:0 4px;box-sizing:border-box;
+  display:flex;flex-direction:column;align-items:center}
+.uc-card.locked{opacity:.55}
+.uc-img{max-width:60%;max-height:200px;object-fit:contain;
+  filter:drop-shadow(0 6px 10px rgba(0,0,0,.35));margin-bottom:8px}
+.uc-name{font-size:16px;color:#2c2114;margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.uc-name .tag{font-size:11px;background:rgba(90,69,48,.15);border-radius:3px;padding:2px 6px;
+  color:#5a4530}
+.uc-lock{font-size:12px;color:#8a2f22;text-align:center;margin-bottom:8px}
+.uc-have{font-size:12.5px;color:#3a2c1c;margin:6px 0}
+#uc-nav{display:flex;justify-content:space-between;gap:8px;margin:10px 0 16px}
+#uc-nav button{flex:1;padding:8px 4px;font-size:12.5px;text-align:center;
+  background:rgba(90,69,48,.12);border:1px solid rgba(90,69,48,.3);border-radius:4px;
+  color:#5a4530}
 #bm-tree{margin-bottom:16px}
 #bm-tree .rgroup{font-variant:small-caps;letter-spacing:.12em;font-size:12.5px;color:#6b5230;
   margin:14px 0 6px;padding-bottom:3px;border-bottom:1px solid rgba(90,69,48,.35)}
@@ -3186,32 +3203,7 @@ function trainInfoHtml(p,type){
        "<span class='rnode-lv'>&times;"+RU(T.n)+"</span></div>"+
        "<div class='rnode-eff'>Готовы через <em>"+fmtDur(T.t1-W.t)+"</em></div></div></div>";
   }
-  const maxT=tierUnlockedFor(p,type);
-  const c=troopCost(type,maxT);
-  const can=Math.floor(Math.min.apply(null,RES.map(r=>c[r]?p.res[r]/c[r]:1e9)));
-  const beats=TROOP_TYPES[type].beats;
-  let h="<div id='bm-tree'><div class='rgroup'>Набор</div>"+
-    "<div class='rnode'><div class='rnode-hd'>"+unitThumb(p,type,maxT)+"<b>"+unitName(type,maxT,p.race)+"</b><span class='rnode-lv'>T"+maxT+"</span></div>"+
-    "<div class='rnode-eff'>Атака <em>"+Math.round(troopStat(type,maxT,"atk")*troopMod(p.race,type,"atk"))+"</em> · защита <em>"+troopStat(type,maxT,"def")+
-    "</em> · здоровье <em>"+troopStat(type,maxT,"hp")+"</em>"+
-    (beats?" · бьёт "+TROOP_TYPES[beats].name.toLowerCase():"")+
-    "<br>по средствам <em>"+fmt(can)+"</em></div>"+
-    "<div class='rnode-cost'>"+RES.filter(r=>c[r]).map(r=>"<span class='"+(p.res[r]<c[r]?"short":"")+"'>"+fmt(c[r])+" "+RES_NAME[r]+"</span>").join("")+"</div>"+
-    "<button class='rnode-go' data-act='train' data-t='"+type+"' data-tier='"+maxT+"' "+(can<1?"disabled":"")+">Набрать</button></div>";
-  let retrainHtml="", anyRetrain=false;
-  for(let i=1;i<maxT;i++){
-    const have=p.troops[type][i]; if(!have) continue;
-    anyRetrain=true;
-    const canR=retrainMax(p,type,i), cR=retrainCost(type,i,1);
-    retrainHtml+="<div class='rnode'><div class='rnode-hd'>"+unitThumb(p,type,i)+"<b>"+unitName(type,i,p.race)+" &rarr; "+unitName(type,i+1,p.race)+"</b>"+
-      "<span class='rnode-lv'>в строю "+RU(have)+"</span></div>"+
-      "<div class='rnode-eff'>Доступно к переобучению: <em>"+fmt(canR)+"</em></div>"+
-      "<div class='rnode-cost'>"+RES.filter(r=>cR[r]).map(r=>"<span class='"+(p.res[r]<cR[r]?"short":"")+"'>"+fmt(cR[r])+" "+RES_NAME[r]+"</span>").join("")+"</div>"+
-      "<button class='rnode-go' data-act='retrain' data-t='"+type+"' data-tier='"+i+"' "+(canR<1?"disabled":"")+">Переобучить</button></div>";
-  }
-  if(anyRetrain) h+="<div class='rgroup'>Переобучение</div>"+retrainHtml;
-  h+="</div>";
-  return h;
+  return "<div id='bm-tree'><button class='rnode-go' data-act='browsetrain' data-t='"+type+"'>Тренировать</button></div>";
 }
 function buildingModalHtml(ci){
   const p=me(), c=CITY_CELLS[ci];
@@ -3796,6 +3788,15 @@ function handleAct(e){
     openRetrainModal(b.dataset.t,+b.dataset.tier);
     return;
   }
+  else if(a==="browsetrain"){
+    openUnitCarousel(b.dataset.t);
+    return;
+  }
+  else if(a==="ucnav"){
+    const track=$("#uc-track");
+    if(track) track.scrollLeft += track.clientWidth*(+b.dataset.dir);
+    return;
+  }
   else if(a==="traingo"){
     if(!trainCtx) return;
     const isRetrain=trainCtx.mode==="retrain";
@@ -3924,12 +3925,12 @@ function toggleView(){
 function toggleMenu(){ $("#side-menu").classList.toggle("open"); }
 let buildingModalSel=-1;
 function openBuildingModal(ci){
-  trainCtx=null;
+  trainCtx=null; carouselCtx=null;
   buildingModalSel=ci;
   $("#bm-body").innerHTML = buildingModalHtml(ci);
   $("#building-modal").classList.add("open");
 }
-function closeBuildingModal(){ $("#building-modal").classList.remove("open"); buildingModalSel=-1; trainCtx=null; }
+function closeBuildingModal(){ $("#building-modal").classList.remove("open"); buildingModalSel=-1; trainCtx=null; carouselCtx=null; }
 $("#building-modal").addEventListener("click",e=>{ if(e.target.id==="building-modal") closeBuildingModal(); });
 $("#building-modal").addEventListener("click",handleAct);
 $("#building-modal").addEventListener("input",e=>{
@@ -3940,11 +3941,52 @@ $("#building-modal").addEventListener("input",e=>{
   }
 });
 
+/* ---- Витрина юнитов: все тиры листаются вправо-влево, обучение — со своей карточки ---- */
+let carouselCtx=null;
+function openUnitCarousel(type){
+  carouselCtx={type};
+  buildingModalSel=-1; trainCtx=null;
+  $("#bm-body").innerHTML = unitCarouselHtml();
+  $("#building-modal").classList.add("open");
+  const p=me(), maxT=tierUnlockedFor(p,type);
+  requestAnimationFrame(()=>{
+    const track=$("#uc-track");
+    if(track) track.scrollLeft = (maxT-1)*track.clientWidth;
+  });
+}
+function unitCarouselHtml(){
+  const p=me(), type=carouselCtx.type, maxT=tierUnlockedFor(p,type);
+  let h="<div id='bm-title'>"+TROOP_TYPES[type].name+"</div>";
+  h+="<div id='bm-sub'>тиры 1&ndash;5 &middot; листайте карточку вправо-влево</div>";
+  h+="<div id='uc-track'>";
+  for(let tier=1; tier<=5; tier++){
+    const locked=tier>maxT, have=p.troops[type][tier]||0, beats=TROOP_TYPES[type].beats;
+    h+="<div class='uc-card"+(locked?" locked":"")+"'>"+
+      "<img class='uc-img' src='images/units/"+p.race+"-"+type+tier+".png' alt=''>"+
+      "<div class='uc-name'>"+unitName(type,tier,p.race)+"<span class='tag'>T"+tier+"</span></div>"+
+      (locked?"<div class='uc-lock'>&#128274; заблокирован &mdash; нужен тир "+tier+" в академии</div>":"")+
+      "<table id='bm-stats'>"+
+        "<tr><td>Атака</td><td>"+Math.round(troopStat(type,tier,"atk")*troopMod(p.race,type,"atk"))+"</td></tr>"+
+        "<tr><td>Защита</td><td>"+troopStat(type,tier,"def")+"</td></tr>"+
+        "<tr><td>Здоровье</td><td>"+troopStat(type,tier,"hp")+"</td></tr>"+
+        (beats?"<tr><td>Бьёт</td><td>"+TROOP_TYPES[beats].name+"</td></tr>":"")+
+      "</table>"+
+      (have>0?"<div class='uc-have'>в строю: "+RU(have)+"</div>":"")+
+      (!locked&&tier===maxT?"<button class='rnode-go' data-act='train' data-t='"+type+"' data-tier='"+tier+"'>Обучить</button>":"")+
+      (!locked&&tier<maxT&&have>0?"<button class='rnode-go' data-act='retrain' data-t='"+type+"' data-tier='"+tier+"'>Переобучить</button>":"")+
+      "</div>";
+  }
+  h+="</div>";
+  h+="<div id='uc-nav'><button data-act='ucnav' data-dir='-1'>&lsaquo; Тир назад</button>"+
+    "<button data-act='ucnav' data-dir='1'>Тир вперёд &rsaquo;</button></div>";
+  return h;
+}
+
 /* ---- Набор и переобучение войск: карточка на пергаменте ---- */
 let trainCtx=null;
 function openTrainModal(type,tier){
   const p=me();
-  buildingModalSel=-1;
+  buildingModalSel=-1; carouselCtx=null;
   const max=trainMax(p,type,tier);
   trainCtx={type,tier,mode:"train",max,n:max,lastLocked:!!p.train[type]||max<1};
   $("#bm-body").innerHTML = trainSheetHtml();
@@ -3953,7 +3995,7 @@ function openTrainModal(type,tier){
 }
 function openRetrainModal(type,fromTier){
   const p=me();
-  buildingModalSel=-1;
+  buildingModalSel=-1; carouselCtx=null;
   const max=retrainMax(p,type,fromTier);
   trainCtx={type,tier:fromTier+1,fromTier,mode:"retrain",max,n:max,lastLocked:!!p.train[type]||max<1};
   $("#bm-body").innerHTML = trainSheetHtml();
