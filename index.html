@@ -310,6 +310,22 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   border:1px solid rgba(107,82,48,.7);border-radius:3px;color:#2c2114;font-variant:small-caps;
   letter-spacing:.08em;font-size:12.5px}
 #bm-tree .rnode-go:disabled{opacity:.5}
+.mat-card{display:flex;align-items:center;gap:10px;padding:8px 0 6px;
+  border-bottom:1px solid rgba(90,69,48,.18)}
+.mat-icon-wrap{width:40px;height:40px;border-radius:5px;background:rgba(90,69,48,.1);
+  border:1px solid rgba(90,69,48,.3);flex:0 0 auto;overflow:hidden}
+.mat-icon{width:100%;height:100%;object-fit:cover}
+.mat-info{flex:1;min-width:0}
+.mat-name{font-size:13.5px;color:#2c2114;margin-bottom:4px}
+.mat-pips{display:flex;gap:5px;flex-wrap:wrap}
+.pip{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;
+  padding:0 3px;border-radius:9px;background:var(--pc);color:#fff;font-size:10px;
+  font-family:var(--data);box-shadow:0 0 5px var(--pc)}
+.pip.mini{width:9px;height:9px;min-width:9px;padding:0;border-radius:50%;box-shadow:0 0 3px var(--pc)}
+#bm-tree .mat-go{width:auto;flex:0 0 auto;padding:8px 14px;margin-top:0}
+.mat-upgrades{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
+#bm-tree .mat-upgrades button{flex:1;min-width:66px;padding:6px 4px;margin-top:0;
+  display:flex;align-items:center;justify-content:center;gap:4px;font-size:11px}
 #bm-btn{display:block;width:100%;margin-top:auto;padding:11px;
   background:linear-gradient(180deg,rgba(58,44,28,.55),rgba(36,26,16,.68));
   border:1px solid rgba(107,82,48,.85);border-radius:3px;color:#e2c485;font-variant:small-caps;
@@ -868,6 +884,7 @@ const MATERIALS = {
   ore:{name:"Железная руда"}, leather:{name:"Кожа"}, bone:{name:"Кость"}, ebony:{name:"Эбеновое дерево"},
 };
 const RARITY_NAMES = ["Обычная","Улучшенная","Отборная","Эпическая","Легендарная"];
+const RARITY_COLOR = ["#9a9a9a","#4caf50","#3d8bff","#a24fd6","#e0a030"];
 const GEAR_SLOTS = [
   {id:"helmet",name:"Шлем",        mat:"ore",    cat:"armor"},
   {id:"chest", name:"Грудь",       mat:"ore",    cat:"armor"},
@@ -3206,6 +3223,7 @@ function unitThumb(p,t,i){
   const headPos = t==="sie" ? "50% 40%" : "50% 20%";
   return "<img class='unit-thumb' style='object-position:"+headPos+"' src='images/units/"+p.race+"-"+t+i+".png' alt=''>";
 }
+let forgeTab="make";
 function forgeInfoHtml(p){
   const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+st[k])).join(", ");
   let h="<div id='bm-tree'>";
@@ -3218,28 +3236,45 @@ function forgeInfoHtml(p){
        "<div class='progress'><i style='width:"+(cf*100).toFixed(1)+"%'></i></div>"+
        "<div class='rnode-eff'>Готово через <em>"+fmtDur(p.craft.t1-W.t)+"</em></div></div>";
   }
-  h+="<div class='rgroup'>Материалы</div>";
-  Object.keys(MATERIALS).forEach(mat=>{
-    const stock=p.materials[mat];
-    h+="<div class='rnode'><div class='rnode-hd'><b>"+MATERIALS[mat].name+"</b></div>"+
-      "<div class='rnode-eff'>"+RARITY_NAMES.map((rn,i)=>rn.slice(0,3)+": "+(stock[i]||0)).join(" · ")+"</div>"+
-      "<button class='rnode-go' data-act='matprod' data-mat='"+mat+"' "+(p.craft?"disabled":"")+">Добыть</button>"+
-      [0,1,2,3].map(t=>"<button class='rnode-go' data-act='matup' data-mat='"+mat+"' data-tier='"+t+"' "+
-        ((stock[t]||0)<4?"disabled":"")+" style='margin-top:4px'>4×"+RARITY_NAMES[t].slice(0,3)+"&rarr;"+RARITY_NAMES[t+1].slice(0,3)+"</button>").join("")+
-      "</div>";
-  });
-  const curRarity=Math.min(5,epochOf(p.b.hall));
-  h+="<div class='rgroup'>Ковка · "+RARITY_NAMES[curRarity-1]+"</div>";
-  GEAR_SLOTS.forEach(s=>{
-    const haveMat=(p.materials[s.mat][curRarity-1]||0)>=1;
-    h+="<div class='rnode'><div class='rnode-hd'><b>"+s.name+"</b></div>"+
-      "<div class='rnode-eff'>нужен материал: "+MATERIALS[s.mat].name+" ("+RARITY_NAMES[curRarity-1]+") · "+
-      "бастион "+statTxt(gearItemStats(s.cat,"bastion",curRarity))+" · буря "+statTxt(gearItemStats(s.cat,"storm",curRarity))+"</div>"+
-      "<button class='rnode-go' data-act='craft' data-slot='"+s.id+"' data-order='bastion' data-rarity='"+curRarity+"' "+
-      (p.craft||!haveMat?"disabled":"")+">Бастион</button>"+
-      "<button class='rnode-go' data-act='craft' data-slot='"+s.id+"' data-order='storm' data-rarity='"+curRarity+"' "+
-      (p.craft||!haveMat?"disabled":"")+">Буря</button></div>";
-  });
+  h+="<div id='ac-tabs'>"+
+    "<button class='"+(forgeTab==="make"?"on":"")+"' data-act='forgetab' data-t='make'>Изготовление</button>"+
+    "<button class='"+(forgeTab==="blueprint"?"on":"")+"' data-act='forgetab' data-t='blueprint'>Чертежи</button>"+
+    "</div>";
+
+  if(forgeTab==="make"){
+    h+="<div class='rgroup'>Материалы</div><div class='note' style='margin:-6px 0 10px;font-size:12px;color:#6b5230'>"+
+      "Добыча даёт только обычное качество — редкость получают слиянием 4-в-1.</div>";
+    Object.keys(MATERIALS).forEach(mat=>{
+      const stock=p.materials[mat];
+      h+="<div class='mat-card'>"+
+        "<div class='mat-icon-wrap'><img class='mat-icon' src='images/ui/material-"+mat+".png' alt='' onerror=\"this.style.display='none'\"></div>"+
+        "<div class='mat-info'><div class='mat-name'>"+MATERIALS[mat].name+"</div>"+
+        "<div class='mat-pips'>"+RARITY_NAMES.map((rn,i)=>
+          "<span class='pip' style='--pc:"+RARITY_COLOR[i]+"' title='"+rn+"'>"+(stock[i]||0)+"</span>").join("")+
+        "</div></div>"+
+        "<button class='rnode-go mat-go' data-act='matprod' data-mat='"+mat+"' "+(p.craft?"disabled":"")+">Добыть</button>"+
+        "</div>";
+      h+="<div class='mat-upgrades'>"+[0,1,2,3].map(t=>
+        "<button class='rnode-go' data-act='matup' data-mat='"+mat+"' data-tier='"+t+"' "+
+        ((stock[t]||0)<4?"disabled":"")+">4&times;<span class='pip mini' style='--pc:"+RARITY_COLOR[t]+"'></span>&rarr;"+
+        "<span class='pip mini' style='--pc:"+RARITY_COLOR[t+1]+"'></span></button>"
+      ).join("")+"</div>";
+    });
+  } else {
+    const curRarity=Math.min(5,epochOf(p.b.hall));
+    h+="<div class='rgroup'>Чертежи · <span style='color:"+RARITY_COLOR[curRarity-1]+"'>"+RARITY_NAMES[curRarity-1]+"</span></div>";
+    GEAR_SLOTS.forEach(s=>{
+      const haveMat=(p.materials[s.mat][curRarity-1]||0)>=1;
+      h+="<div class='rnode'><div class='rnode-hd'><b>"+s.name+"</b></div>"+
+        "<div class='rnode-eff'>нужен материал: <span class='pip mini' style='--pc:"+RARITY_COLOR[curRarity-1]+"'></span> "+
+        MATERIALS[s.mat].name+" · "+
+        "бастион "+statTxt(gearItemStats(s.cat,"bastion",curRarity))+" · буря "+statTxt(gearItemStats(s.cat,"storm",curRarity))+"</div>"+
+        "<button class='rnode-go' data-act='craft' data-slot='"+s.id+"' data-order='bastion' data-rarity='"+curRarity+"' "+
+        (p.craft||!haveMat?"disabled":"")+">Бастион</button>"+
+        "<button class='rnode-go' data-act='craft' data-slot='"+s.id+"' data-order='storm' data-rarity='"+curRarity+"' "+
+        (p.craft||!haveMat?"disabled":"")+">Буря</button></div>";
+    });
+  }
   h+="</div>";
   return h;
 }
@@ -3951,6 +3986,10 @@ function handleAct(e){
   }
   else if(a==="academytab"){
     academyTab=b.dataset.t;
+    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);
+  }
+  else if(a==="forgetab"){
+    forgeTab=b.dataset.t;
     if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);
   }
   else if(a==="rtreejump"){
