@@ -51,16 +51,21 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   box-shadow:0 6px 18px rgba(0,0,0,.5);padding:8px 12px;
   backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
 
-#crest{display:flex;align-items:center;gap:10px;cursor:pointer}
+#crest{display:flex;align-items:center;cursor:pointer}
 #crest:hover .mark{color:var(--gilt-hi)}
-#crest .mark{font-size:19px;color:var(--gilt);line-height:1;transition:color .15s}
-#crest .avatar{width:52px;height:52px;object-fit:contain;display:block}
-#crest .crest-info{display:flex;flex-direction:column;line-height:1.3;white-space:nowrap;gap:3px}
-#crest .crest-info b{font-size:14px;font-weight:normal;color:var(--vellum);max-width:150px;
-  overflow:hidden;text-overflow:ellipsis}
-#crest-power{display:flex;align-items:center;gap:5px;font-family:var(--data);font-size:14px;
-  color:var(--gilt-hi);font-weight:bold}
-#crest-power .ico{width:17px;height:17px;object-fit:contain}
+#crest .mark{font-size:19px;color:var(--gilt);line-height:1;transition:color .15s;
+  width:60px;text-align:center;flex:0 0 auto}
+#crest .avatar{width:64px;height:64px;object-fit:contain;display:block;flex:0 0 auto;
+  position:relative;z-index:2;margin-right:-16px;filter:drop-shadow(0 2px 6px rgba(0,0,0,.7))}
+#crest .crest-card{display:flex;flex-direction:column;align-items:flex-start;gap:4px;
+  min-width:0;flex:1;background:rgba(0,0,0,.32);border:1px solid var(--rule-soft);
+  border-radius:6px;padding:6px 10px 6px 22px}
+#crest .crest-card b{font-size:13.5px;font-weight:normal;color:var(--vellum);max-width:170px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#crest-power{display:flex;align-items:center;gap:5px;font-family:var(--data);font-size:12.5px;
+  color:var(--gilt-hi);font-weight:bold;background:rgba(0,0,0,.35);
+  border:1px solid var(--gilt-dim);border-radius:4px;padding:2px 7px}
+#crest-power .ico{width:14px;height:14px;object-fit:contain}
 
 .profile-avatar-wrap{position:relative}
 .profile-avatar{width:52px;height:52px;object-fit:contain;display:block}
@@ -68,13 +73,32 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .gen-portrait-wrap{position:relative}
 .gen-portrait{width:44px;height:44px;object-fit:contain;display:block}
 
-.gen-figure-wrap{width:100%;max-height:220px;display:flex;justify-content:center;
+.gen-figure-wrap{width:100%;max-height:320px;display:flex;justify-content:center;
   overflow:hidden;margin-bottom:6px}
-.gen-figure{max-width:60%;max-height:220px;object-fit:contain;
+.gen-figure{max-width:95%;max-height:320px;object-fit:contain;
   filter:drop-shadow(0 8px 14px rgba(0,0,0,.5))}
 
 .stars{color:var(--gilt);font-size:13px;letter-spacing:1px;margin:2px 0}
 .gen-skills{display:flex;gap:8px;margin-top:9px}
+.gear-slots{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:6px}
+.gear-slot{background:linear-gradient(180deg,rgba(52,42,29,.5),rgba(30,24,16,.5));
+  border:1px solid var(--rule-soft);border-radius:6px;padding:8px 6px;text-align:center;
+  display:flex;flex-direction:column;align-items:center;gap:4px}
+.gear-slot.filled{border-color:var(--gilt-dim)}
+.gear-slot-icon{width:38px;height:38px;border-radius:5px;background:rgba(0,0,0,.3);
+  border:1px solid var(--rule-soft);flex:0 0 auto}
+.gear-slot-name{font-size:10px;color:var(--vellum-faint);letter-spacing:.05em;text-transform:uppercase}
+.gear-slot-item{font-size:10.5px;color:var(--vellum-dim);min-height:13px}
+.gear-slot-item .tag{margin-left:3px}
+.gear-slot .seal{margin-top:2px;font-size:10px;padding:4px 7px}
+.gear-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(58px,1fr));gap:8px}
+.gear-cell{aspect-ratio:1;border:1px solid var(--rule-soft);border-radius:5px;
+  background:rgba(0,0,0,.25);position:relative}
+.gear-cell.equipped{border-color:var(--gilt-dim);background:rgba(194,153,60,.1)}
+.gear-cell .cnt{position:absolute;bottom:2px;right:3px;font-family:var(--data);font-size:10px;
+  color:var(--gilt-hi);text-shadow:0 1px 2px #000}
+.gear-cell .eq{position:absolute;top:2px;left:3px;font-size:9px;color:var(--verdigris);
+  text-shadow:0 1px 2px #000}
 .gen-skill{width:34px;height:34px;border-radius:50%;background:var(--wood-deep);
   border:1px solid var(--rule);display:flex;flex-direction:column;align-items:center;
   justify-content:center;line-height:1}
@@ -223,6 +247,23 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   border:1px solid #8a6d2c;border-radius:3px;padding:7px 6px;font-family:var(--data);
   font-size:14px;text-align:right;color:#2c2114}
 #bm-time{text-align:center;font-size:12.5px;color:#5a4530;margin-bottom:16px}
+#uc-track{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:0;
+  margin:0 -22px;padding:0 22px;scrollbar-width:none}
+#uc-track::-webkit-scrollbar{display:none}
+.uc-card{flex:0 0 100%;scroll-snap-align:center;padding:0 4px;box-sizing:border-box;
+  display:flex;flex-direction:column;align-items:center}
+.uc-card.locked{opacity:.55}
+.uc-img{max-width:60%;max-height:200px;object-fit:contain;
+  filter:drop-shadow(0 6px 10px rgba(0,0,0,.35));margin-bottom:8px}
+.uc-name{font-size:16px;color:#2c2114;margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.uc-name .tag{font-size:11px;background:rgba(90,69,48,.15);border-radius:3px;padding:2px 6px;
+  color:#5a4530}
+.uc-lock{font-size:12px;color:#8a2f22;text-align:center;margin-bottom:8px}
+.uc-have{font-size:12.5px;color:#3a2c1c;margin:6px 0}
+#uc-nav{display:flex;justify-content:space-between;gap:8px;margin:10px 0 16px}
+#uc-nav button{flex:1;padding:8px 4px;font-size:12.5px;text-align:center;
+  background:rgba(90,69,48,.12);border:1px solid rgba(90,69,48,.3);border-radius:4px;
+  color:#5a4530}
 #bm-tree{margin-bottom:16px}
 #bm-tree .rgroup{font-variant:small-caps;letter-spacing:.12em;font-size:12.5px;color:#6b5230;
   margin:14px 0 6px;padding-bottom:3px;border-bottom:1px solid rgba(90,69,48,.35)}
@@ -386,12 +427,12 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 /* Строки войск — аватар с бейджами тира/класса вместо текстового дублирования */
 .troop-row{display:flex;align-items:center;gap:11px;padding:6px 0;border-bottom:1px dotted var(--rule-soft)}
 .troop-row:last-child{border-bottom:none}
-.troop-avatar{position:relative;width:40px;height:40px;flex:0 0 auto;margin-bottom:6px}
+.troop-avatar{position:relative;width:48px;height:48px;flex:0 0 auto;margin-bottom:9px}
 .troop-avatar .portrait{width:100%;height:100%;border-radius:50%;object-fit:cover;
   border:1px solid var(--rule);background:var(--wood-deep)}
-.troop-avatar .tier-badge{position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);
-  width:17px;height:17px;pointer-events:none;filter:drop-shadow(0 1px 2px rgba(0,0,0,.85))}
-.troop-avatar .class-badge{position:absolute;top:-3px;left:-3px;width:14px;height:14px;
+.troop-avatar .tier-badge{position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);
+  width:24px;height:24px;pointer-events:none;filter:drop-shadow(0 1px 2px rgba(0,0,0,.85))}
+.troop-avatar .class-badge{position:absolute;top:-4px;left:-4px;width:20px;height:20px;
   filter:drop-shadow(0 1px 2px rgba(0,0,0,.85));pointer-events:none}
 .troop-name{flex:1;font-size:13.5px;color:var(--vellum);min-width:0}
 .troop-count{font-family:var(--data);font-size:13px;color:var(--vellum-dim);font-variant-numeric:tabular-nums}
@@ -467,14 +508,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   #chart{flex:1 1 46%}
   #key,#minimap{display:none}
   #top{top:8px;left:8px;padding:7px 9px;max-width:calc(100vw - 16px)}
-  #crest{gap:7px}
-  #crest .avatar{width:40px;height:40px}
-  #crest .crest-info b{max-width:110px;font-size:12.5px}
-  #crest-power{font-size:12px}
-  .purse{gap:8px}
+  #crest .avatar{width:52px;height:52px;margin-right:-14px}
+  #crest .crest-card{padding:5px 8px 5px 18px}
+  #crest .crest-card b{max-width:130px;font-size:12px}
+  #crest-power{font-size:11px}
+  #crest-power .ico{width:12px;height:12px}
+  .purse{gap:7px}
+  .coin{gap:5px}
   .coin .disc{width:15px;height:15px}
-  .coin .amt{font-size:12.5px}
-  .coin .rate{font-size:9px}
+  .coin .amt{font-size:11.5px}
+  .coin .rate{font-size:8.5px}
   #chron{gap:9px;padding-left:8px}
   #chron .stat s{display:none}
   #chron .stat b{font-size:12px}
@@ -498,7 +541,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   <header id="top">
     <div id="crest">
       <span class="mark">&#9884;</span><img id="crest-avatar" class="avatar" alt="" style="display:none">
-      <div class="crest-info">
+      <div class="crest-card">
         <b id="crest-name">Безымянный лорд</b>
         <span id="crest-power"><img class="ico" src="images/ui/icon-power.png" alt="">—</span>
       </div>
@@ -968,7 +1011,7 @@ const BUILDINGS = {
   wall:    {name:"Стена",         max:30, desc:"Защита города при обороне"},
   garrison:{name:"Гарнизон",      max:30, desc:"Доп. защита при осаде и предупреждение о марше врага"},
   scout:   {name:"Разведка",      max:30, desc:"Раскрывает сведения о войсках противника"},
-  forge:   {name:"Горн",          max:30, desc:"Ковка снаряжения для полководца (механика в разработке)"},
+  forge:   {name:"Горн",          max:30, desc:"Добыча материалов и ковка снаряжения для полководца"},
   portal:  {name:"Портал",        max:30, desc:"Врата в иные земли (механика в разработке)"},
 };
 const BKEYS = Object.keys(BUILDINGS);
@@ -3115,6 +3158,43 @@ function unitThumb(p,t,i){
   const headPos = t==="sie" ? "50% 40%" : "50% 20%";
   return "<img class='unit-thumb' style='object-position:"+headPos+"' src='images/units/"+p.race+"-"+t+i+".png' alt=''>";
 }
+function forgeInfoHtml(p){
+  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+st[k])).join(", ");
+  let h="<div id='bm-tree'>";
+  if(p.craft){
+    const cf=(W.t-p.craft.t0)/Math.max(1,p.craft.t1-p.craft.t0);
+    const title = p.craft.kind==="material" ? MATERIALS[p.craft.mat].name+" ×"+p.craft.n
+                : GEAR_NAMES[p.craft.slot][p.craft.order][p.craft.rarity-1];
+    h+="<div class='rgroup'>На горне</div>"+
+       "<div class='rnode'><div class='rnode-hd'><b>"+title+"</b></div>"+
+       "<div class='progress'><i style='width:"+(cf*100).toFixed(1)+"%'></i></div>"+
+       "<div class='rnode-eff'>Готово через <em>"+fmtDur(p.craft.t1-W.t)+"</em></div></div>";
+  }
+  h+="<div class='rgroup'>Материалы</div>";
+  Object.keys(MATERIALS).forEach(mat=>{
+    const stock=p.materials[mat];
+    h+="<div class='rnode'><div class='rnode-hd'><b>"+MATERIALS[mat].name+"</b></div>"+
+      "<div class='rnode-eff'>"+RARITY_NAMES.map((rn,i)=>rn.slice(0,3)+": "+(stock[i]||0)).join(" · ")+"</div>"+
+      "<button class='rnode-go' data-act='matprod' data-mat='"+mat+"' "+(p.craft?"disabled":"")+">Добыть</button>"+
+      [0,1,2,3].map(t=>"<button class='rnode-go' data-act='matup' data-mat='"+mat+"' data-tier='"+t+"' "+
+        ((stock[t]||0)<4?"disabled":"")+" style='margin-top:4px'>4×"+RARITY_NAMES[t].slice(0,3)+"&rarr;"+RARITY_NAMES[t+1].slice(0,3)+"</button>").join("")+
+      "</div>";
+  });
+  const curRarity=Math.min(5,epochOf(p.b.hall));
+  h+="<div class='rgroup'>Ковка · "+RARITY_NAMES[curRarity-1]+"</div>";
+  GEAR_SLOTS.forEach(s=>{
+    const haveMat=(p.materials[s.mat][curRarity-1]||0)>=1;
+    h+="<div class='rnode'><div class='rnode-hd'><b>"+s.name+"</b></div>"+
+      "<div class='rnode-eff'>нужен материал: "+MATERIALS[s.mat].name+" ("+RARITY_NAMES[curRarity-1]+") · "+
+      "бастион "+statTxt(gearItemStats(s.cat,"bastion",curRarity))+" · буря "+statTxt(gearItemStats(s.cat,"storm",curRarity))+"</div>"+
+      "<button class='rnode-go' data-act='craft' data-slot='"+s.id+"' data-order='bastion' data-rarity='"+curRarity+"' "+
+      (p.craft||!haveMat?"disabled":"")+">Бастион</button>"+
+      "<button class='rnode-go' data-act='craft' data-slot='"+s.id+"' data-order='storm' data-rarity='"+curRarity+"' "+
+      (p.craft||!haveMat?"disabled":"")+">Буря</button></div>";
+  });
+  h+="</div>";
+  return h;
+}
 function trainInfoHtml(p,type){
   const T=p.train[type];
   if(T){
@@ -3123,32 +3203,7 @@ function trainInfoHtml(p,type){
        "<span class='rnode-lv'>&times;"+RU(T.n)+"</span></div>"+
        "<div class='rnode-eff'>Готовы через <em>"+fmtDur(T.t1-W.t)+"</em></div></div></div>";
   }
-  const maxT=tierUnlockedFor(p,type);
-  const c=troopCost(type,maxT);
-  const can=Math.floor(Math.min.apply(null,RES.map(r=>c[r]?p.res[r]/c[r]:1e9)));
-  const beats=TROOP_TYPES[type].beats;
-  let h="<div id='bm-tree'><div class='rgroup'>Набор</div>"+
-    "<div class='rnode'><div class='rnode-hd'>"+unitThumb(p,type,maxT)+"<b>"+unitName(type,maxT,p.race)+"</b><span class='rnode-lv'>T"+maxT+"</span></div>"+
-    "<div class='rnode-eff'>Атака <em>"+Math.round(troopStat(type,maxT,"atk")*troopMod(p.race,type,"atk"))+"</em> · защита <em>"+troopStat(type,maxT,"def")+
-    "</em> · здоровье <em>"+troopStat(type,maxT,"hp")+"</em>"+
-    (beats?" · бьёт "+TROOP_TYPES[beats].name.toLowerCase():"")+
-    "<br>по средствам <em>"+fmt(can)+"</em></div>"+
-    "<div class='rnode-cost'>"+RES.filter(r=>c[r]).map(r=>"<span class='"+(p.res[r]<c[r]?"short":"")+"'>"+fmt(c[r])+" "+RES_NAME[r]+"</span>").join("")+"</div>"+
-    "<button class='rnode-go' data-act='train' data-t='"+type+"' data-tier='"+maxT+"' "+(can<1?"disabled":"")+">Набрать</button></div>";
-  let retrainHtml="", anyRetrain=false;
-  for(let i=1;i<maxT;i++){
-    const have=p.troops[type][i]; if(!have) continue;
-    anyRetrain=true;
-    const canR=retrainMax(p,type,i), cR=retrainCost(type,i,1);
-    retrainHtml+="<div class='rnode'><div class='rnode-hd'>"+unitThumb(p,type,i)+"<b>"+unitName(type,i,p.race)+" &rarr; "+unitName(type,i+1,p.race)+"</b>"+
-      "<span class='rnode-lv'>в строю "+RU(have)+"</span></div>"+
-      "<div class='rnode-eff'>Доступно к переобучению: <em>"+fmt(canR)+"</em></div>"+
-      "<div class='rnode-cost'>"+RES.filter(r=>cR[r]).map(r=>"<span class='"+(p.res[r]<cR[r]?"short":"")+"'>"+fmt(cR[r])+" "+RES_NAME[r]+"</span>").join("")+"</div>"+
-      "<button class='rnode-go' data-act='retrain' data-t='"+type+"' data-tier='"+i+"' "+(canR<1?"disabled":"")+">Переобучить</button></div>";
-  }
-  if(anyRetrain) h+="<div class='rgroup'>Переобучение</div>"+retrainHtml;
-  h+="</div>";
-  return h;
+  return "<div id='bm-tree'><button class='rnode-go' data-act='browsetrain' data-t='"+type+"'>Тренировать</button></div>";
 }
 function buildingModalHtml(ci){
   const p=me(), c=CITY_CELLS[ci];
@@ -3178,6 +3233,7 @@ function buildingModalHtml(ci){
   }
   else if(c.bk==="store") h+=storeInfoHtml(p);
   else if(c.bk==="academy") h+=academyTreeHtml(p);
+  else if(c.bk==="forge" && lv>0) h+=forgeInfoHtml(p);
   else if(BLD_TRAIN[c.bk] && lv>0) h+=trainInfoHtml(p,BLD_TRAIN[c.bk]);
   if(canGo){
     h+="<div id=\'bm-reqs\'>"+RES.map(r=>{
@@ -3311,6 +3367,40 @@ function genSkillBadges(p){
     return "<span class='gen-skill' title='"+br.name+"'><b>"+letter+"</b><s>"+spent+"</s></span>";
   }).join("")+"</div>";
 }
+function genGearHtml(p){
+  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+st[k])).join(", ");
+  let h=rubric("Экипировка","снаряжение куётся в горне, а не здесь");
+  h+="<div class='gear-slots'>";
+  GEAR_SLOTS.forEach(s=>{
+    const it=p.gear[s.id];
+    h+="<div class='gear-slot"+(it?" filled":"")+"'>"+
+      "<div class='gear-slot-icon'></div>"+
+      "<div class='gear-slot-name'>"+s.name+"</div>"+
+      "<div class='gear-slot-item'>"+(it?GEAR_NAMES[s.id][it.order][it.rarity-1]+"<span class='tag gilt'>"+RARITY_NAMES[it.rarity-1]+"</span>"
+        +"<div class='note'>"+statTxt(gearItemStats(s.cat,it.order,it.rarity))+"</div>":"пусто")+"</div>"+
+      (it?"<button class='seal' data-act='unequip' data-slot='"+s.id+"'>Снять</button>":"")+
+      "</div>";
+  });
+  h+="</div>";
+
+  let any=false, stored="";
+  GEAR_SLOTS.forEach(s=>{
+    ["bastion","storm"].forEach(order=>{
+      for(let r=1;r<=5;r++){
+        const cnt=p.inventory[s.id][order][r-1]||0; if(!cnt) continue;
+        any=true;
+        stored+="<div class='entry'><div class='line'><div class='fill'>"+
+          "<div class='title'>"+GEAR_NAMES[s.id][order][r-1]+"<span class='tag'>×"+cnt+"</span></div>"+
+          "<div class='note'>"+s.name+" · "+statTxt(gearItemStats(s.cat,order,r))+"</div></div>"+
+          "<button class='seal' data-act='equip' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Надеть</button>"+
+          "<button class='seal' data-act='dismantle' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Разобрать</button></div>";
+      }
+    });
+  });
+  h+=rubric("На складе","можно надеть или разобрать");
+  h+= any ? stored : hollow("&#9884;","Склад снаряжения пуст — куйте в горне.");
+  return h;
+}
 function foGen(){
   const p=me();
   if(p.gen.id==null){
@@ -3343,14 +3433,16 @@ function foGen(){
     "<table class='roll' style='margin-top:9px'><tr><td>Сила полководца</td><td>"+RU(genPower)+"</td></tr></table>"+
     genSkillBadges(p)+
     "<div class='line' style='margin-top:9px'>"+
-    "<button class='seal' data-act='gentab' data-t='talents'>Таланты</button>"+
-    "<button class='seal' data-act='opengear'>Экипировка</button>"+
+    "<button class='seal' data-act='gentab' data-t='gear'>Экипировка</button>"+
     "</div></div>";
 
   h+="<div id='inv-tabs'>"+
     "<button class='"+(genTab==="overview"?"on":"")+"' data-act='gentab' data-t='overview'>Обзор</button>"+
     "<button class='"+(genTab==="talents"?"on":"")+"' data-act='gentab' data-t='talents'>Таланты</button>"+
+    "<button class='"+(genTab==="gear"?"on":"")+"' data-act='gentab' data-t='gear'>Экипировка</button>"+
     "</div>";
+
+  if(genTab==="gear") return h+genGearHtml(p);
 
   if(genTab==="talents"){
     for(const bk in GENERAL_TREE){
@@ -3405,7 +3497,7 @@ function foGen(){
 function foInv(){
   const p=me();
   const tabsHtml="<div id='inv-tabs'>"+
-    [["res","Ресурсы"],["mat","Материалы"],["items","Предметы"],["gear","Снаряжение"]].map(([k,label])=>
+    [["res","Ресурсы"],["mat","Материалы"],["gear","Снаряжение"]].map(([k,label])=>
       "<button class='"+(invTab===k?"on":"")+"' data-act='invtab' data-t='"+k+"'>"+label+"</button>").join("")+
     "</div>";
 
@@ -3422,70 +3514,33 @@ function foInv(){
   }
 
   if(invTab==="mat"){
-    let h=tabsHtml+rubric("Материалы","добываются и сливаются в горне");
+    let h=tabsHtml+rubric("Материалы","добываются и куются в горне");
     Object.keys(MATERIALS).forEach(mat=>{
       const stock=p.materials[mat];
       h+="<div class='entry'><div class='line'><div class='fill'>"+
         "<div class='title'>"+MATERIALS[mat].name+"</div>"+
-        "<div class='note'>"+RARITY_NAMES.map((rn,i)=>rn.slice(0,3)+": "+(stock[i]||0)).join(" · ")+"</div></div>"+
-        "<button class='seal' data-act='matprod' data-mat='"+mat+"' "+(p.craft?"disabled":"")+">Добыть</button></div>"+
-        "<div class='line' style='margin-top:6px'>"+[0,1,2,3].map(t=>
-          "<button class='seal' data-act='matup' data-mat='"+mat+"' data-tier='"+t+"' "+
-          ((stock[t]||0)<4?"disabled":"")+" style='margin-right:4px'>4×"+RARITY_NAMES[t].slice(0,3)+"→"+RARITY_NAMES[t+1].slice(0,3)+"</button>"
-        ).join("")+"</div></div>";
+        "<div class='note'>"+RARITY_NAMES.map((rn,i)=>rn.slice(0,3)+": "+(stock[i]||0)).join(" · ")+"</div></div></div></div>";
     });
     return h;
   }
 
-  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+st[k])).join(", ");
-
-  if(invTab==="items"){
-    let h=tabsHtml+rubric("Предметы","снаряжение на складе, ещё не надето");
-    let any=false;
-    GEAR_SLOTS.forEach(s=>{
-      ["bastion","storm"].forEach(order=>{
-        for(let r=1;r<=5;r++){
-          const cnt=p.inventory[s.id][order][r-1]||0; if(!cnt) continue;
-          any=true;
-          h+="<div class='entry'><div class='line'><div class='fill'>"+
-            "<div class='title'>"+GEAR_NAMES[s.id][order][r-1]+"<span class='tag'>×"+cnt+"</span></div>"+
-            "<div class='note'>"+s.name+" · "+statTxt(gearItemStats(s.cat,order,r))+"</div></div>"+
-            "<button class='seal' data-act='equip' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Надеть</button>"+
-            "<button class='seal' data-act='dismantle' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Разобрать</button></div>";
-        }
-      });
-    });
-    if(!any) h+=hollow("&#9884;","Склад снаряжения пуст.");
-    return h;
-  }
-
-  let h=tabsHtml;
-  h+=rubric("Снаряжение","горн ур. "+p.b.forge);
-  if(p.craft){
-    const cf=(W.t-p.craft.t0)/Math.max(1,p.craft.t1-p.craft.t0);
-    const title = p.craft.kind==="material" ? MATERIALS[p.craft.mat].name+" ×"+p.craft.n
-                : GEAR_NAMES[p.craft.slot][p.craft.order][p.craft.rarity-1];
-    h+="<div class='entry hot'><div class='line'><div class='fill'>"+
-       "<div class='title'>"+title+"</div><div class='note'>Готово через <em>"+fmtDur(p.craft.t1-W.t)+"</em></div></div></div>"+
-       "<div class='progress'><i style='width:"+(cf*100).toFixed(1)+"%'></i></div></div>";
-  }
-  const curRarity=Math.min(5,epochOf(p.b.hall));
+  // Снаряжение: только каталог того, что есть (надето и на складе) — рядом иконками, как в RoK.
+  // Экипировка (надеть/снять) — в Генерале, ковка и добыча материалов — в Горне.
+  let h=tabsHtml+rubric("Снаряжение","каталог; надеть — у генерала, сковать — в горне");
+  const cells=[];
   GEAR_SLOTS.forEach(s=>{
     const it=p.gear[s.id];
-    h+="<div class='entry"+(it?" hot":"")+"'><div class='line'><div class='fill'>"+
-      "<div class='title'>"+s.name+(it?"<span class='tag gilt'>"+RARITY_NAMES[it.rarity-1]+"</span>":"")+"</div>"+
-      "<div class='note'>"+(it?GEAR_NAMES[s.id][it.order][it.rarity-1]+" · "+statTxt(gearItemStats(s.cat,it.order,it.rarity))
-        :"пусто")+"</div></div>"+
-      (it?"<button class='seal' data-act='unequip' data-slot='"+s.id+"'>Снять</button>":"")+"</div></div>";
-    const haveMat=(p.materials[s.mat][curRarity-1]||0)>=1;
-    h+="<div class='entry'><div class='line'><div class='fill'>"+
-      "<div class='title'>Сковать "+RARITY_NAMES[curRarity-1].toLowerCase()+"</div>"+
-      "<div class='note'>нужен материал: "+MATERIALS[s.mat].name+" ("+RARITY_NAMES[curRarity-1]+")</div></div>"+
-      "<button class='seal' data-act='craft' data-slot='"+s.id+"' data-order='bastion' data-rarity='"+curRarity+"' "+
-      (p.craft||!haveMat?"disabled":"")+">Бастион</button>"+
-      "<button class='seal' data-act='craft' data-slot='"+s.id+"' data-order='storm' data-rarity='"+curRarity+"' "+
-      (p.craft||!haveMat?"disabled":"")+">Буря</button></div></div>";
+    if(it) cells.push("<div class='gear-cell equipped' title='"+GEAR_NAMES[s.id][it.order][it.rarity-1]+" ("+s.name+", надето)'>"+
+      "<span class='eq'>&#9733;</span></div>");
+    ["bastion","storm"].forEach(order=>{
+      for(let r=1;r<=5;r++){
+        const cnt=p.inventory[s.id][order][r-1]||0; if(!cnt) continue;
+        cells.push("<div class='gear-cell' title='"+GEAR_NAMES[s.id][order][r-1]+" ("+s.name+")'>"+
+          "<span class='cnt'>×"+cnt+"</span></div>");
+      }
+    });
   });
+  h+= cells.length ? "<div class='gear-grid'>"+cells.join("")+"</div>" : hollow("&#9884;","Пока нет ни одного предмета — куйте в горне.");
   return h;
 }
 
@@ -3696,6 +3751,10 @@ document.querySelectorAll("#ribbons button").forEach(b=>{
 });
 
 /* ---- Действия в реестре и картуше ---- */
+function refreshGenIfOpen(){
+  const menu=$("#menu-modal");
+  if(menu.classList.contains("open")&&menu.dataset.tab==="gen") $("#menu-modal-body").innerHTML=foGen();
+}
 function handleAct(e){
   const closeBtn=e.target.closest("[data-act='closemenu']");
   if(closeBtn){ closeMenuModal(); return; }
@@ -3727,6 +3786,15 @@ function handleAct(e){
   }
   else if(a==="retrain"){
     openRetrainModal(b.dataset.t,+b.dataset.tier);
+    return;
+  }
+  else if(a==="browsetrain"){
+    openUnitCarousel(b.dataset.t);
+    return;
+  }
+  else if(a==="ucnav"){
+    const track=$("#uc-track");
+    if(track) track.scrollLeft += track.clientWidth*(+b.dataset.dir);
     return;
   }
   else if(a==="traingo"){
@@ -3770,15 +3838,15 @@ function handleAct(e){
   }
   else if(a==="equip"){
     const r=equipItem(p,b.dataset.slot,b.dataset.order,+b.dataset.rarity);
-    herald(r.err||"Надето."); lastFolio=""; renderFolio();
+    herald(r.err||"Надето."); lastFolio=""; renderFolio(); refreshGenIfOpen();
   }
   else if(a==="unequip"){
     const r=unequipItem(p,b.dataset.slot);
-    herald(r.err||"Снято, отправлено на склад."); lastFolio=""; renderFolio();
+    herald(r.err||"Снято, отправлено на склад."); lastFolio=""; renderFolio(); refreshGenIfOpen();
   }
   else if(a==="dismantle"){
     const r=dismantleItem(p,b.dataset.slot,b.dataset.order,+b.dataset.rarity);
-    herald(r.err||("Разобрано, возвращено золота: "+RU(r.refund)+".")); lastFolio=""; renderFolio();
+    herald(r.err||("Разобрано, возвращено золота: "+RU(r.refund)+".")); lastFolio=""; renderFolio(); refreshGenIfOpen();
   }
   else if(a==="tal"){
     const id=b.dataset.id, node=findTalentNode(id), max=(node&&node.max)||5;
@@ -3788,15 +3856,13 @@ function handleAct(e){
     if(p.gen.id==null){ p.gen.id=+b.dataset.id; herald("Выбран генерал: "+GENERALS[p.race][p.gen.id].name+".") }
   }
   else if(a==="opentab"){ openMenuModal(b.dataset.tab); }
-  else if(a==="opengear"){ invTab="gear"; openMenuModal("inv"); }
   else if(a==="savenick"){
     const inp=$("#nick-input");
     if(inp){ const v=inp.value.trim().slice(0,24); p.nick=v||"Безымянный лорд"; herald("Ник сохранён."); renderTop(); }
   }
   else if(a==="gentab"){
     genTab=b.dataset.t;
-    const menu=$("#menu-modal");
-    if(menu.classList.contains("open")&&menu.dataset.tab==="gen") $("#menu-modal-body").innerHTML=foGen();
+    refreshGenIfOpen();
   }
   else if(a==="academytab"){
     academyTab=b.dataset.t;
@@ -3859,12 +3925,12 @@ function toggleView(){
 function toggleMenu(){ $("#side-menu").classList.toggle("open"); }
 let buildingModalSel=-1;
 function openBuildingModal(ci){
-  trainCtx=null;
+  trainCtx=null; carouselCtx=null;
   buildingModalSel=ci;
   $("#bm-body").innerHTML = buildingModalHtml(ci);
   $("#building-modal").classList.add("open");
 }
-function closeBuildingModal(){ $("#building-modal").classList.remove("open"); buildingModalSel=-1; trainCtx=null; }
+function closeBuildingModal(){ $("#building-modal").classList.remove("open"); buildingModalSel=-1; trainCtx=null; carouselCtx=null; }
 $("#building-modal").addEventListener("click",e=>{ if(e.target.id==="building-modal") closeBuildingModal(); });
 $("#building-modal").addEventListener("click",handleAct);
 $("#building-modal").addEventListener("input",e=>{
@@ -3875,11 +3941,52 @@ $("#building-modal").addEventListener("input",e=>{
   }
 });
 
+/* ---- Витрина юнитов: все тиры листаются вправо-влево, обучение — со своей карточки ---- */
+let carouselCtx=null;
+function openUnitCarousel(type){
+  carouselCtx={type};
+  buildingModalSel=-1; trainCtx=null;
+  $("#bm-body").innerHTML = unitCarouselHtml();
+  $("#building-modal").classList.add("open");
+  const p=me(), maxT=tierUnlockedFor(p,type);
+  requestAnimationFrame(()=>{
+    const track=$("#uc-track");
+    if(track) track.scrollLeft = (maxT-1)*track.clientWidth;
+  });
+}
+function unitCarouselHtml(){
+  const p=me(), type=carouselCtx.type, maxT=tierUnlockedFor(p,type);
+  let h="<div id='bm-title'>"+TROOP_TYPES[type].name+"</div>";
+  h+="<div id='bm-sub'>тиры 1&ndash;5 &middot; листайте карточку вправо-влево</div>";
+  h+="<div id='uc-track'>";
+  for(let tier=1; tier<=5; tier++){
+    const locked=tier>maxT, have=p.troops[type][tier]||0, beats=TROOP_TYPES[type].beats;
+    h+="<div class='uc-card"+(locked?" locked":"")+"'>"+
+      "<img class='uc-img' src='images/units/"+p.race+"-"+type+tier+".png' alt=''>"+
+      "<div class='uc-name'>"+unitName(type,tier,p.race)+"<span class='tag'>T"+tier+"</span></div>"+
+      (locked?"<div class='uc-lock'>&#128274; заблокирован &mdash; нужен тир "+tier+" в академии</div>":"")+
+      "<table id='bm-stats'>"+
+        "<tr><td>Атака</td><td>"+Math.round(troopStat(type,tier,"atk")*troopMod(p.race,type,"atk"))+"</td></tr>"+
+        "<tr><td>Защита</td><td>"+troopStat(type,tier,"def")+"</td></tr>"+
+        "<tr><td>Здоровье</td><td>"+troopStat(type,tier,"hp")+"</td></tr>"+
+        (beats?"<tr><td>Бьёт</td><td>"+TROOP_TYPES[beats].name+"</td></tr>":"")+
+      "</table>"+
+      (have>0?"<div class='uc-have'>в строю: "+RU(have)+"</div>":"")+
+      (!locked&&tier===maxT?"<button class='rnode-go' data-act='train' data-t='"+type+"' data-tier='"+tier+"'>Обучить</button>":"")+
+      (!locked&&tier<maxT&&have>0?"<button class='rnode-go' data-act='retrain' data-t='"+type+"' data-tier='"+tier+"'>Переобучить</button>":"")+
+      "</div>";
+  }
+  h+="</div>";
+  h+="<div id='uc-nav'><button data-act='ucnav' data-dir='-1'>&lsaquo; Тир назад</button>"+
+    "<button data-act='ucnav' data-dir='1'>Тир вперёд &rsaquo;</button></div>";
+  return h;
+}
+
 /* ---- Набор и переобучение войск: карточка на пергаменте ---- */
 let trainCtx=null;
 function openTrainModal(type,tier){
   const p=me();
-  buildingModalSel=-1;
+  buildingModalSel=-1; carouselCtx=null;
   const max=trainMax(p,type,tier);
   trainCtx={type,tier,mode:"train",max,n:max,lastLocked:!!p.train[type]||max<1};
   $("#bm-body").innerHTML = trainSheetHtml();
@@ -3888,7 +3995,7 @@ function openTrainModal(type,tier){
 }
 function openRetrainModal(type,fromTier){
   const p=me();
-  buildingModalSel=-1;
+  buildingModalSel=-1; carouselCtx=null;
   const max=retrainMax(p,type,fromTier);
   trainCtx={type,tier:fromTier+1,fromTier,mode:"retrain",max,n:max,lastLocked:!!p.train[type]||max<1};
   $("#bm-body").innerHTML = trainSheetHtml();
@@ -3962,7 +4069,9 @@ function refreshOpenModal(){
     }
   }
   const menu=$("#menu-modal");
-  if(menu.classList.contains("open")){
+  const typingInModal = document.activeElement && $("#menu-modal-body").contains(document.activeElement) &&
+    (document.activeElement.tagName==="INPUT"||document.activeElement.tagName==="TEXTAREA");
+  if(menu.classList.contains("open") && !typingInModal){
     const t=menu.dataset.tab;
     $("#menu-modal-body").innerHTML = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): foInv();
   }
