@@ -255,13 +255,17 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .uc-card{flex:0 0 100%;scroll-snap-align:center;padding:0 4px;box-sizing:border-box;
   display:flex;flex-direction:column;align-items:center}
 .uc-card.locked{opacity:.55}
-.uc-img{max-width:60%;max-height:200px;object-fit:contain;
+.uc-img{max-width:85%;max-height:280px;object-fit:contain;
   filter:drop-shadow(0 6px 10px rgba(0,0,0,.35));margin-bottom:8px}
 .uc-name{font-size:16px;color:#2c2114;margin-bottom:6px;display:flex;align-items:center;gap:8px}
 .uc-name .tag{font-size:11px;background:rgba(90,69,48,.15);border-radius:3px;padding:2px 6px;
   color:#5a4530}
 .uc-lock{font-size:12px;color:#8a2f22;text-align:center;margin-bottom:8px}
 .uc-have{font-size:12.5px;color:#3a2c1c;margin:6px 0}
+.uc-go{margin-top:10px;width:100%;padding:12px 7px;background:linear-gradient(180deg,#c2993c,#8a6d2c);
+  border:1px solid #6b5220;border-radius:5px;color:#2c2114;font-weight:bold;font-size:14.5px;
+  letter-spacing:.03em;box-shadow:0 3px 8px rgba(0,0,0,.35)}
+.uc-go:disabled{opacity:.5;background:rgba(90,69,48,.3);color:#5a4530;box-shadow:none}
 #uc-nav{display:flex;justify-content:space-between;gap:8px;margin:10px 0 16px}
 #uc-nav button{flex:1;padding:8px 4px;font-size:12.5px;text-align:center;
   background:rgba(90,69,48,.12);border:1px solid rgba(90,69,48,.3);border-radius:4px;
@@ -377,7 +381,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   color:var(--gilt-hi);background:rgba(0,0,0,.55);padding:0 3px;line-height:1.4;z-index:2}
 
 /* Бригады (слева) и отряды в поле (справа) — плавающие столбцы поверх фона города */
-#brigades,#fieldarmy{position:absolute;top:70px;bottom:14px;display:flex;flex-direction:column;
+#brigades,#fieldarmy{position:absolute;top:108px;bottom:14px;display:flex;flex-direction:column;
   gap:8px;z-index:5;overflow-y:auto;scrollbar-width:none}
 #brigades::-webkit-scrollbar,#fieldarmy::-webkit-scrollbar{display:none}
 #brigades{left:14px}
@@ -1162,10 +1166,10 @@ function buildingName(bk,p){
    Базовые числа в духе RoK (T4 конница ≈ 220 атк / 212 защ / 216 хп).      */
 const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];     // T1..T5
 const TROOP_TYPES = {
-  inf: {name:"Пехота",  atk:34, def:46, hp:44, load:6,  speed:1.00, beats:"arc", losesTo:"cav"},
-  arc: {name:"Лучники", atk:50, def:30, hp:36, load:8,  speed:1.10, beats:"cav", losesTo:"inf"},
-  cav: {name:"Конница", atk:46, def:34, hp:40, load:5,  speed:1.70, beats:"inf", losesTo:"arc"},
-  sie: {name:"Осадные", atk:24, def:20, hp:60, load:30, speed:0.60, beats:null,  losesTo:null},
+  inf: {name:"Пехота",  atk:34, def:46, hp:44, load:6,  speed:1.00, magicAtk:8,  magicDef:18, beats:"arc", losesTo:"cav"},
+  arc: {name:"Лучники", atk:50, def:30, hp:36, load:8,  speed:1.10, magicAtk:20, magicDef:8,  beats:"cav", losesTo:"inf"},
+  cav: {name:"Конница", atk:46, def:34, hp:40, load:5,  speed:1.70, magicAtk:12, magicDef:12, beats:"inf", losesTo:"arc"},
+  sie: {name:"Осадные", atk:24, def:20, hp:60, load:30, speed:0.60, magicAtk:26, magicDef:6,  beats:null,  losesTo:null},
 };
 const TKEYS = ["inf","arc","cav","sie"];
 /* ---- Расовые правки отдельных типов войск (не задевают базовые числа других рас) ----
@@ -3476,9 +3480,7 @@ function foGen(){
     " — берётся с разбойничьих застав.</div>"+
     "<table class='roll' style='margin-top:9px'><tr><td>Сила полководца</td><td>"+RU(genPower)+"</td></tr></table>"+
     genSkillBadges(p)+
-    "<div class='line' style='margin-top:9px'>"+
-    "<button class='seal' data-act='gentab' data-t='gear'>Экипировка</button>"+
-    "</div></div>";
+    "</div>";
 
   h+="<div id='inv-tabs'>"+
     "<button class='"+(genTab==="overview"?"on":"")+"' data-act='gentab' data-t='overview'>Обзор</button>"+
@@ -3824,14 +3826,6 @@ function handleAct(e){
     const r=startBuild(p,b.dataset.b,plot);
     herald(r.err||(buildingName(b.dataset.b,p)+(plot!=null?" (участок "+(plot+1)+")":"")+" заложена."));
   }
-  else if(a==="train"){
-    openTrainModal(b.dataset.t,+b.dataset.tier);
-    return;
-  }
-  else if(a==="retrain"){
-    openRetrainModal(b.dataset.t,+b.dataset.tier);
-    return;
-  }
   else if(a==="browsetrain"){
     openUnitCarousel(b.dataset.t);
     return;
@@ -3839,6 +3833,21 @@ function handleAct(e){
   else if(a==="ucnav"){
     const track=$("#uc-track");
     if(track) track.scrollLeft += track.clientWidth*(+b.dataset.dir);
+    return;
+  }
+  else if(a==="ucfocus"){
+    const type=carouselCtx.type, tier=+b.dataset.tier;
+    const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
+    if(b.dataset.mode==="train"){
+      const max=trainMax(p,type,tier);
+      trainCtx={type,tier,mode:"train",max,n:max,lastLocked:!!p.train[type]||max<1};
+    } else {
+      const max=retrainMax(p,type,tier);
+      trainCtx={type,tier:tier+1,fromTier:tier,mode:"retrain",max,n:max,lastLocked:!!p.train[type]||max<1};
+    }
+    $("#bm-body").innerHTML=unitCarouselHtml();
+    updateTrainSheet();
+    const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
     return;
   }
   else if(a==="traingo"){
@@ -3989,73 +3998,37 @@ $("#building-modal").addEventListener("input",e=>{
   }
 });
 
-/* ---- Витрина юнитов: все тиры листаются вправо-влево, обучение — со своей карточки ---- */
-let carouselCtx=null;
+/* ---- Витрина юнитов: все тиры листаются вправо-влево, обучение — прямо с той же карточки ---- */
+let carouselCtx=null, trainCtx=null;
 function openUnitCarousel(type){
+  const p=me(), maxT=tierUnlockedFor(p,type);
   carouselCtx={type};
-  buildingModalSel=-1; trainCtx=null;
+  buildingModalSel=-1;
+  const max=trainMax(p,type,maxT);
+  trainCtx={type,tier:maxT,mode:"train",max,n:max,lastLocked:!!p.train[type]||max<1};
   $("#bm-body").innerHTML = unitCarouselHtml();
   $("#building-modal").classList.add("open");
-  const p=me(), maxT=tierUnlockedFor(p,type);
+  updateTrainSheet();
   requestAnimationFrame(()=>{
     const track=$("#uc-track");
     if(track) track.scrollLeft = (maxT-1)*track.clientWidth;
   });
 }
-function unitCarouselHtml(){
-  const p=me(), type=carouselCtx.type, maxT=tierUnlockedFor(p,type);
-  let h="<div id='bm-title'>"+TROOP_TYPES[type].name+"</div>";
-  h+="<div id='bm-sub'>листайте карточку вправо-влево</div>";
-  h+="<div id='uc-track'>";
-  for(let tier=1; tier<=5; tier++){
-    const locked=tier>maxT, have=p.troops[type][tier]||0;
-    h+="<div class='uc-card"+(locked?" locked":"")+"'>"+
-      "<img class='uc-img' src='images/units/"+p.race+"-"+type+tier+".png' alt=''>"+
-      "<div class='uc-name'>"+unitName(type,tier,p.race)+"</div>"+
-      (locked?"<div class='uc-lock'>&#128274; чтобы обучить, нужно исследование в академии</div>":"")+
-      "<table id='bm-stats'>"+
-        "<tr><td>"+statIcon("atk")+"Атака</td><td>"+Math.round(troopStat(type,tier,"atk")*troopMod(p.race,type,"atk"))+"</td></tr>"+
-        "<tr><td>"+statIcon("def")+"Защита</td><td>"+troopStat(type,tier,"def")+"</td></tr>"+
-        "<tr><td>"+statIcon("hp")+"Здоровье</td><td>"+troopStat(type,tier,"hp")+"</td></tr>"+
-      "</table>"+
-      (have>0?"<div class='uc-have'>в строю: "+RU(have)+"</div>":"")+
-      (!locked&&tier===maxT?"<button class='rnode-go' data-act='train' data-t='"+type+"' data-tier='"+tier+"'>Обучить</button>":"")+
-      (!locked&&tier<maxT&&have>0?"<button class='rnode-go' data-act='retrain' data-t='"+type+"' data-tier='"+tier+"'>Переобучить</button>":"")+
-      "</div>";
-  }
-  h+="</div>";
-  h+="<div id='uc-nav'><button data-act='ucnav' data-dir='-1'>&lsaquo; Назад</button>"+
-    "<button data-act='ucnav' data-dir='1'>Вперёд &rsaquo;</button></div>";
-  return h;
+function unitCardStatsHtml(p,type,tier){
+  return "<table id='bm-stats'>"+
+    "<tr><td>"+statIcon("atk")+"Атака</td><td>"+Math.round(troopStat(type,tier,"atk")*troopMod(p.race,type,"atk"))+"</td></tr>"+
+    "<tr><td>"+statIcon("def")+"Защита</td><td>"+troopStat(type,tier,"def")+"</td></tr>"+
+    "<tr><td>"+statIcon("hp")+"Здоровье</td><td>"+troopStat(type,tier,"hp")+"</td></tr>"+
+    "<tr><td>"+statIcon("matk")+"Магическая атака</td><td>"+troopStat(type,tier,"magicAtk")+"</td></tr>"+
+    "<tr><td>"+statIcon("mdef")+"Магическая защита</td><td>"+troopStat(type,tier,"magicDef")+"</td></tr>"+
+    "<tr><td>"+statIcon("speed")+"Скорость</td><td>&times;"+TROOP_TYPES[type].speed.toFixed(2)+"</td></tr>"+
+    "<tr><td>"+statIcon("load")+"Грузоподъёмность</td><td>"+TROOP_TYPES[type].load+"</td></tr>"+
+  "</table>";
 }
-
-/* ---- Набор и переобучение войск: карточка на пергаменте ---- */
-let trainCtx=null;
-function openTrainModal(type,tier){
-  const p=me();
-  buildingModalSel=-1; carouselCtx=null;
-  const max=trainMax(p,type,tier);
-  trainCtx={type,tier,mode:"train",max,n:max,lastLocked:!!p.train[type]||max<1};
-  $("#bm-body").innerHTML = trainSheetHtml();
-  $("#building-modal").classList.add("open");
-  updateTrainSheet();
-}
-function openRetrainModal(type,fromTier){
-  const p=me();
-  buildingModalSel=-1; carouselCtx=null;
-  const max=retrainMax(p,type,fromTier);
-  trainCtx={type,tier:fromTier+1,fromTier,mode:"retrain",max,n:max,lastLocked:!!p.train[type]||max<1};
-  $("#bm-body").innerHTML = trainSheetHtml();
-  $("#building-modal").classList.add("open");
-  updateTrainSheet();
-}
-function trainSheetHtml(){
+function trainInlineHtml(){
   const p=me(), {type,tier,max,n,fromTier}=trainCtx, isRetrain=trainCtx.mode==="retrain";
   const busy=!!p.train[type], locked=busy||max<1;
-  let h="<img id='bm-art' src='images/units/"+p.race+"-"+type+tier+".png'>";
-  h+="<div id='bm-title'>"+(isRetrain?unitName(type,fromTier,p.race)+" &rarr; "+unitName(type,tier,p.race):unitName(type,tier,p.race))+"</div>";
-  h+="<div id='bm-sub'>"+(isRetrain?"переобучение · в строю "+RU(p.troops[type][fromTier]||0):"набор в столице · тир "+tier)+"</div>";
-  h+="<div id='bm-qty'><div class='cap'><span>Доступно максимум</span><b>"+RU(max)+"</b></div>"+
+  let h="<div id='bm-qty'><div class='cap'><span>Доступно максимум</span><b>"+RU(max)+"</b></div>"+
      "<div class='row'><input type='range' id='qty-range' min='0' max='"+max+"' value='"+n+"' "+(locked?"disabled":"")+">"+
      "<input type='number' id='qty-num' min='0' max='"+max+"' value='"+n+"' "+(locked?"disabled":"")+"></div></div>";
   if(busy){
@@ -4071,11 +4044,36 @@ function trainSheetHtml(){
     }).join("")+"</div>";
     h+="<div id='bm-time'></div>";
   }
-  h+="<button id='bm-btn' data-act='traingo' "+((busy||max<1||n<=0)?"disabled":"")+">"+(isRetrain?"Переобучить":"Набрать")+"</button>";
+  h+="<button id='bm-btn' class='uc-go' data-act='traingo' "+((busy||max<1||n<=0)?"disabled":"")+">"+(isRetrain?"Переобучить":"Обучить")+"</button>";
+  return h;
+}
+function unitCarouselHtml(){
+  const p=me(), type=carouselCtx.type, maxT=tierUnlockedFor(p,type);
+  let h="<div id='bm-title'>"+TROOP_TYPES[type].name+"</div>";
+  h+="<div id='uc-track'>";
+  for(let tier=1; tier<=5; tier++){
+    const locked=tier>maxT, have=p.troops[type][tier]||0;
+    const active = trainCtx && trainCtx.type===type &&
+      (trainCtx.mode==="train" ? trainCtx.tier===tier : trainCtx.fromTier===tier);
+    h+="<div class='uc-card"+(locked?" locked":"")+"'>"+
+      "<img class='uc-img' src='images/units/"+p.race+"-"+type+tier+".png' alt=''>"+
+      "<div class='uc-name'>"+unitName(type,tier,p.race)+"</div>"+
+      (locked?"<div class='uc-lock'>&#128274; чтобы обучить, нужно исследование в академии</div>":"")+
+      unitCardStatsHtml(p,type,tier)+
+      (have>0?"<div class='uc-have'>в строю: "+RU(have)+"</div>":"");
+    if(!locked && active) h+=trainInlineHtml();
+    else if(!locked && tier===maxT) h+="<button class='rnode-go uc-go' data-act='ucfocus' data-mode='train' data-tier='"+tier+"'>Обучить</button>";
+    else if(!locked && tier<maxT && have>0) h+="<button class='rnode-go uc-go' data-act='ucfocus' data-mode='retrain' data-tier='"+tier+"'>Переобучить</button>";
+    h+="</div>";
+  }
+  h+="</div>";
+  h+="<div id='uc-nav'><button data-act='ucnav' data-dir='-1'>&lsaquo; Назад</button>"+
+    "<button data-act='ucnav' data-dir='1'>Вперёд &rsaquo;</button></div>";
   return h;
 }
 function updateTrainSheet(){
   const p=me(), {type,tier,max,n,fromTier}=trainCtx, isRetrain=trainCtx.mode==="retrain";
+  if(!$("#qty-range")) return;
   $("#qty-range").value=n; $("#qty-num").value=n;
   const unitC=isRetrain?retrainCost(type,fromTier,1):troopCost(type,tier);
   const totC=isRetrain?retrainCost(type,fromTier,n):null;
@@ -4102,13 +4100,15 @@ function closeMenuModal(){ $("#menu-modal").classList.remove("open"); }
 /* ---- Живое обновление открытых окошек раз в секунду, без переоткрытия ---- */
 function refreshOpenModal(){
   if($("#building-modal").classList.contains("open")){
-    if(trainCtx){
+    if(carouselCtx && trainCtx){
       const p=me();
       const newMax=trainCtx.mode==="retrain"?retrainMax(p,trainCtx.type,trainCtx.fromTier):trainMax(p,trainCtx.type,trainCtx.tier);
       const newLocked=!!p.train[trainCtx.type]||newMax<1;
       if(newLocked!==trainCtx.lastLocked){
         trainCtx.max=newMax; trainCtx.n=Math.min(trainCtx.n,newMax); trainCtx.lastLocked=newLocked;
-        $("#bm-body").innerHTML=trainSheetHtml();
+        const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
+        $("#bm-body").innerHTML=unitCarouselHtml();
+        const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
       }
       updateTrainSheet();
     } else if(buildingModalSel>=0){
