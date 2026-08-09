@@ -77,6 +77,9 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 
 .stars{color:var(--gilt);font-size:13px;letter-spacing:1px;margin:2px 0}
 .gen-skills{display:flex;gap:8px;margin-top:9px}
+.gen-lvup{flex:0 0 auto;width:26px;height:26px;padding:0;line-height:1;font-size:16px;
+  border-radius:5px}
+.gen-lvup:disabled{opacity:.35}
 .gear-slots{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-bottom:6px}
 .gear-slot{position:relative;background:radial-gradient(120% 120% at 50% 30%,rgba(52,42,29,.6),rgba(20,16,10,.7));
   border:1px solid var(--gilt-dim);border-radius:4px;padding:10px 6px;text-align:center;
@@ -1522,9 +1525,10 @@ function power(p){
   [...ACADEMY_TREE.eco,...ACADEMY_TREE.mil].forEach(n=>{
     const lv=p.tech[n.id]||0; if(lv) v+=lv*RESEARCH_WAVE[n.wave]*3;
   });
-  v+=p.gen.lv*80;
+  v+=genPowerOf(p);
   return Math.round(v);
 }
+function genPowerOf(p){ return 2000+Math.pow(p.gen.lv,1.5)*130; }   // 1 ур. ~2130 (в RoK командир сразу даёт 2-3к силы)
 function armyPower(units,B,race){
   const TYPE_ATK={inf:"atkInf",arc:"atkArc",cav:"atkCav",sie:"atkSie"};
   const TYPE_DEF={inf:"defInf",arc:"defArc",cav:"defCav",sie:"defSie"};
@@ -3391,12 +3395,13 @@ function statIcon(kind){
   return "<img class='stat-ico' src='images/ui/stat-"+kind+".png' alt='' onerror=\"this.remove()\">";
 }
 function genStats(p){
-  const lv=p.gen.lv, B=bonuses(p), g=Math.pow(lv,1.15);   // рост ускоряется с уровнем, не линейно
+  // 1 ур. полководца ~= статы юнита Т5 (как в RoK), дальше растёт той же кривой, что и раньше
+  const lv=p.gen.lv, B=bonuses(p), g=Math.pow(lv,1.15);
   const gear=gearBonus(p);
   return {
-    hp:  Math.round((100+12*g)*(1+B.genHpMod))+gear.hp,
-    atk: Math.round((20+3.2*g)*(1+B.genAtkMod))+gear.atk,
-    def: Math.round((15+2.4*g)*(1+B.genDefMod))+gear.def,
+    hp:  Math.round((250+30*g)*(1+B.genHpMod))+gear.hp,
+    atk: Math.round((200+40*g)*(1+B.genAtkMod))+gear.atk,
+    def: Math.round((170+30*g)*(1+B.genDefMod))+gear.def,
   };
 }
 function genPortraitHtml(race,i){
@@ -3465,7 +3470,7 @@ function foGen(){
   const G=genOf(p), B=bonuses(p), S=genStats(p);
   const need=genXpNeed(p.gen.lv), f=p.gen.xp/need, lvCap=Math.min(60,epochOf(p.b.hall)*12);
   const stars=Math.min(5,1+Math.floor(p.gen.lv/12));
-  const genPower=p.gen.lv*80;
+  const genPower=genPowerOf(p);
   let h="<div class='gen-figure-wrap'>"+genFigureHtml(p.race,p.gen.id||0)+"</div>";
   h+=rubric("Полководец");
   h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
@@ -3475,9 +3480,9 @@ function foGen(){
     "<div class='note'>"+G.bonus+
     (p.gen.pts>0?" · <em>очков к раздаче: "+p.gen.pts+"</em>":"")+
     (p.gen.lv>=lvCap&&lvCap<60?" · потолок эпохи: "+lvCap:"")+"</div></div></div>"+
-    "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div>"+
-    "<div class='note' style='margin-top:5px'>Опыт "+RU(p.gen.xp)+" из "+RU(need)+
-    " — берётся с разбойничьих застав.</div>"+
+    "<div class='line' style='margin-top:7px;gap:8px'><div class='progress' style='flex:1;margin-top:0'>"+
+    "<i style='width:"+(f*100).toFixed(1)+"%'></i></div>"+
+    "<button class='seal gen-lvup' data-act='genlvup' disabled title='Нужны книги опыта — появятся позже'>+</button></div>"+
     "<table class='roll' style='margin-top:9px'><tr><td>Сила полководца</td><td>"+RU(genPower)+"</td></tr></table>"+
     genSkillBadges(p)+
     "</div>";
