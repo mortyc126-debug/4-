@@ -2516,24 +2516,39 @@ function deviceId(){
 const DEVICE_ID=deviceId();
 const Store={
   async get(k){
+    // Локальная копия обновляется синхронно (beforeunload/visibilitychange),
+    // а облачная — раз в 20 сек и может не успеть уйти при плохой сети.
+    // Поэтому берём НЕ "облако, если оно ответило", а более свежую по savedAt.
+    let cloud=null, local=null;
     if(sb){
       try{
         const {data,error}=await sb.from("saves").select("data")
           .eq("device_id",DEVICE_ID).eq("save_key",k).maybeSingle();
-        if(!error&&data) return data.data;
+        if(!error&&data) cloud=data.data;
       }catch(e){}
     }
-    try{ if(window.storage){const r=await window.storage.get(k);return r?r.value:null} }catch(e){}
-    try{ return localStorage.getItem(k) }catch(e){ return null }
+    try{ local=localStorage.getItem(k) }catch(e){}
+    if(!local){
+      try{ if(window.storage){const r=await window.storage.get(k); if(r) local=r.value} }catch(e){}
+    }
+    if(cloud&&local){
+      try{
+        const ct=JSON.parse(cloud).savedAt||0, lt=JSON.parse(local).savedAt||0;
+        return ct>=lt ? cloud : local;
+      }catch(e){ return local||cloud }
+    }
+    return cloud||local||null;
   },
   async set(k,v){
+    // Локальная запись — первой и синхронно: на слабой сети облачный upsert
+    // может зависнуть/не успеть, а страницу на телефоне тем временем убьют.
+    try{ localStorage.setItem(k,v) }catch(e){}
+    try{ if(window.storage){await window.storage.set(k,v)} }catch(e){}
     if(sb){
       try{
         await sb.from("saves").upsert({device_id:DEVICE_ID,save_key:k,data:v,updated_at:new Date().toISOString()});
       }catch(e){}
     }
-    try{ if(window.storage){await window.storage.set(k,v);return} }catch(e){}
-    try{ localStorage.setItem(k,v) }catch(e){}
   },
   async del(k){
     if(sb){
@@ -2595,7 +2610,7 @@ const FONT=getComputedStyle(document.body).fontFamily;   // читаем оди�
 const cv=$("#map"), g=cv.getContext("2d");
 const mini=$("#mini"), mg=mini.getContext("2d");
 let view={x:0,y:0,z:8}, drag=null, sel=null, hover=null;
-let tab="city", tempo=1, lastReal=Date.now(), lastFolio="", academyTab="mil", invTab="res", genTab="overview";
+let tab="city", tempo=1, lastReal=Date.now(), lastFolio="", lastMenuBody="", academyTab="mil", invTab="res", genTab="overview";
 
 /* ---- Рельеф в буфер ---------------------------------------------------- */
 let terrain=null;
@@ -3866,7 +3881,7 @@ document.querySelectorAll("#ribbons button").forEach(b=>{
 /* ---- Действия в реестре и картуше ---- */
 function refreshGenIfOpen(){
   const menu=$("#menu-modal");
-  if(menu.classList.contains("open")&&menu.dataset.tab==="gen") $("#menu-modal-body").innerHTML=foGen();
+  if(menu.classList.contains("open")&&menu.dataset.tab==="gen"){ lastMenuBody=foGen(); $("#menu-modal-body").innerHTML=lastMenuBody; }
 }
 function handleAct(e){
   const closeBtn=e.target.closest("[data-act='closemenu']");
@@ -4000,7 +4015,7 @@ function handleAct(e){
     invTab=b.dataset.t;
     lastFolio=""; renderFolio();
     const menu=$("#menu-modal");
-    if(menu.classList.contains("open")&&menu.dataset.tab==="inv") $("#menu-modal-body").innerHTML=foInv();
+    if(menu.classList.contains("open")&&menu.dataset.tab==="inv"){ lastMenuBody=foInv(); $("#menu-modal-body").innerHTML=lastMenuBody; }
   }
   else if(a==="recall"){ const m=W.marches.find(x=>x.id==b.dataset.m);
     if(m){ recallMarch(m); herald("Отряд поворачивает домой.") } }
@@ -4037,7 +4052,8 @@ function handleAct(e){
   const modal=$("#menu-modal");
   if(modal.classList.contains("open")){
     const t=modal.dataset.tab;
-    $("#menu-modal-body").innerHTML = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): foInv();
+    lastMenuBody = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): foInv();
+    $("#menu-modal-body").innerHTML = lastMenuBody;
   }
 }
 $("#folio").addEventListener("click",handleAct);
@@ -4163,6 +4179,7 @@ function updateTrainSheet(){
 function openMenuModal(t){
   $("#menu-modal").dataset.tab = t;
   const html = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): foInv();
+  lastMenuBody = html;
   $("#menu-modal-body").innerHTML = html;
   $("#menu-modal").classList.add("open");
   $("#side-menu").classList.remove("open");
@@ -4191,7 +4208,11 @@ function refreshOpenModal(){
     (document.activeElement.tagName==="INPUT"||document.activeElement.tagName==="TEXTAREA");
   if(menu.classList.contains("open") && !typingInModal){
     const t=menu.dataset.tab;
-    $("#menu-modal-body").innerHTML = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): foInv();
+    const html = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): foInv();
+    if(html!==lastMenuBody){                       // не перерисовываем зря (иначе моргает аватар)
+      lastMenuBody=html;
+      $("#menu-modal-body").innerHTML = html;
+    }
   }
 }
 $("#menu-btn").addEventListener("click",toggleMenu);
