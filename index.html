@@ -80,6 +80,25 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 
 .stars{color:var(--gilt);font-size:13px;letter-spacing:1px;margin:2px 0}
 .gen-skills{display:flex;gap:8px;margin-top:9px}
+.gear-slots{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:6px}
+.gear-slot{background:linear-gradient(180deg,rgba(52,42,29,.5),rgba(30,24,16,.5));
+  border:1px solid var(--rule-soft);border-radius:6px;padding:8px 6px;text-align:center;
+  display:flex;flex-direction:column;align-items:center;gap:4px}
+.gear-slot.filled{border-color:var(--gilt-dim)}
+.gear-slot-icon{width:38px;height:38px;border-radius:5px;background:rgba(0,0,0,.3);
+  border:1px solid var(--rule-soft);flex:0 0 auto}
+.gear-slot-name{font-size:10px;color:var(--vellum-faint);letter-spacing:.05em;text-transform:uppercase}
+.gear-slot-item{font-size:10.5px;color:var(--vellum-dim);min-height:13px}
+.gear-slot-item .tag{margin-left:3px}
+.gear-slot .seal{margin-top:2px;font-size:10px;padding:4px 7px}
+.gear-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(58px,1fr));gap:8px}
+.gear-cell{aspect-ratio:1;border:1px solid var(--rule-soft);border-radius:5px;
+  background:rgba(0,0,0,.25);position:relative}
+.gear-cell.equipped{border-color:var(--gilt-dim);background:rgba(194,153,60,.1)}
+.gear-cell .cnt{position:absolute;bottom:2px;right:3px;font-family:var(--data);font-size:10px;
+  color:var(--gilt-hi);text-shadow:0 1px 2px #000}
+.gear-cell .eq{position:absolute;top:2px;left:3px;font-size:9px;color:var(--verdigris);
+  text-shadow:0 1px 2px #000}
 .gen-skill{width:34px;height:34px;border-radius:50%;background:var(--wood-deep);
   border:1px solid var(--rule);display:flex;flex-direction:column;align-items:center;
   justify-content:center;line-height:1}
@@ -975,7 +994,7 @@ const BUILDINGS = {
   wall:    {name:"Стена",         max:30, desc:"Защита города при обороне"},
   garrison:{name:"Гарнизон",      max:30, desc:"Доп. защита при осаде и предупреждение о марше врага"},
   scout:   {name:"Разведка",      max:30, desc:"Раскрывает сведения о войсках противника"},
-  forge:   {name:"Горн",          max:30, desc:"Ковка снаряжения для полководца (механика в разработке)"},
+  forge:   {name:"Горн",          max:30, desc:"Добыча материалов и ковка снаряжения для полководца"},
   portal:  {name:"Портал",        max:30, desc:"Врата в иные земли (механика в разработке)"},
 };
 const BKEYS = Object.keys(BUILDINGS);
@@ -3122,6 +3141,43 @@ function unitThumb(p,t,i){
   const headPos = t==="sie" ? "50% 40%" : "50% 20%";
   return "<img class='unit-thumb' style='object-position:"+headPos+"' src='images/units/"+p.race+"-"+t+i+".png' alt=''>";
 }
+function forgeInfoHtml(p){
+  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+st[k])).join(", ");
+  let h="<div id='bm-tree'>";
+  if(p.craft){
+    const cf=(W.t-p.craft.t0)/Math.max(1,p.craft.t1-p.craft.t0);
+    const title = p.craft.kind==="material" ? MATERIALS[p.craft.mat].name+" ×"+p.craft.n
+                : GEAR_NAMES[p.craft.slot][p.craft.order][p.craft.rarity-1];
+    h+="<div class='rgroup'>На горне</div>"+
+       "<div class='rnode'><div class='rnode-hd'><b>"+title+"</b></div>"+
+       "<div class='progress'><i style='width:"+(cf*100).toFixed(1)+"%'></i></div>"+
+       "<div class='rnode-eff'>Готово через <em>"+fmtDur(p.craft.t1-W.t)+"</em></div></div>";
+  }
+  h+="<div class='rgroup'>Материалы</div>";
+  Object.keys(MATERIALS).forEach(mat=>{
+    const stock=p.materials[mat];
+    h+="<div class='rnode'><div class='rnode-hd'><b>"+MATERIALS[mat].name+"</b></div>"+
+      "<div class='rnode-eff'>"+RARITY_NAMES.map((rn,i)=>rn.slice(0,3)+": "+(stock[i]||0)).join(" · ")+"</div>"+
+      "<button class='rnode-go' data-act='matprod' data-mat='"+mat+"' "+(p.craft?"disabled":"")+">Добыть</button>"+
+      [0,1,2,3].map(t=>"<button class='rnode-go' data-act='matup' data-mat='"+mat+"' data-tier='"+t+"' "+
+        ((stock[t]||0)<4?"disabled":"")+" style='margin-top:4px'>4×"+RARITY_NAMES[t].slice(0,3)+"&rarr;"+RARITY_NAMES[t+1].slice(0,3)+"</button>").join("")+
+      "</div>";
+  });
+  const curRarity=Math.min(5,epochOf(p.b.hall));
+  h+="<div class='rgroup'>Ковка · "+RARITY_NAMES[curRarity-1]+"</div>";
+  GEAR_SLOTS.forEach(s=>{
+    const haveMat=(p.materials[s.mat][curRarity-1]||0)>=1;
+    h+="<div class='rnode'><div class='rnode-hd'><b>"+s.name+"</b></div>"+
+      "<div class='rnode-eff'>нужен материал: "+MATERIALS[s.mat].name+" ("+RARITY_NAMES[curRarity-1]+") · "+
+      "бастион "+statTxt(gearItemStats(s.cat,"bastion",curRarity))+" · буря "+statTxt(gearItemStats(s.cat,"storm",curRarity))+"</div>"+
+      "<button class='rnode-go' data-act='craft' data-slot='"+s.id+"' data-order='bastion' data-rarity='"+curRarity+"' "+
+      (p.craft||!haveMat?"disabled":"")+">Бастион</button>"+
+      "<button class='rnode-go' data-act='craft' data-slot='"+s.id+"' data-order='storm' data-rarity='"+curRarity+"' "+
+      (p.craft||!haveMat?"disabled":"")+">Буря</button></div>";
+  });
+  h+="</div>";
+  return h;
+}
 function trainInfoHtml(p,type){
   const T=p.train[type];
   if(T){
@@ -3185,6 +3241,7 @@ function buildingModalHtml(ci){
   }
   else if(c.bk==="store") h+=storeInfoHtml(p);
   else if(c.bk==="academy") h+=academyTreeHtml(p);
+  else if(c.bk==="forge" && lv>0) h+=forgeInfoHtml(p);
   else if(BLD_TRAIN[c.bk] && lv>0) h+=trainInfoHtml(p,BLD_TRAIN[c.bk]);
   if(canGo){
     h+="<div id=\'bm-reqs\'>"+RES.map(r=>{
@@ -3318,6 +3375,40 @@ function genSkillBadges(p){
     return "<span class='gen-skill' title='"+br.name+"'><b>"+letter+"</b><s>"+spent+"</s></span>";
   }).join("")+"</div>";
 }
+function genGearHtml(p){
+  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+st[k])).join(", ");
+  let h=rubric("Экипировка","снаряжение куётся в горне, а не здесь");
+  h+="<div class='gear-slots'>";
+  GEAR_SLOTS.forEach(s=>{
+    const it=p.gear[s.id];
+    h+="<div class='gear-slot"+(it?" filled":"")+"'>"+
+      "<div class='gear-slot-icon'></div>"+
+      "<div class='gear-slot-name'>"+s.name+"</div>"+
+      "<div class='gear-slot-item'>"+(it?GEAR_NAMES[s.id][it.order][it.rarity-1]+"<span class='tag gilt'>"+RARITY_NAMES[it.rarity-1]+"</span>"
+        +"<div class='note'>"+statTxt(gearItemStats(s.cat,it.order,it.rarity))+"</div>":"пусто")+"</div>"+
+      (it?"<button class='seal' data-act='unequip' data-slot='"+s.id+"'>Снять</button>":"")+
+      "</div>";
+  });
+  h+="</div>";
+
+  let any=false, stored="";
+  GEAR_SLOTS.forEach(s=>{
+    ["bastion","storm"].forEach(order=>{
+      for(let r=1;r<=5;r++){
+        const cnt=p.inventory[s.id][order][r-1]||0; if(!cnt) continue;
+        any=true;
+        stored+="<div class='entry'><div class='line'><div class='fill'>"+
+          "<div class='title'>"+GEAR_NAMES[s.id][order][r-1]+"<span class='tag'>×"+cnt+"</span></div>"+
+          "<div class='note'>"+s.name+" · "+statTxt(gearItemStats(s.cat,order,r))+"</div></div>"+
+          "<button class='seal' data-act='equip' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Надеть</button>"+
+          "<button class='seal' data-act='dismantle' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Разобрать</button></div>";
+      }
+    });
+  });
+  h+=rubric("На складе","можно надеть или разобрать");
+  h+= any ? stored : hollow("&#9884;","Склад снаряжения пуст — куйте в горне.");
+  return h;
+}
 function foGen(){
   const p=me();
   if(p.gen.id==null){
@@ -3350,13 +3441,16 @@ function foGen(){
     "<table class='roll' style='margin-top:9px'><tr><td>Сила полководца</td><td>"+RU(genPower)+"</td></tr></table>"+
     genSkillBadges(p)+
     "<div class='line' style='margin-top:9px'>"+
-    "<button class='seal' data-act='opengear'>Экипировка</button>"+
+    "<button class='seal' data-act='gentab' data-t='gear'>Экипировка</button>"+
     "</div></div>";
 
   h+="<div id='inv-tabs'>"+
     "<button class='"+(genTab==="overview"?"on":"")+"' data-act='gentab' data-t='overview'>Обзор</button>"+
     "<button class='"+(genTab==="talents"?"on":"")+"' data-act='gentab' data-t='talents'>Таланты</button>"+
+    "<button class='"+(genTab==="gear"?"on":"")+"' data-act='gentab' data-t='gear'>Экипировка</button>"+
     "</div>";
+
+  if(genTab==="gear") return h+genGearHtml(p);
 
   if(genTab==="talents"){
     for(const bk in GENERAL_TREE){
@@ -3411,7 +3505,7 @@ function foGen(){
 function foInv(){
   const p=me();
   const tabsHtml="<div id='inv-tabs'>"+
-    [["res","Ресурсы"],["mat","Материалы"],["items","Предметы"],["gear","Снаряжение"]].map(([k,label])=>
+    [["res","Ресурсы"],["mat","Материалы"],["gear","Снаряжение"]].map(([k,label])=>
       "<button class='"+(invTab===k?"on":"")+"' data-act='invtab' data-t='"+k+"'>"+label+"</button>").join("")+
     "</div>";
 
@@ -3428,70 +3522,33 @@ function foInv(){
   }
 
   if(invTab==="mat"){
-    let h=tabsHtml+rubric("Материалы","добываются и сливаются в горне");
+    let h=tabsHtml+rubric("Материалы","добываются и куются в горне");
     Object.keys(MATERIALS).forEach(mat=>{
       const stock=p.materials[mat];
       h+="<div class='entry'><div class='line'><div class='fill'>"+
         "<div class='title'>"+MATERIALS[mat].name+"</div>"+
-        "<div class='note'>"+RARITY_NAMES.map((rn,i)=>rn.slice(0,3)+": "+(stock[i]||0)).join(" · ")+"</div></div>"+
-        "<button class='seal' data-act='matprod' data-mat='"+mat+"' "+(p.craft?"disabled":"")+">Добыть</button></div>"+
-        "<div class='line' style='margin-top:6px'>"+[0,1,2,3].map(t=>
-          "<button class='seal' data-act='matup' data-mat='"+mat+"' data-tier='"+t+"' "+
-          ((stock[t]||0)<4?"disabled":"")+" style='margin-right:4px'>4×"+RARITY_NAMES[t].slice(0,3)+"→"+RARITY_NAMES[t+1].slice(0,3)+"</button>"
-        ).join("")+"</div></div>";
+        "<div class='note'>"+RARITY_NAMES.map((rn,i)=>rn.slice(0,3)+": "+(stock[i]||0)).join(" · ")+"</div></div></div></div>";
     });
     return h;
   }
 
-  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+st[k])).join(", ");
-
-  if(invTab==="items"){
-    let h=tabsHtml+rubric("Предметы","снаряжение на складе, ещё не надето");
-    let any=false;
-    GEAR_SLOTS.forEach(s=>{
-      ["bastion","storm"].forEach(order=>{
-        for(let r=1;r<=5;r++){
-          const cnt=p.inventory[s.id][order][r-1]||0; if(!cnt) continue;
-          any=true;
-          h+="<div class='entry'><div class='line'><div class='fill'>"+
-            "<div class='title'>"+GEAR_NAMES[s.id][order][r-1]+"<span class='tag'>×"+cnt+"</span></div>"+
-            "<div class='note'>"+s.name+" · "+statTxt(gearItemStats(s.cat,order,r))+"</div></div>"+
-            "<button class='seal' data-act='equip' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Надеть</button>"+
-            "<button class='seal' data-act='dismantle' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Разобрать</button></div>";
-        }
-      });
-    });
-    if(!any) h+=hollow("&#9884;","Склад снаряжения пуст.");
-    return h;
-  }
-
-  let h=tabsHtml;
-  h+=rubric("Снаряжение","горн ур. "+p.b.forge);
-  if(p.craft){
-    const cf=(W.t-p.craft.t0)/Math.max(1,p.craft.t1-p.craft.t0);
-    const title = p.craft.kind==="material" ? MATERIALS[p.craft.mat].name+" ×"+p.craft.n
-                : GEAR_NAMES[p.craft.slot][p.craft.order][p.craft.rarity-1];
-    h+="<div class='entry hot'><div class='line'><div class='fill'>"+
-       "<div class='title'>"+title+"</div><div class='note'>Готово через <em>"+fmtDur(p.craft.t1-W.t)+"</em></div></div></div>"+
-       "<div class='progress'><i style='width:"+(cf*100).toFixed(1)+"%'></i></div></div>";
-  }
-  const curRarity=Math.min(5,epochOf(p.b.hall));
+  // Снаряжение: только каталог того, что есть (надето и на складе) — рядом иконками, как в RoK.
+  // Экипировка (надеть/снять) — в Генерале, ковка и добыча материалов — в Горне.
+  let h=tabsHtml+rubric("Снаряжение","каталог; надеть — у генерала, сковать — в горне");
+  const cells=[];
   GEAR_SLOTS.forEach(s=>{
     const it=p.gear[s.id];
-    h+="<div class='entry"+(it?" hot":"")+"'><div class='line'><div class='fill'>"+
-      "<div class='title'>"+s.name+(it?"<span class='tag gilt'>"+RARITY_NAMES[it.rarity-1]+"</span>":"")+"</div>"+
-      "<div class='note'>"+(it?GEAR_NAMES[s.id][it.order][it.rarity-1]+" · "+statTxt(gearItemStats(s.cat,it.order,it.rarity))
-        :"пусто")+"</div></div>"+
-      (it?"<button class='seal' data-act='unequip' data-slot='"+s.id+"'>Снять</button>":"")+"</div></div>";
-    const haveMat=(p.materials[s.mat][curRarity-1]||0)>=1;
-    h+="<div class='entry'><div class='line'><div class='fill'>"+
-      "<div class='title'>Сковать "+RARITY_NAMES[curRarity-1].toLowerCase()+"</div>"+
-      "<div class='note'>нужен материал: "+MATERIALS[s.mat].name+" ("+RARITY_NAMES[curRarity-1]+")</div></div>"+
-      "<button class='seal' data-act='craft' data-slot='"+s.id+"' data-order='bastion' data-rarity='"+curRarity+"' "+
-      (p.craft||!haveMat?"disabled":"")+">Бастион</button>"+
-      "<button class='seal' data-act='craft' data-slot='"+s.id+"' data-order='storm' data-rarity='"+curRarity+"' "+
-      (p.craft||!haveMat?"disabled":"")+">Буря</button></div></div>";
+    if(it) cells.push("<div class='gear-cell equipped' title='"+GEAR_NAMES[s.id][it.order][it.rarity-1]+" ("+s.name+", надето)'>"+
+      "<span class='eq'>&#9733;</span></div>");
+    ["bastion","storm"].forEach(order=>{
+      for(let r=1;r<=5;r++){
+        const cnt=p.inventory[s.id][order][r-1]||0; if(!cnt) continue;
+        cells.push("<div class='gear-cell' title='"+GEAR_NAMES[s.id][order][r-1]+" ("+s.name+")'>"+
+          "<span class='cnt'>×"+cnt+"</span></div>");
+      }
+    });
   });
+  h+= cells.length ? "<div class='gear-grid'>"+cells.join("")+"</div>" : hollow("&#9884;","Пока нет ни одного предмета — куйте в горне.");
   return h;
 }
 
@@ -3702,6 +3759,10 @@ document.querySelectorAll("#ribbons button").forEach(b=>{
 });
 
 /* ---- Действия в реестре и картуше ---- */
+function refreshGenIfOpen(){
+  const menu=$("#menu-modal");
+  if(menu.classList.contains("open")&&menu.dataset.tab==="gen") $("#menu-modal-body").innerHTML=foGen();
+}
 function handleAct(e){
   const closeBtn=e.target.closest("[data-act='closemenu']");
   if(closeBtn){ closeMenuModal(); return; }
@@ -3776,15 +3837,15 @@ function handleAct(e){
   }
   else if(a==="equip"){
     const r=equipItem(p,b.dataset.slot,b.dataset.order,+b.dataset.rarity);
-    herald(r.err||"Надето."); lastFolio=""; renderFolio();
+    herald(r.err||"Надето."); lastFolio=""; renderFolio(); refreshGenIfOpen();
   }
   else if(a==="unequip"){
     const r=unequipItem(p,b.dataset.slot);
-    herald(r.err||"Снято, отправлено на склад."); lastFolio=""; renderFolio();
+    herald(r.err||"Снято, отправлено на склад."); lastFolio=""; renderFolio(); refreshGenIfOpen();
   }
   else if(a==="dismantle"){
     const r=dismantleItem(p,b.dataset.slot,b.dataset.order,+b.dataset.rarity);
-    herald(r.err||("Разобрано, возвращено золота: "+RU(r.refund)+".")); lastFolio=""; renderFolio();
+    herald(r.err||("Разобрано, возвращено золота: "+RU(r.refund)+".")); lastFolio=""; renderFolio(); refreshGenIfOpen();
   }
   else if(a==="tal"){
     const id=b.dataset.id, node=findTalentNode(id), max=(node&&node.max)||5;
@@ -3794,15 +3855,13 @@ function handleAct(e){
     if(p.gen.id==null){ p.gen.id=+b.dataset.id; herald("Выбран генерал: "+GENERALS[p.race][p.gen.id].name+".") }
   }
   else if(a==="opentab"){ openMenuModal(b.dataset.tab); }
-  else if(a==="opengear"){ invTab="gear"; openMenuModal("inv"); }
   else if(a==="savenick"){
     const inp=$("#nick-input");
     if(inp){ const v=inp.value.trim().slice(0,24); p.nick=v||"Безымянный лорд"; herald("Ник сохранён."); renderTop(); }
   }
   else if(a==="gentab"){
     genTab=b.dataset.t;
-    const menu=$("#menu-modal");
-    if(menu.classList.contains("open")&&menu.dataset.tab==="gen") $("#menu-modal-body").innerHTML=foGen();
+    refreshGenIfOpen();
   }
   else if(a==="academytab"){
     academyTab=b.dataset.t;
