@@ -1013,20 +1013,20 @@ const GENERAL_TREE = {
 /* ---- Здания ---- */
 const BUILDINGS = {
   hall:    {name:"Ратуша",        max:30, req:null,  desc:"Задаёт потолок всех зданий и размер города"},
-  farm:    {name:"Ферма",         max:30, prod:"food", plots:4},
-  lumber:  {name:"Лесопилка",     max:30, prod:"wood", plots:4},
-  quarry:  {name:"Каменоломня",   max:30, prod:"stone", plots:4},
-  mine:    {name:"Золотая шахта", max:30, prod:"gold", plots:4},
+  farm:    {name:"Ферма",         max:30, prod:"food", plots:4, desc:"Добывает еду в город"},
+  lumber:  {name:"Лесопилка",     max:30, prod:"wood", plots:4, desc:"Добывает дерево в город"},
+  quarry:  {name:"Каменоломня",   max:30, prod:"stone", plots:4, desc:"Добывает камень в город"},
+  mine:    {name:"Золотая шахта", max:30, prod:"gold", plots:4, desc:"Добывает золото в город"},
   store:   {name:"Склад",         max:30, desc:"Защищает ресурсы от разграбления при штурме города"},
-  barracks:{name:"Казармы",       max:30, train:"inf"},
-  range:   {name:"Стрельбище",    max:30, train:"arc"},
-  stable:  {name:"Конюшня",       max:30, train:"cav"},
-  siege:   {name:"Мастерская",    max:30, train:"sie"},
+  barracks:{name:"Казармы",       max:30, train:"inf", desc:"Обучает пехоту"},
+  range:   {name:"Стрельбище",    max:30, train:"arc", desc:"Обучает лучников"},
+  stable:  {name:"Конюшня",       max:30, train:"cav", desc:"Обучает конницу"},
+  siege:   {name:"Мастерская",    max:30, train:"sie", desc:"Обучает осадные орудия"},
   hospital:{name:"Госпиталь",     max:30, desc:"Раненые вместо убитых", plots:4},
   academy: {name:"Академия",      max:30, desc:"Исследования и открытие тиров"},
   wall:    {name:"Стена",         max:30, desc:"Защита города при обороне"},
   garrison:{name:"Гарнизон",      max:30, desc:"Доп. защита при осаде и предупреждение о марше врага"},
-  scout:   {name:"Разведка",      max:30, desc:"Раскрывает сведения о войсках противника"},
+  scout:   {name:"Разведка",      max:30, desc:"Раскрывает сведения о войсках противника: чем выше эпоха здания, тем точнее разведданные"},
   forge:   {name:"Горн",          max:30, desc:"Добыча материалов и ковка снаряжения для полководца"},
   portal:  {name:"Портал",        max:30, desc:"Врата в иные земли (механика в разработке)"},
 };
@@ -3253,6 +3253,32 @@ function trainInfoHtml(p,type){
   }
   return "<div id='bm-tree'><button class='rnode-go' data-act='browsetrain' data-t='"+type+"'>Тренировать</button></div>";
 }
+function buildingStatDeltaHtml(bk,lv,nx){
+  const B=BUILDINGS[bk];
+  if(B.prod){
+    const mult={food:1.25,wood:1.25,stone:0.90,gold:0.50}[B.prod];
+    const cur=Math.round(prodRate(lv)*(1+lateSpeed(lv))*mult), next=Math.round(prodRate(nx)*(1+lateSpeed(nx))*mult);
+    return "<table id='bm-stats'><tr><td>Добыча "+RES_NAME[B.prod].toLowerCase()+"/ч</td><td>"+fmt(cur)+" &rarr; "+fmt(next)+"</td></tr></table>";
+  }
+  if(bk==="store"){
+    return "<table id='bm-stats'><tr><td>Базовая защита склада</td><td>"+fmt(storeCap(lv))+" &rarr; "+fmt(storeCap(nx))+"</td></tr></table>";
+  }
+  if(bk==="hospital"){
+    return "<table id='bm-stats'><tr><td>Мест в лазарете</td><td>"+fmt(hospitalCap(lv))+" &rarr; "+fmt(hospitalCap(nx))+"</td></tr></table>";
+  }
+  if(bk==="wall"){
+    return "<table id='bm-stats'>"+
+      "<tr><td>Прочность стены</td><td>"+fmt(maxWallHp(lv))+" &rarr; "+fmt(maxWallHp(nx))+"</td></tr>"+
+      "<tr><td>Защита при обороне</td><td>+"+(lv*3)+"% &rarr; +"+(nx*3)+"%</td></tr></table>";
+  }
+  if(bk==="garrison"){
+    return "<table id='bm-stats'><tr><td>Урон залпа гарнизона</td><td>"+fmt(lv*900)+" &rarr; "+fmt(nx*900)+"</td></tr></table>";
+  }
+  if(BLD_TRAIN[bk]){
+    return "<table id='bm-stats'><tr><td>Воинов за один заказ</td><td>"+fmt(trainCap(lv))+" &rarr; "+fmt(trainCap(nx))+"</td></tr></table>";
+  }
+  return "";
+}
 function buildingModalHtml(ci){
   const p=me(), c=CITY_CELLS[ci];
   if(!c||!c.bk) return "";
@@ -3274,6 +3300,7 @@ function buildingModalHtml(ci){
   if(!maxed && lv>0){
     const term=l=>Math.pow(l,2.1)*12, curPow=power(p), nxPow=Math.round(curPow-term(lv)+term(nx));
     h+="<table id=\'bm-stats\'><tr><td>Мощь города</td><td>"+fmt(curPow)+" &rarr; "+fmt(nxPow)+"</td></tr></table>";
+    h+=buildingStatDeltaHtml(c.bk,lv,nx);
   }
   if(c.bk==="hall"){
     if(epochOf(nx)>epochOf(lv)) h+="<div id=\'bm-opens\'>Открывает: "+RACE_EPOCHS[p.race][epochOf(nx)-1].title+"</div>";
