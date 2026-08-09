@@ -77,6 +77,9 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 
 .stars{color:var(--gilt);font-size:13px;letter-spacing:1px;margin:2px 0}
 .gen-skills{display:flex;gap:8px;margin-top:9px}
+.gen-lvup{flex:0 0 auto;width:26px;height:26px;padding:0;line-height:1;font-size:16px;
+  border-radius:5px}
+.gen-lvup:disabled{opacity:.35}
 .gear-slots{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-bottom:6px}
 .gear-slot{position:relative;background:radial-gradient(120% 120% at 50% 30%,rgba(52,42,29,.6),rgba(20,16,10,.7));
   border:1px solid var(--gilt-dim);border-radius:4px;padding:10px 6px;text-align:center;
@@ -255,13 +258,17 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .uc-card{flex:0 0 100%;scroll-snap-align:center;padding:0 4px;box-sizing:border-box;
   display:flex;flex-direction:column;align-items:center}
 .uc-card.locked{opacity:.55}
-.uc-img{max-width:60%;max-height:200px;object-fit:contain;
+.uc-img{max-width:85%;max-height:280px;object-fit:contain;
   filter:drop-shadow(0 6px 10px rgba(0,0,0,.35));margin-bottom:8px}
 .uc-name{font-size:16px;color:#2c2114;margin-bottom:6px;display:flex;align-items:center;gap:8px}
 .uc-name .tag{font-size:11px;background:rgba(90,69,48,.15);border-radius:3px;padding:2px 6px;
   color:#5a4530}
 .uc-lock{font-size:12px;color:#8a2f22;text-align:center;margin-bottom:8px}
 .uc-have{font-size:12.5px;color:#3a2c1c;margin:6px 0}
+.uc-go{margin-top:10px;width:100%;padding:12px 7px;background:linear-gradient(180deg,#c2993c,#8a6d2c);
+  border:1px solid #6b5220;border-radius:5px;color:#2c2114;font-weight:bold;font-size:14.5px;
+  letter-spacing:.03em;box-shadow:0 3px 8px rgba(0,0,0,.35)}
+.uc-go:disabled{opacity:.5;background:rgba(90,69,48,.3);color:#5a4530;box-shadow:none}
 #uc-nav{display:flex;justify-content:space-between;gap:8px;margin:10px 0 16px}
 #uc-nav button{flex:1;padding:8px 4px;font-size:12.5px;text-align:center;
   background:rgba(90,69,48,.12);border:1px solid rgba(90,69,48,.3);border-radius:4px;
@@ -303,6 +310,22 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   border:1px solid rgba(107,82,48,.7);border-radius:3px;color:#2c2114;font-variant:small-caps;
   letter-spacing:.08em;font-size:12.5px}
 #bm-tree .rnode-go:disabled{opacity:.5}
+.mat-card{display:flex;align-items:center;gap:10px;padding:8px 0 6px;
+  border-bottom:1px solid rgba(90,69,48,.18)}
+.mat-icon-wrap{width:40px;height:40px;border-radius:5px;background:rgba(90,69,48,.1);
+  border:1px solid rgba(90,69,48,.3);flex:0 0 auto;overflow:hidden}
+.mat-icon{width:100%;height:100%;object-fit:cover}
+.mat-info{flex:1;min-width:0}
+.mat-name{font-size:13.5px;color:#2c2114;margin-bottom:4px}
+.mat-pips{display:flex;gap:5px;flex-wrap:wrap}
+.pip{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;
+  padding:0 3px;border-radius:9px;background:var(--pc);color:#fff;font-size:10px;
+  font-family:var(--data);box-shadow:0 0 5px var(--pc)}
+.pip.mini{width:9px;height:9px;min-width:9px;padding:0;border-radius:50%;box-shadow:0 0 3px var(--pc)}
+#bm-tree .mat-go{width:auto;flex:0 0 auto;padding:8px 14px;margin-top:0}
+.mat-upgrades{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
+#bm-tree .mat-upgrades button{flex:1;min-width:66px;padding:6px 4px;margin-top:0;
+  display:flex;align-items:center;justify-content:center;gap:4px;font-size:11px}
 #bm-btn{display:block;width:100%;margin-top:auto;padding:11px;
   background:linear-gradient(180deg,rgba(58,44,28,.55),rgba(36,26,16,.68));
   border:1px solid rgba(107,82,48,.85);border-radius:3px;color:#e2c485;font-variant:small-caps;
@@ -377,7 +400,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   color:var(--gilt-hi);background:rgba(0,0,0,.55);padding:0 3px;line-height:1.4;z-index:2}
 
 /* Бригады (слева) и отряды в поле (справа) — плавающие столбцы поверх фона города */
-#brigades,#fieldarmy{position:absolute;top:70px;bottom:14px;display:flex;flex-direction:column;
+#brigades,#fieldarmy{position:absolute;top:108px;bottom:14px;display:flex;flex-direction:column;
   gap:8px;z-index:5;overflow-y:auto;scrollbar-width:none}
 #brigades::-webkit-scrollbar,#fieldarmy::-webkit-scrollbar{display:none}
 #brigades{left:14px}
@@ -861,6 +884,7 @@ const MATERIALS = {
   ore:{name:"Железная руда"}, leather:{name:"Кожа"}, bone:{name:"Кость"}, ebony:{name:"Эбеновое дерево"},
 };
 const RARITY_NAMES = ["Обычная","Улучшенная","Отборная","Эпическая","Легендарная"];
+const RARITY_COLOR = ["#9a9a9a","#4caf50","#3d8bff","#a24fd6","#e0a030"];
 const GEAR_SLOTS = [
   {id:"helmet",name:"Шлем",        mat:"ore",    cat:"armor"},
   {id:"chest", name:"Грудь",       mat:"ore",    cat:"armor"},
@@ -1006,20 +1030,20 @@ const GENERAL_TREE = {
 /* ---- Здания ---- */
 const BUILDINGS = {
   hall:    {name:"Ратуша",        max:30, req:null,  desc:"Задаёт потолок всех зданий и размер города"},
-  farm:    {name:"Ферма",         max:30, prod:"food", plots:4},
-  lumber:  {name:"Лесопилка",     max:30, prod:"wood", plots:4},
-  quarry:  {name:"Каменоломня",   max:30, prod:"stone", plots:4},
-  mine:    {name:"Золотая шахта", max:30, prod:"gold", plots:4},
+  farm:    {name:"Ферма",         max:30, prod:"food", plots:4, desc:"Добывает еду в город"},
+  lumber:  {name:"Лесопилка",     max:30, prod:"wood", plots:4, desc:"Добывает дерево в город"},
+  quarry:  {name:"Каменоломня",   max:30, prod:"stone", plots:4, desc:"Добывает камень в город"},
+  mine:    {name:"Золотая шахта", max:30, prod:"gold", plots:4, desc:"Добывает золото в город"},
   store:   {name:"Склад",         max:30, desc:"Защищает ресурсы от разграбления при штурме города"},
-  barracks:{name:"Казармы",       max:30, train:"inf"},
-  range:   {name:"Стрельбище",    max:30, train:"arc"},
-  stable:  {name:"Конюшня",       max:30, train:"cav"},
-  siege:   {name:"Мастерская",    max:30, train:"sie"},
+  barracks:{name:"Казармы",       max:30, train:"inf", desc:"Обучает пехоту"},
+  range:   {name:"Стрельбище",    max:30, train:"arc", desc:"Обучает лучников"},
+  stable:  {name:"Конюшня",       max:30, train:"cav", desc:"Обучает конницу"},
+  siege:   {name:"Мастерская",    max:30, train:"sie", desc:"Обучает осадные орудия"},
   hospital:{name:"Госпиталь",     max:30, desc:"Раненые вместо убитых", plots:4},
   academy: {name:"Академия",      max:30, desc:"Исследования и открытие тиров"},
   wall:    {name:"Стена",         max:30, desc:"Защита города при обороне"},
   garrison:{name:"Гарнизон",      max:30, desc:"Доп. защита при осаде и предупреждение о марше врага"},
-  scout:   {name:"Разведка",      max:30, desc:"Раскрывает сведения о войсках противника"},
+  scout:   {name:"Разведка",      max:30, desc:"Раскрывает сведения о войсках противника: чем выше эпоха здания, тем точнее разведданные"},
   forge:   {name:"Горн",          max:30, desc:"Добыча материалов и ковка снаряжения для полководца"},
   portal:  {name:"Портал",        max:30, desc:"Врата в иные земли (механика в разработке)"},
 };
@@ -1162,10 +1186,10 @@ function buildingName(bk,p){
    Базовые числа в духе RoK (T4 конница ≈ 220 атк / 212 защ / 216 хп).      */
 const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];     // T1..T5
 const TROOP_TYPES = {
-  inf: {name:"Пехота",  atk:34, def:46, hp:44, load:6,  speed:1.00, beats:"arc", losesTo:"cav"},
-  arc: {name:"Лучники", atk:50, def:30, hp:36, load:8,  speed:1.10, beats:"cav", losesTo:"inf"},
-  cav: {name:"Конница", atk:46, def:34, hp:40, load:5,  speed:1.70, beats:"inf", losesTo:"arc"},
-  sie: {name:"Осадные", atk:24, def:20, hp:60, load:30, speed:0.60, beats:null,  losesTo:null},
+  inf: {name:"Пехота",  atk:34, def:46, hp:44, load:6,  speed:1.00, magicAtk:8,  magicDef:18, beats:"arc", losesTo:"cav"},
+  arc: {name:"Лучники", atk:50, def:30, hp:36, load:8,  speed:1.10, magicAtk:20, magicDef:8,  beats:"cav", losesTo:"inf"},
+  cav: {name:"Конница", atk:46, def:34, hp:40, load:5,  speed:1.70, magicAtk:12, magicDef:12, beats:"inf", losesTo:"arc"},
+  sie: {name:"Осадные", atk:24, def:20, hp:60, load:30, speed:0.60, magicAtk:26, magicDef:6,  beats:null,  losesTo:null},
 };
 const TKEYS = ["inf","arc","cav","sie"];
 /* ---- Расовые правки отдельных типов войск (не задевают базовые числа других рас) ----
@@ -1518,9 +1542,10 @@ function power(p){
   [...ACADEMY_TREE.eco,...ACADEMY_TREE.mil].forEach(n=>{
     const lv=p.tech[n.id]||0; if(lv) v+=lv*RESEARCH_WAVE[n.wave]*3;
   });
-  v+=p.gen.lv*80;
+  v+=genPowerOf(p);
   return Math.round(v);
 }
+function genPowerOf(p){ return 2000+Math.pow(p.gen.lv,1.5)*130; }   // 1 ур. ~2130 (в RoK командир сразу даёт 2-3к силы)
 function armyPower(units,B,race){
   const TYPE_ATK={inf:"atkInf",arc:"atkArc",cav:"atkCav",sie:"atkSie"};
   const TYPE_DEF={inf:"defInf",arc:"defArc",cav:"defCav",sie:"defSie"};
@@ -3198,6 +3223,7 @@ function unitThumb(p,t,i){
   const headPos = t==="sie" ? "50% 40%" : "50% 20%";
   return "<img class='unit-thumb' style='object-position:"+headPos+"' src='images/units/"+p.race+"-"+t+i+".png' alt=''>";
 }
+let forgeTab="make";
 function forgeInfoHtml(p){
   const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+st[k])).join(", ");
   let h="<div id='bm-tree'>";
@@ -3210,28 +3236,45 @@ function forgeInfoHtml(p){
        "<div class='progress'><i style='width:"+(cf*100).toFixed(1)+"%'></i></div>"+
        "<div class='rnode-eff'>Готово через <em>"+fmtDur(p.craft.t1-W.t)+"</em></div></div>";
   }
-  h+="<div class='rgroup'>Материалы</div>";
-  Object.keys(MATERIALS).forEach(mat=>{
-    const stock=p.materials[mat];
-    h+="<div class='rnode'><div class='rnode-hd'><b>"+MATERIALS[mat].name+"</b></div>"+
-      "<div class='rnode-eff'>"+RARITY_NAMES.map((rn,i)=>rn.slice(0,3)+": "+(stock[i]||0)).join(" · ")+"</div>"+
-      "<button class='rnode-go' data-act='matprod' data-mat='"+mat+"' "+(p.craft?"disabled":"")+">Добыть</button>"+
-      [0,1,2,3].map(t=>"<button class='rnode-go' data-act='matup' data-mat='"+mat+"' data-tier='"+t+"' "+
-        ((stock[t]||0)<4?"disabled":"")+" style='margin-top:4px'>4×"+RARITY_NAMES[t].slice(0,3)+"&rarr;"+RARITY_NAMES[t+1].slice(0,3)+"</button>").join("")+
-      "</div>";
-  });
-  const curRarity=Math.min(5,epochOf(p.b.hall));
-  h+="<div class='rgroup'>Ковка · "+RARITY_NAMES[curRarity-1]+"</div>";
-  GEAR_SLOTS.forEach(s=>{
-    const haveMat=(p.materials[s.mat][curRarity-1]||0)>=1;
-    h+="<div class='rnode'><div class='rnode-hd'><b>"+s.name+"</b></div>"+
-      "<div class='rnode-eff'>нужен материал: "+MATERIALS[s.mat].name+" ("+RARITY_NAMES[curRarity-1]+") · "+
-      "бастион "+statTxt(gearItemStats(s.cat,"bastion",curRarity))+" · буря "+statTxt(gearItemStats(s.cat,"storm",curRarity))+"</div>"+
-      "<button class='rnode-go' data-act='craft' data-slot='"+s.id+"' data-order='bastion' data-rarity='"+curRarity+"' "+
-      (p.craft||!haveMat?"disabled":"")+">Бастион</button>"+
-      "<button class='rnode-go' data-act='craft' data-slot='"+s.id+"' data-order='storm' data-rarity='"+curRarity+"' "+
-      (p.craft||!haveMat?"disabled":"")+">Буря</button></div>";
-  });
+  h+="<div id='ac-tabs'>"+
+    "<button class='"+(forgeTab==="make"?"on":"")+"' data-act='forgetab' data-t='make'>Изготовление</button>"+
+    "<button class='"+(forgeTab==="blueprint"?"on":"")+"' data-act='forgetab' data-t='blueprint'>Чертежи</button>"+
+    "</div>";
+
+  if(forgeTab==="make"){
+    h+="<div class='rgroup'>Материалы</div><div class='note' style='margin:-6px 0 10px;font-size:12px;color:#6b5230'>"+
+      "Добыча даёт только обычное качество — редкость получают слиянием 4-в-1.</div>";
+    Object.keys(MATERIALS).forEach(mat=>{
+      const stock=p.materials[mat];
+      h+="<div class='mat-card'>"+
+        "<div class='mat-icon-wrap'><img class='mat-icon' src='images/ui/material-"+mat+".png' alt='' onerror=\"this.style.display='none'\"></div>"+
+        "<div class='mat-info'><div class='mat-name'>"+MATERIALS[mat].name+"</div>"+
+        "<div class='mat-pips'>"+RARITY_NAMES.map((rn,i)=>
+          "<span class='pip' style='--pc:"+RARITY_COLOR[i]+"' title='"+rn+"'>"+(stock[i]||0)+"</span>").join("")+
+        "</div></div>"+
+        "<button class='rnode-go mat-go' data-act='matprod' data-mat='"+mat+"' "+(p.craft?"disabled":"")+">Добыть</button>"+
+        "</div>";
+      h+="<div class='mat-upgrades'>"+[0,1,2,3].map(t=>
+        "<button class='rnode-go' data-act='matup' data-mat='"+mat+"' data-tier='"+t+"' "+
+        ((stock[t]||0)<4?"disabled":"")+">4&times;<span class='pip mini' style='--pc:"+RARITY_COLOR[t]+"'></span>&rarr;"+
+        "<span class='pip mini' style='--pc:"+RARITY_COLOR[t+1]+"'></span></button>"
+      ).join("")+"</div>";
+    });
+  } else {
+    const curRarity=Math.min(5,epochOf(p.b.hall));
+    h+="<div class='rgroup'>Чертежи · <span style='color:"+RARITY_COLOR[curRarity-1]+"'>"+RARITY_NAMES[curRarity-1]+"</span></div>";
+    GEAR_SLOTS.forEach(s=>{
+      const haveMat=(p.materials[s.mat][curRarity-1]||0)>=1;
+      h+="<div class='rnode'><div class='rnode-hd'><b>"+s.name+"</b></div>"+
+        "<div class='rnode-eff'>нужен материал: <span class='pip mini' style='--pc:"+RARITY_COLOR[curRarity-1]+"'></span> "+
+        MATERIALS[s.mat].name+" · "+
+        "бастион "+statTxt(gearItemStats(s.cat,"bastion",curRarity))+" · буря "+statTxt(gearItemStats(s.cat,"storm",curRarity))+"</div>"+
+        "<button class='rnode-go' data-act='craft' data-slot='"+s.id+"' data-order='bastion' data-rarity='"+curRarity+"' "+
+        (p.craft||!haveMat?"disabled":"")+">Бастион</button>"+
+        "<button class='rnode-go' data-act='craft' data-slot='"+s.id+"' data-order='storm' data-rarity='"+curRarity+"' "+
+        (p.craft||!haveMat?"disabled":"")+">Буря</button></div>";
+    });
+  }
   h+="</div>";
   return h;
 }
@@ -3244,6 +3287,32 @@ function trainInfoHtml(p,type){
        "<div class='rnode-eff'>Готовы через <em>"+fmtDur(T.t1-W.t)+"</em></div></div></div>";
   }
   return "<div id='bm-tree'><button class='rnode-go' data-act='browsetrain' data-t='"+type+"'>Тренировать</button></div>";
+}
+function buildingStatDeltaHtml(bk,lv,nx){
+  const B=BUILDINGS[bk];
+  if(B.prod){
+    const mult={food:1.25,wood:1.25,stone:0.90,gold:0.50}[B.prod];
+    const cur=Math.round(prodRate(lv)*(1+lateSpeed(lv))*mult), next=Math.round(prodRate(nx)*(1+lateSpeed(nx))*mult);
+    return "<table id='bm-stats'><tr><td>Добыча "+RES_NAME[B.prod].toLowerCase()+"/ч</td><td>"+fmt(cur)+" &rarr; "+fmt(next)+"</td></tr></table>";
+  }
+  if(bk==="store"){
+    return "<table id='bm-stats'><tr><td>Базовая защита склада</td><td>"+fmt(storeCap(lv))+" &rarr; "+fmt(storeCap(nx))+"</td></tr></table>";
+  }
+  if(bk==="hospital"){
+    return "<table id='bm-stats'><tr><td>Мест в лазарете</td><td>"+fmt(hospitalCap(lv))+" &rarr; "+fmt(hospitalCap(nx))+"</td></tr></table>";
+  }
+  if(bk==="wall"){
+    return "<table id='bm-stats'>"+
+      "<tr><td>Прочность стены</td><td>"+fmt(maxWallHp(lv))+" &rarr; "+fmt(maxWallHp(nx))+"</td></tr>"+
+      "<tr><td>Защита при обороне</td><td>+"+(lv*3)+"% &rarr; +"+(nx*3)+"%</td></tr></table>";
+  }
+  if(bk==="garrison"){
+    return "<table id='bm-stats'><tr><td>Урон залпа гарнизона</td><td>"+fmt(lv*900)+" &rarr; "+fmt(nx*900)+"</td></tr></table>";
+  }
+  if(BLD_TRAIN[bk]){
+    return "<table id='bm-stats'><tr><td>Воинов за один заказ</td><td>"+fmt(trainCap(lv))+" &rarr; "+fmt(trainCap(nx))+"</td></tr></table>";
+  }
+  return "";
 }
 function buildingModalHtml(ci){
   const p=me(), c=CITY_CELLS[ci];
@@ -3266,6 +3335,7 @@ function buildingModalHtml(ci){
   if(!maxed && lv>0){
     const term=l=>Math.pow(l,2.1)*12, curPow=power(p), nxPow=Math.round(curPow-term(lv)+term(nx));
     h+="<table id=\'bm-stats\'><tr><td>Мощь города</td><td>"+fmt(curPow)+" &rarr; "+fmt(nxPow)+"</td></tr></table>";
+    h+=buildingStatDeltaHtml(c.bk,lv,nx);
   }
   if(c.bk==="hall"){
     if(epochOf(nx)>epochOf(lv)) h+="<div id=\'bm-opens\'>Открывает: "+RACE_EPOCHS[p.race][epochOf(nx)-1].title+"</div>";
@@ -3387,12 +3457,13 @@ function statIcon(kind){
   return "<img class='stat-ico' src='images/ui/stat-"+kind+".png' alt='' onerror=\"this.remove()\">";
 }
 function genStats(p){
-  const lv=p.gen.lv, B=bonuses(p), g=Math.pow(lv,1.15);   // рост ускоряется с уровнем, не линейно
+  // 1 ур. полководца ~= статы юнита Т5 (как в RoK), дальше растёт той же кривой, что и раньше
+  const lv=p.gen.lv, B=bonuses(p), g=Math.pow(lv,1.15);
   const gear=gearBonus(p);
   return {
-    hp:  Math.round((100+12*g)*(1+B.genHpMod))+gear.hp,
-    atk: Math.round((20+3.2*g)*(1+B.genAtkMod))+gear.atk,
-    def: Math.round((15+2.4*g)*(1+B.genDefMod))+gear.def,
+    hp:  Math.round((250+30*g)*(1+B.genHpMod))+gear.hp,
+    atk: Math.round((200+40*g)*(1+B.genAtkMod))+gear.atk,
+    def: Math.round((170+30*g)*(1+B.genDefMod))+gear.def,
   };
 }
 function genPortraitHtml(race,i){
@@ -3461,7 +3532,7 @@ function foGen(){
   const G=genOf(p), B=bonuses(p), S=genStats(p);
   const need=genXpNeed(p.gen.lv), f=p.gen.xp/need, lvCap=Math.min(60,epochOf(p.b.hall)*12);
   const stars=Math.min(5,1+Math.floor(p.gen.lv/12));
-  const genPower=p.gen.lv*80;
+  const genPower=genPowerOf(p);
   let h="<div class='gen-figure-wrap'>"+genFigureHtml(p.race,p.gen.id||0)+"</div>";
   h+=rubric("Полководец");
   h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
@@ -3471,14 +3542,12 @@ function foGen(){
     "<div class='note'>"+G.bonus+
     (p.gen.pts>0?" · <em>очков к раздаче: "+p.gen.pts+"</em>":"")+
     (p.gen.lv>=lvCap&&lvCap<60?" · потолок эпохи: "+lvCap:"")+"</div></div></div>"+
-    "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div>"+
-    "<div class='note' style='margin-top:5px'>Опыт "+RU(p.gen.xp)+" из "+RU(need)+
-    " — берётся с разбойничьих застав.</div>"+
+    "<div class='line' style='margin-top:7px;gap:8px'><div class='progress' style='flex:1;margin-top:0'>"+
+    "<i style='width:"+(f*100).toFixed(1)+"%'></i></div>"+
+    "<button class='seal gen-lvup' data-act='genlvup' disabled title='Нужны книги опыта — появятся позже'>+</button></div>"+
     "<table class='roll' style='margin-top:9px'><tr><td>Сила полководца</td><td>"+RU(genPower)+"</td></tr></table>"+
     genSkillBadges(p)+
-    "<div class='line' style='margin-top:9px'>"+
-    "<button class='seal' data-act='gentab' data-t='gear'>Экипировка</button>"+
-    "</div></div>";
+    "</div>";
 
   h+="<div id='inv-tabs'>"+
     "<button class='"+(genTab==="overview"?"on":"")+"' data-act='gentab' data-t='overview'>Обзор</button>"+
@@ -3824,14 +3893,6 @@ function handleAct(e){
     const r=startBuild(p,b.dataset.b,plot);
     herald(r.err||(buildingName(b.dataset.b,p)+(plot!=null?" (участок "+(plot+1)+")":"")+" заложена."));
   }
-  else if(a==="train"){
-    openTrainModal(b.dataset.t,+b.dataset.tier);
-    return;
-  }
-  else if(a==="retrain"){
-    openRetrainModal(b.dataset.t,+b.dataset.tier);
-    return;
-  }
   else if(a==="browsetrain"){
     openUnitCarousel(b.dataset.t);
     return;
@@ -3839,6 +3900,21 @@ function handleAct(e){
   else if(a==="ucnav"){
     const track=$("#uc-track");
     if(track) track.scrollLeft += track.clientWidth*(+b.dataset.dir);
+    return;
+  }
+  else if(a==="ucfocus"){
+    const type=carouselCtx.type, tier=+b.dataset.tier;
+    const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
+    if(b.dataset.mode==="train"){
+      const max=trainMax(p,type,tier);
+      trainCtx={type,tier,mode:"train",max,n:max,lastLocked:!!p.train[type]||max<1};
+    } else {
+      const max=retrainMax(p,type,tier);
+      trainCtx={type,tier:tier+1,fromTier:tier,mode:"retrain",max,n:max,lastLocked:!!p.train[type]||max<1};
+    }
+    $("#bm-body").innerHTML=unitCarouselHtml();
+    updateTrainSheet();
+    const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
     return;
   }
   else if(a==="traingo"){
@@ -3910,6 +3986,10 @@ function handleAct(e){
   }
   else if(a==="academytab"){
     academyTab=b.dataset.t;
+    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);
+  }
+  else if(a==="forgetab"){
+    forgeTab=b.dataset.t;
     if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);
   }
   else if(a==="rtreejump"){
@@ -3989,73 +4069,37 @@ $("#building-modal").addEventListener("input",e=>{
   }
 });
 
-/* ---- Витрина юнитов: все тиры листаются вправо-влево, обучение — со своей карточки ---- */
-let carouselCtx=null;
+/* ---- Витрина юнитов: все тиры листаются вправо-влево, обучение — прямо с той же карточки ---- */
+let carouselCtx=null, trainCtx=null;
 function openUnitCarousel(type){
+  const p=me(), maxT=tierUnlockedFor(p,type);
   carouselCtx={type};
-  buildingModalSel=-1; trainCtx=null;
+  buildingModalSel=-1;
+  const max=trainMax(p,type,maxT);
+  trainCtx={type,tier:maxT,mode:"train",max,n:max,lastLocked:!!p.train[type]||max<1};
   $("#bm-body").innerHTML = unitCarouselHtml();
   $("#building-modal").classList.add("open");
-  const p=me(), maxT=tierUnlockedFor(p,type);
+  updateTrainSheet();
   requestAnimationFrame(()=>{
     const track=$("#uc-track");
     if(track) track.scrollLeft = (maxT-1)*track.clientWidth;
   });
 }
-function unitCarouselHtml(){
-  const p=me(), type=carouselCtx.type, maxT=tierUnlockedFor(p,type);
-  let h="<div id='bm-title'>"+TROOP_TYPES[type].name+"</div>";
-  h+="<div id='bm-sub'>листайте карточку вправо-влево</div>";
-  h+="<div id='uc-track'>";
-  for(let tier=1; tier<=5; tier++){
-    const locked=tier>maxT, have=p.troops[type][tier]||0;
-    h+="<div class='uc-card"+(locked?" locked":"")+"'>"+
-      "<img class='uc-img' src='images/units/"+p.race+"-"+type+tier+".png' alt=''>"+
-      "<div class='uc-name'>"+unitName(type,tier,p.race)+"</div>"+
-      (locked?"<div class='uc-lock'>&#128274; чтобы обучить, нужно исследование в академии</div>":"")+
-      "<table id='bm-stats'>"+
-        "<tr><td>"+statIcon("atk")+"Атака</td><td>"+Math.round(troopStat(type,tier,"atk")*troopMod(p.race,type,"atk"))+"</td></tr>"+
-        "<tr><td>"+statIcon("def")+"Защита</td><td>"+troopStat(type,tier,"def")+"</td></tr>"+
-        "<tr><td>"+statIcon("hp")+"Здоровье</td><td>"+troopStat(type,tier,"hp")+"</td></tr>"+
-      "</table>"+
-      (have>0?"<div class='uc-have'>в строю: "+RU(have)+"</div>":"")+
-      (!locked&&tier===maxT?"<button class='rnode-go' data-act='train' data-t='"+type+"' data-tier='"+tier+"'>Обучить</button>":"")+
-      (!locked&&tier<maxT&&have>0?"<button class='rnode-go' data-act='retrain' data-t='"+type+"' data-tier='"+tier+"'>Переобучить</button>":"")+
-      "</div>";
-  }
-  h+="</div>";
-  h+="<div id='uc-nav'><button data-act='ucnav' data-dir='-1'>&lsaquo; Назад</button>"+
-    "<button data-act='ucnav' data-dir='1'>Вперёд &rsaquo;</button></div>";
-  return h;
+function unitCardStatsHtml(p,type,tier){
+  return "<table id='bm-stats'>"+
+    "<tr><td>"+statIcon("atk")+"Атака</td><td>"+Math.round(troopStat(type,tier,"atk")*troopMod(p.race,type,"atk"))+"</td></tr>"+
+    "<tr><td>"+statIcon("def")+"Защита</td><td>"+troopStat(type,tier,"def")+"</td></tr>"+
+    "<tr><td>"+statIcon("hp")+"Здоровье</td><td>"+troopStat(type,tier,"hp")+"</td></tr>"+
+    "<tr><td>"+statIcon("matk")+"Магическая атака</td><td>"+troopStat(type,tier,"magicAtk")+"</td></tr>"+
+    "<tr><td>"+statIcon("mdef")+"Магическая защита</td><td>"+troopStat(type,tier,"magicDef")+"</td></tr>"+
+    "<tr><td>"+statIcon("speed")+"Скорость</td><td>&times;"+TROOP_TYPES[type].speed.toFixed(2)+"</td></tr>"+
+    "<tr><td>"+statIcon("load")+"Грузоподъёмность</td><td>"+TROOP_TYPES[type].load+"</td></tr>"+
+  "</table>";
 }
-
-/* ---- Набор и переобучение войск: карточка на пергаменте ---- */
-let trainCtx=null;
-function openTrainModal(type,tier){
-  const p=me();
-  buildingModalSel=-1; carouselCtx=null;
-  const max=trainMax(p,type,tier);
-  trainCtx={type,tier,mode:"train",max,n:max,lastLocked:!!p.train[type]||max<1};
-  $("#bm-body").innerHTML = trainSheetHtml();
-  $("#building-modal").classList.add("open");
-  updateTrainSheet();
-}
-function openRetrainModal(type,fromTier){
-  const p=me();
-  buildingModalSel=-1; carouselCtx=null;
-  const max=retrainMax(p,type,fromTier);
-  trainCtx={type,tier:fromTier+1,fromTier,mode:"retrain",max,n:max,lastLocked:!!p.train[type]||max<1};
-  $("#bm-body").innerHTML = trainSheetHtml();
-  $("#building-modal").classList.add("open");
-  updateTrainSheet();
-}
-function trainSheetHtml(){
+function trainInlineHtml(){
   const p=me(), {type,tier,max,n,fromTier}=trainCtx, isRetrain=trainCtx.mode==="retrain";
   const busy=!!p.train[type], locked=busy||max<1;
-  let h="<img id='bm-art' src='images/units/"+p.race+"-"+type+tier+".png'>";
-  h+="<div id='bm-title'>"+(isRetrain?unitName(type,fromTier,p.race)+" &rarr; "+unitName(type,tier,p.race):unitName(type,tier,p.race))+"</div>";
-  h+="<div id='bm-sub'>"+(isRetrain?"переобучение · в строю "+RU(p.troops[type][fromTier]||0):"набор в столице · тир "+tier)+"</div>";
-  h+="<div id='bm-qty'><div class='cap'><span>Доступно максимум</span><b>"+RU(max)+"</b></div>"+
+  let h="<div id='bm-qty'><div class='cap'><span>Доступно максимум</span><b>"+RU(max)+"</b></div>"+
      "<div class='row'><input type='range' id='qty-range' min='0' max='"+max+"' value='"+n+"' "+(locked?"disabled":"")+">"+
      "<input type='number' id='qty-num' min='0' max='"+max+"' value='"+n+"' "+(locked?"disabled":"")+"></div></div>";
   if(busy){
@@ -4071,11 +4115,36 @@ function trainSheetHtml(){
     }).join("")+"</div>";
     h+="<div id='bm-time'></div>";
   }
-  h+="<button id='bm-btn' data-act='traingo' "+((busy||max<1||n<=0)?"disabled":"")+">"+(isRetrain?"Переобучить":"Набрать")+"</button>";
+  h+="<button id='bm-btn' class='uc-go' data-act='traingo' "+((busy||max<1||n<=0)?"disabled":"")+">"+(isRetrain?"Переобучить":"Обучить")+"</button>";
+  return h;
+}
+function unitCarouselHtml(){
+  const p=me(), type=carouselCtx.type, maxT=tierUnlockedFor(p,type);
+  let h="<div id='bm-title'>"+TROOP_TYPES[type].name+"</div>";
+  h+="<div id='uc-track'>";
+  for(let tier=1; tier<=5; tier++){
+    const locked=tier>maxT, have=p.troops[type][tier]||0;
+    const active = trainCtx && trainCtx.type===type &&
+      (trainCtx.mode==="train" ? trainCtx.tier===tier : trainCtx.fromTier===tier);
+    h+="<div class='uc-card"+(locked?" locked":"")+"'>"+
+      "<img class='uc-img' src='images/units/"+p.race+"-"+type+tier+".png' alt=''>"+
+      "<div class='uc-name'>"+unitName(type,tier,p.race)+"</div>"+
+      (locked?"<div class='uc-lock'>&#128274; чтобы обучить, нужно исследование в академии</div>":"")+
+      unitCardStatsHtml(p,type,tier)+
+      (have>0?"<div class='uc-have'>в строю: "+RU(have)+"</div>":"");
+    if(!locked && active) h+=trainInlineHtml();
+    else if(!locked && tier===maxT) h+="<button class='rnode-go uc-go' data-act='ucfocus' data-mode='train' data-tier='"+tier+"'>Обучить</button>";
+    else if(!locked && tier<maxT && have>0) h+="<button class='rnode-go uc-go' data-act='ucfocus' data-mode='retrain' data-tier='"+tier+"'>Переобучить</button>";
+    h+="</div>";
+  }
+  h+="</div>";
+  h+="<div id='uc-nav'><button data-act='ucnav' data-dir='-1'>&lsaquo; Назад</button>"+
+    "<button data-act='ucnav' data-dir='1'>Вперёд &rsaquo;</button></div>";
   return h;
 }
 function updateTrainSheet(){
   const p=me(), {type,tier,max,n,fromTier}=trainCtx, isRetrain=trainCtx.mode==="retrain";
+  if(!$("#qty-range")) return;
   $("#qty-range").value=n; $("#qty-num").value=n;
   const unitC=isRetrain?retrainCost(type,fromTier,1):troopCost(type,tier);
   const totC=isRetrain?retrainCost(type,fromTier,n):null;
@@ -4102,13 +4171,15 @@ function closeMenuModal(){ $("#menu-modal").classList.remove("open"); }
 /* ---- Живое обновление открытых окошек раз в секунду, без переоткрытия ---- */
 function refreshOpenModal(){
   if($("#building-modal").classList.contains("open")){
-    if(trainCtx){
+    if(carouselCtx && trainCtx){
       const p=me();
       const newMax=trainCtx.mode==="retrain"?retrainMax(p,trainCtx.type,trainCtx.fromTier):trainMax(p,trainCtx.type,trainCtx.tier);
       const newLocked=!!p.train[trainCtx.type]||newMax<1;
       if(newLocked!==trainCtx.lastLocked){
         trainCtx.max=newMax; trainCtx.n=Math.min(trainCtx.n,newMax); trainCtx.lastLocked=newLocked;
-        $("#bm-body").innerHTML=trainSheetHtml();
+        const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
+        $("#bm-body").innerHTML=unitCarouselHtml();
+        const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
       }
       updateTrainSheet();
     } else if(buildingModalSel>=0){
