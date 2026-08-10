@@ -1529,8 +1529,9 @@ function syncRes(p){
 }
 function canPay(p,c){ syncRes(p); return RES.every(r=>!c[r]||p.res[r]>=c[r]) }
 function pay(p,c){ syncRes(p); RES.forEach(r=>{if(c[r])p.res[r]-=c[r]}) }
-function gain(p,c){ syncRes(p); const cap=capacity(p);
-  RES.forEach(r=>{if(c[r])p.res[r]=Math.min(p.res[r]+c[r], r==="gold"?cap[r]*2:cap[r])}) }
+function gain(p,c){ syncRes(p);
+  // склад не ограничивает накопление — он только защищает часть ресурсов при разграблении (см. battleCity)
+  RES.forEach(r=>{if(c[r])p.res[r]=Math.max(0,p.res[r]+c[r])}) }
 
 function power(p){
   let v=0; BKEYS.forEach(k=>{
