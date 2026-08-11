@@ -3252,16 +3252,15 @@ function renderTreeMap(arr,p){
   h+="</div>";
   return h;
 }
+function nodeEffectDesc(n,lv,nx){
+  if(n.unlock) return lv>=1?"Открыто":"Открывает нового бойца";
+  const list=n.effects||[{field:n.field,total:n.total}];
+  const fname=f=>RESEARCH_FIELD_NAME[f]||f;
+  const now=list.map(e=>"+"+Math.round(e.total*(lv/n.max)*100)+"% "+fname(e.field)).join(", ");
+  const next=list.map(e=>"+"+Math.round(e.total*(nx/n.max)*100)+"% "+fname(e.field)).join(", ");
+  return "сейчас <em>"+now+"</em>"+(lv>=n.max?"":" · дальше <em>"+next+"</em>");
+}
 function academyTreeHtml(p){
-  const B=bonuses(p);
-  const nodeEffectDesc=(n,lv,nx)=>{
-    if(n.unlock) return lv>=1?"Открыто":"Открывает нового бойца";
-    const list=n.effects||[{field:n.field,total:n.total}];
-    const fname=f=>RESEARCH_FIELD_NAME[f]||f;
-    const now=list.map(e=>"+"+Math.round(e.total*(lv/n.max)*100)+"% "+fname(e.field)).join(", ");
-    const next=list.map(e=>"+"+Math.round(e.total*(nx/n.max)*100)+"% "+fname(e.field)).join(", ");
-    return "сейчас <em>"+now+"</em>"+(lv>=n.max?"":" · дальше <em>"+next+"</em>");
-  };
   let h="<div id='bm-tree'>";
   if(p.rsch){
     const rn=findNode(p.rsch.id);
@@ -3275,26 +3274,7 @@ function academyTreeHtml(p){
     "<button class='"+(academyTab==="mil"?"on":"")+"' data-act='academytab' data-t='mil'>Военные</button>"+
     "<button class='"+(academyTab==="eco"?"on":"")+"' data-act='academytab' data-t='eco'>Экономические</button>"+
     "</div>";
-  const renderGroup=(arr,label)=>{
-    h+=renderTreeMap(arr,p);
-    h+="<div class='rgroup'>"+label+"</div>";
-    arr.filter(n=>!n.race||n.race===p.race).forEach(n=>{
-      const lv=p.tech[n.id]||0, maxed=lv>=n.max, nx=lv+1, gated=p.b.academy<=0;
-      const locked=researchLocked(n,p);
-      const c = maxed||locked||gated?null:researchCost(n.branch,n.wave,nx);
-      h+="<div class='rnode' id='rn-"+n.id+"'><div class='rnode-hd'><b>"+nodeTitle(n)+(n.race?" · венец":"")+"</b>"+
-         "<span class='rnode-lv"+(maxed?" maxed":"")+"'>"+lv+"/"+n.max+"</span></div>"+
-         "<div class='rnode-eff'>"+nodeEffectDesc(n,lv,nx)+"</div>"+
-         (c?"<div class='rnode-cost'>"+RES.filter(r=>c[r]).map(r=>
-           "<span class='"+(p.res[r]<c[r]?"short":"")+"'>"+fmt(c[r])+" "+RES_NAME[r]+"</span>").join("")+"</div>":"")+
-         "<button class='rnode-go' data-act='research' data-id='"+n.id+"' "+(maxed||gated||locked||p.rsch?"disabled":"")+">"+
-         (maxed?"Предел":gated?"Нужна академия":locked?"Нужно предыдущее исследование":
-           "Исследовать · "+fmtDur(researchTime(n.branch,n.wave,nx)/((1+B.researchSpeed)*(1+lateSpeed(p.b.academy)))))+
-         "</button></div>";
-    });
-  };
-  if(academyTab==="eco") renderGroup(ACADEMY_TREE.eco,"Хозяйство");
-  else renderGroup(ACADEMY_TREE.mil,"Армия");
+  h+=renderTreeMap(academyTab==="eco"?ACADEMY_TREE.eco:ACADEMY_TREE.mil,p);
   h+="</div>";
   return h;
 }
@@ -4087,8 +4067,8 @@ function handleAct(e){
     if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);
   }
   else if(a==="rtreejump"){
-    const el=document.getElementById("rn-"+b.dataset.id);
-    if(el) el.scrollIntoView({behavior:"smooth",block:"center"});
+    const n=findNode(b.dataset.id);
+    if(n) openResearchCarousel(n.branch,n.id);
   }
   else if(a==="invtab"){
     invTab=b.dataset.t;
@@ -4148,12 +4128,12 @@ function toggleView(){
 function toggleMenu(){ $("#side-menu").classList.toggle("open"); }
 let buildingModalSel=-1;
 function openBuildingModal(ci){
-  trainCtx=null; carouselCtx=null; forgeTab=null; forgeRarity=null;
+  trainCtx=null; carouselCtx=null; forgeTab=null; forgeRarity=null; researchCtx=null;
   buildingModalSel=ci;
   $("#bm-body").innerHTML = buildingModalHtml(ci);
   $("#building-modal").classList.add("open");
 }
-function closeBuildingModal(){ $("#building-modal").classList.remove("open"); buildingModalSel=-1; trainCtx=null; carouselCtx=null; }
+function closeBuildingModal(){ $("#building-modal").classList.remove("open"); buildingModalSel=-1; trainCtx=null; carouselCtx=null; researchCtx=null; }
 $("#building-modal").addEventListener("click",e=>{ if(e.target.id==="building-modal") closeBuildingModal(); });
 $("#building-modal").addEventListener("click",handleAct);
 $("#building-modal").addEventListener("input",e=>{
@@ -4168,7 +4148,7 @@ $("#building-modal").addEventListener("input",e=>{
 let carouselCtx=null, trainCtx=null;
 function openUnitCarousel(type){
   const p=me(), maxT=tierUnlockedFor(p,type);
-  carouselCtx={type};
+  carouselCtx={type}; researchCtx=null;
   buildingModalSel=-1;
   const max=trainMax(p,type,maxT);
   trainCtx={type,tier:maxT,mode:"train",max,n:max,lastLocked:!!p.train[type]||max<1};
@@ -4238,6 +4218,59 @@ function unitCarouselHtml(){
     "<button data-act='ucnav' data-dir='1'>Вперёд &rsaquo;</button></div>";
   return h;
 }
+let researchCtx=null;
+function researchNodeList(branch,p){
+  return ACADEMY_TREE[branch].filter(n=>!n.race||n.race===p.race);
+}
+function openResearchCarousel(branch,startId){
+  const p=me();
+  trainCtx=null; carouselCtx=null; forgeTab=null; forgeRarity=null;
+  buildingModalSel=-1;
+  const list=researchNodeList(branch,p);
+  const idx=Math.max(0,list.findIndex(n=>n.id===startId));
+  researchCtx={branch,idx};
+  $("#bm-body").innerHTML = researchCarouselHtml();
+  $("#building-modal").classList.add("open");
+  requestAnimationFrame(()=>{
+    const track=$("#uc-track"), card=track&&track.querySelectorAll(".uc-card")[idx];
+    if(track&&card) track.scrollLeft = card.offsetLeft;
+  });
+}
+function researchCarouselHtml(){
+  const p=me(), B=bonuses(p);
+  const list=researchNodeList(researchCtx.branch,p);
+  let h="<div id='bm-title'>"+(researchCtx.branch==="mil"?"Военные исследования":"Экономические исследования")+"</div>";
+  h+="<div id='uc-track'>";
+  list.forEach(n=>{
+    const lv=p.tech[n.id]||0, maxed=lv>=n.max, nx=lv+1, gated=p.b.academy<=0;
+    const locked=researchLocked(n,p);
+    const c = maxed||locked||gated?null:researchCost(n.branch,n.wave,nx);
+    const powNow=lv*RESEARCH_WAVE[n.wave]*3, powNext=nx*RESEARCH_WAVE[n.wave]*3;
+    h+="<div class='uc-card"+(locked?" locked":"")+"'>"+
+      "<img class='uc-img' style='max-height:170px;border-radius:50%' src='images/ui/research-"+n.id+".png' alt='' onerror=\"this.style.display='none'\">"+
+      "<div class='uc-name'>"+nodeTitle(n)+(n.race?" · венец":"")+"</div>"+
+      "<div class='uc-have'>"+waveLabel(n.wave)+" · уровень "+lv+"/"+n.max+"</div>"+
+      (locked?"<div class='uc-lock'>&#128274; нужно предыдущее исследование</div>":"")+
+      "<table id='bm-stats'>"+
+        "<tr><td>Эффект</td><td style='text-align:left'>"+nodeEffectDesc(n,lv,nx)+"</td></tr>"+
+        (maxed?"":"<tr><td><img class='stat-ico' src='images/ui/icon-power.png' alt=''>Мощь</td><td>"+fmt(powNow)+" &rarr; "+fmt(powNext)+"</td></tr>")+
+      "</table>"+
+      (c?"<div class='rnode-cost'>"+RES.filter(r=>c[r]).map(r=>
+        "<span class='"+(p.res[r]<c[r]?"short":"")+"'>"+fmt(c[r])+" "+RES_NAME[r]+"</span>").join("")+"</div>":"")+
+      (p.rsch&&p.rsch.id===n.id ?
+        "<div class='progress'><i style='width:"+(Math.min(1,(W.t-p.rsch.t0)/Math.max(1,p.rsch.t1-p.rsch.t0))*100).toFixed(1)+"%'></i></div>"+
+        "<div class='rnode-eff'>Готово через <em>"+fmtDur(p.rsch.t1-W.t)+"</em></div>"
+      : "<button class='rnode-go uc-go' data-act='research' data-id='"+n.id+"' "+(maxed||gated||locked||p.rsch?"disabled":"")+">"+
+        (maxed?"Предел":gated?"Нужна академия":locked?"Нужно предыдущее исследование":p.rsch?"Академия занята":
+          "Исследовать · "+fmtDur(researchTime(n.branch,n.wave,nx)/((1+B.researchSpeed)*(1+lateSpeed(p.b.academy)))))+
+        "</button>")+
+      "</div>";
+  });
+  h+="</div>";
+  h+="<div id='uc-nav'><button data-act='ucnav' data-dir='-1'>&lsaquo; Назад</button>"+
+    "<button data-act='ucnav' data-dir='1'>Вперёд &rsaquo;</button></div>";
+  return h;
+}
 function updateTrainSheet(){
   const p=me(), {type,tier,max,n,fromTier}=trainCtx, isRetrain=trainCtx.mode==="retrain";
   if(!$("#qty-range")) return;
@@ -4279,6 +4312,10 @@ function refreshOpenModal(){
         const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
       }
       updateTrainSheet();
+    } else if(researchCtx){
+      const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
+      $("#bm-body").innerHTML=researchCarouselHtml();
+      const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
     } else if(buildingModalSel>=0){
       $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);
     }
