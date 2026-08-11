@@ -3224,6 +3224,16 @@ const RESEARCH_FIELD_NAME = {
   atk:"атака войск", def:"защита войск", hp:"здоровье войск",
   trainSpeed:"скорость обучения", march:"скорость марша", scoutBonus:"точность разведки",
 };
+const RESEARCH_FIELD_ICON = {
+  prodFood:"res-food", prodWood:"res-wood", prodStone:"res-stone", prodGold:"res-gold",
+  build:"icon-build", march:"icon-march", trainSpeed:"icon-army",
+  gatherFW:"res-food", gatherSG:"res-stone", gather:"stat-load", load:"stat-load",
+  atkInf:"class-inf", defInf:"class-inf", matkInf:"class-inf", mdefInf:"class-inf",
+  atkArc:"class-arc", defArc:"class-arc", matkArc:"class-arc", mdefArc:"class-arc",
+  atkCav:"class-cav", defCav:"class-cav", matkCav:"class-cav", mdefCav:"class-cav",
+  atkSie:"class-sie", defSie:"class-sie", matkSie:"class-sie", mdefSie:"class-sie",
+  atk:"stat-atk", def:"stat-def", hp:"stat-hp", matk:"stat-matk", mdef:"stat-mdef",
+};
 function nodeTitle(n){
   if(n.unlock) return ({inf:"Пехота",arc:"Лучники",cav:"Кавалерия",sie:"Осада"}[n.unlock.type])+": "+TIER_NAMES[n.unlock.type][n.unlock.tier-1];
   return n.name;
@@ -3270,12 +3280,13 @@ function renderTreeMap(arr,p){
   return h;
 }
 function nodeEffectRows(n,lv,nx){
-  if(n.unlock) return [{label:"Открывает бойца",now:lv>=1?"открыто":"заперто",next:null}];
+  if(n.unlock) return [{label:"Открывает бойца",icon:"class-"+n.unlock.type,now:lv>=1?"открыто":"заперто",next:null}];
   const list=n.effects||[{field:n.field,total:n.total}];
   const fname=f=>RESEARCH_FIELD_NAME[f]||f;
   const maxed=lv>=n.max;
   return list.map(e=>({
     label:fname(e.field),
+    icon:RESEARCH_FIELD_ICON[e.field],
     now:"+"+Math.round(e.total*(lv/n.max)*100)+"%",
     next:maxed?null:"+"+Math.round(e.total*(nx/n.max)*100)+"%"
   }));
@@ -4273,7 +4284,8 @@ function researchCarouselHtml(){
       "<div class='uc-have'>"+waveLabel(n.wave)+" · уровень "+lv+"/"+n.max+"</div>"+
       (locked?"<div class='uc-lock'>&#128274; "+lockReason(n,p)+"</div>":"")+
       "<table id='bm-stats'>"+
-        rows.map(r=>"<tr><td>"+r.label+"</td><td>"+r.now+(r.next?" &rarr; "+r.next:"")+"</td></tr>").join("")+
+        rows.map(r=>"<tr><td>"+(r.icon?"<img class='stat-ico' src='images/ui/"+r.icon+".png' alt='' onerror=\"this.remove()\">":"")+
+          r.label+"</td><td>"+r.now+(r.next?" &rarr; "+r.next:"")+"</td></tr>").join("")+
         (maxed?"":"<tr><td><img class='stat-ico' src='images/ui/icon-power.png' alt=''>Мощь</td><td>"+fmt(powNow)+" &rarr; "+fmt(powNext)+"</td></tr>")+
       "</table>"+
       (c?"<div id='bm-reqs'>"+RES.filter(r=>c[r]).map(r=>
