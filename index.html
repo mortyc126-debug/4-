@@ -3401,7 +3401,7 @@ function foProfile(){
      "placeholder='Ваш ник' style='flex:1;min-width:0'>"+
      "<button class='seal' data-act='savenick'>Сохранить</button></div>"+
      "<table class='roll' style='margin-top:9px'>"+
-     "<tr><td>Сила города</td><td>"+RU(power(p))+"</td></tr>"+
+     "<tr><td>Мощь правителя</td><td>"+RU(power(p))+"</td></tr>"+
      "<tr><td>Войска в городе</td><td>"+RU(garrison(p))+"</td></tr></table></div>";
   return h;
 }
@@ -4112,7 +4112,7 @@ function unitCardStatsHtml(p,type,tier){
     "<tr><td>"+statIcon("mdef")+"Магическая защита</td><td>"+troopStat(type,tier,"magicDef")+"</td></tr>"+
     "<tr><td>"+statIcon("speed")+"Скорость</td><td>&times;"+TROOP_TYPES[type].speed.toFixed(2)+"</td></tr>"+
     "<tr><td>"+statIcon("load")+"Грузоподъёмность</td><td>"+TROOP_TYPES[type].load+"</td></tr>"+
-    "<tr><td>"+statIcon("power")+"Мощь</td><td>"+unitPower(tier)+"</td></tr>"+
+    "<tr><td><img class='stat-ico' src='images/ui/icon-power.png' alt=''>Мощь</td><td>"+unitPower(tier)+"</td></tr>"+
   "</table>";
 }
 function trainInlineHtml(){
@@ -4306,14 +4306,20 @@ let sinceSave=0, sinceUi=0;
 function frame(){
   const now=Date.now();
   let dt=(now-lastReal)/1000; lastReal=now;
-  if(dt>0&&dt<3600){ advanceTo(W.t+dt*tempo); sinceSave+=dt; sinceUi+=dt }
+  if(dt>0){ advanceTo(W.t+dt*tempo); sinceSave+=Math.min(dt,3600); sinceUi+=dt }
   draw(); drawMini();
   if(sinceUi>1.0){ sinceUi=0; renderTop(); renderFolio(); renderCartouche(); refreshOpenModal() }
   if(sinceSave>20){ sinceSave=0; save() }
   requestAnimationFrame(frame);
 }
 document.addEventListener("visibilitychange",()=>{
-  if(document.hidden) save(); else lastReal=Date.now();
+  if(document.hidden){ save(); return }
+  // Пока вкладка была свёрнута/экран заблокирован, requestAnimationFrame не тикал —
+  // досчитываем реальное время сразу, иначе очереди построек «замирают» до перезагрузки.
+  const away=Math.max(0,(Date.now()-lastReal)/1000);
+  lastReal=Date.now();
+  if(away>0) advanceTo(W.t+away);
+  renderTop(); renderFolio(); renderCartouche(); refreshOpenModal();
 });
 window.addEventListener("beforeunload",()=>{
   try{ W.savedAt=Date.now(); localStorage.setItem(SAVE_KEY,JSON.stringify(W)) }catch(e){}
