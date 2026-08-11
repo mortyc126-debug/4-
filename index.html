@@ -4112,7 +4112,7 @@ function unitCardStatsHtml(p,type,tier){
     "<tr><td>"+statIcon("mdef")+"Магическая защита</td><td>"+troopStat(type,tier,"magicDef")+"</td></tr>"+
     "<tr><td>"+statIcon("speed")+"Скорость</td><td>&times;"+TROOP_TYPES[type].speed.toFixed(2)+"</td></tr>"+
     "<tr><td>"+statIcon("load")+"Грузоподъёмность</td><td>"+TROOP_TYPES[type].load+"</td></tr>"+
-    "<tr><td>"+statIcon("power")+"Мощь</td><td>"+unitPower(tier)+"</td></tr>"+
+    "<tr><td><img class='stat-ico' src='images/ui/icon-power.png' alt=''>Мощь</td><td>"+unitPower(tier)+"</td></tr>"+
   "</table>";
 }
 function trainInlineHtml(){
