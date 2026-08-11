@@ -2456,6 +2456,8 @@ function startResearch(p,id){
   if(cur>=n.max) return {err:"Уже на максимуме"};
   if(n.unlock && n.unlock.tier>2 && !(p.tech["mil_tier_"+n.unlock.type+(n.unlock.tier-1)]>=1))
     return {err:"Сначала откройте предыдущий тир"};
+  if(!waveUnlocked(n.branch,n.wave,p))
+    return {err:"Сначала завершите исследования предыдущего этапа (и уровень ратуши)"};
   const lv=cur+1;
   const c=researchCost(n.branch,n.wave,lv);
   if(!canPay(p,c)) return {err:"Не хватает ресурсов"};
@@ -3227,8 +3229,23 @@ function nodeTitle(n){
   return n.name;
 }
 function waveLabel(w){ return {1:"Начало",2:"Развитие",3:"Расцвет",4:"Венец"}[w]||("Ступень "+w); }
+function waveUnlocked(branch,wave,p){
+  if(wave<=1) return true;
+  if(epochOf(p.b.hall)<wave) return false;
+  const prev=ACADEMY_TREE[branch].filter(n=>n.wave===wave-1 && (!n.race||n.race===p.race));
+  return prev.every(n=>(p.tech[n.id]||0)>=n.max);
+}
 function researchLocked(n,p){
+  if(!waveUnlocked(n.branch,n.wave,p)) return true;
   return !!(n.unlock && n.unlock.tier>2 && !(p.tech["mil_tier_"+n.unlock.type+(n.unlock.tier-1)]>=1));
+}
+const EPOCH_HALL_MIN=[1,7,13,19,25];
+function lockReason(n,p){
+  if(n.unlock && n.unlock.tier>2 && !(p.tech["mil_tier_"+n.unlock.type+(n.unlock.tier-1)]>=1))
+    return "нужен предыдущий тир бойца";
+  if(n.wave>1 && epochOf(p.b.hall)<n.wave) return "нужна ратуша "+EPOCH_HALL_MIN[n.wave-1]+" уровня";
+  if(n.wave>1) return "сначала завершите этап «"+waveLabel(n.wave-1)+"»";
+  return "заблокировано";
 }
 function renderTreeMap(arr,p){
   const byWave={};
@@ -4254,7 +4271,7 @@ function researchCarouselHtml(){
       "<img class='uc-img' style='max-height:170px;border-radius:50%' src='images/ui/research-"+n.id+".png' alt='' onerror=\"this.style.display='none'\">"+
       "<div class='uc-name'>"+nodeTitle(n)+(n.race?" · венец":"")+"</div>"+
       "<div class='uc-have'>"+waveLabel(n.wave)+" · уровень "+lv+"/"+n.max+"</div>"+
-      (locked?"<div class='uc-lock'>&#128274; нужно предыдущее исследование</div>":"")+
+      (locked?"<div class='uc-lock'>&#128274; "+lockReason(n,p)+"</div>":"")+
       "<table id='bm-stats'>"+
         rows.map(r=>"<tr><td>"+r.label+"</td><td>"+r.now+(r.next?" &rarr; "+r.next:"")+"</td></tr>").join("")+
         (maxed?"":"<tr><td><img class='stat-ico' src='images/ui/icon-power.png' alt=''>Мощь</td><td>"+fmt(powNow)+" &rarr; "+fmt(powNext)+"</td></tr>")+
@@ -4267,7 +4284,7 @@ function researchCarouselHtml(){
         "<div class='progress'><i style='width:"+(Math.min(1,(W.t-p.rsch.t0)/Math.max(1,p.rsch.t1-p.rsch.t0))*100).toFixed(1)+"%'></i></div>"+
         "<div class='rnode-eff'>Готово через <em>"+fmtDur(p.rsch.t1-W.t)+"</em></div>"
       : "<button class='rnode-go uc-go' data-act='research' data-id='"+n.id+"' "+(maxed||gated||locked||p.rsch?"disabled":"")+">"+
-        (maxed?"Предел":gated?"Нужна академия":locked?"Нужно предыдущее исследование":p.rsch?"Академия занята":
+        (maxed?"Предел":gated?"Нужна академия":locked?lockReason(n,p):p.rsch?"Академия занята":
           "Исследовать · "+fmtDur(researchTime(n.branch,n.wave,nx)/((1+B.researchSpeed)*(1+lateSpeed(p.b.academy)))))+
         "</button>")+
       "</div>";
