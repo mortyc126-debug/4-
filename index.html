@@ -253,10 +253,10 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   font-size:14px;text-align:right;color:#2c2114}
 #bm-time{text-align:center;font-size:12.5px;color:#5a4530;margin-bottom:16px}
 #uc-track{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:0;
-  margin:0 -22px;padding:0 22px;scrollbar-width:none}
+  scrollbar-width:none}
 #uc-track::-webkit-scrollbar{display:none}
-.uc-card{flex:0 0 100%;scroll-snap-align:center;padding:0 4px;box-sizing:border-box;
-  display:flex;flex-direction:column;align-items:center}
+.uc-card{flex:0 0 100%;scroll-snap-align:start;padding:0 4px;box-sizing:border-box;
+  display:flex;flex-direction:column;align-items:center;overflow:hidden}
 .uc-card.locked{opacity:.55}
 .uc-img{max-width:85%;max-height:280px;object-fit:contain;
   filter:drop-shadow(0 6px 10px rgba(0,0,0,.35));margin-bottom:8px}
@@ -1185,6 +1185,7 @@ function buildingName(bk,p){
 /* ---- Войска: 4 рода × 5 тиров ----
    Базовые числа в духе RoK (T4 конница ≈ 220 атк / 212 защ / 216 хп).      */
 const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];     // T1..T5
+const unitPower = tier => tier;                    // мощь одного воина: Т1=1, Т2=2, ... Т5=5
 const TROOP_TYPES = {
   inf: {name:"Пехота",  atk:34, def:46, hp:44, load:6,  speed:1.00, magicAtk:8,  magicDef:18, beats:"arc", losesTo:"cav"},
   arc: {name:"Лучники", atk:50, def:30, hp:36, load:8,  speed:1.10, magicAtk:20, magicDef:8,  beats:"cav", losesTo:"inf"},
@@ -1538,8 +1539,8 @@ function power(p){
     const lv=p.b[k];
     if(Array.isArray(lv)) lv.forEach(l=>v+=Math.pow(l,2.1)*12); else v+=Math.pow(lv,2.1)*12;
   });
-  TKEYS.forEach(t=>{for(let i=1;i<=5;i++) v+=p.troops[t][i]*TIER_MULT[i-1]*4});
-  W.marches.forEach(m=>{if(m.pid===p.id)TKEYS.forEach(t=>{for(let i=1;i<=5;i++)v+=(m.units[t][i]||0)*TIER_MULT[i-1]*4})});
+  TKEYS.forEach(t=>{for(let i=1;i<=5;i++) v+=p.troops[t][i]*unitPower(i)});
+  W.marches.forEach(m=>{if(m.pid===p.id)TKEYS.forEach(t=>{for(let i=1;i<=5;i++)v+=(m.units[t][i]||0)*unitPower(i)})});
   [...ACADEMY_TREE.eco,...ACADEMY_TREE.mil].forEach(n=>{
     const lv=p.tech[n.id]||0; if(lv) v+=lv*RESEARCH_WAVE[n.wave]*3;
   });
@@ -3914,8 +3915,8 @@ function handleAct(e){
     return;
   }
   else if(a==="ucnav"){
-    const track=$("#uc-track");
-    if(track) track.scrollLeft += track.clientWidth*(+b.dataset.dir);
+    const track=$("#uc-track"), card=track&&track.querySelector(".uc-card");
+    if(track&&card) track.scrollLeft += card.getBoundingClientRect().width*(+b.dataset.dir);
     return;
   }
   else if(a==="ucfocus"){
@@ -4098,8 +4099,8 @@ function openUnitCarousel(type){
   $("#building-modal").classList.add("open");
   updateTrainSheet();
   requestAnimationFrame(()=>{
-    const track=$("#uc-track");
-    if(track) track.scrollLeft = (maxT-1)*track.clientWidth;
+    const track=$("#uc-track"), card=track&&track.querySelectorAll(".uc-card")[maxT-1];
+    if(track&&card) track.scrollLeft = card.offsetLeft;
   });
 }
 function unitCardStatsHtml(p,type,tier){
@@ -4111,6 +4112,7 @@ function unitCardStatsHtml(p,type,tier){
     "<tr><td>"+statIcon("mdef")+"Магическая защита</td><td>"+troopStat(type,tier,"magicDef")+"</td></tr>"+
     "<tr><td>"+statIcon("speed")+"Скорость</td><td>&times;"+TROOP_TYPES[type].speed.toFixed(2)+"</td></tr>"+
     "<tr><td>"+statIcon("load")+"Грузоподъёмность</td><td>"+TROOP_TYPES[type].load+"</td></tr>"+
+    "<tr><td>"+statIcon("power")+"Мощь</td><td>"+unitPower(tier)+"</td></tr>"+
   "</table>";
 }
 function trainInlineHtml(){
