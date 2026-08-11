@@ -322,6 +322,9 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   padding:0 3px;border-radius:9px;background:var(--pc);color:#fff;font-size:10px;
   font-family:var(--data);box-shadow:0 0 5px var(--pc)}
 .pip.mini{width:9px;height:9px;min-width:9px;padding:0;border-radius:50%;box-shadow:0 0 3px var(--pc)}
+.pip[data-act]{cursor:pointer;min-width:24px;height:24px;border-radius:50%;font-size:12px;font-weight:bold;
+  border:2px solid transparent}
+.pip[data-act].on{border-color:#2c2114;box-shadow:0 0 9px var(--pc)}
 #bm-tree .mat-go{width:auto;flex:0 0 auto;padding:8px 14px;margin-top:0}
 .mat-upgrades{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
 #bm-tree .mat-upgrades button{flex:1;min-width:66px;padding:6px 4px;margin-top:0;
@@ -936,11 +939,15 @@ const GEAR_NAMES = {
   acc2:  {bastion:["Простой оберег","Оберег стражи","Оберег ветерана","Оберег несокрушимого","Реликвия Бастиона"],
           storm:  ["Походная подвеска","Подвеска разведчика","Подвеска стремительного","Подвеска бури","Знак Бури"]},
 };
+const GEAR_RARITY_MULT = [1, 2.3, 4.2, 7.5, 13];   // нелинейный рост: редкая вещь должна стоить риска
 function gearItemStats(cat,order,r){     // r = редкость 1..5
-  if(cat==="armor") return order==="bastion" ? {def:4*r,hp:6*r} : {def:2*r,hp:9*r};
-  if(cat==="weapon") return order==="bastion" ? {atk:4*r,def:3*r} : {atk:8*r};
-  return order==="bastion" ? {hp:4*r,def:2*r,atk:1*r} : {hp:2*r,atk:4*r,def:1*r};   // acc
+  const m=GEAR_RARITY_MULT[r-1];
+  if(cat==="armor") return order==="bastion" ? {def:Math.round(4*m),hp:Math.round(6*m)} : {def:Math.round(2*m),hp:Math.round(9*m)};
+  if(cat==="weapon") return order==="bastion" ? {atk:Math.round(4*m),def:Math.round(3*m)} : {atk:Math.round(8*m)};
+  return order==="bastion" ? {hp:Math.round(4*m),def:Math.round(2*m),atk:Math.round(1*m)} : {hp:Math.round(2*m),atk:Math.round(4*m),def:Math.round(1*m)};   // acc
 }
+const CRAFT_CHANCE = [1.0, 0.9, 0.75, 0.55, 0.35];  // шанс успеха ковки по редкости 1..5
+const CRAFT_MAT_NEED = [2, 1, 1, 1, 1];             // сколько единиц материала своего тира нужно
 function craftCost(mat,tier,r){          // r = редкость/тир материала 1..5 (индекс tier-1)
   const gold=200*r*r;
   const c={gold, food:Math.round(gold*0.3), wood:Math.round(gold*0.3)};
@@ -1928,8 +1935,11 @@ const EV = {
       p.materials[c.mat][0]=(p.materials[c.mat][0]||0)+c.n;
       if(!p.isBot) logg("Добыто: "+MATERIALS[c.mat].name+" ×"+c.n+" ("+RARITY_NAMES[0].toLowerCase()+" качества).","good");
     } else {
-      p.inventory[c.slot][c.order][c.rarity-1]=(p.inventory[c.slot][c.order][c.rarity-1]||0)+1;
-      if(!p.isBot) logg("Скован: "+GEAR_NAMES[c.slot][c.order][c.rarity-1]+" (на складе).","good");
+      const name=GEAR_NAMES[c.slot][c.order][c.rarity-1];
+      if(RNG()<CRAFT_CHANCE[c.rarity-1]){
+        p.inventory[c.slot][c.order][c.rarity-1]=(p.inventory[c.slot][c.order][c.rarity-1]||0)+1;
+        if(!p.isBot) logg("Скован: "+name+" (на складе).","good");
+      } else if(!p.isBot) logg("Ковка не удалась: "+name+" испорчена в горне, материал и время утрачены.","war");
     }
     p.craft=null;
   },
@@ -2457,10 +2467,10 @@ function startResearch(p,id){
 }
 function produceMaterial(p,mat){
   if(p.craft) return {err:"Кузница занята"};
-  const n=5, cost={gold:100};
+  const n=3, cost={gold:100};
   if(!canPay(p,cost)) return {err:"Не хватает золота"};
   pay(p,cost);
-  const t=600/(1+lateSpeed(p.b.forge));
+  const t=2400/(1+lateSpeed(p.b.forge));    // 40 минут за партию — обычная вещь требует набрать 2 такие
   p.craft={kind:"material",mat,n,t0:W.t,t1:W.t+t};
   schedule(t,"craft",{pid:p.id});
   return {ok:1};
@@ -2475,12 +2485,12 @@ function startCraftItem(p,slot,order,rarity){
   if(p.b.forge<=0) return {err:"Нужен горн"};
   if(rarity>epochOf(p.b.hall)) return {err:"Такая редкость откроется позже"};
   const s=findGearSlot(slot); if(!s) return {err:"Неизвестный слот"};
-  const tier=rarity-1;
-  if((p.materials[s.mat][tier]||0)<1) return {err:"Не хватает материала нужного качества"};
+  const tier=rarity-1, need=CRAFT_MAT_NEED[tier];
+  if((p.materials[s.mat][tier]||0)<need) return {err:"Не хватает материала нужного качества"};
   const c=craftCost(s.mat,tier,rarity);
   if(!canPay(p,{gold:c.gold,food:c.food,wood:c.wood})) return {err:"Не хватает ресурсов"};
   pay(p,{gold:c.gold,food:c.food,wood:c.wood});
-  p.materials[s.mat][tier]--;
+  p.materials[s.mat][tier]-=need;
   const t=1800*rarity*rarity/(1+lateSpeed(p.b.forge));
   p.craft={kind:"item",slot,order,rarity,t0:W.t,t1:W.t+t};
   schedule(t,"craft",{pid:p.id});
@@ -3292,7 +3302,7 @@ function unitThumb(p,t,i){
   const headPos = t==="sie" ? "50% 40%" : "50% 20%";
   return "<img class='unit-thumb' style='object-position:"+headPos+"' src='images/units/"+p.race+"-"+t+i+".png' alt=''>";
 }
-let forgeTab="make";
+let forgeTab=null, forgeRarity=null;
 function forgeInfoHtml(p){
   const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+st[k])).join(", ");
   let h="<div id='bm-tree'>";
@@ -3310,7 +3320,9 @@ function forgeInfoHtml(p){
     "<button class='"+(forgeTab==="blueprint"?"on":"")+"' data-act='forgetab' data-t='blueprint'>Чертежи</button>"+
     "</div>";
 
-  if(forgeTab==="make"){
+  if(!forgeTab){
+    // ничего не выбрано — ждём, пока откроют одну из вкладок
+  } else if(forgeTab==="make"){
     h+="<div class='rgroup'>Материалы</div><div class='note' style='margin:-6px 0 10px;font-size:12px;color:#6b5230'>"+
       "Добыча даёт только обычное качество — редкость получают слиянием 4-в-1.</div>";
     Object.keys(MATERIALS).forEach(mat=>{
@@ -3330,17 +3342,27 @@ function forgeInfoHtml(p){
       ).join("")+"</div>";
     });
   } else {
-    const curRarity=Math.min(5,epochOf(p.b.hall));
-    h+="<div class='rgroup'>Чертежи · <span style='color:"+RARITY_COLOR[curRarity-1]+"'>"+RARITY_NAMES[curRarity-1]+"</span></div>";
+    const maxRarity=Math.min(5,epochOf(p.b.hall));
+    if(!forgeRarity||forgeRarity>maxRarity) forgeRarity=maxRarity;
+    const r=forgeRarity, need=CRAFT_MAT_NEED[r-1], chance=CRAFT_CHANCE[r-1];
+    h+="<div class='rgroup'>Чертежи</div>"+
+      "<div class='mat-pips' style='margin-bottom:10px'>"+[1,2,3,4,5].map(rr=>
+        "<span class='pip"+(rr===r?" on":"")+"' style='--pc:"+RARITY_COLOR[rr-1]+(rr>maxRarity?";opacity:.3":"")+"' "+
+        (rr<=maxRarity?"data-act='forgerarity' data-r='"+rr+"'":"")+" title='"+RARITY_NAMES[rr-1]+
+        (rr>maxRarity?" — откроется позже":"")+"'>"+rr+"</span>").join("")+
+      "</div>"+
+      "<div class='note' style='margin:-4px 0 10px;font-size:12px;color:#6b5230'>"+
+      "<span style='color:"+RARITY_COLOR[r-1]+"'>"+RARITY_NAMES[r-1]+"</span> · шанс успеха ковки "+Math.round(chance*100)+"%"+
+      (chance<1?" — при неудаче материал и время сгорают":"")+"</div>";
     GEAR_SLOTS.forEach(s=>{
-      const haveMat=(p.materials[s.mat][curRarity-1]||0)>=1;
+      const have=p.materials[s.mat][r-1]||0, haveMat=have>=need;
       h+="<div class='rnode'><div class='rnode-hd'><b>"+s.name+"</b></div>"+
-        "<div class='rnode-eff'>нужен материал: <span class='pip mini' style='--pc:"+RARITY_COLOR[curRarity-1]+"'></span> "+
-        MATERIALS[s.mat].name+" · "+
-        "бастион "+statTxt(gearItemStats(s.cat,"bastion",curRarity))+" · буря "+statTxt(gearItemStats(s.cat,"storm",curRarity))+"</div>"+
-        "<button class='rnode-go' data-act='craft' data-slot='"+s.id+"' data-order='bastion' data-rarity='"+curRarity+"' "+
+        "<div class='rnode-eff'>нужно: "+need+"&times;<span class='pip mini' style='--pc:"+RARITY_COLOR[r-1]+"'></span> "+
+        MATERIALS[s.mat].name+" ("+have+"/"+need+") · "+
+        "бастион "+statTxt(gearItemStats(s.cat,"bastion",r))+" · буря "+statTxt(gearItemStats(s.cat,"storm",r))+"</div>"+
+        "<button class='rnode-go' data-act='craft' data-slot='"+s.id+"' data-order='bastion' data-rarity='"+r+"' "+
         (p.craft||!haveMat?"disabled":"")+">Бастион</button>"+
-        "<button class='rnode-go' data-act='craft' data-slot='"+s.id+"' data-order='storm' data-rarity='"+curRarity+"' "+
+        "<button class='rnode-go' data-act='craft' data-slot='"+s.id+"' data-order='storm' data-rarity='"+r+"' "+
         (p.craft||!haveMat?"disabled":"")+">Буря</button></div>";
     });
   }
@@ -4060,6 +4082,10 @@ function handleAct(e){
     forgeTab=b.dataset.t;
     if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);
   }
+  else if(a==="forgerarity"){
+    forgeRarity=+b.dataset.r;
+    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);
+  }
   else if(a==="rtreejump"){
     const el=document.getElementById("rn-"+b.dataset.id);
     if(el) el.scrollIntoView({behavior:"smooth",block:"center"});
@@ -4122,7 +4148,7 @@ function toggleView(){
 function toggleMenu(){ $("#side-menu").classList.toggle("open"); }
 let buildingModalSel=-1;
 function openBuildingModal(ci){
-  trainCtx=null; carouselCtx=null;
+  trainCtx=null; carouselCtx=null; forgeTab=null; forgeRarity=null;
   buildingModalSel=ci;
   $("#bm-body").innerHTML = buildingModalHtml(ci);
   $("#building-modal").classList.add("open");
