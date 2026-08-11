@@ -1534,10 +1534,19 @@ function gain(p,c){ syncRes(p);
   // склад не ограничивает накопление — он только защищает часть ресурсов при разграблении (см. battleCity)
   RES.forEach(r=>{if(c[r])p.res[r]=Math.max(0,p.res[r]+c[r])}) }
 
+// В RoK разные здания дают разную мощь на одном и том же уровне: Ратуша — самый
+// весомый источник (задаёт потолок всем прочим), рядовые ресурсные участки — почти
+// незаметный вклад (их по 4 на город), военные/научные постройки — выше среднего.
+const POWER_WEIGHT = {
+  hall:4.0, academy:2.0, wall:1.5, barracks:1.3, range:1.3, stable:1.3, siege:1.3,
+  garrison:1.2, forge:1.0, store:1.0, scout:0.8,
+  farm:0.5, lumber:0.5, quarry:0.5, mine:0.5, hospital:0.5, portal:0.5,
+};
+const buildingPower = (bk,lv) => Math.pow(lv,2.1)*12*(POWER_WEIGHT[bk]||1);
 function power(p){
   let v=0; BKEYS.forEach(k=>{
     const lv=p.b[k];
-    if(Array.isArray(lv)) lv.forEach(l=>v+=Math.pow(l,2.1)*12); else v+=Math.pow(lv,2.1)*12;
+    if(Array.isArray(lv)) lv.forEach(l=>v+=buildingPower(k,l)); else v+=buildingPower(k,lv);
   });
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++) v+=p.troops[t][i]*unitPower(i)});
   W.marches.forEach(m=>{if(m.pid===p.id)TKEYS.forEach(t=>{for(let i=1;i<=5;i++)v+=(m.units[t][i]||0)*unitPower(i)})});
@@ -3350,8 +3359,7 @@ function buildingModalHtml(ci){
   h+="<div id=\'bm-sub\'>уровень "+lv+(maxed?" (максимум)":" &rarr; "+nx)+"</div>";
   if(desc) h+="<div id=\'bm-desc\'>"+desc+"</div>";
   if(!maxed && lv>0){
-    const term=l=>Math.pow(l,2.1)*12, curPow=power(p), nxPow=Math.round(curPow-term(lv)+term(nx));
-    h+="<table id=\'bm-stats\'><tr><td>Мощь города</td><td>"+fmt(curPow)+" &rarr; "+fmt(nxPow)+"</td></tr></table>";
+    h+="<table id=\'bm-stats\'><tr><td>Мощь здания</td><td>"+fmt(buildingPower(c.bk,lv))+" &rarr; "+fmt(buildingPower(c.bk,nx))+"</td></tr></table>";
     h+=buildingStatDeltaHtml(c.bk,lv,nx);
   }
   if(c.bk==="hall"){
