@@ -7,7 +7,10 @@
 <style>
   html,body{margin:0;height:100%;overflow:hidden;background:#0b0a09;
     font:14px/1.5 "Palatino Linotype","Book Antiqua",Palatino,Georgia,serif;color:#ece2ca}
-  canvas{display:block;width:100%;height:100%;cursor:grab}
+  /* touch-action:none отдаёт ВСЕ жесты на канвасе нашему коду: без этого
+     браузер по умолчанию перехватывает одиночный палец под скролл страницы,
+     а щипок — под масштабирование вьюпорта, и наша камера дёргается. */
+  canvas{display:block;width:100%;height:100%;cursor:grab;touch-action:none}
   canvas.drag{cursor:grabbing}
   #hud{position:fixed;left:12px;top:12px;cursor:pointer;user-select:none;background:rgba(22,17,11,.84);
     border:1px solid #3d3121;padding:12px 15px;font-size:12.5px;max-width:262px;
@@ -15,21 +18,13 @@
   #hud b{color:#e6c273;font-variant:small-caps;letter-spacing:.13em;display:block;margin-bottom:6px}
   #hud i{font-style:normal;color:#a2967b;display:block;margin-top:8px;font-size:11.5px}
   #hud kbd{font:inherit;color:#e6c273}
-  /* Управление кнопками: жесты на телефоне подводят, нужен запасной путь */
   #ui{position:fixed;inset:0;pointer-events:none;z-index:20}
-  #ui select,#ui button{pointer-events:auto;-webkit-tap-highlight-color:transparent;
+  #ui select{pointer-events:auto;-webkit-tap-highlight-color:transparent;
     touch-action:none;user-select:none}
-  /* Панель держим у ВЕРХНЕГО края: низ страницы в просмотрщике бывает обрезан */
-  #ctrl{position:absolute;left:8px;top:8px;display:grid;gap:5px;
-    grid-template-columns:repeat(6,minmax(0,1fr));width:min(330px,calc(100vw - 16px))}
-  #jump{position:absolute;left:8px;top:104px;width:min(330px,calc(100vw - 16px));
+  #jump{position:absolute;left:8px;top:8px;width:min(330px,calc(100vw - 16px));
     background:rgba(22,17,11,.94);color:#e6c273;border:1px solid #4a3b26;
     border-radius:8px;padding:10px;font:inherit;font-size:14px}
-  #ui button{height:46px;background:rgba(22,17,11,.92);color:#e6c273;
-    border:1px solid #4a3b26;border-radius:8px;font-size:18px;line-height:1;
-    display:flex;align-items:center;justify-content:center;padding:0}
-  #ui button:active{background:rgba(120,92,40,.95);color:#fff}
-  #hud{top:auto;bottom:12px}          /* подсказка уходит вниз, панели — наверх */
+  #hud{top:auto;bottom:12px}          /* подсказка уходит вниз, панель — наверх */
   #hud.min{max-width:none;padding:7px 11px}
   #hud.min p,#hud.min i{display:none}
   @media (max-width:760px){
@@ -41,23 +36,10 @@
 <body>
 <canvas id="c"></canvas>
 <div id="ui">
-  <div id="ctrl">
-    <button data-k="left" title="влево">◀</button>
-    <button data-k="up" title="вперёд">▲</button>
-    <button data-k="down" title="назад">▼</button>
-    <button data-k="right" title="вправо">▶</button>
-    <button data-k="zin" title="ближе">+</button>
-    <button data-k="zout" title="дальше">−</button>
-    <button data-k="ccw" title="повернуть влево">↺</button>
-    <button data-k="cw" title="повернуть вправо">↻</button>
-    <button data-k="tup" title="выше">⌃</button>
-    <button data-k="tdn" title="ниже">⌄</button>
-    <button data-k="home" title="весь мир">◎</button>
-  </div>
   <select id="jump" title="Перейти к городу"></select>
 </div>
 <div id="hud"><b>Четыре Знамени</b>
-<p>Кнопки наверху: перемещение, приближение, поворот, наклон. Список — переход к городу. Жесты тоже работают.</p>
+<p>Один палец — поворот и наклон, два пальца — щипок и перенос взгляда. Коснитесь замка, чтобы подойти к нему. Список — быстрый переход.</p>
 <i>Рельеф, реки, леса, дороги и двадцать замков собраны кодом. Ни одной картинки и ни одной библиотеки. Коснитесь, чтобы свернуть.</i></div>
 <script>
 "use strict";
@@ -80,6 +62,22 @@ const M4={
   look(e,c,u){const z=norm(sub(e,c)),x=norm(cross(u,z)),y=cross(z,x);
     return[x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0,
       -dot(x,e),-dot(y,e),-dot(z,e),1]},
+  // Перенос * поворот Y (курс) * наклон X * наклон Z (лёгкая "физика" — модель
+  // чуть кренится по мелкой ряби рельефа, а не стоит противоестественно ровно)
+  // * масштаб. Считается один раз при расстановке замков, не каждый кадр.
+  modelTilt(tx,ty,tz,ry,tiltX,tiltZ,s){
+    const cy=Math.cos(ry),sy=Math.sin(ry);
+    const cx=Math.cos(tiltX),sx=Math.sin(tiltX);
+    const cz=Math.cos(tiltZ),sz=Math.sin(tiltZ);
+    const Ry=[cy,0,-sy,0, 0,1,0,0, sy,0,cy,0, 0,0,0,1];
+    const Rx=[1,0,0,0, 0,cx,sx,0, 0,-sx,cx,0, 0,0,0,1];
+    const Rz=[cz,sz,0,0, -sz,cz,0,0, 0,0,1,0, 0,0,0,1];
+    const S=[s,0,0,0, 0,s,0,0, 0,0,s,0, 0,0,0,1];
+    let m=M4.mul(Rx,M4.mul(Rz,S));
+    m=M4.mul(Ry,m);
+    m[12]=tx; m[13]=ty; m[14]=tz;   // перенос — отдельно, чтобы не искажать его поворотами
+    return m;
+  },
 };
 
 /* =======================================================================
@@ -448,6 +446,18 @@ const isWet=(x,y)=>inb(x,y)&&wsurf[gi(x,y)]>=0;
 const RK=["human","dwarf","elf","undead"];
 const TINCT={human:[0.86,0.70,0.30],dwarf:[0.74,0.35,0.19],
              elf:[0.31,0.57,0.38],undead:[0.36,0.28,0.46]};
+// Площадка под замок не должна резать уклон: иначе угол здания наполовину
+// уходит в гору. Проверяем перепад высоты на пятачке 7×7 (с запасом — замок
+// эпохи 5 сам займёт 5×5) и переводим его в угол наклона в градусах.
+const CASTLE_PAD_HW=3, CASTLE_MAX_SLOPE_DEG=9;
+function siteFlatEnough(x,z){
+  let mn=1e9,mx=-1e9;
+  for(let j=-CASTLE_PAD_HW;j<=CASTLE_PAD_HW;j++)for(let i=-CASTLE_PAD_HW;i<=CASTLE_PAD_HW;i++){
+    const e=elevAt(x+i,z+j)*HMAX;
+    if(e<mn)mn=e; if(e>mx)mx=e;
+  }
+  return (mx-mn) < 2*CASTLE_PAD_HW*Math.tan(CASTLE_MAX_SLOPE_DEG*Math.PI/180);
+}
 const cities=[];
 for(let i=0;i<20;i++){
   let x,z,t=0,good=false;
@@ -456,7 +466,8 @@ for(let i=0;i<20;i++){
     z=9+Math.floor(hash2(i,t+50,SEED+5)*(N-18)); t++;
     const e=elevAt(x,z);
     good = e>SEA+0.06 && e<0.72 && !isWet(x,z) &&
-           !cities.some(c=>Math.hypot(c.x-x,c.z-z)<10.5);
+           !cities.some(c=>Math.hypot(c.x-x,c.z-z)<10.5) &&
+           siteFlatEnough(x,z);
   }
   // все двадцать сочетаний: четыре расы на пять эпох
   const race=RK[i%4], epoch=1+Math.floor(i/4);
@@ -645,15 +656,6 @@ for(let pass=0;pass<40;pass++){
   if(worst<0.024) break;
 }
 const SEAC_S=[0.14,0.24,0.28], SEAC_D=[0.05,0.11,0.19];
-const RIVC_S=[0.38,0.52,0.50], RIVC_D=[0.12,0.26,0.33];
-function wcol(x,y){
-  const lv=wv[gi(x,y)];
-  const bed=hmap[gi(Math.min(N-1,x),Math.min(N-1,y))];
-  const depth=Math.min(1,Math.max(0,(lv-bed)*10));
-  // Одна палитра на всю воду: прежнее деление на речную и морскую давало
-  // скачок цвета на стыке. Разницу теперь несёт только глубина.
-  return MIX(SEAC_S,SEAC_D,depth);
-}
 // Уровень глади в произвольной точке — билинейно и только по тем углам,
 // где вода вообще есть.
 function wvAt(x,y){
@@ -714,11 +716,6 @@ function cone(cx,cz,r,y0,y1,rgb,seg,k,jit,seed){
         [cx+Math.cos(a1)*r,y0,cz+Math.sin(a1)*r],c,k);
   }
 }
-function roof(cx,cz,w,d,y0,y1,rgb,k){
-  const x0=cx-w/2,x1=cx+w/2,z0=cz-d/2,z1=cz+d/2,ap=[cx,y1,cz];
-  tri([x0,y0,z1],[x1,y0,z1],ap,rgb,k); tri([x1,y0,z0],[x0,y0,z0],ap,rgb,k);
-  tri([x1,y0,z1],[x1,y0,z0],ap,rgb,k); tri([x0,y0,z0],[x0,y0,z1],ap,rgb,k);
-}
 // Гранёный столб — основа всех башен
 function cyl(cx,cz,r,y0,y1,rgb,seg,k){
   seg=seg||8;
@@ -763,15 +760,7 @@ function wallRun(ax,az,bx,bz,y0,h,th,rgb,crenel){
     }
   }
 }
-// Валун: октаэдр со сбитыми вершинами
-// Крона: две сросшиеся глыбы. Нижняя точка задана явно, поэтому зазора
-// между стволом и листвой быть не может — прежде он как раз и вылезал.
-function canopy(cx,cz,r,yBottom,rgb,seed){
-  const c1=yBottom+r*0.62, c2=yBottom+r*1.05;
-  blob(cx,cz,r,c1,rgb,seed,0.55);
-  blob(cx+ (hash2(seed,1,3)-0.5)*r*0.5, cz+(hash2(seed,2,3)-0.5)*r*0.5,
-       r*0.78, c2, [rgb[0]*1.12,rgb[1]*1.12,rgb[2]*1.12], seed+11, 0.62);
-}
+// Глыба: октаэдр со сбитыми вершинами — основа для кроны дерева и т.п.
 function blob(cx,cz,r,cy,rgb,seed,botFrac){
   const p=[[0,1,0],[1,0,0],[0,0,1],[-1,0,0],[0,0,-1],[0,-botFrac,0]].map((v,i)=>{
     const j=0.82+hash2(seed,i,5)*0.36;
@@ -780,20 +769,6 @@ function blob(cx,cz,r,cy,rgb,seed,botFrac){
   const f=[[0,1,2],[0,2,3],[0,3,4],[0,4,1],[5,2,1],[5,3,2],[5,4,3],[5,1,4]];
   f.forEach((t,i)=>{
     const v=0.70+hash2(seed,i,21)*0.52, w=0.94+hash2(seed,i,22)*0.14;
-    tri(p[t[0]],p[t[1]],p[t[2]],[rgb[0]*v*w, rgb[1]*v, rgb[2]*v*(2-w)],1);
-  });
-}
-function boulder(cx,cz,r,y,rgb,seed){
-  const p=[];
-  for(const v of [[0,1,0],[1,0,0],[0,0,1],[-1,0,0],[0,0,-1],[0,-.5,0]])
-    p.push([cx+v[0]*r*(0.7+hash2(seed,v[0]*3+v[2],5)*0.6),
-            y+v[1]*r*(0.8+hash2(seed,v[1]*7,6)*0.5),
-            cz+v[2]*r*(0.7+hash2(seed,v[2]*3+v[0],7)*0.6)]);
-  const f=[[0,1,2],[0,2,3],[0,3,4],[0,4,1],[5,2,1],[5,3,2],[5,4,3],[5,1,4]];
-  // Грани красились почти одинаково — камень выглядел литым. Теперь у каждой
-  // свой сдвиг и по светлоте, и по тону.
-  f.forEach((t,i)=>{
-    const v=0.66+hash2(seed,i,17)*0.62, w=0.92+hash2(seed,i,18)*0.18;
     tri(p[t[0]],p[t[1]],p[t[2]],[rgb[0]*v*w, rgb[1]*v, rgb[2]*v*(2-w)],1);
   });
 }
@@ -851,26 +826,6 @@ function ball(cx,cz,cy,r,rgb,seed,squash){
     quad(lo[i],hi[i],hi[j],lo[j],C(v));               // пояс
     tri(lo[j],bp,lo[i],C(0.60+hash2(seed,i,81)*0.42)); // низ
   }
-}
-// Неправильный многогранник — основа всех камней. Восемь вершин сбиты шумом,
-// каждая из шести граней своего оттенка. Меняя пропорции, получаем и плиту,
-// и глыбу, и щебень.
-function rock(cx,cz,y,rx,ry,rz,rot,rgb,seed,rough){
-  rough=rough||0.42;
-  const c=Math.cos(rot), s2=Math.sin(rot);
-  const V=[[-1,-1,-1],[1,-1,-1],[1,-1,1],[-1,-1,1],[-1,1,-1],[1,1,-1],[1,1,1],[-1,1,1]];
-  const p=V.map((v,i)=>{
-    const X=v[0]*rx*(1+(hash2(seed,i,31)-0.5)*rough);
-    const Y=v[1]*ry*(1+(hash2(seed,i,32)-0.5)*rough);
-    const Z=v[2]*rz*(1+(hash2(seed,i,33)-0.5)*rough);
-    return [cx+X*c-Z*s2, y+Y, cz+X*s2+Z*c];
-  });
-  const F=[[0,1,2,3],[4,7,6,5],[0,4,5,1],[1,5,6,2],[2,6,7,3],[3,7,4,0]];
-  F.forEach((f,i)=>{
-    const v=0.62+hash2(seed,i,41)*0.62, w=0.93+hash2(seed,i,42)*0.16;
-    quad(p[f[0]],p[f[1]],p[f[2]],p[f[3]],
-         [rgb[0]*v*w, rgb[1]*v, rgb[2]*v*(2-w)],1);
-  });
 }
 // Составной камень: два-три сбитых блока внахлёст. Силуэт перестаёт читаться
 // как одна правильная фигура — этого и не хватало.
@@ -1136,642 +1091,38 @@ for(let i=0;i<340;i++){
   camps++;
 }
 
-/* ---- Города: у каждой расы своя рука ---- */
-const STONE=[0.47,0.44,0.38], DARKSTONE=[0.27,0.25,0.24],
-      PALE=[0.63,0.60,0.52], WOOD=[0.40,0.30,0.18], THATCH=[0.44,0.35,0.20];
-function banner(x,z,y,t){
-  box(x,z,0.05,0.05,y,y+1.15,[0.28,0.24,0.18],1);
-  quad([x,y+1.15,z],[x,y+0.62,z],[x+0.85,y+0.78,z],[x+0.85,y+1.15,z],
-       [t[0]*1.25,t[1]*1.25,t[2]*1.25],1);
+// Замки теперь — настоящие GLB-модели (models/castles/<раса>-<эпоха>.glb),
+// а не собранная кодом геометрия: старый процедурный генератор замков
+// (buildCity/buildHuman/buildDwarf и их резчики стен/башен/домов) убран
+// целиком, расстановка идёт через modelInstances (см. блок WebGL — там же
+// грузим сами GLB).
+// Каждая GLB-модель нормализована в бокс ~1×1 по X/Z (проверено на всех 20
+// файлах), поэтому масштаб = номер эпохи даёт ровно footprint эпоха×эпоха
+// в мировых клетках, как просил игрок (1×1, 2×2, ... 5×5).
+const MODEL_SCALE_BY_EPOCH=[0,1,2,3,4,5];
+// Место под замок уже проверено на резкий уклон (siteFlatEnough выше), но
+// мелкая рябь рельефа остаётся — от неё угол здания на глаз чуть проваливался
+// или зависал. Вместо жёстко ровной посадки считаем локальный наклон земли
+// под центром (по соседним точкам) и слегка кренim модель по нему — "физика"
+// естественного оседания, а не выравнивание в идеальную плиту.
+const TILT_SAMPLE=0.6, TILT_MAX=6*Math.PI/180;   // не больше 6° — площадка и так почти ровная
+function groundTiltAt(x,z){
+  const hL=H(x-TILT_SAMPLE,z), hR=H(x+TILT_SAMPLE,z);
+  const hD=H(x,z-TILT_SAMPLE), hU=H(x,z+TILT_SAMPLE);
+  const clampT=v=>Math.max(-TILT_MAX,Math.min(TILT_MAX,v));
+  return {
+    tiltZ: clampT(Math.atan2(hR-hL, TILT_SAMPLE*2)),   // наклон по оси X — крен вокруг Z
+    tiltX: clampT(-Math.atan2(hU-hD, TILT_SAMPLE*2)),  // наклон по оси Z — крен вокруг X
+  };
 }
-// Двускатная кровля с коньком — дом сразу перестаёт быть пирамидкой
-function ridgeRoof(cx,cz,w,d,y0,y1,rgb,over){
-  over=over||0.12;
-  const x0=cx-w/2-over,x1=cx+w/2+over,z0=cz-d/2-over,z1=cz+d/2+over;
-  const r0=[cx,y1,z0], r1=[cx,y1,z1];
-  const lt=[rgb[0]*1.14,rgb[1]*1.14,rgb[2]*1.14], dk=[rgb[0]*0.66,rgb[1]*0.66,rgb[2]*0.66];
-  quad([x0,y0,z0],[x0,y0,z1],r1,r0,lt);          // скат к свету
-  quad([x1,y0,z1],[x1,y0,z0],r0,r1,dk);          // скат в тень
-  tri([x0,y0,z0],r0,[x1,y0,z0],[rgb[0]*0.9,rgb[1]*0.9,rgb[2]*0.9]);   // фронтоны
-  tri([x1,y0,z1],r1,[x0,y0,z1],[rgb[0]*0.9,rgb[1]*0.9,rgb[2]*0.9]);
-}
-// Шпиль в несколько сужающихся ярусов
-function spire(cx,cz,r,y0,y1,rgb,seg){
-  const st=3, dy=(y1-y0)/st;
-  for(let i=0;i<st;i++){
-    const rr=r*(1-i/st*0.55), yy=y0+dy*i;
-    cone(cx,cz,rr,yy,yy+dy*1.55,
-      [rgb[0]*(0.88+i*0.09),rgb[1]*(0.88+i*0.09),rgb[2]*(0.88+i*0.09)],seg||6,1);
-  }
-}
-// Узкие бойницы — тёмные насечки, они дают башне масштаб
-// Бойницы лежали ровно в плоскости стены — две поверхности на одной глубине,
-// и видеокарта выбирала между ними случайно. Это и была рябь по кладке.
-// Теперь проём целиком снаружи и слегка выступает.
-function slits(cx,cz,r,y0,y1,n){
-  for(let i=0;i<n;i++){
-    const a=i/n*6.2832+0.3;
-    const d=r+0.055;
-    const x=cx+Math.cos(a)*d, z=cz+Math.sin(a)*d;
-    const y=y0+(y1-y0)*(0.30+0.45*hash2(Math.round(x*7),Math.round(z*7),9));
-    box(x,z,0.085,0.085,y,y+0.30,[0.06,0.055,0.05],1);
-    box(x,z,0.125,0.125,y+0.30,y+0.36,[0.50,0.47,0.41],1);   // перемычка
-  }
-}
-const ringPts=(x,z,r,n)=>Array.from({length:n},(_,i)=>{
-  const a=i/n*6.2832; return [x+Math.cos(a)*r, z+Math.sin(a)*r];
+const modelInstances=cities.map((c,i)=>{
+  const y=H(c.x,c.z), yaw=hash2(i,71,SEED+900)*Math.PI*2, scale=MODEL_SCALE_BY_EPOCH[c.epoch];
+  const {tiltX,tiltZ}=groundTiltAt(c.x,c.z);
+  return {
+    race:c.race, epoch:c.epoch, x:c.x, y, z:c.z, yaw, scale,
+    mat:M4.modelTilt(c.x,y,c.z,yaw,tiltX,tiltZ,scale),
+  };
 });
-
-/* =======================================================================
-   ГОРОДА. Не двадцать отдельных функций, а одна система: раса задаёт почерк
-   (материал, число граней башни, тип кровли, навершие), эпоха — состав.
-   Деревня → острог → замок → большой замок → цитадель.
-   ======================================================================= */
-const BONE=[0.76,0.72,0.63];
-const STYLE={
-  human: {wall:STONE,     tow:8, cap:"cone",  pal:WOOD,      crenel:true,
-          house:"ridge",  hut:THATCH, finial:null, spread:1.00},
-  dwarf: {wall:STONE,     tow:4, cap:"flat",  pal:STONE,     crenel:true,
-          house:"flat",   hut:STONE,  finial:null, spread:0.92},
-  elf:   {wall:PALE,      tow:8, cap:"spire", pal:PALE,      crenel:false,
-          house:"spire",  hut:PALE,   finial:null, spread:1.10},
-  undead:{wall:DARKSTONE, tow:6, cap:"spike", pal:DARKSTONE, crenel:true,
-          house:"spike",  hut:DARKSTONE, finial:BONE, spread:1.00},
-};
-const EPOCH_R=[0,1.5,2.0,2.6,3.3,4.4];        // радиус застройки по эпохам
-
-function towerBody(x,z,r,y0,y1,st){
-  if(st.tow===4) box(x,z,r*1.9,r*1.9,y0,y1,st.wall,1);
-  else cyl(x,z,r,y0,y1,st.wall,st.tow,1);
-}
-function towerCap(x,z,r,y,st,t){
-  if(st.cap==="cone"){
-    merlonRing(x,z,r*0.92,y,st.tow,r*0.38,r*0.6,st.wall);
-    cone(x,z,r*1.16,y+r*0.6,y+r*2.5,t,st.tow,1);
-  } else if(st.cap==="flat"){
-    box(x,z,r*2.2,r*2.2,y,y+r*0.34,st.wall,1);               // машикули
-    merlonRing(x,z,r*0.95,y+r*0.34,4,r*0.66,r*0.72,st.wall);
-    box(x,z,r*0.9,r*0.9,y+r*0.34,y+r*0.6,t,1);
-  } else if(st.cap==="spire"){
-    cyl(x,z,r*1.2,y,y+r*0.3,st.wall,st.tow,1);               // галерея
-    spire(x,z,r*1.05,y+r*0.3,y+r*4.6,t,st.tow);
-  } else {
-    merlonRing(x,z,r*0.9,y,5,r*0.4,r*0.85,st.wall);
-    cone(x,z,r*0.85,y+r*0.85,y+r*2.9,t,4,1);
-    if(st.finial) cone(x,z,r*0.32,y+r*2.9,y+r*3.6,st.finial,4,1);
-  }
-}
-function tower(x,z,r,h,st,t,slit){
-  const g=H(x,z);
-  towerBody(x,z,r,g-0.6,g+h,st);
-  if(slit) slits(x,z,r,g+h*0.35,g+h*0.9,Math.max(3,st.tow>>1));
-  towerCap(x,z,r,g+h,st,t);
-  return g+h;
-}
-function palisadeRing(x,z,r,n,st,t){
-  const P=ringPts(x,z,r,n);
-  for(let i=0;i<n;i++){
-    const A=P[i],B=P[(i+1)%n];
-    if(i===Math.floor(n*0.3)) continue;                       // проезд
-    wallRun(A[0],A[1],B[0],B[1],H(A[0],A[1]),H(A[0],A[1])+0.75,0.2,st.pal,false);
-  }
-  for(let i=0;i<n;i+=2){
-    const A=P[i], g=H(A[0],A[1]);
-    box(A[0],A[1],0.16,0.16,g-0.3,g+0.95,st.pal,1);
-    cone(A[0],A[1],0.11,g+0.95,g+1.12,st.pal,4,1);            // заострённый кол
-  }
-  return P;
-}
-function stoneRing(x,z,r,n,st,t,wallH,th,towEvery,towR,towH){
-  const P=ringPts(x,z,r,n), GATE=Math.floor(n*0.28);
-  for(let i=0;i<n;i++){
-    if(i===GATE) continue;
-    const A=P[i],B=P[(i+1)%n];
-    let hh=wallH;
-    if(st.cap==="spike") hh*=0.72+hash2(x,i,31)*0.6;          // у нежити стена рваная
-    if(st.cap==="spike"&&i%5===2) continue;                   // и с проломами
-    wallRun(A[0],A[1],B[0],B[1],H(A[0],A[1]),H(A[0],A[1])+hh,th,st.wall,st.crenel);
-  }
-  for(let i=0;i<n;i+=towEvery) tower(P[i][0],P[i][1],towR,towH,st,t,true);
-  // воротная башня
-  const A=P[GATE],B=P[(GATE+1)%n];
-  const mx=(A[0]+B[0])/2, mz=(A[1]+B[1])/2, gm=H(mx,mz);
-  for(const Q of [A,B]) tower(Q[0],Q[1],towR*0.92,towH*0.92,st,t,false);
-  wallRun(A[0],A[1],B[0],B[1],gm+wallH*0.72,gm+wallH*1.25,th*1.25,st.wall,st.crenel);
-  box(mx,mz,0.55,0.55,gm-0.3,gm+wallH*0.72,[0.17,0.11,0.07],1);   // створы
-  return P;
-}
-function dwellings(x,z,rmin,rmax,count,st,t,seed){
-  for(let s=0;s<count;s++){
-    const a=hash2(seed,s,11)*6.2832, r=rmin+hash2(seed,s,12)*(rmax-rmin);
-    const hx=x+Math.cos(a)*r, hz=z+Math.sin(a)*r, g=H(hx,hz);
-    const w=0.4+hash2(seed,s,13)*0.2;
-    if(st.house==="ridge"){
-      box(hx,hz,w,w*1.4,g-0.25,g+0.5,st.hut,1);
-      ridgeRoof(hx,hz,w,w*1.4,g+0.5,g+0.96,t);
-      box(hx+w*0.3,hz,0.09,0.09,g+0.9,g+1.22,STONE,1);            // печная труба
-    } else if(st.house==="flat"){
-      box(hx,hz,w*1.25,w*1.45,g-0.3,g+0.52,st.hut,1);
-      box(hx,hz,w*1.45,w*1.65,g+0.52,g+0.68,t,1);
-    } else if(st.house==="spire"){
-      cyl(hx,hz,w*0.68,g-0.3,g+1.0,st.hut,8,1);
-      spire(hx,hz,w*0.8,g+1.0,g+2.2,t,8);
-    } else {
-      box(hx,hz,w,w*1.15,g-0.25,g+0.58,st.hut,1);
-      cone(hx,hz,w*0.85,g+0.58,g+1.4,t,4,1);
-      if(st.finial) cone(hx,hz,w*0.2,g+1.4,g+1.68,st.finial,4,1);
-    }
-  }
-}
-function greatKeep(x,z,scale,tiers,st,t){
-  const h=H(x,z), w=1.35*scale;
-  let y=h-0.5;
-  for(let i=0;i<tiers;i++){
-    const ww=w*(1-i*0.17), hh=(0.95+0.25*scale)*(1-i*0.06);
-    if(st.tow===4||st.cap==="flat") box(x,z,ww,ww,y,y+hh,st.wall,1);
-    else box(x,z,ww,ww,y,y+hh,st.wall,1);
-    y+=hh;
-  }
-  slits(x,z,w*0.5,h+0.6,y-0.3,7);
-  const turr=w*0.42;
-  for(const q of [[-1,-1],[1,-1],[-1,1],[1,1]]){
-    const tx=x+q[0]*turr, tz=z+q[1]*turr;
-    towerBody(tx,tz,0.24*scale,h-0.4,y+0.55*scale,st);
-    towerCap(tx,tz,0.24*scale,y+0.55*scale,st,t);
-  }
-  if(st.cap==="spire") spire(x,z,w*0.5,y,y+3.4*scale,t,st.tow);
-  else if(st.cap==="spike"){ cone(x,z,w*0.55,y,y+2.6*scale,t,5,1);
-    if(st.finial) cone(x,z,w*0.2,y+2.6*scale,y+3.3*scale,st.finial,4,1) }
-  else if(st.cap==="flat"){ box(x,z,w*0.72,w*0.72,y,y+0.4*scale,t,1);
-    merlonRing(x,z,w*0.42,y+0.4*scale,4,0.34*scale,0.36*scale,st.wall) }
-  else ridgeRoof(x,z,w*0.83,w*0.83,y,y+0.95*scale,t,0.16*scale);
-  return y;
-}
-
-/* =======================================================================
-   ЛЮДИ. Отдельный строитель по вашей раскладке: деревня → форпост → замок →
-   королевский замок → цитадель. Дерево до второй эпохи, дальше камень,
-   синие кровли с золотыми навершиями, знамёна на стенах.
-   ======================================================================= */
-const H_STONE=[0.56,0.53,0.46], H_STONE_D=[0.38,0.36,0.31], H_STONE_L=[0.68,0.65,0.57];
-const H_ROOF =[0.19,0.27,0.49], H_ROOF_L=[0.27,0.37,0.62];
-const H_GOLD =[0.84,0.68,0.26];
-const H_WOOD =[0.31,0.21,0.12], H_SHINGLE=[0.23,0.20,0.17], H_PLANK=[0.44,0.32,0.19];
-const H_BANNER=[0.15,0.25,0.56];
-
-// Знамя на стене: полотнище с золотой каймой поверху.
-function wallBanner(x,z,a,w,top,bot,cloth,trim){
-  const nx=Math.cos(a), nz=Math.sin(a), tx=-nz, tz=nx, o=0.07;
-  const P=(s,y)=>[x+nx*o+tx*s, y, z+nz*o+tz*s];
-  quad(P(-w/2,top),P(w/2,top),P(w/2,bot),P(-w/2,bot),cloth||H_BANNER,1);
-  quad(P(-w/2,top),P(w/2,top),P(w/2,top-0.09),P(-w/2,top-0.09),trim||H_GOLD,1);
-  quad(P(-w/2,bot+0.07),P(w/2,bot+0.07),P(w/2,bot),P(-w/2,bot),trim||H_GOLD,1);
-}
-// Круглая башня под синей кровлей с золотым навершием.
-function humanTower(x,z,r,h,gold){
-  const g=H(x,z);
-  cyl(x,z,r*1.14,g-0.7,g-0.7+h*0.16,H_STONE_D,9,1);     // цоколь с откосом
-  cyl(x,z,r,g-0.55,g+h,H_STONE,9,1);
-  cyl(x,z,r*1.06,g+h*0.44,g+h*0.50,H_STONE_L,9,1);      // поясок кладки
-  slits(x,z,r,g+h*0.28,g+h*0.86,5);
-  cyl(x,z,r*1.16,g+h-0.16,g+h,H_STONE_L,9,1);           // машикули под зубцами
-  merlonRing(x,z,r*1.00,g+h,9,r*0.26,r*0.36,H_STONE_L);
-  cone(x,z,r*1.18,g+h+r*0.36,g+h+r*2.6,H_ROOF,9,1,0.13,(x*31+z*7)|0);
-  cyl(x,z,r*1.20,g+h+r*0.30,g+h+r*0.40,H_ROOF_L,9,1);   // карниз кровли
-  if(gold){
-    cone(x,z,r*0.24,g+h+r*2.6,g+h+r*3.05,H_GOLD,6,1);
-    box(x,z,0.035,0.035,g+h+r*3.05,g+h+r*3.5,H_GOLD,1);
-    box(x,z,0.14,0.035,g+h+r*3.3,g+h+r*3.36,H_GOLD,1);  // перекладина
-  }
-  return g+h;
-}
-// Окно: тёмный проём с наличником, вынесен из плоскости стены.
-function wallWindow(x,z,a,w,y0,y1){   // назвать это window значило перекрыть
-                                      // глобальный объект браузера — так и вышло
-  const nx=Math.cos(a), nz=Math.sin(a), d=0.055;
-  box(x+nx*d, z+nz*d, w, w, y0, y1, [0.07,0.06,0.06],1);
-  box(x+nx*d, z+nz*d, w*1.5, w*1.5, y1, y1+w*0.5, H_STONE_L,1);
-  box(x+nx*d, z+nz*d, w*1.5, w*1.5, y0-w*0.4, y0, H_STONE_L,1);
-}
-// Дом с двускатной кровлей и печной трубой.
-function timberHouse(x,z,w,d,seed,stoneBase){
-  const g=H(x,z), h=0.46+hash2(seed,1,3)*0.16;
-  if(stoneBase) box(x,z,w*1.06,d*1.06,g-0.3,g+0.16,H_STONE_D,1);
-  box(x,z,w,d,g-0.2,g+h,stoneBase?H_PLANK:H_WOOD,1);
-  ridgeRoof(x,z,w,d,g+h,g+h+0.42+hash2(seed,2,3)*0.14,H_SHINGLE,0.10);
-  box(x+w*0.3,z+d*0.2,0.09,0.09,g+h+0.34,g+h+0.66,H_STONE_D,1);
-}
-// Лестница ко входу.
-function stairsTo(x1,z1,x2,z2,w,n,y1,y2){
-  const dx=(x2-x1)/n, dz=(z2-z1)/n, dy=(y2-y1)/n;
-  for(let i=0;i<n;i++)
-    box(x1+dx*(i+0.5), z1+dz*(i+0.5), w, Math.hypot(dx,dz)*1.15,
-        y1+dy*i-0.12, y1+dy*(i+1), i%2?H_STONE:H_STONE_L, 1);
-}
-function fountain(x,z,r){
-  const g=H(x,z);
-  for(let i=0;i<10;i++){
-    const a=i/10*6.2832;
-    box(x+Math.cos(a)*r, z+Math.sin(a)*r, r*0.42,r*0.42, g-0.1, g+0.16, H_STONE_L,1);
-  }
-  quad([x-r,g+0.06,z-r],[x-r,g+0.06,z+r],[x+r,g+0.06,z+r],[x+r,g+0.06,z-r],
-       [0.20,0.32,0.40],1);
-  cyl(x,z,r*0.22,g,g+0.42,H_STONE_L,6,1);
-  cone(x,z,r*0.3,g+0.42,g+0.62,H_GOLD,6,1);
-}
-function statue(x,z,sc){
-  const g=H(x,z);
-  box(x,z,0.30*sc,0.30*sc,g-0.2,g+0.34*sc,H_STONE_D,1);
-  box(x,z,0.22*sc,0.22*sc,g+0.34*sc,g+0.44*sc,H_STONE_L,1);
-  cyl(x,z,0.10*sc,g+0.44*sc,g+0.92*sc,H_STONE_L,6,1);
-  cone(x,z,0.09*sc,g+0.92*sc,g+1.10*sc,H_STONE_L,5,1);
-}
-// Арочные ворота: два пилона и перемычка с проёмом.
-function archGate(ax,az,bx,bz,h){
-  const mx=(ax+bx)/2, mz=(az+bz)/2, g=H(mx,mz);
-  for(const q of [[ax,az],[bx,bz]]){
-    cyl(q[0],q[1],0.34,H(q[0],q[1])-0.7,g+h,H_STONE,8,1);
-    merlonRing(q[0],q[1],0.32,g+h,7,0.14,0.24,H_STONE_L);
-    cone(q[0],q[1],0.4,g+h+0.24,g+h+1.0,H_ROOF,8,1,0.12,(ax*13)|0);
-    cone(q[0],q[1],0.09,g+h+1.0,g+h+1.25,H_GOLD,5,1);
-  }
-  wallRun(ax,az,bx,bz,g+h*0.62,g+h*0.98,0.5,H_STONE,true);
-  box(mx,mz,0.62,0.5,g-0.2,g+h*0.55,[0.16,0.11,0.07],1);      // створы
-  const a=Math.atan2(mz-cityCz,mx-cityCx);
-  wallBanner(mx+Math.cos(a)*0.3, mz+Math.sin(a)*0.3, a, 0.34, g+h*0.58, g+h*0.18);
-}
-let cityCx=0, cityCz=0;
-
-function buildHuman(c){
-  const {x,z,epoch}=c, h=H(x,z);
-  cityCx=x; cityCz=z;
-
-  if(epoch===1){                       /* ── деревня ── */
-    for(let i=0;i<6;i++){
-      const a=i*2.399+hash2(x,i,11)*0.6, r=0.55+hash2(x,i,12)*0.85;
-      timberHouse(x+Math.cos(a)*r, z+Math.sin(a)*r, 0.42+hash2(x,i,13)*0.16,
-                  0.56+hash2(x,i,14)*0.2, (x*7+i)|0, false);
-    }
-    timberHouse(x,z,0.72,0.92,(x*3)|0,false);            // общий дом
-    for(let i=0;i<10;i++){                                // жерди изгороди
-      const a=i/10*6.2832, px=x+Math.cos(a)*1.75, pz=z+Math.sin(a)*1.75;
-      if(i%4===0) continue;
-      box(px,pz,0.09,0.09,H(px,pz)-0.2,H(px,pz)+0.5,H_WOOD,1);
-    }
-    banner(x+1.0,z+0.7,h+0.3,H_BANNER);
-
-  } else if(epoch===2){                /* ── форпост ── */
-    const P=ringPts(x,z,2.15,16), GATE=4;
-    for(let i=0;i<16;i++){
-      if(i===GATE) continue;
-      const A=P[i],B=P[(i+1)%16];
-      wallRun(A[0],A[1],B[0],B[1],H(A[0],A[1]),H(A[0],A[1])+1.0,0.26,H_WOOD,false);
-    }
-    for(let i=0;i<16;i+=2){                               // заострённые колья
-      const A=P[i], g=H(A[0],A[1]);
-      box(A[0],A[1],0.15,0.15,g-0.3,g+1.15,H_WOOD,1);
-      cone(A[0],A[1],0.11,g+1.15,g+1.34,H_WOOD,4,1);
-    }
-    for(const q of [[0.35,-1.6],[-1.5,0.9]]){             // сторожевые вышки
-      const tx=x+q[0], tz=z+q[1], g=H(tx,tz);
-      for(const s of [[-0.28,-0.28],[0.28,-0.28],[-0.28,0.28],[0.28,0.28]])
-        box(tx+s[0],tz+s[1],0.11,0.11,g-0.3,g+1.35,H_WOOD,1);
-      box(tx,tz,0.86,0.86,g+1.35,g+1.85,H_PLANK,1);
-      ridgeRoof(tx,tz,0.86,0.86,g+1.85,g+2.3,H_SHINGLE,0.12);
-    }
-    { const A=P[GATE],B=P[(GATE+1)%16], gm=H((A[0]+B[0])/2,(A[1]+B[1])/2);
-      for(const q of [A,B]) box(q[0],q[1],0.3,0.3,H(q[0],q[1])-0.3,gm+1.5,H_WOOD,1);
-      wallRun(A[0],A[1],B[0],B[1],gm+1.1,gm+1.5,0.3,H_PLANK,false);
-    }
-    for(let i=0;i<5;i++){
-      const a=hash2(x,i,21)*6.2832, r=0.7+hash2(x,i,22)*0.7;
-      timberHouse(x+Math.cos(a)*r, z+Math.sin(a)*r, 0.44,0.6,(x*5+i)|0,false);
-    }
-    box(x,z,1.05,1.25,h-0.35,h+0.24,H_STONE_D,1);         // каменное основание
-    box(x,z,0.92,1.10,h+0.24,h+0.95,H_PLANK,1);
-    ridgeRoof(x,z,0.92,1.10,h+0.95,h+1.55,H_SHINGLE,0.12);
-    box(x+0.5,z+0.5,0.05,0.05,h+1.55,h+2.5,H_WOOD,1);
-    quad([x+0.5,h+2.5,z+0.5],[x+0.5,h+2.0,z+0.5],
-         [x+1.25,h+2.1,z+0.5],[x+1.25,h+2.5,z+0.5],H_BANNER,1);
-
-  } else {                             /* ── камень: III, IV, V ── */
-    const big = epoch>=4, cit = epoch===5;
-    const R   = epoch===3?2.6 : epoch===4?3.3 : 4.4;
-    const NW  = epoch===3?16 : epoch===4?20 : 24;
-    const wallH = epoch===3?1.25 : epoch===4?1.5 : 1.7;
-    const GATE=Math.floor(NW*0.28);
-    const P=ringPts(x,z,R,NW);
-    for(let i=0;i<NW;i++){
-      if(i===GATE) continue;
-      const A=P[i],B=P[(i+1)%NW];
-      wallRun(A[0],A[1],B[0],B[1],H(A[0],A[1]),H(A[0],A[1])+wallH,0.46,H_STONE,true);
-      { const mx=(A[0]+B[0])/2, mz=(A[1]+B[1])/2, a2=Math.atan2(mz-z,mx-x);
-        // машикульный пояс по внешней грани прясла
-        wallRun(A[0]+Math.cos(a2)*0.10,A[1]+Math.sin(a2)*0.10,
-                B[0]+Math.cos(a2)*0.10,B[1]+Math.sin(a2)*0.10,
-                H(mx,mz)+wallH-0.20,H(mx,mz)+wallH-0.07,0.60,H_STONE_L,false); }
-      if(i%3===1){                                        // знамёна на пряслах
-        const mx=(A[0]+B[0])/2, mz=(A[1]+B[1])/2;
-        const a=Math.atan2(mz-z,mx-x);
-        wallBanner(mx+Math.cos(a)*0.24, mz+Math.sin(a)*0.24, a, 0.30,
-                   H(mx,mz)+wallH*0.86, H(mx,mz)+wallH*0.18);
-      }
-    }
-    const step = epoch===3?4 : 3;
-    for(let i=0;i<NW;i+=step)
-      humanTower(P[i][0],P[i][1], epoch===3?0.46:0.52, wallH+(big?1.1:0.8), big);
-    { const A=P[GATE],B=P[(GATE+1)%NW];
-      archGate(A[0],A[1],B[0],B[1], wallH+1.0);
-      const mx=(A[0]+B[0])/2, mz=(A[1]+B[1])/2;
-      const a=Math.atan2(mz-z,mx-x);
-      stairsTo(mx+Math.cos(a)*1.5, mz+Math.sin(a)*1.5, mx, mz, 0.9, 5,
-               H(mx+Math.cos(a)*1.5,mz+Math.sin(a)*1.5), H(mx,mz)+0.1);
-    }
-    const houses = epoch===3?9 : epoch===4?12 : 16;
-    for(let i=0;i<houses;i++){
-      const a=i*2.399+hash2(x,i,31)*0.5, r=(0.75+hash2(x,i,32)*0.55)*(R/2.6);
-      timberHouse(x+Math.cos(a)*r, z+Math.sin(a)*r, 0.44+hash2(x,i,33)*0.14,
-                  0.58+hash2(x,i,34)*0.18, (x*11+i)|0, true);
-    }
-    // Донжон: ярусы, угловые турели и высокий шпиль с золотом
-    const sc = epoch===3?1.0 : epoch===4?1.25 : 1.55;
-    const tiers = epoch===3?2 : epoch===4?3 : 4;
-    let y=h-0.5, w=1.30*sc;
-    for(let i=0;i<tiers;i++){
-      const ww=w*(1-i*0.15), hh=1.05*sc*(1-i*0.05);
-      box(x,z,ww,ww,y,y+hh,i%2?H_STONE:H_STONE_L,1);
-      y+=hh;
-    }
-    // контрфорсы по граням донжона
-    for(const q of [[1,0],[-1,0],[0,1],[0,-1]]){
-      box(x+q[0]*w*0.54, z+q[1]*w*0.54, q[0]?0.16*sc:0.34*sc, q[1]?0.16*sc:0.34*sc,
-          h-0.5, y-0.5*sc, H_STONE_D,1);
-      box(x+q[0]*w*0.54, z+q[1]*w*0.54, q[0]?0.22*sc:0.42*sc, q[1]?0.22*sc:0.42*sc,
-          y-0.5*sc, y-0.36*sc, H_STONE_L,1);
-    }
-    for(let i=0;i<4;i++){                                  // окна по сторонам
-      const a=i*1.5708+0.7854;
-      for(let k=0;k<tiers-1;k++)
-        wallWindow(x+Math.cos(a)*w*0.5, z+Math.sin(a)*w*0.5, a, 0.13*sc,
-               h+0.5+k*0.95*sc, h+0.5+k*0.95*sc+0.34*sc);
-    }
-    box(x,z,w*1.10,w*1.10,y-0.14,y,H_STONE_L,1);           // карниз под кровлей
-    for(const q of [[-1,-1],[1,-1],[-1,1],[1,1]]){
-      const tx=x+q[0]*w*0.44, tz=z+q[1]*w*0.44;
-      cyl(tx,tz,0.24*sc,h-0.4,y+0.5*sc,H_STONE,8,1);
-      merlonRing(tx,tz,0.23*sc,y+0.5*sc,7,0.11*sc,0.16*sc,H_STONE_L);
-      cone(tx,tz,0.28*sc,y+0.66*sc,y+1.5*sc,H_ROOF,8,1,0.12,(tx*17)|0);
-      cone(tx,tz,0.07*sc,y+1.5*sc,y+1.78*sc,H_GOLD,5,1);
-    }
-    cone(x,z,w*0.62,y,y+2.5*sc,H_ROOF,9,1,0.16,(x*23)|0);
-    cone(x,z,w*0.20,y+2.5*sc,y+3.3*sc,H_ROOF_L,7,1,0.1,(x*29)|0);
-    cone(x,z,0.10*sc,y+3.3*sc,y+3.8*sc,H_GOLD,5,1);
-    banner(x+w*0.5,z+w*0.5,y+0.4*sc,H_BANNER);
-    if(big){                                              // двор: фонтан и статуи
-      fountain(x-R*0.42, z+R*0.30, 0.34*sc);
-      for(const q of [[-0.30,-0.52],[0.34,-0.46]])
-        statue(x+q[0]*R, z+q[1]*R, sc*0.9);
-    }
-    if(cit){                                              // цитадель: внутреннее кольцо
-      const Q=ringPts(x,z,R*0.48,12);
-      for(let i=0;i<12;i++){
-        const A=Q[i],B=Q[(i+1)%12];
-        if(i===3) continue;
-        wallRun(A[0],A[1],B[0],B[1],H(A[0],A[1]),H(A[0],A[1])+1.5,0.42,H_STONE,true);
-      }
-      for(let i=0;i<12;i+=3) humanTower(Q[i][0],Q[i][1],0.40,2.2,true);
-      for(let i=0;i<4;i++){                               // угловые бастионы
-        const a=i/4*6.2832+0.4;
-        humanTower(x+Math.cos(a)*R*1.02, z+Math.sin(a)*R*1.02, 0.58, 2.6, true);
-      }
-    }
-  }
-}
-
-/* =======================================================================
-   ГНОМЫ. Тёмный камень с золотой отделкой, ступенчатые террасы, синие
-   знамёна с золотом и огонь: шахта, горны, жаровни, дымящие трубы.
-   ======================================================================= */
-const D_STONE=[0.33,0.33,0.36], D_STONE_L=[0.46,0.46,0.49], D_STONE_D=[0.21,0.21,0.24];
-const D_GOLD =[0.82,0.63,0.22], D_BRONZE=[0.52,0.38,0.17];
-const D_BANNER=[0.13,0.23,0.52];
-const D_WOOD =[0.29,0.20,0.12], D_SHINGLE=[0.20,0.18,0.16];
-const D_FIRE =[2.6,1.30,0.32], D_EMBER=[1.7,0.62,0.16];   // ярче единицы — светятся
-const D_SMOKE=[0.42,0.41,0.40];
-
-// Жаровня на подставке: чаша, угли, язык пламени.
-function brazier(x,z,sc){
-  const g=H(x,z);
-  cyl(x,z,0.10*sc,g-0.2,g+0.34*sc,D_STONE_D,6,1);
-  cyl(x,z,0.20*sc,g+0.34*sc,g+0.46*sc,D_BRONZE,7,1);
-  cone(x,z,0.17*sc,g+0.44*sc,g+0.52*sc,D_EMBER,7,1);
-  cone(x,z,0.13*sc,g+0.48*sc,g+0.86*sc,D_FIRE,6,1,0.3,(x*31+z*13)|0);
-}
-// Труба с дымом: сам дым — редкие светлые комья, уходящие вверх и вбок.
-function chimney(x,z,y0,h,sc,smoke){
-  box(x,z,0.24*sc,0.24*sc,y0,y0+h,D_STONE_D,1);
-  box(x,z,0.32*sc,0.32*sc,y0+h,y0+h+0.10*sc,D_STONE_L,1);
-  cone(x,z,0.13*sc,y0+h+0.02*sc,y0+h+0.16*sc,D_EMBER,5,1);
-  if(smoke) for(let i=0;i<4;i++){
-    const t=i/4;
-    ball(x+t*0.5*sc, z+t*0.28*sc, y0+h+(0.35+t*1.15)*sc,
-         (0.11+t*0.20)*sc, [D_SMOKE[0]*(1-t*0.3),D_SMOKE[1]*(1-t*0.3),D_SMOKE[2]*(1-t*0.3)],
-         (x*7+i)|0, 0.8);
-  }
-}
-// Ступенчатая терраса с золотым карнизом — основа гномьей архитектуры.
-function terrace(x,z,w,d,y0,y1,seed){
-  box(x,z,w,d,y0,y1,((seed|0)%2)?D_STONE:D_STONE_L,1);
-  box(x,z,w*1.06,d*1.06,y1-0.10,y1,D_GOLD,1);            // карниз
-  box(x,z,w*1.02,d*1.02,y0,y0+0.07,D_STONE_D,1);          // цоколь
-}
-// Приземистый гномий воин на постаменте.
-function dwarfStatue(x,z,sc,a){
-  const g=H(x,z), nx=Math.cos(a), nz=Math.sin(a);
-  box(x,z,0.36*sc,0.36*sc,g-0.2,g+0.30*sc,D_STONE_D,1);
-  box(x,z,0.42*sc,0.42*sc,g+0.30*sc,g+0.38*sc,D_GOLD,1);
-  box(x,z,0.26*sc,0.22*sc,g+0.38*sc,g+0.78*sc,D_STONE_L,1);   // корпус
-  box(x,z,0.20*sc,0.18*sc,g+0.78*sc,g+0.94*sc,D_STONE_L,1);   // голова
-  cone(x,z,0.13*sc,g+0.94*sc,g+1.06*sc,D_BRONZE,5,1);         // шлем
-  box(x+nx*0.17*sc,z+nz*0.17*sc,0.07*sc,0.07*sc,g+0.30*sc,g+1.02*sc,D_BRONZE,1); // топор
-  box(x+nx*0.17*sc,z+nz*0.17*sc,0.20*sc,0.06*sc,g+0.86*sc,g+1.02*sc,D_GOLD,1);
-}
-// Арочный портал: два массива и перемычка с золотом.
-function dwarfGate(x,z,a,w,h,sc){
-  const nx=Math.cos(a), nz=Math.sin(a), tx=-nz, tz=nx, g=H(x,z);
-  for(const sgn of [1,-1]){
-    const px=x+tx*w*0.5*sgn, pz=z+tz*w*0.5*sgn;
-    box(px,pz,0.36*sc,0.36*sc,g-0.3,g+h,D_STONE,1);
-    box(px,pz,0.44*sc,0.44*sc,g+h,g+h+0.12*sc,D_GOLD,1);
-  }
-  box(x,z,w+0.3*sc,0.34*sc,g+h*0.74,g+h+0.10*sc,D_STONE_L,1);
-  box(x,z,w+0.42*sc,0.40*sc,g+h+0.10*sc,g+h+0.22*sc,D_GOLD,1);
-  box(x,z,w*0.72,0.26*sc,g-0.2,g+h*0.72,[0.13,0.10,0.07],1);       // створы
-  for(let i=0;i<3;i++)                                              // заклёпки
-    box(x+tx*(i-1)*w*0.24, z+tz*(i-1)*w*0.24, 0.08*sc,0.30*sc,
-        g+h*0.20, g+h*0.60, D_BRONZE,1);
-}
-
-function buildDwarf(c){
-  const {x,z,epoch}=c, h=H(x,z);
-
-  if(epoch===1){                       /* ── шахтёрская деревня ── */
-    // вход в шахту: скальный массив с аркой
-    box(x-1.0,z-0.9,1.5,1.1,h-0.4,h+1.35,D_STONE_D,1);
-    box(x-1.0,z-0.9,1.62,1.2,h+1.35,h+1.5,D_STONE,1);
-    box(x-1.0,z-0.42,0.55,0.24,h-0.3,h+0.85,[0.06,0.05,0.05],1);   // проём
-    box(x-1.0,z-0.42,0.70,0.20,h+0.85,h+1.0,D_BRONZE,1);
-    for(let i=0;i<5;i++){                                          // хижины
-      const a=i*2.399+hash2(x,i,11)*0.5, r=0.75+hash2(x,i,12)*0.7;
-      const hx=x+Math.cos(a)*r, hz=z+Math.sin(a)*r, g=H(hx,hz);
-      const w=0.40+hash2(x,i,13)*0.14;
-      box(hx,hz,w*1.1,w*1.35,g-0.3,g+0.16,D_STONE_D,1);
-      box(hx,hz,w,w*1.25,g+0.16,g+0.52,D_WOOD,1);
-      ridgeRoof(hx,hz,w,w*1.25,g+0.52,g+0.92,D_SHINGLE,0.10);
-      if(i%2===0) chimney(hx+w*0.35,hz,g+0.52,0.34,0.8,true);
-    }
-    brazier(x+0.7,z+0.6,1.0);
-    box(x+0.55,z-0.75,0.06,0.06,h-0.2,h+1.3,D_WOOD,1);
-    wallBanner(x+0.55,z-0.75,0.0,0.30,h+1.25,h+0.55,D_BANNER,D_GOLD);
-
-  } else if(epoch===2){                /* ── крепость-кузня ── */
-    terrace(x,z,3.0,3.0,h-0.5,h+0.42,1);
-    for(const q of [[-1,-1],[1,-1],[-1,1],[1,1]])
-      box(x+q[0]*1.35,z+q[1]*1.35,0.44,0.44,h-0.5,h+0.95,D_STONE,1);
-    box(x-0.35,z,1.35,1.5,h+0.42,h+1.30,D_STONE,1);                 // кузня
-    ridgeRoof(x-0.35,z,1.35,1.5,h+1.30,h+1.85,D_SHINGLE,0.14);
-    box(x-0.35,z,0.55,0.30,h+0.42,h+0.95,D_EMBER,1);                // зев горна
-    chimney(x-0.95,z-0.55,h+1.30,1.05,1.0,true);
-    chimney(x+0.10,z+0.55,h+1.30,0.85,0.9,true);
-    box(x+1.05,z-0.2,0.9,1.1,h+0.42,h+1.0,D_WOOD,1);                // мастерская
-    ridgeRoof(x+1.05,z-0.2,0.9,1.1,h+1.0,h+1.42,D_SHINGLE,0.12);
-    brazier(x+0.6,z+1.1,1.0); brazier(x-1.1,z+1.0,1.0);
-    stairsTo(x+0.2,z+2.2,x+0.2,z+1.45,0.8,4,H(x+0.2,z+2.2),h+0.44);
-    for(const q of [[-1.5,0.2],[1.5,-0.4]]){
-      box(x+q[0],z+q[1],0.07,0.07,h+0.4,h+1.85,D_WOOD,1);
-      wallBanner(x+q[0],z+q[1],Math.atan2(q[1],q[0]),0.32,h+1.8,h+1.0,D_BANNER,D_GOLD);
-    }
-
-  } else {                             /* ── камень: III, IV, V ── */
-    const R  = epoch===3?2.5 : epoch===4?3.2 : 4.2;
-    const NT = epoch===3?3 : epoch===4?4 : 5;      // ярусов террас
-    const sc = epoch===3?1.0 : epoch===4?1.22 : 1.5;
-    // ступенчатое основание
-    let y=h-0.6, w=R*2.0;
-    for(let i=0;i<NT;i++){
-      const hh=(0.55+0.10*i)*sc;
-      terrace(x,z,w,w,y,y+hh,i);
-      // жаровни по углам каждой террасы
-      for(const q of [[-1,-1],[1,-1],[-1,1],[1,1]]){
-        const bx=x+q[0]*w*0.42, bz=z+q[1]*w*0.42;
-        if(i%2===0) { cyl(bx,bz,0.09*sc,y+hh,y+hh+0.26*sc,D_STONE_D,6,1);
-          cyl(bx,bz,0.16*sc,y+hh+0.26*sc,y+hh+0.35*sc,D_BRONZE,7,1);
-          cone(bx,bz,0.11*sc,y+hh+0.33*sc,y+hh+0.62*sc,D_FIRE,6,1,0.3,(bx*17)|0); }
-      }
-      // знамёна по граням
-      for(let k=0;k<4;k++){
-        const a=k*1.5708;
-        const bx=x+Math.cos(a)*w*0.5, bz=z+Math.sin(a)*w*0.5;
-        wallBanner(bx,bz,a,0.30*sc,y+hh-0.12*sc,y+0.14*sc,D_BANNER,D_GOLD);
-      }
-      y+=hh; w*=0.78;
-    }
-    // угловые башни-контрфорсы
-    for(const q of [[-1,-1],[1,-1],[-1,1],[1,1]]){
-      const tx=x+q[0]*R*0.86, tz=z+q[1]*R*0.86, g=H(tx,tz);
-      const th=(1.5+0.5*NT)*sc;
-      box(tx,tz,0.62*sc,0.62*sc,g-0.5,g+th,D_STONE,1);
-      box(tx,tz,0.74*sc,0.74*sc,g+th,g+th+0.12*sc,D_GOLD,1);
-      merlonRing(tx,tz,0.34*sc,g+th+0.12*sc,4,0.24*sc,0.26*sc,D_STONE_L);
-      slits(tx,tz,0.31*sc,g+th*0.4,g+th*0.85,4);
-      if(epoch>=4) cone(tx,tz,0.30*sc,g+th+0.38*sc,g+th+0.80*sc,D_GOLD,6,1);
-    }
-    // врата и лестница
-    const ga=-1.5708;
-    dwarfGate(x+Math.cos(ga)*R*0.92, z+Math.sin(ga)*R*0.92, ga, 1.05*sc, 1.35*sc, sc);
-    stairsTo(x+Math.cos(ga)*(R+1.6), z+Math.sin(ga)*(R+1.6),
-             x+Math.cos(ga)*R*0.92,  z+Math.sin(ga)*R*0.92, 1.15*sc, 6,
-             H(x+Math.cos(ga)*(R+1.6), z+Math.sin(ga)*(R+1.6)), h+0.1);
-    if(epoch>=4) for(const sgn of [1,-1])
-      dwarfStatue(x+Math.cos(ga)*R*0.92+sgn*0.95*sc, z+Math.sin(ga)*R*0.92+0.3, sc*0.95, ga);
-    // венец: чертог с золотой кровлей
-    box(x,z,w*1.15,w*1.15,y,y+0.85*sc,D_STONE,1);
-    box(x,z,w*1.30,w*1.30,y+0.85*sc,y+0.98*sc,D_GOLD,1);
-    ridgeRoof(x,z,w*1.15,w*1.15,y+0.98*sc,y+1.55*sc,D_BRONZE,0.14*sc);
-    chimney(x-w*0.4,z-w*0.4,y+0.85*sc,0.75*sc,sc,true);
-    chimney(x+w*0.4,z+w*0.35,y+0.85*sc,0.60*sc,sc*0.9,true);
-    box(x,z,0.06*sc,0.06*sc,y+1.55*sc,y+2.35*sc,D_GOLD,1);
-    cone(x,z,0.16*sc,y+2.35*sc,y+2.7*sc,D_GOLD,6,1);
-    if(epoch===5){                       // цитадель: внешняя стена и статуи
-      const P=ringPts(x,z,R*1.42,16);
-      for(let i=0;i<16;i++){
-        if(i===12) continue;
-        const A=P[i],B=P[(i+1)%16];
-        wallRun(A[0],A[1],B[0],B[1],H(A[0],A[1]),H(A[0],A[1])+1.5,0.55,D_STONE,true);
-      }
-      for(let i=0;i<16;i+=4){
-        const A=P[i], g=H(A[0],A[1]);
-        box(A[0],A[1],0.72,0.72,g-0.5,g+2.1,D_STONE,1);
-        box(A[0],A[1],0.84,0.84,g+2.1,g+2.24,D_GOLD,1);
-        merlonRing(A[0],A[1],0.38,g+2.24,4,0.26,0.28,D_STONE_L);
-      }
-      for(let i=0;i<3;i++) dwarfStatue(x+Math.cos(i*2.1)*R*1.1, z+Math.sin(i*2.1)*R*1.1, sc, i*2.1);
-    }
-  }
-}
-
-function buildCity(c){
-  if(c.race==="human") return buildHuman(c);
-  if(c.race==="dwarf") return buildDwarf(c);
-  const {x,z,race,epoch}=c;
-  const st=STYLE[race], t=TINCT[race], h=H(x,z);
-  const R=EPOCH_R[epoch]*st.spread;
-
-  if(epoch===1){                                   // деревня: ни стен, ни башен
-    dwellings(x,z,0.6,R,5,st,t,x*3+z);
-    box(x,z,0.85,1.05,h-0.3,h+0.62,st.hut,1);
-    if(st.house==="spire") spire(x,z,0.6,h+0.62,h+1.9,t,8);
-    else if(st.house==="flat") box(x,z,1.0,1.2,h+0.62,h+0.82,t,1);
-    else if(st.house==="spike"){ cone(x,z,0.7,h+0.62,h+1.6,t,4,1);
-      if(st.finial) cone(x,z,0.2,h+1.6,h+1.95,st.finial,4,1) }
-    else ridgeRoof(x,z,0.85,1.05,h+0.62,h+1.15,t);
-    banner(x+0.9,z+0.5,h+0.2,t);
-
-  } else if(epoch===2){                            // острог за частоколом
-    palisadeRing(x,z,R,12,st,t);
-    dwellings(x,z,0.6,R*0.72,7,st,t,x*3+z);
-    tower(x+R*0.55,z-R*0.35,0.3,1.5,st,t,false);   // дозорная вышка
-    greatKeep(x,z,0.75,1,st,t);
-    banner(x-R*0.5,z+R*0.4,h+0.4,t);
-
-  } else if(epoch===3){                            // каменный замок
-    stoneRing(x,z,R,13,st,t,1.1,0.4,4,0.42,1.6);
-    dwellings(x,z,0.8,R*0.66,8,st,t,x*3+z);
-    greatKeep(x,z,1.0,2,st,t);
-
-  } else if(epoch===4){                            // большой замок
-    stoneRing(x,z,R,16,st,t,1.35,0.46,3,0.5,2.1);
-    dwellings(x,z,0.9,R*0.7,10,st,t,x*3+z);
-    greatKeep(x,z,1.25,3,st,t);
-    for(const q of [[-0.62,0.2],[0.55,-0.55]]){    // службы во дворе
-      const bx=x+q[0]*R, bz=z+q[1]*R, g=H(bx,bz);
-      box(bx,bz,0.7,1.1,g-0.3,g+0.62,st.wall,1);
-      if(st.house==="ridge") ridgeRoof(bx,bz,0.7,1.1,g+0.62,g+1.05,t);
-      else box(bx,bz,0.85,1.25,g+0.62,g+0.8,t,1);
-    }
-
-  } else {                                          // цитадель: два кольца
-    stoneRing(x,z,R,20,st,t,1.5,0.5,4,0.52,2.3);           // городская стена
-    dwellings(x,z,R*0.55,R*0.86,14,st,t,x*3+z);            // посад между кольцами
-    stoneRing(x,z,R*0.45,11,st,t,1.7,0.52,3,0.46,2.9);     // внутренняя стена
-    greatKeep(x,z,1.55,4,st,t);
-    for(let i=0;i<4;i++){                                   // угловые бастионы
-      const a=i/4*6.2832+0.4;
-      tower(x+Math.cos(a)*R*1.02, z+Math.sin(a)*R*1.02, 0.6, 2.6, st, t, true);
-    }
-  }
-}
-cities.forEach(buildCity);
 
 /* =======================================================================
    WebGL
@@ -1894,6 +1245,55 @@ void main(){
   frag=vec4(c,1.0);
 }`;
 
+/* ---- Шейдер настоящих GLB-моделей (замков). Освещение/тени/туман — та же
+   формула, что и в основном FS, только цвет берём из текстуры, а не из
+   вершинного атрибута. Модели пока не отбрасывают тень сами на землю —
+   только принимают её от рельефа (упрощение первой версии). ---- */
+const MVS=`#version 300 es
+in vec3 aPos; in vec3 aNrm; in vec2 aUv;
+uniform mat4 uVP, uModel, uLightVP;
+out vec3 vWorld, vNrm; out vec2 vUv; out vec4 vLight;
+void main(){
+  vec4 w = uModel*vec4(aPos,1.0);
+  vWorld = w.xyz;
+  vNrm = mat3(uModel)*aNrm;
+  vUv = aUv;
+  vLight = uLightVP*w;
+  gl_Position = uVP*w;
+}`;
+const MFS=`#version 300 es
+precision highp float;
+in vec3 vWorld, vNrm; in vec2 vUv; in vec4 vLight;
+uniform vec3 uEye, uSun; uniform float uTime, uFog, uNbias;
+uniform mat4 uLightVP; uniform highp sampler2DShadow uShadow; uniform sampler2D uTex;
+out vec4 frag;
+float shadow(vec3 n, float ndl){
+  float k = uNbias * (1.0 + 2.6*(1.0-ndl));
+  vec4 lp = uLightVP * vec4(vWorld + n*k, 1.0);
+  vec3 p = lp.xyz / lp.w;
+  if(p.x<0.0||p.x>1.0||p.y<0.0||p.y>1.0||p.z>1.0) return 1.0;
+  float s=0.0; float o=1.0/2048.0;
+  s+=textureProj(uShadow, vec4(p.xy+vec2(-o,-o), p.z, 1.0));
+  s+=textureProj(uShadow, vec4(p.xy+vec2( o,-o), p.z, 1.0));
+  s+=textureProj(uShadow, vec4(p.xy+vec2(-o, o), p.z, 1.0));
+  s+=textureProj(uShadow, vec4(p.xy+vec2( o, o), p.z, 1.0));
+  return s*0.25;
+}
+void main(){
+  vec3 n = normalize(vNrm);
+  vec3 base = texture(uTex, vUv).rgb;
+  float d = max(dot(n,uSun),0.0);
+  float sh = d>0.015 ? shadow(n,d) : 1.0;
+  vec3 warm = vec3(1.22,0.94,0.62);
+  vec3 sky  = vec3(0.26,0.34,0.50);
+  vec3 bounce = vec3(0.34,0.26,0.16) * (1.0-max(n.y,0.0)) * 0.30;
+  vec3 lit = base * (sky*(0.30+0.24*(n.y*0.5+0.5)) + warm*d*sh*1.22 + bounce);
+  lit = mix(lit*vec3(0.86,0.92,1.10), lit, sh);
+  float dist = length(vWorld-uEye);
+  float fog = 1.0-exp(-pow(dist*uFog,2.2));
+  frag = vec4(mix(lit, vec3(0.50,0.45,0.38), clamp(fog,0.0,0.72)), 1.0);
+}`;
+
 function mkProg(vs,fs){
   const sh=(t,s)=>{const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);
     if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(o));return o};
@@ -1972,6 +1372,84 @@ const SU=n=>gl.getUniformLocation(skyProg,n);
 gl.enable(gl.DEPTH_TEST);
 gl.disable(gl.CULL_FACE);   // обход вершин глазами не проверить — рисуем обе стороны
 
+/* =======================================================================
+   ЗАМКИ. Настоящие GLB-модели (models/castles/<раса>-<эпоха>.glb), а не
+   собранная кодом геометрия. Свой мини-загрузчик: файлы — обычный glTF 2.0
+   (JSON+BIN в одном контейнере), без анимаций и расширений, поэтому хватает
+   разобрать нужные accessor'ы руками — библиотека не нужна.
+   ======================================================================= */
+const modelProg=mkProg(MVS,MFS);
+const mU=n=>gl.getUniformLocation(modelProg,n);
+const mUVP=mU("uVP"), mUModel=mU("uModel"), mULightVP=mU("uLightVP"),
+      mUEye=mU("uEye"), mUSun=mU("uSun"), mUTime=mU("uTime"),
+      mUShadow=mU("uShadow"), mUFog=mU("uFog"), mUNbias=mU("uNbias"), mUTex=mU("uTex");
+
+async function loadGLB(url){
+  const buf=await (await fetch(url)).arrayBuffer();
+  const dv=new DataView(buf);
+  if(dv.getUint32(0,true)!==0x46546C67) throw new Error("не glTF-контейнер: "+url);
+  const length=dv.getUint32(8,true);
+  let off=12, json=null, bin=null;
+  while(off<length){
+    const clen=dv.getUint32(off,true), ctype=dv.getUint32(off+4,true);
+    const cdata=buf.slice(off+8,off+8+clen);
+    if(ctype===0x4E4F534A) json=JSON.parse(new TextDecoder().decode(cdata));
+    else if(ctype===0x004E4942) bin=cdata;
+    off+=8+clen;
+  }
+  const CTYPE={5121:Uint8Array,5123:Uint16Array,5125:Uint32Array,5126:Float32Array};
+  const NCOMP={SCALAR:1,VEC2:2,VEC3:3,VEC4:4};
+  const acc=i=>json.accessors[i], bv=i=>json.bufferViews[i];
+  function accArr(i){
+    const a=acc(i), v=bv(a.bufferView), Ctor=CTYPE[a.componentType];
+    const byteOff=(v.byteOffset||0)+(a.byteOffset||0);
+    return new Ctor(bin, byteOff, a.count*NCOMP[a.type]);
+  }
+  const prim=json.meshes[0].primitives[0];
+  const positions=accArr(prim.attributes.POSITION);
+  const normals=accArr(prim.attributes.NORMAL);
+  const uvs=accArr(prim.attributes.TEXCOORD_0);
+  const indices=accArr(prim.indices);
+  const mat=json.materials[prim.material];
+  const bcIdx=mat.pbrMetallicRoughness.baseColorTexture.index;
+  const img=json.images[json.textures[bcIdx].source];
+  const iv=bv(img.bufferView);
+  const bytes=bin.slice(iv.byteOffset||0, (iv.byteOffset||0)+iv.byteLength);
+  const bitmap=await createImageBitmap(new Blob([bytes],{type:img.mimeType}));
+
+  const mvao=gl.createVertexArray(); gl.bindVertexArray(mvao);
+  const battach=(name,data,size)=>{
+    const b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b);
+    gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);
+    const l=gl.getAttribLocation(modelProg,name);
+    if(l>=0){gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,size,gl.FLOAT,false,0,0)}
+  };
+  battach("aPos",positions,3); battach("aNrm",normals,3); battach("aUv",uvs,2);
+  const ibo=gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ibo);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,indices,gl.STATIC_DRAW);
+  const tex=gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,bitmap);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  bitmap.close();
+  return {vao:mvao, tex, indexType:indices.BYTES_PER_ELEMENT===2?gl.UNSIGNED_SHORT:gl.UNSIGNED_INT,
+    indexCount:indices.length};
+}
+
+const castleModelCache={};   // "раса-эпоха" -> {vao,tex,indexType,indexCount} | Promise
+function castleModel(race,epoch){
+  const key=race+"-"+epoch;
+  if(!castleModelCache[key]) castleModelCache[key]=loadGLB("models/castles/"+key+".glb")
+    .then(m=>{castleModelCache[key]=m; return m})
+    .catch(e=>{console.warn("замок не загрузился:",key,e); castleModelCache[key]=null; return null});
+  const v=castleModelCache[key];
+  return (v&&v.then)?null:v;   // ещё грузится — вернём null, отрисуем на следующий раз
+}
+
 /* ---- Камера ---- */
 let cam={yaw:0.72,pitch:0.55,dist:74,tx:C,tz:C,ty:3}, drag=null;
 // Управление. С телефона колеса нет, поэтому: один палец — поворот,
@@ -1981,17 +1459,28 @@ let pinch=null;
 const mid=()=>{const a=[...pts.values()];
   return {x:(a[0].x+a[1].x)/2, y:(a[0].y+a[1].y)/2,
           d:Math.hypot(a[0].x-a[1].x, a[0].y-a[1].y)}};
+// Полный тач-контроль: один палец крутит и наклоняет камеру, два —
+// щипок/перенос, короткое касание без сдвига — тап по цели (см. tryTap ниже).
+// preventDefault нужен и на move, не только на down: без него на части
+// браузеров всё равно пробивается собственный скролл/пинч страницы поверх
+// touch-action:none, если жест начался чуть раньше, чем сработал CSS.
+let tapCand=null;   // {x,y,t} — куда упал единственный палец, ждём: тап или увод в drag
+const TAP_MOVE=10, TAP_TIME=380;
 cv.addEventListener("pointerdown",e=>{
+  e.preventDefault();
   pts.set(e.pointerId,{x:e.clientX,y:e.clientY});     // сначала запомнить палец,
   try{ cv.setPointerCapture(e.pointerId) }catch(_){}  // захват — уже потом
   if(pts.size===1){ drag={x:e.clientX,y:e.clientY,yaw:cam.yaw,pitch:cam.pitch};
+    tapCand={x:e.clientX,y:e.clientY,t:performance.now()};
     cv.classList.add("drag") }
-  else if(pts.size===2){ drag=null;
+  else if(pts.size===2){ drag=null; tapCand=null;
     const m=mid(); pinch={d:m.d, x:m.x, y:m.y, dist:cam.dist, tx:cam.tx, tz:cam.tz} }
 });
 cv.addEventListener("pointermove",e=>{
   if(!pts.has(e.pointerId)) return;
+  e.preventDefault();
   pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(tapCand && Math.hypot(e.clientX-tapCand.x,e.clientY-tapCand.y)>TAP_MOVE) tapCand=null;
   if(pts.size>=2 && pinch){
     const m=mid();
     cam.dist=Math.max(9,Math.min(200, pinch.dist*(pinch.d/Math.max(12,m.d))));
@@ -2010,6 +1499,8 @@ cv.addEventListener("pointermove",e=>{
   }
 });
 function lift(e){
+  if(tapCand && pts.size===1 && performance.now()-tapCand.t<TAP_TIME) tryTap(tapCand.x,tapCand.y);
+  tapCand=null;
   pts.delete(e.pointerId);
   if(pts.size<2) pinch=null;
   if(pts.size===0){ drag=null; cv.classList.remove("drag") }
@@ -2017,62 +1508,51 @@ function lift(e){
     drag={x:a.x,y:a.y,yaw:cam.yaw,pitch:cam.pitch} }
 }
 cv.addEventListener("pointerup",lift);
-cv.addEventListener("pointercancel",lift);
+cv.addEventListener("pointercancel",()=>{ tapCand=null; lift(...arguments) });
 cv.addEventListener("wheel",e=>{e.preventDefault();
   cam.dist=Math.max(9,Math.min(200,cam.dist*(e.deltaY<0?0.9:1.11)))},{passive:false});
-/* ---- Кнопочное управление: работает там, где жесты не сработали ---- */
-const held={};
-function camMove(fx,fz,k){                      // сдвиг в плоскости взгляда
-  const c=Math.cos(cam.yaw), s2=Math.sin(cam.yaw), d=cam.dist*0.9*k;
-  cam.tx=Math.max(-8,Math.min(N+8, cam.tx + (fx*c - fz*s2)*d));
-  cam.tz=Math.max(-8,Math.min(N+8, cam.tz + (fx*s2 + fz*c)*d));
-  cam.ty=H(Math.max(0,Math.min(N-1,cam.tx)),Math.max(0,Math.min(N-1,cam.tz)))+1;
+
+/* ---- Тап по замку: проецируем каждый город последней VP-матрицей кадра,
+   берём ближайший к точке касания в экранных пикселях. Тот же переход
+   камеры, что и в выпадающем списке — модалка города подключится позже,
+   когда карта войдёт в саму игру. ---- */
+let lastVP=null;
+function projectToScreen(x,y,z){
+  const v=lastVP, w=v[3]*x+v[7]*y+v[11]*z+v[15];
+  const cx=v[0]*x+v[4]*y+v[8]*z+v[12], cy=v[1]*x+v[5]*y+v[9]*z+v[13];
+  if(w<=0.001) return null;
+  const r=cv.getBoundingClientRect();
+  return {x:(cx/w*0.5+0.5)*r.width, y:(1-(cy/w*0.5+0.5))*r.height};
 }
-const ACT={
-  up:   k=>camMove(0,-1,k),      down: k=>camMove(0, 1,k),
-  left: k=>camMove(-1,0,k),      right:k=>camMove( 1,0,k),
-  zin:  k=>{cam.dist=Math.max(6,  cam.dist*(1-1.1*k))},
-  zout: k=>{cam.dist=Math.min(200,cam.dist*(1+1.1*k))},
-  ccw:  k=>{cam.yaw-=1.6*k},     cw:   k=>{cam.yaw+=1.6*k},
-  tup:  k=>{cam.pitch=Math.min(1.42,cam.pitch+1.1*k)},
-  tdn:  k=>{cam.pitch=Math.max(0.08,cam.pitch-1.1*k)},
-  home: ()=>{ cam.tx=N/2; cam.tz=N/2; cam.ty=H(N/2,N/2)+2;
-              cam.dist=95; cam.pitch=0.45 },
-};
-// Три пути обработки: указатель, касание и щелчок. Если один из них на
-// устройстве не срабатывает, остальные подхватывают. Повторов не будет —
-// сторожим по времени последнего нажатия.
-document.querySelectorAll("#ctrl button").forEach(el=>{
-  const k=el.dataset.k, fn=ACT[k];
-  let last=0;
-  const stop=()=>{ delete held[k] };
-  const press=e=>{
-    const now=Date.now();
-    if(now-last<450) return;                    // уже обработано другим путём
-    last=now;
-    if(e){ e.preventDefault(); e.stopPropagation() }
-    fn(0.20);
-    if(k!=="home") held[k]=fn;
-  };
-  el.addEventListener("pointerdown",press);
-  el.addEventListener("touchstart",press,{passive:false});
-  el.addEventListener("mousedown",press);
-  el.addEventListener("click",e=>{ e.preventDefault();
-    if(Date.now()-last>450){ last=Date.now(); fn(0.30) } });
-  ["pointerup","pointercancel","pointerleave","touchend","touchcancel","mouseup","mouseleave"]
-    .forEach(ev=>el.addEventListener(ev,stop));
-});
-{ // Переход к городу: список всех двадцати
+function goToCity(c){
+  cam.tx=c.x; cam.tz=c.z; cam.ty=H(c.x,c.z)+1.2;
+  cam.dist=[0,8,10,13,16,20][c.epoch]; cam.pitch=0.34;
+  const sel=document.getElementById("jump");
+  const idx=cities.indexOf(c); if(sel&&idx>=0) sel.value=idx;
+}
+function tryTap(clientX,clientY){
+  if(!lastVP) return;
+  const r=cv.getBoundingClientRect();
+  const lx=clientX-r.left, ly=clientY-r.top;
+  let best=null, bestD=46;   // порог в CSS-пикселях — палец толще курсора
+  cities.forEach(c=>{
+    const p=projectToScreen(c.x, H(c.x,c.z)+1, c.z); if(!p) return;
+    const d=Math.hypot(p.x-lx, p.y-ly);
+    if(d<bestD){ bestD=d; best=c }
+  });
+  if(best) goToCity(best);
+}
+function goHome(){ cam.tx=N/2; cam.tz=N/2; cam.ty=H(N/2,N/2)+2;
+  cam.dist=95; cam.pitch=0.45 }
+{ // Переход к городу: список всех двадцати (дублирует тап по замку)
   const RUN={human:"Люди",dwarf:"Гномы",elf:"Эльфы",undead:"Нежить"};
   const sel=document.getElementById("jump");
   sel.innerHTML='<option value="-1">Весь мир</option>'+
     cities.map((c,i)=>'<option value="'+i+'">'+RUN[c.race]+" \u00b7 эпоха "+c.epoch+'</option>').join("");
   sel.addEventListener("change",()=>{
     const i=+sel.value; drag=null; pinch=null;
-    if(i<0){ ACT.home(); return }
-    const c=cities[i];
-    cam.tx=c.x; cam.tz=c.z; cam.ty=H(c.x,c.z)+1.2;
-    cam.dist=[0,8,10,13,16,20][c.epoch]; cam.pitch=0.34;
+    if(i<0){ goHome(); return }
+    goToCity(cities[i]);
   });
 }
 
@@ -2085,16 +1565,18 @@ function resize(){const d=Math.min(2,devicePixelRatio||1);
 addEventListener("resize",resize); resize();
 
 const t0=performance.now();
-let prevT=performance.now();
 function frame(){
   const t=(performance.now()-t0)/1000;
-  const dt=Math.min(0.05,(performance.now()-prevT)/1000); prevT=performance.now();
-  let acting=false;
-  for(const k in held){ held[k](dt); acting=true }   // удержание кнопки
-  if(!drag && !acting) cam.yaw+=0.0007;
+  if(!drag) cam.yaw+=0.0007;
   const ex=cam.tx+Math.sin(cam.yaw)*Math.cos(cam.pitch)*cam.dist;
   const ez=cam.tz+Math.cos(cam.yaw)*Math.cos(cam.pitch)*cam.dist;
-  const ey=Math.sin(cam.pitch)*cam.dist+cam.ty+0.5;
+  let ey=Math.sin(cam.pitch)*cam.dist+cam.ty+0.5;
+  // Камера ходит по орбите вокруг цели, а высоту рельефа знает только под
+  // самой целью — рядом со склоном орбита может увести взгляд ПОД землю
+  // (упираемся в изнанку ближнего треугольника — экран заливает чёрным).
+  // Подпираем глаз высотой земли прямо под ним, с запасом.
+  const groundAtEye=H(Math.max(0,Math.min(N-1,Math.round(ex))),Math.max(0,Math.min(N-1,Math.round(ez))));
+  if(ey<groundAtEye+0.6) ey=groundAtEye+0.6;
   const eye=[ex,ey,ez], tgt=[cam.tx,cam.ty,cam.tz];
 
   // Проход 1: глубина со стороны солнца
@@ -2127,6 +1609,7 @@ function frame(){
 
   gl.useProgram(prog); gl.bindVertexArray(vao);
   const VP=M4.mul(M4.persp(0.82,cv.width/cv.height,0.5,460),M4.look(eye,tgt,[0,1,0]));
+  lastVP=VP;   // для тапа по замку — экранная проекция городов между кадрами
   gl.uniformMatrix4fv(uVP,false,new Float32Array(VP));
   gl.uniformMatrix4fv(uLightVP,false,new Float32Array(window.__noShadow?FAR_VPB:lightVPB));
   gl.uniform3fv(uEye,new Float32Array(eye));
@@ -2137,6 +1620,28 @@ function frame(){
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,shadowTex);
   gl.uniform1i(uShadow,0);
   gl.drawArrays(gl.TRIANGLES,0,VERTS);
+
+  // Проход 3: замки (GLB). Каждая раса+эпоха грузится один раз и лениво —
+  // модель, которая ещё в пути, просто пропускается до следующего кадра.
+  gl.useProgram(modelProg);
+  gl.uniformMatrix4fv(mUVP,false,new Float32Array(VP));
+  gl.uniformMatrix4fv(mULightVP,false,new Float32Array(window.__noShadow?FAR_VPB:lightVPB));
+  gl.uniform3fv(mUEye,new Float32Array(eye));
+  gl.uniform3fv(mUSun,new Float32Array(SUN));
+  gl.uniform1f(mUTime,t);
+  gl.uniform1f(mUFog,window.__fog!==undefined?window.__fog:0.0075);
+  gl.uniform1f(mUNbias,0.03);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,shadowTex);
+  gl.uniform1i(mUShadow,0);
+  gl.uniform1i(mUTex,1);
+  for(const inst of modelInstances){
+    const m=castleModel(inst.race,inst.epoch);
+    if(!m) continue;
+    gl.bindVertexArray(m.vao);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,m.tex);
+    gl.uniformMatrix4fv(mUModel,false,new Float32Array(inst.mat));
+    gl.drawElements(gl.TRIANGLES,m.indexCount,m.indexType,0);
+  }
 
   requestAnimationFrame(frame);
 }
