@@ -3267,12 +3267,14 @@ function computeRows(arr,p){
   let sizeIdx=0;
   const rows=[];
   depths.forEach(d=>{
-    let list=byDepth[d];
+    const unlockNodes=byDepth[d].filter(n=>n.unlock);
+    let list=byDepth[d].filter(n=>!n.unlock);
     while(list.length){
       const n=ROW_SIZES[sizeIdx%ROW_SIZES.length]; sizeIdx++;
       rows.push(list.slice(0,n));
       list=list.slice(n);
     }
+    if(unlockNodes.length) rows.push(unlockNodes);   // открытие тира войск — всегда своей строкой целиком, без разбивки
   });
   return rows;
 }
@@ -3304,7 +3306,7 @@ function renderTreeMap(arr,p){
         const lv=p.tech[n.id]||0, maxed=lv>=n.max, locked=researchLocked(n,p);
         const state=maxed?"maxed":locked?"locked":lv>0?"started":"open";
         return "<div class='rtree-node "+state+"' data-act='rtreejump' data-id='"+n.id+"' title='"+nodeTitle(n)+"'>"+
-          "<img src='"+nodeImgSrc(n,p)+"' alt='' onerror=\"this.style.display='none'\">"+
+          "<img src='"+nodeImgSrc(n,p)+"'"+(n.unlock?" style='object-position:"+unitHeadPos(p.race,n.unlock.type,n.unlock.tier)+"'":"")+" alt='' onerror=\"this.style.display='none'\">"+
           "<span class='rtree-node-lv'>"+lv+"/"+n.max+"</span></div>";
       }).join("")+
       "</div></div>";
@@ -3342,9 +3344,12 @@ function academyTreeHtml(p){
   h+="</div>";
   return h;
 }
+const UNIT_HEAD_POS = {"dwarf-arc1":19.5,"dwarf-arc2":30.9,"dwarf-arc3":13.6,"dwarf-arc4":31.2,"dwarf-arc5":13.4,"dwarf-cav1":67.0,"dwarf-cav2":100.0,"dwarf-cav3":50.0,"dwarf-cav4":100.0,"dwarf-cav5":31.5,"dwarf-inf1":95.2,"dwarf-inf2":47.1,"dwarf-inf3":76.7,"dwarf-inf4":74.7,"dwarf-inf5":41.6,"dwarf-sie1":50.0,"dwarf-sie2":50.0,"dwarf-sie3":100.0,"dwarf-sie4":50.0,"dwarf-sie5":31.4,"elf-arc1":33.9,"elf-arc2":31.1,"elf-arc3":32.5,"elf-arc4":27.5,"elf-arc5":30.6,"elf-cav1":28.6,"elf-cav2":34.2,"elf-cav3":37.8,"elf-cav4":39.1,"elf-cav5":22.9,"elf-inf1":45.4,"elf-inf2":25.1,"elf-inf3":11.6,"elf-inf4":29.4,"elf-inf5":14.0,"elf-sie1":75.2,"elf-sie2":61.6,"elf-sie3":100.0,"elf-sie4":63.9,"elf-sie5":37.0,"human-arc1":17.9,"human-arc2":38.5,"human-arc3":20.7,"human-arc4":33.8,"human-arc5":9.4,"human-cav1":15.2,"human-cav2":22.5,"human-cav3":32.0,"human-cav4":14.3,"human-cav5":33.2,"human-inf1":28.9,"human-inf2":20.9,"human-inf3":31.1,"human-inf4":27.7,"human-inf5":7.0,"human-sie1":50.0,"human-sie2":50.0,"human-sie3":100.0,"human-sie4":50.0,"human-sie5":50.0,"undead-arc1":5.2,"undead-arc2":6.6,"undead-arc3":6.1,"undead-arc4":7.1,"undead-arc5":12.2,"undead-cav1":17.3,"undead-cav2":27.8,"undead-cav3":23.6,"undead-cav4":34.6,"undead-cav5":28.9,"undead-inf1":49.9,"undead-inf2":100.0,"undead-inf3":49.3,"undead-inf4":44.5,"undead-inf5":43.9,"undead-sie1":18.0,"undead-sie2":27.8,"undead-sie3":27.6,"undead-sie4":19.2,"undead-sie5":7.1};
+function unitHeadPos(race,t,i){                        // подобрано по контенту портрета (заголовок бывает сдвинут флагом/плюмажем)
+  const v=UNIT_HEAD_POS[race+"-"+t+i]; return "50% "+(v!=null?v:20)+"%";
+}
 function unitThumb(p,t,i){
-  const headPos = t==="sie" ? "50% 40%" : "50% 20%";
-  return "<img class='unit-thumb' style='object-position:"+headPos+"' src='images/units/"+p.race+"-"+t+i+".png' alt=''>";
+  return "<img class='unit-thumb' style='object-position:"+unitHeadPos(p.race,t,i)+"' src='images/units/"+p.race+"-"+t+i+".png' alt=''>";
 }
 let forgeTab=null, forgeRarity=null;
 function forgeInfoHtml(p){
@@ -3533,9 +3538,8 @@ function foCity(){
 
 /* ---- Войско ---- */
 function unitAvatarHtml(p,t,i){
-  const headPos = t==="sie" ? "50% 40%" : "50% 20%";
   return "<span class='troop-avatar'>"+
-    "<img class='portrait' style='object-position:"+headPos+"' src='images/units/"+p.race+"-"+t+i+".png' alt=''>"+
+    "<img class='portrait' style='object-position:"+unitHeadPos(p.race,t,i)+"' src='images/units/"+p.race+"-"+t+i+".png' alt=''>"+
     "<img class='class-badge' src='images/ui/class-"+t+".png' alt=''>"+
     "<img class='tier-badge' src='images/ui/tier-"+i+".png' alt=''>"+
     "</span>";
