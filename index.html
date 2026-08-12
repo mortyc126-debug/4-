@@ -95,9 +95,9 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .gear-slot-item .tag{margin-left:3px}
 .gear-slot .seal{margin-top:2px;font-size:10px;padding:4px 7px}
 .gear-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(58px,1fr));gap:8px}
-.gear-cell{aspect-ratio:1;border:1px solid var(--rule-soft);border-radius:5px;
-  background:rgba(0,0,0,.25);position:relative}
-.gear-cell.equipped{border-color:var(--gilt-dim);background:rgba(194,153,60,.1)}
+.gear-cell{aspect-ratio:1;border:2px solid var(--pc,var(--rule-soft));border-radius:5px;
+  background:rgba(20,15,8,.6);box-shadow:inset 0 0 10px var(--pc,transparent);position:relative}
+.gear-cell.equipped{background:rgba(194,153,60,.18);box-shadow:inset 0 0 10px var(--pc,transparent),0 0 6px var(--pc,transparent)}
 .gear-cell .cnt{position:absolute;bottom:2px;right:3px;font-family:var(--data);font-size:10px;
   color:var(--gilt-hi);text-shadow:0 1px 2px #000}
 .gear-cell .eq{position:absolute;top:2px;left:3px;font-size:9px;color:var(--verdigris);
@@ -222,7 +222,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   background:transparent url(images/ui/icon-close.png) center/contain no-repeat;
   border:none;color:#5a4530;font-size:22px;line-height:1}
 #bm-close span{display:none}
-#bm-title{font-size:22px;font-variant:small-caps;letter-spacing:.08em;text-align:center;
+#bm-title{font-size:clamp(17px,5.6vw,22px);line-height:1.25;font-variant:small-caps;letter-spacing:.08em;text-align:center;
   margin-bottom:4px;color:#2c2114}
 #bm-sub{text-align:center;font-size:13px;color:#5a4530;margin-bottom:16px}
 #bm-art{display:block;max-width:64%;margin:0 auto 16px;filter:drop-shadow(0 6px 10px rgba(0,0,0,.35))}
@@ -3456,7 +3456,7 @@ function buildingModalHtml(ci){
   const img=cityCellImg(c);
   const desc=(BUILDINGS[c.bk]&&BUILDINGS[c.bk].desc)||"";
   let h="<img id=\'bm-art\' src=\'"+img+"\'>";
-  h+="<div id=\'bm-title\'>"+buildingName(c.bk,p)+(c.pl!=null?" · участок "+(c.pl+1):"")+"</div>";
+  h+="<div id=\'bm-title\'>"+buildingName(c.bk,p)+(c.pl!=null?" · участок&nbsp;"+(c.pl+1):"")+"</div>";
   h+="<div id=\'bm-sub\'>уровень "+lv+(maxed?" (максимум)":" &rarr; "+nx)+"</div>";
   if(desc) h+="<div id=\'bm-desc\'>"+desc+"</div>";
   if(!maxed && lv>0){
@@ -3769,12 +3769,12 @@ function foInv(){
   const cells=[];
   GEAR_SLOTS.forEach(s=>{
     const it=p.gear[s.id];
-    if(it) cells.push("<div class='gear-cell equipped' title='"+GEAR_NAMES[s.id][it.order][it.rarity-1]+" ("+s.name+", надето)'>"+
+    if(it) cells.push("<div class='gear-cell equipped' style='--pc:"+RARITY_COLOR[it.rarity-1]+"' title='"+GEAR_NAMES[s.id][it.order][it.rarity-1]+" ("+s.name+", надето)'>"+
       "<span class='eq'>&#9733;</span></div>");
     ["bastion","storm"].forEach(order=>{
       for(let r=1;r<=5;r++){
         const cnt=p.inventory[s.id][order][r-1]||0; if(!cnt) continue;
-        cells.push("<div class='gear-cell' title='"+GEAR_NAMES[s.id][order][r-1]+" ("+s.name+")'>"+
+        cells.push("<div class='gear-cell' style='--pc:"+RARITY_COLOR[r-1]+"' title='"+GEAR_NAMES[s.id][order][r-1]+" ("+s.name+")'>"+
           "<span class='cnt'>×"+cnt+"</span></div>");
       }
     });
@@ -4176,6 +4176,10 @@ function toggleView(){
   app.classList.toggle("view-world", showingCity);
   img.src = showingCity ? "images/ui/icon-city.png" : "images/ui/icon-world.png";
   img.alt = showingCity ? "Город" : "Мир";
+  if(showingCity){
+    // #chart (и его канвасы) были display:none — их пиксельный размер ещё не мерился
+    requestAnimationFrame(()=>{ resize(); clampView(); draw(); drawMini(); });
+  }
 }
 function toggleMenu(){ $("#side-menu").classList.toggle("open"); }
 let buildingModalSel=-1;
@@ -4307,7 +4311,7 @@ function researchCarouselHtml(){
       "<table id='bm-stats'>"+
         rows.map(r=>"<tr><td>"+(r.icon?"<img class='stat-ico' src='images/ui/"+r.icon+".png' alt='' onerror=\"this.remove()\">":"")+
           r.label+"</td><td>"+r.now+(r.next?" &rarr; "+r.next:"")+"</td></tr>").join("")+
-        (maxed?"":"<tr><td><img class='stat-ico' src='images/ui/icon-power.png' alt=''>Мощь</td><td>"+fmt(powNow)+" &rarr; "+fmt(powNext)+"</td></tr>")+
+        "<tr><td><img class='stat-ico' src='images/ui/icon-power.png' alt=''>Мощь</td><td>"+fmt(powNow)+(maxed?"":" &rarr; "+fmt(powNext))+"</td></tr>"+
       "</table>"+
       (c?"<div id='bm-reqs'>"+RES.filter(r=>c[r]).map(r=>
         "<div class='req-row'><img src='images/ui/res-"+r+".png' alt=''>"+
