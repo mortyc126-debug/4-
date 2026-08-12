@@ -90,6 +90,8 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .gear-slot.crown{padding-top:16px}
 .gear-slot-icon{width:42px;height:42px;border-radius:3px;background:rgba(0,0,0,.35);
   border:1px solid rgba(194,153,60,.3);flex:0 0 auto}
+.gear-slot-icon img{width:100%;height:100%;object-fit:contain;border-radius:3px}
+.gear-slot.filled .gear-slot-icon{border-color:var(--pc,rgba(194,153,60,.3));box-shadow:inset 0 0 8px var(--pc,transparent)}
 .gear-slot-name{font-size:9.5px;color:var(--vellum-faint);letter-spacing:.07em;text-transform:uppercase}
 .gear-slot-item{font-size:10.5px;color:var(--vellum-dim);min-height:13px}
 .gear-slot-item .tag{margin-left:3px}
@@ -97,6 +99,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .gear-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(58px,1fr));gap:8px}
 .gear-cell{aspect-ratio:1;border:2px solid var(--pc,var(--rule-soft));border-radius:5px;
   background:rgba(20,15,8,.6);box-shadow:inset 0 0 10px var(--pc,transparent);position:relative}
+.gear-cell img{width:100%;height:100%;object-fit:contain;padding:6px;box-sizing:border-box}
 .gear-cell.equipped{background:rgba(194,153,60,.18);box-shadow:inset 0 0 10px var(--pc,transparent),0 0 6px var(--pc,transparent)}
 .gear-cell .cnt{position:absolute;bottom:2px;right:3px;font-family:var(--data);font-size:10px;
   color:var(--gilt-hi);text-shadow:0 1px 2px #000}
@@ -781,6 +784,10 @@ const RACE_EPOCHS = {
    Хозяйство готово целиком. Военное дерево и венцы рас — следующим заходом:
    там нужна отдельная правка боевого расчёта (атака/защита по родам войск). */
 const RESEARCH_GROWTH=1.6, RESEARCH_WAVE={1:1,2:5,3:20,4:60};
+// Откалибровано так, чтобы вся ветка на максимуме (все узлы, один венец) давала:
+// экономика ~25-30 млн, военные ~45-50 млн (заданный игроком бюджет).
+const RESEARCH_POWER_BASE={eco:28500, mil:26200};
+const researchPower = (branch,wave,lv) => lv*RESEARCH_WAVE[wave]*RESEARCH_POWER_BASE[branch];
 const ECO_TIME_BASE=900, MIL_TIME_BASE=720;   // сек: первый узел первой волны — 15 и 12 минут
 function researchTime(branch,wave,lv){
   const base = branch==="eco"?ECO_TIME_BASE:MIL_TIME_BASE;
@@ -957,6 +964,7 @@ function gearItemStats(cat,order,r){     // r = редкость 1..5
   if(cat==="weapon") return order==="bastion" ? {atk:Math.round(4*m),def:Math.round(3*m)} : {atk:Math.round(8*m)};
   return order==="bastion" ? {hp:Math.round(4*m),def:Math.round(2*m),atk:Math.round(1*m)} : {hp:Math.round(2*m),atk:Math.round(4*m),def:Math.round(1*m)};   // acc
 }
+const gearIconSrc = (slot,order) => "images/ui/gear-"+slot+"-"+order+".png";
 const CRAFT_CHANCE = [1.0, 0.9, 0.75, 0.55, 0.35];  // шанс успеха ковки по редкости 1..5
 const CRAFT_MAT_NEED = [2, 1, 1, 1, 1];             // сколько единиц материала своего тира нужно
 function craftCost(mat,tier,r){          // r = редкость/тир материала 1..5 (индекс tier-1)
@@ -1083,7 +1091,7 @@ const BUILDINGS = {
   garrison:{name:"Гарнизон",      max:30, desc:"Доп. защита при осаде и предупреждение о марше врага"},
   scout:   {name:"Разведка",      max:30, desc:"Раскрывает сведения о войсках противника: чем выше эпоха здания, тем точнее разведданные"},
   forge:   {name:"Горн",          max:30, desc:"Добыча материалов и ковка снаряжения для полководца"},
-  portal:  {name:"Портал",        max:30, desc:"Врата в иные земли (механика в разработке)"},
+  portal:  {name:"Портал",        max:30, desc:"Пассивно ускоряет марш; с 3 эпохи открывает проход, сокращающий путь отрядов"},
 };
 const BKEYS = Object.keys(BUILDINGS);
 // Разметка карты города: координаты в % от изображения, bk — ключ здания (null = задел на будущее)
@@ -1346,6 +1354,13 @@ const totalHospitalCap = p => p.b.hospital.reduce((s,lv)=>s+hospitalCap(lv),0);
 const hallGateLevel = (p,k) => isMulti(k) ? p.b[k][0] : p.b[k];
 const maxWallHp = lv => 3000+lv*2500;
 const wallDefBonus = lv => lv<=0?0 : lv<=25 ? lv*0.005 : 25*0.005+(lv-25)*0.01;   // 0.5%/ур. до 25, затем 1%/ур.
+const portalMarchBonus = lv => lv<=0?0 : lv<=10 ? lv*0.005 : 10*0.005+(lv-10)*0.01;   // 0.5%/ур. до 10, затем 1%/ур. — макс. +25% на 30 ур.
+const PORTAL_GATE_LV = 13;   // уровень портала на начало 3 эпохи (=EPOCH_HALL_MIN[2]) — с него считаем сокращение марша
+function portalShortcut(p){    // доля (0..0.5), на которую портал укорачивает путь отряда
+  if(epochOf(p.b.hall)<3) return 0;
+  const lv=p.b.portal||0;
+  return Math.max(0, Math.min(0.5, (lv-PORTAL_GATE_LV)/(CFG.MAX_LEVEL-PORTAL_GATE_LV)*0.5));
+}
 function syncWall(p){
   const mx=maxWallHp(p.b.wall);
   if(p.wallHp==null) p.wallHp=mx;
@@ -1508,6 +1523,7 @@ function bonuses(p, defending){
     });
   }
   genOf(p).apply(b);
+  b.march*=1+portalMarchBonus(p.b.portal);
   const T=p.gen.tal||{};
   const g=id=>T[id]||0;
   b.atk+=g("w1")*.02; b.def+=g("w2")*.02; b.hp+=g("w3")*.02;
@@ -1583,7 +1599,14 @@ const POWER_WEIGHT = {
   garrison:1.2, forge:1.0, store:1.0, scout:0.8,
   farm:0.5, lumber:0.5, quarry:0.5, mine:0.5, hospital:0.5, portal:0.5,
 };
-const buildingPower = (bk,lv) => Math.pow(lv,2.1)*12*(POWER_WEIGHT[bk]||1);
+// Форма кривой (K) выведена из таблички "Ратуша" реального RoK (ур.17-25,
+// столбец Power): ln(P) = a + K*(ур-1)^2 — вершина параболы сдвинута на
+// ур.1, чтобы кривая не проседала при экстраполяции на низкие уровни.
+// BASE откалиброван отдельно (не как в RoK) под заданный игроком бюджет:
+// сумма мощи ВСЕХ построенных зданий на максимуме (30 ур., с учётом
+// POWER_WEIGHT и количества участков) должна быть 45-50 млн.
+const BUILDING_POWER_BASE=1100, BUILDING_POWER_K=0.00876;
+const buildingPower = (bk,lv) => lv<=0 ? 0 : BUILDING_POWER_BASE*(POWER_WEIGHT[bk]||1)*Math.exp(BUILDING_POWER_K*(lv-1)*(lv-1));
 function power(p){
   let v=0; BKEYS.forEach(k=>{
     const lv=p.b[k];
@@ -1592,7 +1615,7 @@ function power(p){
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++) v+=p.troops[t][i]*unitPower(i)});
   W.marches.forEach(m=>{if(m.pid===p.id)TKEYS.forEach(t=>{for(let i=1;i<=5;i++)v+=(m.units[t][i]||0)*unitPower(i)})});
   [...ACADEMY_TREE.eco,...ACADEMY_TREE.mil].forEach(n=>{
-    const lv=p.tech[n.id]||0; if(lv) v+=lv*RESEARCH_WAVE[n.wave]*3;
+    const lv=p.tech[n.id]||0; if(lv) v+=researchPower(n.branch,n.wave,lv);
   });
   v+=genPowerOf(p);
   return Math.round(v);
@@ -1617,9 +1640,12 @@ function armyPower(units,B,race){
 }
 function countUnits(u){let n=0;TKEYS.forEach(t=>{for(let i=1;i<=5;i++)n+=(u[t]&&u[t][i])||0});return n}
 function emptyUnits(){const u={};TKEYS.forEach(t=>{u[t]={};for(let i=1;i<=5;i++)u[t][i]=0});return u}
+// Кривая — регрессия по табличке "Ратуша" из оригинала (Troop Capacity, ур.17-25):
+// cap = 145.98 * ур^2.1443 (степенной закон, лог-лог МНК), ошибка ~0.1-3%.
+const marchCapacityBase = hall => 145.98*Math.pow(hall,2.1443);
 function marchCapacity(p){
   const B=bonuses(p);
-  return Math.round((3000+p.b.hall*1400+p.gen.lv*260)*(1+B.load*0));
+  return Math.round((marchCapacityBase(p.b.hall)+p.gen.lv*260)*(1+B.load));
 }
 
 /* =========================================================================
@@ -1882,7 +1908,7 @@ function sendMarch(p,tx,ty,units,mode){
     if(units[t][i]>p.troops[t][i]) units[t][i]=p.troops[t][i];
     p.troops[t][i]-=units[t][i];
   }});
-  const d=Math.hypot(tx-p.x,ty-p.y);
+  const d=Math.hypot(tx-p.x,ty-p.y)*(1-portalShortcut(p));
   const spd=marchSpeed(p,units);
   const travel=Math.max(20, d/spd*60);
   const m={id:W.nextId++,pid:p.id,mode,x0:p.x,y0:p.y,tx,ty,units,
@@ -1904,7 +1930,7 @@ function sendMarch(p,tx,ty,units,mode){
 function recallMarch(m){
   if(m.state==="back") return;
   const p=W.players.find(q=>q.id===m.pid);
-  const back=Math.max(15,Math.hypot(m.tx-p.x,m.ty-p.y)/marchSpeed(p,m.units)*60);
+  const back=Math.max(15,Math.hypot(m.tx-p.x,m.ty-p.y)*(1-portalShortcut(p))/marchSpeed(p,m.units)*60);
   m.state="back"; m.t0=W.t; m.t1=W.t+back;
   unschedule(e=>e.data&&e.data.mid===m.id);
   schedule(back,"home",{mid:m.id});
@@ -2662,6 +2688,11 @@ function fmt(n){ n=Math.round(n);
   if(Math.abs(n)>=1e6) return (n/1e6).toFixed(2)+" млн";
   if(Math.abs(n)>=1e4) return (n/1e3).toFixed(1)+" тыс";
   return RU(n) }
+function fmt0(n){ n=Math.round(n);              // без дробной части — для вместимости марша и т.п.
+  if(Math.abs(n)>=1e9) return Math.round(n/1e9)+" млрд";
+  if(Math.abs(n)>=1e6) return Math.round(n/1e6)+" млн";
+  if(Math.abs(n)>=1e4) return Math.round(n/1e3)+" тыс";
+  return RU(n) }
 function fmtDur(s){ s=Math.max(0,Math.round(s));
   const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),x=s%60;
   if(d) return d+" д "+h+" ч";
@@ -3197,7 +3228,7 @@ function hallInfoHtml(p){
   const epoch=epochOf(p.b.hall), track=RACE_EPOCHS[p.race], minus=RACES[p.race].minus;
   let h="<table id='bm-stats'><tr><td>Эпоха</td><td>"+epoch+" из 5</td></tr>"+
     "<tr><td>Отрядов в поле</td><td>"+marchSlots(p.b.hall)+"</td></tr>"+
-    "<tr><td>"+statIcon("load")+"Вместимость марша</td><td>"+fmt(marchCapacity(p))+"</td></tr></table>";
+    "<tr><td>"+statIcon("load")+"Вместимость марша</td><td>"+fmt0(marchCapacity(p))+"</td></tr></table>";
   h+="<div id='bm-tree'><div class='rgroup'>Черты расы: "+RACES[p.race].name+"</div>"+
     "<div class='rnode'><div class='rnode-hd'><b>Природа расы</b></div>"+
     "<div class='rnode-eff'>"+minus.desc+"</div></div>";
@@ -3405,7 +3436,9 @@ function forgeInfoHtml(p){
       (chance<1?" — при неудаче материал и время сгорают":"")+"</div>";
     GEAR_SLOTS.forEach(s=>{
       const have=p.materials[s.mat][r-1]||0, haveMat=have>=need;
-      h+="<div class='rnode'><div class='rnode-hd'><b>"+s.name+"</b></div>"+
+      h+="<div class='rnode'><div class='rnode-hd'>"+
+        "<span class='mat-icon-wrap' style='width:28px;height:28px'><img class='mat-icon' src='"+gearIconSrc(s.id,"bastion")+"' alt=''></span>"+
+        "<b>"+s.name+"</b></div>"+
         "<div class='rnode-eff'>нужно: "+need+"&times;<span class='pip mini' style='--pc:"+RARITY_COLOR[r-1]+"'></span> "+
         MATERIALS[s.mat].name+" ("+have+"/"+need+") · "+
         "бастион "+statTxt(gearItemStats(s.cat,"bastion",r))+" · буря "+statTxt(gearItemStats(s.cat,"storm",r))+"</div>"+
@@ -3445,6 +3478,13 @@ function buildingStatDeltaHtml(bk,lv,nx){
     return "<table id='bm-stats'>"+
       "<tr><td>Прочность стены</td><td>"+fmt(maxWallHp(lv))+" &rarr; "+fmt(maxWallHp(nx))+"</td></tr>"+
       "<tr><td>Защита при обороне</td><td>+"+(wallDefBonus(lv)*100).toFixed(1)+"% &rarr; +"+(wallDefBonus(nx)*100).toFixed(1)+"%</td></tr></table>";
+  }
+  if(bk==="portal"){
+    const p=me(), gated=epochOf(p.b.hall)<3;
+    const sc=l=>Math.max(0,Math.min(0.5,(l-PORTAL_GATE_LV)/(CFG.MAX_LEVEL-PORTAL_GATE_LV)*0.5));
+    return "<table id='bm-stats'>"+
+      "<tr><td>Скорость марша</td><td>+"+(portalMarchBonus(lv)*100).toFixed(1)+"% &rarr; +"+(portalMarchBonus(nx)*100).toFixed(1)+"%</td></tr>"+
+      "<tr><td>Сокращение пути отряда</td><td>"+(gated?"откроется на 3 эпохе":"&minus;"+(sc(lv)*100).toFixed(0)+"% &rarr; &minus;"+(sc(nx)*100).toFixed(0)+"%")+"</td></tr></table>";
   }
   if(bk==="garrison"){
     return "<table id='bm-stats'><tr><td>Урон залпа гарнизона</td><td>"+fmt(lv*900)+" &rarr; "+fmt(nx*900)+"</td></tr></table>";
@@ -3626,8 +3666,8 @@ function genGearHtml(p){
   h+="<div class='gear-slots'>";
   GEAR_LAYOUT.forEach(id=>{
     const s=findGearSlot(id), it=p.gear[id];
-    h+="<div class='gear-slot"+(it?" filled":"")+(id==="helmet"?" crown":"")+"'>"+
-      "<div class='gear-slot-icon'></div>"+
+    h+="<div class='gear-slot"+(it?" filled":"")+(id==="helmet"?" crown":"")+"' "+(it?"style='--pc:"+RARITY_COLOR[it.rarity-1]+"'":"")+">"+
+      "<div class='gear-slot-icon'>"+(it?"<img src='"+gearIconSrc(s.id,it.order)+"' alt=''>":"")+"</div>"+
       "<div class='gear-slot-name'>"+s.name+"</div>"+
       "<div class='gear-slot-item'>"+(it?GEAR_NAMES[s.id][it.order][it.rarity-1]+"<span class='tag gilt'>"+RARITY_NAMES[it.rarity-1]+"</span>"
         +"<div class='note'>"+statTxt(gearItemStats(s.cat,it.order,it.rarity))+"</div>":"пусто")+"</div>"+
@@ -3642,7 +3682,10 @@ function genGearHtml(p){
       for(let r=1;r<=5;r++){
         const cnt=p.inventory[s.id][order][r-1]||0; if(!cnt) continue;
         any=true;
-        stored+="<div class='entry'><div class='line'><div class='fill'>"+
+        stored+="<div class='entry'><div class='line'>"+
+          "<div class='mat-icon-wrap' style='--pc:"+RARITY_COLOR[r-1]+";box-shadow:inset 0 0 8px var(--pc)'>"+
+          "<img class='mat-icon' src='"+gearIconSrc(s.id,order)+"' alt=''></div>"+
+          "<div class='fill'>"+
           "<div class='title'>"+GEAR_NAMES[s.id][order][r-1]+"<span class='tag'>×"+cnt+"</span></div>"+
           "<div class='note'>"+s.name+" · "+statTxt(gearItemStats(s.cat,order,r))+"</div></div>"+
           "<button class='seal' data-act='equip' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Надеть</button>"+
@@ -3782,12 +3825,12 @@ function foInv(){
   GEAR_SLOTS.forEach(s=>{
     const it=p.gear[s.id];
     if(it) cells.push("<div class='gear-cell equipped' style='--pc:"+RARITY_COLOR[it.rarity-1]+"' title='"+GEAR_NAMES[s.id][it.order][it.rarity-1]+" ("+s.name+", надето)'>"+
-      "<span class='eq'>&#9733;</span></div>");
+      "<img src='"+gearIconSrc(s.id,it.order)+"' alt=''><span class='eq'>&#9733;</span></div>");
     ["bastion","storm"].forEach(order=>{
       for(let r=1;r<=5;r++){
         const cnt=p.inventory[s.id][order][r-1]||0; if(!cnt) continue;
         cells.push("<div class='gear-cell' style='--pc:"+RARITY_COLOR[r-1]+"' title='"+GEAR_NAMES[s.id][order][r-1]+" ("+s.name+")'>"+
-          "<span class='cnt'>×"+cnt+"</span></div>");
+          "<img src='"+gearIconSrc(s.id,order)+"' alt=''><span class='cnt'>×"+cnt+"</span></div>");
       }
     });
   });
@@ -3890,7 +3933,7 @@ function openLevy(cx,cy){
     TKEYS.forEach(t=>{for(let i=1;i<=5;i++){weight+=st[t+i]*TIER_MULT[i-1]; n+=st[t+i]}});
     const over=weight>capL;
     const u=emptyUnits(); TKEYS.forEach(t=>{for(let i=1;i<=5;i++)u[t][i]=st[t+i]});
-    const dd=Math.hypot(cx-p.x,cy-p.y), eta=n?dd/marchSpeed(p,u)*60:0;
+    const dd=Math.hypot(cx-p.x,cy-p.y)*(1-portalShortcut(p)), eta=n?dd/marchSpeed(p,u)*60:0;
     let load=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++)load+=st[t+i]*TROOP_TYPES[t].load*TIER_MULT[i-1]*troopMod(p.race,t,"load")});
     const mine=armyPower(u,bonuses(p),p.race);
 
@@ -3918,7 +3961,7 @@ function openLevy(cx,cy){
 
     h+="<table class='roll' style='margin-top:14px'>"+
       "<tr><td>Выступает</td><td>"+RU(n)+"</td></tr>"+
-      "<tr><td>Место в отряде</td><td class='"+(over?"bad":"")+"'>"+fmt(weight)+" из "+fmt(capL)+"</td></tr>"+
+      "<tr><td>Место в отряде</td><td class='"+(over?"bad":"")+"'>"+fmt0(weight)+" из "+fmt0(capL)+"</td></tr>"+
       "<tr><td>Поднимут груза</td><td>"+fmt(load)+"</td></tr>"+
       "<tr><td>Дорога займёт</td><td>"+(n?fmtDur(eta):"—")+"</td></tr>"+
       "<tr><td>Сила отряда</td><td>"+fmt(mine)+"</td></tr></table>";
@@ -4313,7 +4356,7 @@ function researchCarouselHtml(){
     const lv=p.tech[n.id]||0, maxed=lv>=n.max, nx=lv+1, gated=p.b.academy<=0;
     const locked=researchLocked(n,p);
     const c = maxed||locked||gated?null:researchCost(n.branch,n.wave,nx);
-    const powNow=lv*RESEARCH_WAVE[n.wave]*3, powNext=nx*RESEARCH_WAVE[n.wave]*3;
+    const powNow=researchPower(n.branch,n.wave,lv), powNext=researchPower(n.branch,n.wave,nx);
     const rows=nodeEffectRows(n,lv,nx);
     h+="<div class='uc-card"+(locked?" locked":"")+"'>"+
       "<img class='uc-img' style='max-height:170px;border-radius:50%' src='"+nodeImgSrc(n,p)+"' alt='' onerror=\"this.style.display='none'\">"+
