@@ -784,8 +784,10 @@ const RACE_EPOCHS = {
    Хозяйство готово целиком. Военное дерево и венцы рас — следующим заходом:
    там нужна отдельная правка боевого расчёта (атака/защита по родам войск). */
 const RESEARCH_GROWTH=1.6, RESEARCH_WAVE={1:1,2:5,3:20,4:60};
-const RESEARCH_POWER_BASE=360;   // откалибровано так, чтобы вся ветка исследований на максимуме давала ~1 млн мощи
-const researchPower = (wave,lv) => lv*RESEARCH_WAVE[wave]*RESEARCH_POWER_BASE;
+// Откалибровано так, чтобы вся ветка на максимуме (все узлы, один венец) давала:
+// экономика ~25-30 млн, военные ~45-50 млн (заданный игроком бюджет).
+const RESEARCH_POWER_BASE={eco:28500, mil:26200};
+const researchPower = (branch,wave,lv) => lv*RESEARCH_WAVE[wave]*RESEARCH_POWER_BASE[branch];
 const ECO_TIME_BASE=900, MIL_TIME_BASE=720;   // сек: первый узел первой волны — 15 и 12 минут
 function researchTime(branch,wave,lv){
   const base = branch==="eco"?ECO_TIME_BASE:MIL_TIME_BASE;
@@ -1597,12 +1599,13 @@ const POWER_WEIGHT = {
   garrison:1.2, forge:1.0, store:1.0, scout:0.8,
   farm:0.5, lumber:0.5, quarry:0.5, mine:0.5, hospital:0.5, portal:0.5,
 };
-// Кривая выведена из таблички "Ратуша" реального RoK (ур.17-25, столбец Power):
-// ln(P) = 9.50334 + 0.00875803*(ур-1)^2 — вершина параболы сдвинута на ур.1,
-// чтобы кривая не проседала при экстраполяции на низкие уровни. 3350 — эта
-// же кривая с весом Ратуши (4.0) вынесенным наружу, чтобы масштабировать
-// прочие здания через POWER_WEIGHT.
-const BUILDING_POWER_BASE=3350, BUILDING_POWER_K=0.00876;
+// Форма кривой (K) выведена из таблички "Ратуша" реального RoK (ур.17-25,
+// столбец Power): ln(P) = a + K*(ур-1)^2 — вершина параболы сдвинута на
+// ур.1, чтобы кривая не проседала при экстраполяции на низкие уровни.
+// BASE откалиброван отдельно (не как в RoK) под заданный игроком бюджет:
+// сумма мощи ВСЕХ построенных зданий на максимуме (30 ур., с учётом
+// POWER_WEIGHT и количества участков) должна быть 45-50 млн.
+const BUILDING_POWER_BASE=1100, BUILDING_POWER_K=0.00876;
 const buildingPower = (bk,lv) => lv<=0 ? 0 : BUILDING_POWER_BASE*(POWER_WEIGHT[bk]||1)*Math.exp(BUILDING_POWER_K*(lv-1)*(lv-1));
 function power(p){
   let v=0; BKEYS.forEach(k=>{
@@ -1612,7 +1615,7 @@ function power(p){
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++) v+=p.troops[t][i]*unitPower(i)});
   W.marches.forEach(m=>{if(m.pid===p.id)TKEYS.forEach(t=>{for(let i=1;i<=5;i++)v+=(m.units[t][i]||0)*unitPower(i)})});
   [...ACADEMY_TREE.eco,...ACADEMY_TREE.mil].forEach(n=>{
-    const lv=p.tech[n.id]||0; if(lv) v+=researchPower(n.wave,lv);
+    const lv=p.tech[n.id]||0; if(lv) v+=researchPower(n.branch,n.wave,lv);
   });
   v+=genPowerOf(p);
   return Math.round(v);
@@ -4348,7 +4351,7 @@ function researchCarouselHtml(){
     const lv=p.tech[n.id]||0, maxed=lv>=n.max, nx=lv+1, gated=p.b.academy<=0;
     const locked=researchLocked(n,p);
     const c = maxed||locked||gated?null:researchCost(n.branch,n.wave,nx);
-    const powNow=researchPower(n.wave,lv), powNext=researchPower(n.wave,nx);
+    const powNow=researchPower(n.branch,n.wave,lv), powNext=researchPower(n.branch,n.wave,nx);
     const rows=nodeEffectRows(n,lv,nx);
     h+="<div class='uc-card"+(locked?" locked":"")+"'>"+
       "<img class='uc-img' style='max-height:170px;border-radius:50%' src='"+nodeImgSrc(n,p)+"' alt='' onerror=\"this.style.display='none'\">"+
