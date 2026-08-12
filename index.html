@@ -2755,6 +2755,9 @@ async function load(){
     const s=JSON.parse(raw);
     if(!s||!s.players) return false;
     W=s; RNG=mulberry(W.seed+Math.floor(W.t));
+    // довооружаем старые сохранения полями, добавленными позже (иначе экраны,
+    // читающие их напрямую, падают на сейвах "довоенной" версии).
+    W.players.forEach(p=>{ if(!p.tomes) p.tomes={}; if(p.heal===undefined) p.heal=null; });
     // догоняем реальное время, прошедшее с последнего захода
     const away=Math.max(0,(Date.now()-W.savedAt)/1000);
     if(away>60){
@@ -3831,7 +3834,7 @@ function foGen(){
     "<div class='line' style='margin-top:7px;gap:8px'><div class='progress' style='flex:1;margin-top:0'>"+
     "<i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>"+
     "<div class='gen-tomes'>"+TOME_VALUES.map(v=>{
-      const cnt=p.tomes[v]||0; if(!cnt) return "";
+      const cnt=(p.tomes&&p.tomes[v])||0; if(!cnt) return "";
       return "<button class='gen-tome' data-act='usetome' data-v='"+v+"' "+(p.gen.lv>=lvCap?"disabled":"")+
         " title='"+TOME_NAME[v]+" — восполняет "+RU(v)+" опыта'>"+
         "<img src='images/ui/"+TOME_ICON[v]+".png' alt=''><s>×"+cnt+"</s></button>";
