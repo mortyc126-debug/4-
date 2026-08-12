@@ -62,9 +62,22 @@ const M4={
   look(e,c,u){const z=norm(sub(e,c)),x=norm(cross(u,z)),y=cross(z,x);
     return[x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0,
       -dot(x,e),-dot(y,e),-dot(z,e),1]},
-  // Перенос * поворот вокруг Y * равномерный масштаб — матрица размещения GLB-модели в мире.
-  model(tx,ty,tz,ry,s){const c=Math.cos(ry),si=Math.sin(ry);
-    return[c*s,0,-si*s,0, 0,s,0,0, si*s,0,c*s,0, tx,ty,tz,1]},
+  // Перенос * поворот Y (курс) * наклон X * наклон Z (лёгкая "физика" — модель
+  // чуть кренится по мелкой ряби рельефа, а не стоит противоестественно ровно)
+  // * масштаб. Считается один раз при расстановке замков, не каждый кадр.
+  modelTilt(tx,ty,tz,ry,tiltX,tiltZ,s){
+    const cy=Math.cos(ry),sy=Math.sin(ry);
+    const cx=Math.cos(tiltX),sx=Math.sin(tiltX);
+    const cz=Math.cos(tiltZ),sz=Math.sin(tiltZ);
+    const Ry=[cy,0,-sy,0, 0,1,0,0, sy,0,cy,0, 0,0,0,1];
+    const Rx=[1,0,0,0, 0,cx,sx,0, 0,-sx,cx,0, 0,0,0,1];
+    const Rz=[cz,sz,0,0, -sz,cz,0,0, 0,0,1,0, 0,0,0,1];
+    const S=[s,0,0,0, 0,s,0,0, 0,0,s,0, 0,0,0,1];
+    let m=M4.mul(Rx,M4.mul(Rz,S));
+    m=M4.mul(Ry,m);
+    m[12]=tx; m[13]=ty; m[14]=tz;   // перенос — отдельно, чтобы не искажать его поворотами
+    return m;
+  },
 };
 
 /* =======================================================================
@@ -433,6 +446,18 @@ const isWet=(x,y)=>inb(x,y)&&wsurf[gi(x,y)]>=0;
 const RK=["human","dwarf","elf","undead"];
 const TINCT={human:[0.86,0.70,0.30],dwarf:[0.74,0.35,0.19],
              elf:[0.31,0.57,0.38],undead:[0.36,0.28,0.46]};
+// Площадка под замок не должна резать уклон: иначе угол здания наполовину
+// уходит в гору. Проверяем перепад высоты на пятачке 7×7 (с запасом — замок
+// эпохи 5 сам займёт 5×5) и переводим его в угол наклона в градусах.
+const CASTLE_PAD_HW=3, CASTLE_MAX_SLOPE_DEG=9;
+function siteFlatEnough(x,z){
+  let mn=1e9,mx=-1e9;
+  for(let j=-CASTLE_PAD_HW;j<=CASTLE_PAD_HW;j++)for(let i=-CASTLE_PAD_HW;i<=CASTLE_PAD_HW;i++){
+    const e=elevAt(x+i,z+j)*HMAX;
+    if(e<mn)mn=e; if(e>mx)mx=e;
+  }
+  return (mx-mn) < 2*CASTLE_PAD_HW*Math.tan(CASTLE_MAX_SLOPE_DEG*Math.PI/180);
+}
 const cities=[];
 for(let i=0;i<20;i++){
   let x,z,t=0,good=false;
@@ -441,7 +466,8 @@ for(let i=0;i<20;i++){
     z=9+Math.floor(hash2(i,t+50,SEED+5)*(N-18)); t++;
     const e=elevAt(x,z);
     good = e>SEA+0.06 && e<0.72 && !isWet(x,z) &&
-           !cities.some(c=>Math.hypot(c.x-x,c.z-z)<10.5);
+           !cities.some(c=>Math.hypot(c.x-x,c.z-z)<10.5) &&
+           siteFlatEnough(x,z);
   }
   // все двадцать сочетаний: четыре расы на пять эпох
   const race=RK[i%4], epoch=1+Math.floor(i/4);
@@ -1764,12 +1790,29 @@ function buildCity(c){
 // файлах), поэтому масштаб = номер эпохи даёт ровно footprint эпоха×эпоха
 // в мировых клетках, как просил игрок (1×1, 2×2, ... 5×5).
 const MODEL_SCALE_BY_EPOCH=[0,1,2,3,4,5];
-const modelInstances=cities.map((c,i)=>({
-  race:c.race, epoch:c.epoch,
-  x:c.x, y:H(c.x,c.z), z:c.z,
-  yaw:hash2(i,71,SEED+900)*Math.PI*2,
-  scale:MODEL_SCALE_BY_EPOCH[c.epoch],
-}));
+// Место под замок уже проверено на резкий уклон (siteFlatEnough выше), но
+// мелкая рябь рельефа остаётся — от неё угол здания на глаз чуть проваливался
+// или зависал. Вместо жёстко ровной посадки считаем локальный наклон земли
+// под центром (по соседним точкам) и слегка кренim модель по нему — "физика"
+// естественного оседания, а не выравнивание в идеальную плиту.
+const TILT_SAMPLE=0.6, TILT_MAX=6*Math.PI/180;   // не больше 6° — площадка и так почти ровная
+function groundTiltAt(x,z){
+  const hL=H(x-TILT_SAMPLE,z), hR=H(x+TILT_SAMPLE,z);
+  const hD=H(x,z-TILT_SAMPLE), hU=H(x,z+TILT_SAMPLE);
+  const clampT=v=>Math.max(-TILT_MAX,Math.min(TILT_MAX,v));
+  return {
+    tiltZ: clampT(Math.atan2(hR-hL, TILT_SAMPLE*2)),   // наклон по оси X — крен вокруг Z
+    tiltX: clampT(-Math.atan2(hU-hD, TILT_SAMPLE*2)),  // наклон по оси Z — крен вокруг X
+  };
+}
+const modelInstances=cities.map((c,i)=>{
+  const y=H(c.x,c.z), yaw=hash2(i,71,SEED+900)*Math.PI*2, scale=MODEL_SCALE_BY_EPOCH[c.epoch];
+  const {tiltX,tiltZ}=groundTiltAt(c.x,c.z);
+  return {
+    race:c.race, epoch:c.epoch, x:c.x, y, z:c.z, yaw, scale,
+    mat:M4.modelTilt(c.x,y,c.z,yaw,tiltX,tiltZ,scale),
+  };
+});
 
 /* =======================================================================
    WebGL
@@ -2286,8 +2329,7 @@ function frame(){
     if(!m) continue;
     gl.bindVertexArray(m.vao);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,m.tex);
-    gl.uniformMatrix4fv(mUModel,false,new Float32Array(
-      M4.model(inst.x,inst.y,inst.z,inst.yaw,inst.scale)));
+    gl.uniformMatrix4fv(mUModel,false,new Float32Array(inst.mat));
     gl.drawElements(gl.TRIANGLES,m.indexCount,m.indexType,0);
   }
 
