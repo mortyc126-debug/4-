@@ -77,9 +77,13 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 
 .stars{color:var(--gilt);font-size:13px;letter-spacing:1px;margin:2px 0}
 .gen-skills{display:flex;gap:8px;margin-top:9px}
-.gen-lvup{flex:0 0 auto;width:26px;height:26px;padding:0;line-height:1;font-size:16px;
-  border-radius:5px}
-.gen-lvup:disabled{opacity:.35}
+.gen-tomes{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.gen-tome{position:relative;width:30px;height:30px;padding:0;border-radius:5px;
+  border:1px solid var(--gilt-dim);background:var(--wood-deep);overflow:hidden}
+.gen-tome img{width:100%;height:100%;object-fit:cover}
+.gen-tome:disabled{opacity:.4}
+.gen-tome s{position:absolute;bottom:-2px;right:-2px;text-decoration:none;font-family:var(--data);
+  font-size:8.5px;background:rgba(0,0,0,.65);color:#e6c273;padding:0 3px;border-radius:3px;line-height:1.4}
 .gear-slots{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-bottom:6px}
 .gear-slot{position:relative;background:radial-gradient(120% 120% at 50% 30%,rgba(52,42,29,.6),rgba(20,16,10,.7));
   border:1px solid var(--gilt-dim);border-radius:4px;padding:10px 6px;text-align:center;
@@ -957,12 +961,27 @@ const GEAR_NAMES = {
   acc2:  {bastion:["Простой оберег","Оберег стражи","Оберег ветерана","Оберег несокрушимого","Реликвия Бастиона"],
           storm:  ["Походная подвеска","Подвеска разведчика","Подвеска стремительного","Подвеска бури","Знак Бури"]},
 };
-const GEAR_RARITY_MULT = [1, 2.3, 4.2, 7.5, 13];   // нелинейный рост: редкая вещь должна стоить риска
+// Бонусы снаряжения — теперь в процентах к статам (не флэт-числа), по заданным игроком
+// диапазонам на редкость: обычная 0.5-1%, необычная 1-2.5%, редкая 2-4%, эпическая 4.5-8%,
+// легендарная 7.5-11% (до 15% на топовом оружии). Основной стат предмета берёт верхнюю
+// границу диапазона, второстепенные — пониже, третий (у аксессуаров) — ещё меньше.
+const GEAR_PCT_PRIMARY  =[0.010, 0.025, 0.040, 0.075, 0.11 ];
+const GEAR_PCT_SECONDARY=[0.005, 0.012, 0.022, 0.045, 0.075];
+const GEAR_PCT_TERTIARY =[0.0025,0.006, 0.011, 0.0225,0.0375];
+// Мощь предмета за редкость (середина заданного диапазона) — учитывается, только пока надето.
+const GEAR_POWER=[1250, 2750, 6250, 15000, 37500];
 function gearItemStats(cat,order,r){     // r = редкость 1..5
-  const m=GEAR_RARITY_MULT[r-1];
-  if(cat==="armor") return order==="bastion" ? {def:Math.round(4*m),hp:Math.round(6*m)} : {def:Math.round(2*m),hp:Math.round(9*m)};
-  if(cat==="weapon") return order==="bastion" ? {atk:Math.round(4*m),def:Math.round(3*m)} : {atk:Math.round(8*m)};
-  return order==="bastion" ? {hp:Math.round(4*m),def:Math.round(2*m),atk:Math.round(1*m)} : {hp:Math.round(2*m),atk:Math.round(4*m),def:Math.round(1*m)};   // acc
+  const P=GEAR_PCT_PRIMARY[r-1], S=GEAR_PCT_SECONDARY[r-1], T=GEAR_PCT_TERTIARY[r-1];
+  if(cat==="armor") return order==="bastion" ? {def:P,hp:S} : {hp:P,def:S};
+  if(cat==="weapon"){
+    if(order==="storm") return {atk: r===5?0.15:P};   // буря — чистый урон, легендарное оружие — до 15%
+    return {atk:P,def:S};
+  }
+  return order==="bastion" ? {hp:P,def:S,atk:T} : {atk:P,hp:S,def:T};   // акссессуар
+}
+function gearPowerOf(p){     // мощь надетого снаряжения
+  let v=0; GEAR_SLOTS.forEach(s=>{ const it=p.gear&&p.gear[s.id]; if(it) v+=GEAR_POWER[it.rarity-1]; });
+  return v;
 }
 const gearIconSrc = (slot,order) => "images/ui/gear-"+slot+"-"+order+".png";
 const CRAFT_CHANCE = [1.0, 0.9, 0.75, 0.55, 0.35];  // шанс успеха ковки по редкости 1..5
@@ -1345,11 +1364,17 @@ const trainTime = (type,tier) => 14.58*Math.pow(1.9,tier-1);     // сек за 
 const TRAIN_BLD = {inf:"barracks",arc:"range",cav:"stable",sie:"siege"};
 const BLD_TRAIN = {barracks:"inf",range:"arc",stable:"cav",siege:"sie"};
 const trainCap = lv => 100 + lv*40;                            // максимум за один заказ
-const genXpNeed = lv => Math.round(120*Math.pow(1.18,lv-1));
+// Опыт до след. уровня (лв.1..59) — интерполировано по реальной табличке легендарного
+// командира (контрольные точки 1/10/20/30/37/40/50/55/60), лог-линейно по кумулятиве,
+// затем сглажено до монотонности. Суммарно к 60 ур. ≈50.12 млн (табличная цель 50.107 млн).
+const GEN_XP_NEED=[210,210,276,483,846,1482,2594,4541,7950,7950,7950,7950,8449,10471,12978,16084,19935,24707,30621,30621,33942,40093,47360,55943,66083,78060,92207,108919,128659,128659,142186,163193,187303,214974,246734,283186,323079,370524,424937,424937,478776,540017,609091,687001,774876,873992,985786,1111879,1254102,1660595,1909956,2196763,2526638,2906048,3921926,4612964,5425762,6381774,7506234];
+const genXpNeed = lv => GEN_XP_NEED[lv-1]||GEN_XP_NEED[GEN_XP_NEED.length-1];
 const epochOf   = hall => hall>=25?5 : hall>=19?4 : hall>=13?3 : hall>=7?2 : 1;   // 5 эпох × 6 уровней
 const citySize  = hall => Math.min(5, epochOf(hall));         // город растёт 1×1 → 5×5
 const marchSlots= hall => hall>=28?5 : hall>=22?4 : hall>=16?3 : hall>=10?2 : 1;
-const hospitalCap = lv => lv<=0?0:Math.round(300*Math.pow(1.55,lv-1));
+// Степенной рост: 300 на 1 ур. плавно до 160 000 на максимуме (30 ур., заданный игроком бюджет).
+const HOSP_CAP_EXP=1.8462;
+const hospitalCap = lv => lv<=0?0:Math.round(300*Math.pow(lv,HOSP_CAP_EXP));
 const totalHospitalCap = p => p.b.hospital.reduce((s,lv)=>s+hospitalCap(lv),0);
 const hallGateLevel = (p,k) => isMulti(k) ? p.b[k][0] : p.b[k];
 const maxWallHp = lv => 3000+lv*2500;
@@ -1386,6 +1411,7 @@ function newPlayer(id,race,x,y,isBot){
     gen:{lv:1,xp:0,pts:0,tal:{},id:isBot?(aggr>0.5?0:1):null}, gear:{}, tech:{}, rsch:null,
     inventory:Object.fromEntries(GEAR_SLOTS.map(s=>[s.id,{bastion:[0,0,0,0,0],storm:[0,0,0,0,0]}])),
     materials:{ore:[0,0,0,0,0],leather:[0,0,0,0,0],bone:[0,0,0,0,0],ebony:[0,0,0,0,0]}, craft:null,
+    tomes:{},
     shieldUntil:0, lostTo:null, power:0,
     ai:{aggr, greed:.4+RNG()*.5, caution:.3+RNG()*.6, nextThink:0, target:null},
   };
@@ -1618,9 +1644,14 @@ function power(p){
     const lv=p.tech[n.id]||0; if(lv) v+=researchPower(n.branch,n.wave,lv);
   });
   v+=genPowerOf(p);
+  v+=gearPowerOf(p);
   return Math.round(v);
 }
-function genPowerOf(p){ return 2000+Math.pow(p.gen.lv,1.5)*130; }   // 1 ур. ~2130 (в RoK командир сразу даёт 2-3к силы)
+function genTalentSpent(p){ let s=0; for(const k in p.gen.tal) s+=p.gen.tal[k]||0; return s; }
+// База: 2000 + 318.5*ур^1.5 — ~150 тыс. на 60 ур. Плюс 1000 мощи за каждое вложенное очко
+// таланта (максимум 60 очков за всю жизнь — 1/ур., GENERAL_TREE и TALENTS делят один пул),
+// то есть на полном максимуме генерал даёт 150к+60к=210к мощи (заданный игроком бюджет).
+function genPowerOf(p){ return 2000+Math.pow(p.gen.lv,1.5)*318.5 + genTalentSpent(p)*1000; }
 function armyPower(units,B,race){
   const TYPE_ATK={inf:"atkInf",arc:"atkArc",cav:"atkCav",sie:"atkSie"};
   const TYPE_DEF={inf:"defInf",arc:"defArc",cav:"defCav",sie:"defSie"};
@@ -1645,7 +1676,8 @@ function emptyUnits(){const u={};TKEYS.forEach(t=>{u[t]={};for(let i=1;i<=5;i++)
 const marchCapacityBase = hall => 145.98*Math.pow(hall,2.1443);
 function marchCapacity(p){
   const B=bonuses(p);
-  return Math.round((marchCapacityBase(p.b.hall)+p.gen.lv*260)*(1+B.load));
+  const genCap=p.gen.lv/60*100000;   // вклад полководца — 100 тыс. на максимуме (60 ур.)
+  return Math.round((marchCapacityBase(p.b.hall)+genCap)*(1+B.load));
 }
 
 /* =========================================================================
@@ -2071,14 +2103,17 @@ function arriveMarch(m){
     const r=resolveBattle(A,D,{startA:countUnits(m.units)});
     const sp=splitLosses(p,r.lossA,false);
     if(r.win==="A"){
-      const xp=Math.round(40*Math.pow(1.22,cell.lv-1));
+      const i=clamp(cell.lv,1,30), xp=BANDIT_XP[i-1];
       addXp(p,xp);
+      const drops=bookDrop(cell.lv*100);
+      let bookTxt="";
+      for(const v in drops){ p.tomes[v]=(p.tomes[v]||0)+drops[v]; bookTxt+=", "+TOME_NAME[v]+" ×"+drops[v]; }
       const loot={}; const lootBase=Math.round(1800*Math.pow(1.28,cell.lv-1));
       RES.forEach(rr=>loot[rr]=Math.round(lootBase*(rr==="gold"?.25:rr==="stone"?.6:1)));
       m.carry=loot;
       delete W.map[key(m.tx,m.ty)];
       schedule(CFG.RESPAWN_CAMP,"respawn",{x:m.tx,y:m.ty});
-      if(!p.isBot) logg("Разбитый лагерь ур. "+cell.lv+". Опыт +"+xp+", убито "+sp.dead+
+      if(!p.isBot) logg("Разбитый лагерь ур. "+cell.lv+". Опыт +"+xp+bookTxt+", убито "+sp.dead+
         ", ранено "+sp.hurt+".","war");
     } else {
       if(!p.isBot) logg("Отряд разбит лагерем ур. "+cell.lv+". Убито "+sp.dead+", ранено "+sp.hurt+".","war");
@@ -2099,10 +2134,25 @@ function arriveMarch(m){
   recallMarch(m);
 }
 
+// Книги опыта: выпадают с разбойников (сверх опыта за уровень) и тратятся на ручную прокачку
+// генерала. Суммарная ценность книг с одной победы = уровень_лагеря*100 (проверено на примерах
+// игрока: 17 ур. -> 1700 = 1x1000+1x500+2x100; 30 ур. -> 3000 = 3x1000), разбивается жадно
+// от крупного номинала к мелкому.
+const TOME_VALUES=[20000,10000,5000,1000,500,100];
+const TOME_NAME={100:"Простая книга",500:"Хорошая книга",1000:"Отличная книга",5000:"Золотая книга",10000:"Редкая книга",20000:"Древняя книга"};
+const TOME_ICON={100:"tome_green_100",500:"tome_blue_500",1000:"tome_purple_1000",5000:"tome_gold_5000",10000:"tome_orange_10000",20000:"tome_ancient_20000"};
+function bookDrop(total){
+  const drops={};
+  TOME_VALUES.forEach(v=>{ while(total>=v){ drops[v]=(drops[v]||0)+1; total-=v; } });
+  return drops;
+}
+// Точная табличка разбойников (ур.1-30): численность отряда и базовый опыт за победу.
+const BANDIT_TROOPS=[20000,23000,26000,29000,32000,35000,38000,42000,46000,50000,55000,60000,66000,73000,80000,88000,96000,105000,115000,125000,135000,145000,157000,170000,185000,200000,215000,230000,245000,260000];
+const BANDIT_XP=[100,120,140,160,180,200,220,240,260,300,330,360,390,420,450,480,510,540,570,600,640,680,720,760,800,840,880,920,960,1000];
+const banditTier = lv => lv<=5?1 : lv<=12?2 : lv<=20?3 : 4;
 function banditArmy(lv){
-  const u=emptyUnits();
-  const tier=clamp(Math.ceil(lv/6),1,5);
-  const n=Math.round(90*Math.pow(1.235,lv-1)/TIER_MULT[tier-1]);
+  const u=emptyUnits(), i=clamp(lv,1,30);
+  const tier=banditTier(i), n=BANDIT_TROOPS[i-1];
   u.inf[tier]=Math.round(n*.45); u.arc[tier]=Math.round(n*.3);
   u.cav[tier]=Math.round(n*.25);
   return u;
@@ -3384,7 +3434,7 @@ function unitThumb(p,t,i){
 }
 let forgeTab=null, forgeRarity=null;
 function forgeInfoHtml(p){
-  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+st[k])).join(", ");
+  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+(st[k]*100).toFixed(1)+"%")).join(", ");
   let h="<div id='bm-tree'>";
   if(p.craft){
     const cf=(W.t-p.craft.t0)/Math.max(1,p.craft.t1-p.craft.t0);
@@ -3637,11 +3687,11 @@ function statIcon(kind){
 function genStats(p){
   // 1 ур. полководца ~= статы юнита Т5 (как в RoK), дальше растёт той же кривой, что и раньше
   const lv=p.gen.lv, B=bonuses(p), g=Math.pow(lv,1.15);
-  const gear=gearBonus(p);
+  const gear=gearBonus(p);   // теперь проценты — умножаем, а не прибавляем флэтом
   return {
-    hp:  Math.round((250+30*g)*(1+B.genHpMod))+gear.hp,
-    atk: Math.round((200+40*g)*(1+B.genAtkMod))+gear.atk,
-    def: Math.round((170+30*g)*(1+B.genDefMod))+gear.def,
+    hp:  Math.round((250+30*g)*(1+B.genHpMod)*(1+gear.hp)),
+    atk: Math.round((200+40*g)*(1+B.genAtkMod)*(1+gear.atk)),
+    def: Math.round((170+30*g)*(1+B.genDefMod)*(1+gear.def)),
   };
 }
 function genPortraitHtml(race,i){
@@ -3661,7 +3711,7 @@ function genSkillBadges(p){
 }
 const GEAR_LAYOUT = ["handL","helmet","handR","chest","acc1","gloves","pants","acc2","boots"];
 function genGearHtml(p){
-  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+st[k])).join(", ");
+  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+(st[k]*100).toFixed(1)+"%")).join(", ");
   let h=rubric("Экипировка","снаряжение куётся в горне, а не здесь");
   h+="<div class='gear-slots'>";
   GEAR_LAYOUT.forEach(id=>{
@@ -3670,7 +3720,7 @@ function genGearHtml(p){
       "<div class='gear-slot-icon'>"+(it?"<img src='"+gearIconSrc(s.id,it.order)+"' alt=''>":"")+"</div>"+
       "<div class='gear-slot-name'>"+s.name+"</div>"+
       "<div class='gear-slot-item'>"+(it?GEAR_NAMES[s.id][it.order][it.rarity-1]+"<span class='tag gilt'>"+RARITY_NAMES[it.rarity-1]+"</span>"
-        +"<div class='note'>"+statTxt(gearItemStats(s.cat,it.order,it.rarity))+"</div>":"пусто")+"</div>"+
+        +"<div class='note'>"+statTxt(gearItemStats(s.cat,it.order,it.rarity))+" · мощь "+RU(GEAR_POWER[it.rarity-1])+"</div>":"пусто")+"</div>"+
       (it?"<button class='seal' data-act='unequip' data-slot='"+s.id+"'>Снять</button>":"")+
       "</div>";
   });
@@ -3687,7 +3737,7 @@ function genGearHtml(p){
           "<img class='mat-icon' src='"+gearIconSrc(s.id,order)+"' alt=''></div>"+
           "<div class='fill'>"+
           "<div class='title'>"+GEAR_NAMES[s.id][order][r-1]+"<span class='tag'>×"+cnt+"</span></div>"+
-          "<div class='note'>"+s.name+" · "+statTxt(gearItemStats(s.cat,order,r))+"</div></div>"+
+          "<div class='note'>"+s.name+" · "+statTxt(gearItemStats(s.cat,order,r))+" · мощь "+RU(GEAR_POWER[r-1])+"</div></div>"+
           "<button class='seal' data-act='equip' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Надеть</button>"+
           "<button class='seal' data-act='dismantle' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Разобрать</button></div>";
       }
@@ -3712,20 +3762,25 @@ function foGen(){
   }
   const G=genOf(p), B=bonuses(p), S=genStats(p);
   const need=genXpNeed(p.gen.lv), f=p.gen.xp/need, lvCap=Math.min(60,epochOf(p.b.hall)*12);
-  const stars=Math.min(5,1+Math.floor(p.gen.lv/12));
+  const stars=Math.min(6,1+Math.floor(p.gen.lv/10));   // 1 звезда ~= 10 уровней, всего 6 звёзд до 60 ур.
   const genPower=genPowerOf(p);
   let h="<div class='gen-figure-wrap'>"+genFigureHtml(p.race,p.gen.id||0)+"</div>";
   h+=rubric("Полководец");
   h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
     genPortraitHtml(p.race,p.gen.id||0)+"</div>"+ring(p.gen.lv,60)+"<div class='fill'>"+
     "<div class='title'>"+G.name+"<span class='tag gilt'>"+G.role+"</span></div>"+
-    "<div class='stars'>"+"&#9733;".repeat(stars)+"&#9734;".repeat(5-stars)+"</div>"+
+    "<div class='stars'>"+"&#9733;".repeat(stars)+"&#9734;".repeat(6-stars)+"</div>"+
     "<div class='note'>"+G.bonus+
     (p.gen.pts>0?" · <em>очков к раздаче: "+p.gen.pts+"</em>":"")+
     (p.gen.lv>=lvCap&&lvCap<60?" · потолок эпохи: "+lvCap:"")+"</div></div></div>"+
     "<div class='line' style='margin-top:7px;gap:8px'><div class='progress' style='flex:1;margin-top:0'>"+
-    "<i style='width:"+(f*100).toFixed(1)+"%'></i></div>"+
-    "<button class='seal gen-lvup' data-act='genlvup' disabled title='Нужны книги опыта — появятся позже'>+</button></div>"+
+    "<i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>"+
+    "<div class='gen-tomes'>"+TOME_VALUES.map(v=>{
+      const cnt=p.tomes[v]||0; if(!cnt) return "";
+      return "<button class='gen-tome' data-act='usetome' data-v='"+v+"' "+(p.gen.lv>=lvCap?"disabled":"")+
+        " title='"+TOME_NAME[v]+" — восполняет "+RU(v)+" опыта'>"+
+        "<img src='images/ui/"+TOME_ICON[v]+".png' alt=''><s>×"+cnt+"</s></button>";
+    }).join("")+"</div>"+
     "<table class='roll' style='margin-top:9px'><tr><td>Сила полководца</td><td>"+RU(genPower)+"</td></tr></table>"+
     genSkillBadges(p)+
     "</div>";
@@ -4151,6 +4206,14 @@ function handleAct(e){
   else if(a==="tal"){
     const id=b.dataset.id, node=findTalentNode(id), max=(node&&node.max)||5;
     if(p.gen.pts>0&&(p.gen.tal[id]||0)<max){ p.gen.tal[id]=(p.gen.tal[id]||0)+1; p.gen.pts-- }
+  }
+  else if(a==="usetome"){
+    const v=+b.dataset.v, lvCap=Math.min(60,epochOf(p.b.hall)*12);
+    if((p.tomes[v]||0)>0 && p.gen.lv<lvCap){
+      p.tomes[v]--; addXp(p,v);
+      herald(TOME_NAME[v]+" использована: +"+RU(v)+" опыта.");
+      lastFolio=""; renderFolio(); refreshGenIfOpen();
+    }
   }
   else if(a==="pickgen"){
     if(p.gen.id==null){ p.gen.id=+b.dataset.id; herald("Выбран генерал: "+GENERALS[p.race][p.gen.id].name+".") }
