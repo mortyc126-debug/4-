@@ -3239,20 +3239,6 @@ function nodeTitle(n){
   return n.name;
 }
 function waveLabel(w){ return {1:"Начало",2:"Развитие",3:"Расцвет",4:"Венец"}[w]||("Ступень "+w); }
-function missingRequires(n,p){
-  return (n.requires||[]).filter(id=>{ const rn=findNode(id); return !rn||(p.tech[id]||0)<rn.max; });
-}
-function researchLocked(n,p){
-  if(epochOf(p.b.hall)<n.wave) return true;
-  return missingRequires(n,p).length>0;
-}
-const EPOCH_HALL_MIN=[1,7,13,19,25];
-function lockReason(n,p){
-  if(epochOf(p.b.hall)<n.wave) return "нужна ратуша "+EPOCH_HALL_MIN[n.wave-1]+" уровня";
-  const missing=missingRequires(n,p);
-  if(missing.length) return "нужно закончить: "+missing.map(id=>nodeTitle(findNode(id))).join(", ");
-  return "заблокировано";
-}
 function nodeDepth(n,arr,cache){
   if(cache.has(n.id)) return cache.get(n.id);
   cache.set(n.id,0); // защита от случайного цикла в данных
@@ -3263,13 +3249,13 @@ function nodeDepth(n,arr,cache){
   cache.set(n.id,d);
   return d;
 }
-function renderTreeMap(arr,p){
+const ROW_SIZES=[4,3,4,2];    // рядами по 2-4 для красоты, а не одной длинной стеной
+function computeRows(arr,p){
   const visible=arr.filter(n=>!n.race||n.race===p.race);
   const cache=new Map();
   const byDepth={};
   visible.forEach(n=>{ const d=nodeDepth(n,arr,cache); (byDepth[d]=byDepth[d]||[]).push(n); });
   const depths=Object.keys(byDepth).map(Number).sort((a,b)=>a-b);
-  const ROW_SIZES=[4,3,4,2];    // рядами по 2-4 для красоты, а не одной длинной стеной
   let sizeIdx=0;
   const rows=[];
   depths.forEach(d=>{
@@ -3280,6 +3266,28 @@ function renderTreeMap(arr,p){
       list=list.slice(n);
     }
   });
+  return rows;
+}
+function rowGate(n,p){
+  const rows=computeRows(ACADEMY_TREE[n.branch],p);
+  const idx=rows.findIndex(row=>row.some(x=>x.id===n.id));
+  if(idx<=0) return {locked:false,missing:[]};
+  const missing=rows[idx-1].filter(x=>(p.tech[x.id]||0)<x.max);
+  return {locked:missing.length>0,missing};
+}
+function researchLocked(n,p){
+  if(epochOf(p.b.hall)<n.wave) return true;
+  return rowGate(n,p).locked;
+}
+const EPOCH_HALL_MIN=[1,7,13,19,25];
+function lockReason(n,p){
+  if(epochOf(p.b.hall)<n.wave) return "нужна ратуша "+EPOCH_HALL_MIN[n.wave-1]+" уровня";
+  const missing=rowGate(n,p).missing;
+  if(missing.length) return "нужно закончить: "+missing.map(x=>nodeTitle(x)).join(", ");
+  return "заблокировано";
+}
+function renderTreeMap(arr,p){
+  const rows=computeRows(arr,p);
   let h="<div class='rtree'>";
   rows.forEach((row,ri)=>{
     if(ri>0) h+="<div class='rtree-link'></div>";
