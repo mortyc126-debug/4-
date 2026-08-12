@@ -80,6 +80,9 @@ const M4={
   look(e,c,u){const z=norm(sub(e,c)),x=norm(cross(u,z)),y=cross(z,x);
     return[x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0,
       -dot(x,e),-dot(y,e),-dot(z,e),1]},
+  // Перенос * поворот вокруг Y * равномерный масштаб — матрица размещения GLB-модели в мире.
+  model(tx,ty,tz,ry,s){const c=Math.cos(ry),si=Math.sin(ry);
+    return[c*s,0,-si*s,0, 0,s,0,0, si*s,0,c*s,0, tx,ty,tz,1]},
 };
 
 /* =======================================================================
@@ -1771,7 +1774,17 @@ function buildCity(c){
     }
   }
 }
-cities.forEach(buildCity);
+// Замки теперь — настоящие GLB-модели (models/castles/<раса>-<эпоха>.glb),
+// а не собранная кодом геометрия. buildCity()/buildHuman()/buildDwarf() ниже
+// больше не вызываются на замках — эти функции ещё нужны для теста, но сама
+// расстановка идёт через modelInstances (см. блок WebGL: там же грузим GLB).
+const MODEL_SCALE_BY_EPOCH=[0,2.6,3.6,4.7,6.0,7.6];  // тот же прогресс, что раньше держал EPOCH_R
+const modelInstances=cities.map((c,i)=>({
+  race:c.race, epoch:c.epoch,
+  x:c.x, y:H(c.x,c.z), z:c.z,
+  yaw:hash2(i,71,SEED+900)*Math.PI*2,
+  scale:MODEL_SCALE_BY_EPOCH[c.epoch],
+}));
 
 /* =======================================================================
    WebGL
@@ -1894,6 +1907,55 @@ void main(){
   frag=vec4(c,1.0);
 }`;
 
+/* ---- Шейдер настоящих GLB-моделей (замков). Освещение/тени/туман — та же
+   формула, что и в основном FS, только цвет берём из текстуры, а не из
+   вершинного атрибута. Модели пока не отбрасывают тень сами на землю —
+   только принимают её от рельефа (упрощение первой версии). ---- */
+const MVS=`#version 300 es
+in vec3 aPos; in vec3 aNrm; in vec2 aUv;
+uniform mat4 uVP, uModel, uLightVP;
+out vec3 vWorld, vNrm; out vec2 vUv; out vec4 vLight;
+void main(){
+  vec4 w = uModel*vec4(aPos,1.0);
+  vWorld = w.xyz;
+  vNrm = mat3(uModel)*aNrm;
+  vUv = aUv;
+  vLight = uLightVP*w;
+  gl_Position = uVP*w;
+}`;
+const MFS=`#version 300 es
+precision highp float;
+in vec3 vWorld, vNrm; in vec2 vUv; in vec4 vLight;
+uniform vec3 uEye, uSun; uniform float uTime, uFog, uNbias;
+uniform mat4 uLightVP; uniform highp sampler2DShadow uShadow; uniform sampler2D uTex;
+out vec4 frag;
+float shadow(vec3 n, float ndl){
+  float k = uNbias * (1.0 + 2.6*(1.0-ndl));
+  vec4 lp = uLightVP * vec4(vWorld + n*k, 1.0);
+  vec3 p = lp.xyz / lp.w;
+  if(p.x<0.0||p.x>1.0||p.y<0.0||p.y>1.0||p.z>1.0) return 1.0;
+  float s=0.0; float o=1.0/2048.0;
+  s+=textureProj(uShadow, vec4(p.xy+vec2(-o,-o), p.z, 1.0));
+  s+=textureProj(uShadow, vec4(p.xy+vec2( o,-o), p.z, 1.0));
+  s+=textureProj(uShadow, vec4(p.xy+vec2(-o, o), p.z, 1.0));
+  s+=textureProj(uShadow, vec4(p.xy+vec2( o, o), p.z, 1.0));
+  return s*0.25;
+}
+void main(){
+  vec3 n = normalize(vNrm);
+  vec3 base = texture(uTex, vUv).rgb;
+  float d = max(dot(n,uSun),0.0);
+  float sh = d>0.015 ? shadow(n,d) : 1.0;
+  vec3 warm = vec3(1.22,0.94,0.62);
+  vec3 sky  = vec3(0.26,0.34,0.50);
+  vec3 bounce = vec3(0.34,0.26,0.16) * (1.0-max(n.y,0.0)) * 0.30;
+  vec3 lit = base * (sky*(0.30+0.24*(n.y*0.5+0.5)) + warm*d*sh*1.22 + bounce);
+  lit = mix(lit*vec3(0.86,0.92,1.10), lit, sh);
+  float dist = length(vWorld-uEye);
+  float fog = 1.0-exp(-pow(dist*uFog,2.2));
+  frag = vec4(mix(lit, vec3(0.50,0.45,0.38), clamp(fog,0.0,0.72)), 1.0);
+}`;
+
 function mkProg(vs,fs){
   const sh=(t,s)=>{const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);
     if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(o));return o};
@@ -1971,6 +2033,84 @@ const SU=n=>gl.getUniformLocation(skyProg,n);
 
 gl.enable(gl.DEPTH_TEST);
 gl.disable(gl.CULL_FACE);   // обход вершин глазами не проверить — рисуем обе стороны
+
+/* =======================================================================
+   ЗАМКИ. Настоящие GLB-модели (models/castles/<раса>-<эпоха>.glb), а не
+   собранная кодом геометрия. Свой мини-загрузчик: файлы — обычный glTF 2.0
+   (JSON+BIN в одном контейнере), без анимаций и расширений, поэтому хватает
+   разобрать нужные accessor'ы руками — библиотека не нужна.
+   ======================================================================= */
+const modelProg=mkProg(MVS,MFS);
+const mU=n=>gl.getUniformLocation(modelProg,n);
+const mUVP=mU("uVP"), mUModel=mU("uModel"), mULightVP=mU("uLightVP"),
+      mUEye=mU("uEye"), mUSun=mU("uSun"), mUTime=mU("uTime"),
+      mUShadow=mU("uShadow"), mUFog=mU("uFog"), mUNbias=mU("uNbias"), mUTex=mU("uTex");
+
+async function loadGLB(url){
+  const buf=await (await fetch(url)).arrayBuffer();
+  const dv=new DataView(buf);
+  if(dv.getUint32(0,true)!==0x46546C67) throw new Error("не glTF-контейнер: "+url);
+  const length=dv.getUint32(8,true);
+  let off=12, json=null, bin=null;
+  while(off<length){
+    const clen=dv.getUint32(off,true), ctype=dv.getUint32(off+4,true);
+    const cdata=buf.slice(off+8,off+8+clen);
+    if(ctype===0x4E4F534A) json=JSON.parse(new TextDecoder().decode(cdata));
+    else if(ctype===0x004E4942) bin=cdata;
+    off+=8+clen;
+  }
+  const CTYPE={5121:Uint8Array,5123:Uint16Array,5125:Uint32Array,5126:Float32Array};
+  const NCOMP={SCALAR:1,VEC2:2,VEC3:3,VEC4:4};
+  const acc=i=>json.accessors[i], bv=i=>json.bufferViews[i];
+  function accArr(i){
+    const a=acc(i), v=bv(a.bufferView), Ctor=CTYPE[a.componentType];
+    const byteOff=(v.byteOffset||0)+(a.byteOffset||0);
+    return new Ctor(bin, byteOff, a.count*NCOMP[a.type]);
+  }
+  const prim=json.meshes[0].primitives[0];
+  const positions=accArr(prim.attributes.POSITION);
+  const normals=accArr(prim.attributes.NORMAL);
+  const uvs=accArr(prim.attributes.TEXCOORD_0);
+  const indices=accArr(prim.indices);
+  const mat=json.materials[prim.material];
+  const bcIdx=mat.pbrMetallicRoughness.baseColorTexture.index;
+  const img=json.images[json.textures[bcIdx].source];
+  const iv=bv(img.bufferView);
+  const bytes=bin.slice(iv.byteOffset||0, (iv.byteOffset||0)+iv.byteLength);
+  const bitmap=await createImageBitmap(new Blob([bytes],{type:img.mimeType}));
+
+  const mvao=gl.createVertexArray(); gl.bindVertexArray(mvao);
+  const battach=(name,data,size)=>{
+    const b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b);
+    gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);
+    const l=gl.getAttribLocation(modelProg,name);
+    if(l>=0){gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,size,gl.FLOAT,false,0,0)}
+  };
+  battach("aPos",positions,3); battach("aNrm",normals,3); battach("aUv",uvs,2);
+  const ibo=gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ibo);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,indices,gl.STATIC_DRAW);
+  const tex=gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,bitmap);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  bitmap.close();
+  return {vao:mvao, tex, indexType:indices.BYTES_PER_ELEMENT===2?gl.UNSIGNED_SHORT:gl.UNSIGNED_INT,
+    indexCount:indices.length};
+}
+
+const castleModelCache={};   // "раса-эпоха" -> {vao,tex,indexType,indexCount} | Promise
+function castleModel(race,epoch){
+  const key=race+"-"+epoch;
+  if(!castleModelCache[key]) castleModelCache[key]=loadGLB("models/castles/"+key+".glb")
+    .then(m=>{castleModelCache[key]=m; return m})
+    .catch(e=>{console.warn("замок не загрузился:",key,e); castleModelCache[key]=null; return null});
+  const v=castleModelCache[key];
+  return (v&&v.then)?null:v;   // ещё грузится — вернём null, отрисуем на следующий раз
+}
 
 /* ---- Камера ---- */
 let cam={yaw:0.72,pitch:0.55,dist:74,tx:C,tz:C,ty:3}, drag=null;
@@ -2094,7 +2234,13 @@ function frame(){
   if(!drag && !acting) cam.yaw+=0.0007;
   const ex=cam.tx+Math.sin(cam.yaw)*Math.cos(cam.pitch)*cam.dist;
   const ez=cam.tz+Math.cos(cam.yaw)*Math.cos(cam.pitch)*cam.dist;
-  const ey=Math.sin(cam.pitch)*cam.dist+cam.ty+0.5;
+  let ey=Math.sin(cam.pitch)*cam.dist+cam.ty+0.5;
+  // Камера ходит по орбите вокруг цели, а высоту рельефа знает только под
+  // самой целью — рядом со склоном орбита может увести взгляд ПОД землю
+  // (упираемся в изнанку ближнего треугольника — экран заливает чёрным).
+  // Подпираем глаз высотой земли прямо под ним, с запасом.
+  const groundAtEye=H(Math.max(0,Math.min(N-1,Math.round(ex))),Math.max(0,Math.min(N-1,Math.round(ez))));
+  if(ey<groundAtEye+0.6) ey=groundAtEye+0.6;
   const eye=[ex,ey,ez], tgt=[cam.tx,cam.ty,cam.tz];
 
   // Проход 1: глубина со стороны солнца
@@ -2137,6 +2283,29 @@ function frame(){
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,shadowTex);
   gl.uniform1i(uShadow,0);
   gl.drawArrays(gl.TRIANGLES,0,VERTS);
+
+  // Проход 3: замки (GLB). Каждая раса+эпоха грузится один раз и лениво —
+  // модель, которая ещё в пути, просто пропускается до следующего кадра.
+  gl.useProgram(modelProg);
+  gl.uniformMatrix4fv(mUVP,false,new Float32Array(VP));
+  gl.uniformMatrix4fv(mULightVP,false,new Float32Array(window.__noShadow?FAR_VPB:lightVPB));
+  gl.uniform3fv(mUEye,new Float32Array(eye));
+  gl.uniform3fv(mUSun,new Float32Array(SUN));
+  gl.uniform1f(mUTime,t);
+  gl.uniform1f(mUFog,window.__fog!==undefined?window.__fog:0.0075);
+  gl.uniform1f(mUNbias,0.03);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,shadowTex);
+  gl.uniform1i(mUShadow,0);
+  gl.uniform1i(mUTex,1);
+  for(const inst of modelInstances){
+    const m=castleModel(inst.race,inst.epoch);
+    if(!m) continue;
+    gl.bindVertexArray(m.vao);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,m.tex);
+    gl.uniformMatrix4fv(mUModel,false,new Float32Array(
+      M4.model(inst.x,inst.y,inst.z,inst.yaw,inst.scale)));
+    gl.drawElements(gl.TRIANGLES,m.indexCount,m.indexType,0);
+  }
 
   requestAnimationFrame(frame);
 }
