@@ -2688,6 +2688,11 @@ function fmt(n){ n=Math.round(n);
   if(Math.abs(n)>=1e6) return (n/1e6).toFixed(2)+" млн";
   if(Math.abs(n)>=1e4) return (n/1e3).toFixed(1)+" тыс";
   return RU(n) }
+function fmt0(n){ n=Math.round(n);              // без дробной части — для вместимости марша и т.п.
+  if(Math.abs(n)>=1e9) return Math.round(n/1e9)+" млрд";
+  if(Math.abs(n)>=1e6) return Math.round(n/1e6)+" млн";
+  if(Math.abs(n)>=1e4) return Math.round(n/1e3)+" тыс";
+  return RU(n) }
 function fmtDur(s){ s=Math.max(0,Math.round(s));
   const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),x=s%60;
   if(d) return d+" д "+h+" ч";
@@ -3223,7 +3228,7 @@ function hallInfoHtml(p){
   const epoch=epochOf(p.b.hall), track=RACE_EPOCHS[p.race], minus=RACES[p.race].minus;
   let h="<table id='bm-stats'><tr><td>Эпоха</td><td>"+epoch+" из 5</td></tr>"+
     "<tr><td>Отрядов в поле</td><td>"+marchSlots(p.b.hall)+"</td></tr>"+
-    "<tr><td>"+statIcon("load")+"Вместимость марша</td><td>"+fmt(marchCapacity(p))+"</td></tr></table>";
+    "<tr><td>"+statIcon("load")+"Вместимость марша</td><td>"+fmt0(marchCapacity(p))+"</td></tr></table>";
   h+="<div id='bm-tree'><div class='rgroup'>Черты расы: "+RACES[p.race].name+"</div>"+
     "<div class='rnode'><div class='rnode-hd'><b>Природа расы</b></div>"+
     "<div class='rnode-eff'>"+minus.desc+"</div></div>";
@@ -3956,7 +3961,7 @@ function openLevy(cx,cy){
 
     h+="<table class='roll' style='margin-top:14px'>"+
       "<tr><td>Выступает</td><td>"+RU(n)+"</td></tr>"+
-      "<tr><td>Место в отряде</td><td class='"+(over?"bad":"")+"'>"+fmt(weight)+" из "+fmt(capL)+"</td></tr>"+
+      "<tr><td>Место в отряде</td><td class='"+(over?"bad":"")+"'>"+fmt0(weight)+" из "+fmt0(capL)+"</td></tr>"+
       "<tr><td>Поднимут груза</td><td>"+fmt(load)+"</td></tr>"+
       "<tr><td>Дорога займёт</td><td>"+(n?fmtDur(eta):"—")+"</td></tr>"+
       "<tr><td>Сила отряда</td><td>"+fmt(mine)+"</td></tr></table>";
