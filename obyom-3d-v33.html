@@ -7,7 +7,10 @@
 <style>
   html,body{margin:0;height:100%;overflow:hidden;background:#0b0a09;
     font:14px/1.5 "Palatino Linotype","Book Antiqua",Palatino,Georgia,serif;color:#ece2ca}
-  canvas{display:block;width:100%;height:100%;cursor:grab}
+  /* touch-action:none отдаёт ВСЕ жесты на канвасе нашему коду: без этого
+     браузер по умолчанию перехватывает одиночный палец под скролл страницы,
+     а щипок — под масштабирование вьюпорта, и наша камера дёргается. */
+  canvas{display:block;width:100%;height:100%;cursor:grab;touch-action:none}
   canvas.drag{cursor:grabbing}
   #hud{position:fixed;left:12px;top:12px;cursor:pointer;user-select:none;background:rgba(22,17,11,.84);
     border:1px solid #3d3121;padding:12px 15px;font-size:12.5px;max-width:262px;
@@ -15,21 +18,13 @@
   #hud b{color:#e6c273;font-variant:small-caps;letter-spacing:.13em;display:block;margin-bottom:6px}
   #hud i{font-style:normal;color:#a2967b;display:block;margin-top:8px;font-size:11.5px}
   #hud kbd{font:inherit;color:#e6c273}
-  /* Управление кнопками: жесты на телефоне подводят, нужен запасной путь */
   #ui{position:fixed;inset:0;pointer-events:none;z-index:20}
-  #ui select,#ui button{pointer-events:auto;-webkit-tap-highlight-color:transparent;
+  #ui select{pointer-events:auto;-webkit-tap-highlight-color:transparent;
     touch-action:none;user-select:none}
-  /* Панель держим у ВЕРХНЕГО края: низ страницы в просмотрщике бывает обрезан */
-  #ctrl{position:absolute;left:8px;top:8px;display:grid;gap:5px;
-    grid-template-columns:repeat(6,minmax(0,1fr));width:min(330px,calc(100vw - 16px))}
-  #jump{position:absolute;left:8px;top:104px;width:min(330px,calc(100vw - 16px));
+  #jump{position:absolute;left:8px;top:8px;width:min(330px,calc(100vw - 16px));
     background:rgba(22,17,11,.94);color:#e6c273;border:1px solid #4a3b26;
     border-radius:8px;padding:10px;font:inherit;font-size:14px}
-  #ui button{height:46px;background:rgba(22,17,11,.92);color:#e6c273;
-    border:1px solid #4a3b26;border-radius:8px;font-size:18px;line-height:1;
-    display:flex;align-items:center;justify-content:center;padding:0}
-  #ui button:active{background:rgba(120,92,40,.95);color:#fff}
-  #hud{top:auto;bottom:12px}          /* подсказка уходит вниз, панели — наверх */
+  #hud{top:auto;bottom:12px}          /* подсказка уходит вниз, панель — наверх */
   #hud.min{max-width:none;padding:7px 11px}
   #hud.min p,#hud.min i{display:none}
   @media (max-width:760px){
@@ -41,23 +36,10 @@
 <body>
 <canvas id="c"></canvas>
 <div id="ui">
-  <div id="ctrl">
-    <button data-k="left" title="влево">◀</button>
-    <button data-k="up" title="вперёд">▲</button>
-    <button data-k="down" title="назад">▼</button>
-    <button data-k="right" title="вправо">▶</button>
-    <button data-k="zin" title="ближе">+</button>
-    <button data-k="zout" title="дальше">−</button>
-    <button data-k="ccw" title="повернуть влево">↺</button>
-    <button data-k="cw" title="повернуть вправо">↻</button>
-    <button data-k="tup" title="выше">⌃</button>
-    <button data-k="tdn" title="ниже">⌄</button>
-    <button data-k="home" title="весь мир">◎</button>
-  </div>
   <select id="jump" title="Перейти к городу"></select>
 </div>
 <div id="hud"><b>Четыре Знамени</b>
-<p>Кнопки наверху: перемещение, приближение, поворот, наклон. Список — переход к городу. Жесты тоже работают.</p>
+<p>Один палец — поворот и наклон, два пальца — щипок и перенос взгляда. Коснитесь замка, чтобы подойти к нему. Список — быстрый переход.</p>
 <i>Рельеф, реки, леса, дороги и двадцать замков собраны кодом. Ни одной картинки и ни одной библиотеки. Коснитесь, чтобы свернуть.</i></div>
 <script>
 "use strict";
@@ -1778,7 +1760,10 @@ function buildCity(c){
 // а не собранная кодом геометрия. buildCity()/buildHuman()/buildDwarf() ниже
 // больше не вызываются на замках — эти функции ещё нужны для теста, но сама
 // расстановка идёт через modelInstances (см. блок WebGL: там же грузим GLB).
-const MODEL_SCALE_BY_EPOCH=[0,2.6,3.6,4.7,6.0,7.6];  // тот же прогресс, что раньше держал EPOCH_R
+// Каждая GLB-модель нормализована в бокс ~1×1 по X/Z (проверено на всех 20
+// файлах), поэтому масштаб = номер эпохи даёт ровно footprint эпоха×эпоха
+// в мировых клетках, как просил игрок (1×1, 2×2, ... 5×5).
+const MODEL_SCALE_BY_EPOCH=[0,1,2,3,4,5];
 const modelInstances=cities.map((c,i)=>({
   race:c.race, epoch:c.epoch,
   x:c.x, y:H(c.x,c.z), z:c.z,
@@ -2121,17 +2106,28 @@ let pinch=null;
 const mid=()=>{const a=[...pts.values()];
   return {x:(a[0].x+a[1].x)/2, y:(a[0].y+a[1].y)/2,
           d:Math.hypot(a[0].x-a[1].x, a[0].y-a[1].y)}};
+// Полный тач-контроль: один палец крутит и наклоняет камеру, два —
+// щипок/перенос, короткое касание без сдвига — тап по цели (см. tryTap ниже).
+// preventDefault нужен и на move, не только на down: без него на части
+// браузеров всё равно пробивается собственный скролл/пинч страницы поверх
+// touch-action:none, если жест начался чуть раньше, чем сработал CSS.
+let tapCand=null;   // {x,y,t} — куда упал единственный палец, ждём: тап или увод в drag
+const TAP_MOVE=10, TAP_TIME=380;
 cv.addEventListener("pointerdown",e=>{
+  e.preventDefault();
   pts.set(e.pointerId,{x:e.clientX,y:e.clientY});     // сначала запомнить палец,
   try{ cv.setPointerCapture(e.pointerId) }catch(_){}  // захват — уже потом
   if(pts.size===1){ drag={x:e.clientX,y:e.clientY,yaw:cam.yaw,pitch:cam.pitch};
+    tapCand={x:e.clientX,y:e.clientY,t:performance.now()};
     cv.classList.add("drag") }
-  else if(pts.size===2){ drag=null;
+  else if(pts.size===2){ drag=null; tapCand=null;
     const m=mid(); pinch={d:m.d, x:m.x, y:m.y, dist:cam.dist, tx:cam.tx, tz:cam.tz} }
 });
 cv.addEventListener("pointermove",e=>{
   if(!pts.has(e.pointerId)) return;
+  e.preventDefault();
   pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(tapCand && Math.hypot(e.clientX-tapCand.x,e.clientY-tapCand.y)>TAP_MOVE) tapCand=null;
   if(pts.size>=2 && pinch){
     const m=mid();
     cam.dist=Math.max(9,Math.min(200, pinch.dist*(pinch.d/Math.max(12,m.d))));
@@ -2150,6 +2146,8 @@ cv.addEventListener("pointermove",e=>{
   }
 });
 function lift(e){
+  if(tapCand && pts.size===1 && performance.now()-tapCand.t<TAP_TIME) tryTap(tapCand.x,tapCand.y);
+  tapCand=null;
   pts.delete(e.pointerId);
   if(pts.size<2) pinch=null;
   if(pts.size===0){ drag=null; cv.classList.remove("drag") }
@@ -2157,62 +2155,51 @@ function lift(e){
     drag={x:a.x,y:a.y,yaw:cam.yaw,pitch:cam.pitch} }
 }
 cv.addEventListener("pointerup",lift);
-cv.addEventListener("pointercancel",lift);
+cv.addEventListener("pointercancel",()=>{ tapCand=null; lift(...arguments) });
 cv.addEventListener("wheel",e=>{e.preventDefault();
   cam.dist=Math.max(9,Math.min(200,cam.dist*(e.deltaY<0?0.9:1.11)))},{passive:false});
-/* ---- Кнопочное управление: работает там, где жесты не сработали ---- */
-const held={};
-function camMove(fx,fz,k){                      // сдвиг в плоскости взгляда
-  const c=Math.cos(cam.yaw), s2=Math.sin(cam.yaw), d=cam.dist*0.9*k;
-  cam.tx=Math.max(-8,Math.min(N+8, cam.tx + (fx*c - fz*s2)*d));
-  cam.tz=Math.max(-8,Math.min(N+8, cam.tz + (fx*s2 + fz*c)*d));
-  cam.ty=H(Math.max(0,Math.min(N-1,cam.tx)),Math.max(0,Math.min(N-1,cam.tz)))+1;
+
+/* ---- Тап по замку: проецируем каждый город последней VP-матрицей кадра,
+   берём ближайший к точке касания в экранных пикселях. Тот же переход
+   камеры, что и в выпадающем списке — модалка города подключится позже,
+   когда карта войдёт в саму игру. ---- */
+let lastVP=null;
+function projectToScreen(x,y,z){
+  const v=lastVP, w=v[3]*x+v[7]*y+v[11]*z+v[15];
+  const cx=v[0]*x+v[4]*y+v[8]*z+v[12], cy=v[1]*x+v[5]*y+v[9]*z+v[13];
+  if(w<=0.001) return null;
+  const r=cv.getBoundingClientRect();
+  return {x:(cx/w*0.5+0.5)*r.width, y:(1-(cy/w*0.5+0.5))*r.height};
 }
-const ACT={
-  up:   k=>camMove(0,-1,k),      down: k=>camMove(0, 1,k),
-  left: k=>camMove(-1,0,k),      right:k=>camMove( 1,0,k),
-  zin:  k=>{cam.dist=Math.max(6,  cam.dist*(1-1.1*k))},
-  zout: k=>{cam.dist=Math.min(200,cam.dist*(1+1.1*k))},
-  ccw:  k=>{cam.yaw-=1.6*k},     cw:   k=>{cam.yaw+=1.6*k},
-  tup:  k=>{cam.pitch=Math.min(1.42,cam.pitch+1.1*k)},
-  tdn:  k=>{cam.pitch=Math.max(0.08,cam.pitch-1.1*k)},
-  home: ()=>{ cam.tx=N/2; cam.tz=N/2; cam.ty=H(N/2,N/2)+2;
-              cam.dist=95; cam.pitch=0.45 },
-};
-// Три пути обработки: указатель, касание и щелчок. Если один из них на
-// устройстве не срабатывает, остальные подхватывают. Повторов не будет —
-// сторожим по времени последнего нажатия.
-document.querySelectorAll("#ctrl button").forEach(el=>{
-  const k=el.dataset.k, fn=ACT[k];
-  let last=0;
-  const stop=()=>{ delete held[k] };
-  const press=e=>{
-    const now=Date.now();
-    if(now-last<450) return;                    // уже обработано другим путём
-    last=now;
-    if(e){ e.preventDefault(); e.stopPropagation() }
-    fn(0.20);
-    if(k!=="home") held[k]=fn;
-  };
-  el.addEventListener("pointerdown",press);
-  el.addEventListener("touchstart",press,{passive:false});
-  el.addEventListener("mousedown",press);
-  el.addEventListener("click",e=>{ e.preventDefault();
-    if(Date.now()-last>450){ last=Date.now(); fn(0.30) } });
-  ["pointerup","pointercancel","pointerleave","touchend","touchcancel","mouseup","mouseleave"]
-    .forEach(ev=>el.addEventListener(ev,stop));
-});
-{ // Переход к городу: список всех двадцати
+function goToCity(c){
+  cam.tx=c.x; cam.tz=c.z; cam.ty=H(c.x,c.z)+1.2;
+  cam.dist=[0,8,10,13,16,20][c.epoch]; cam.pitch=0.34;
+  const sel=document.getElementById("jump");
+  const idx=cities.indexOf(c); if(sel&&idx>=0) sel.value=idx;
+}
+function tryTap(clientX,clientY){
+  if(!lastVP) return;
+  const r=cv.getBoundingClientRect();
+  const lx=clientX-r.left, ly=clientY-r.top;
+  let best=null, bestD=46;   // порог в CSS-пикселях — палец толще курсора
+  cities.forEach(c=>{
+    const p=projectToScreen(c.x, H(c.x,c.z)+1, c.z); if(!p) return;
+    const d=Math.hypot(p.x-lx, p.y-ly);
+    if(d<bestD){ bestD=d; best=c }
+  });
+  if(best) goToCity(best);
+}
+function goHome(){ cam.tx=N/2; cam.tz=N/2; cam.ty=H(N/2,N/2)+2;
+  cam.dist=95; cam.pitch=0.45 }
+{ // Переход к городу: список всех двадцати (дублирует тап по замку)
   const RUN={human:"Люди",dwarf:"Гномы",elf:"Эльфы",undead:"Нежить"};
   const sel=document.getElementById("jump");
   sel.innerHTML='<option value="-1">Весь мир</option>'+
     cities.map((c,i)=>'<option value="'+i+'">'+RUN[c.race]+" \u00b7 эпоха "+c.epoch+'</option>').join("");
   sel.addEventListener("change",()=>{
     const i=+sel.value; drag=null; pinch=null;
-    if(i<0){ ACT.home(); return }
-    const c=cities[i];
-    cam.tx=c.x; cam.tz=c.z; cam.ty=H(c.x,c.z)+1.2;
-    cam.dist=[0,8,10,13,16,20][c.epoch]; cam.pitch=0.34;
+    if(i<0){ goHome(); return }
+    goToCity(cities[i]);
   });
 }
 
@@ -2225,13 +2212,9 @@ function resize(){const d=Math.min(2,devicePixelRatio||1);
 addEventListener("resize",resize); resize();
 
 const t0=performance.now();
-let prevT=performance.now();
 function frame(){
   const t=(performance.now()-t0)/1000;
-  const dt=Math.min(0.05,(performance.now()-prevT)/1000); prevT=performance.now();
-  let acting=false;
-  for(const k in held){ held[k](dt); acting=true }   // удержание кнопки
-  if(!drag && !acting) cam.yaw+=0.0007;
+  if(!drag) cam.yaw+=0.0007;
   const ex=cam.tx+Math.sin(cam.yaw)*Math.cos(cam.pitch)*cam.dist;
   const ez=cam.tz+Math.cos(cam.yaw)*Math.cos(cam.pitch)*cam.dist;
   let ey=Math.sin(cam.pitch)*cam.dist+cam.ty+0.5;
@@ -2273,6 +2256,7 @@ function frame(){
 
   gl.useProgram(prog); gl.bindVertexArray(vao);
   const VP=M4.mul(M4.persp(0.82,cv.width/cv.height,0.5,460),M4.look(eye,tgt,[0,1,0]));
+  lastVP=VP;   // для тапа по замку — экранная проекция городов между кадрами
   gl.uniformMatrix4fv(uVP,false,new Float32Array(VP));
   gl.uniformMatrix4fv(uLightVP,false,new Float32Array(window.__noShadow?FAR_VPB:lightVPB));
   gl.uniform3fv(uEye,new Float32Array(eye));
