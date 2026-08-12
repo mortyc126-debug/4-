@@ -679,7 +679,8 @@ const CFG = {
   BUILD_GROW: 1.42,         // множитель времени за уровень, начиная с 4-го
   COST_BASE: 9126,          // базовая стоимость 1 уровня (откалибровано под RoK: ратуша 10 ур.=277.5к, 25 ур.=82.2М еды)
   COST_GROW: 1.4614,
-  PROD_BASE: 640,           // единиц ресурса в час на 1 уровне (откалибровано под RoK: ферма 1 ур.=800/ч, 25 ур.=21600/ч еды)
+  PROD_BASE: 966,           // единиц ресурса в час на 1 ур. — калибровано так, чтобы 1 участок на 30 ур.
+                             // давал: ферма/лесопилка 68 000/ч, каменоломня 51 000/ч, золотая шахта 30 000/ч
   PROD_GROW: 1.1472,
   CAP_BASE: 4000,           // вместимость склада 1 ур.
   CAP_GROW: 1.60,
@@ -1356,14 +1357,25 @@ const buildCost = (lv,p) => {
 const prodRate  = lv => lv<=0?0:CFG.PROD_BASE*Math.pow(CFG.PROD_GROW,lv-1);   // в час
 const storeCap  = lv => Math.round(CFG.CAP_BASE*Math.pow(CFG.CAP_GROW,Math.max(1,lv)-1));
 const troopStat = (type,tier,stat) => Math.round(TROOP_TYPES[type][stat]*TIER_MULT[tier-1]);
-const troopCost = (type,tier) => {
-  const b = 40*Math.pow(2.3,tier-1);
-  return {food:Math.round(b*1.2),wood:Math.round(b),stone:Math.round(b*.5),gold:tier>=3?Math.round(b*.15):0};
-};
-const trainTime = (type,tier) => 14.58*Math.pow(1.9,tier-1);     // сек за 1 юнита (T4=100с — проверенная точка RoK)
+const TROOP_COST=[
+  {food:10, wood:10, stone:0,  gold:0 },
+  {food:40, wood:40, stone:10, gold:0 },
+  {food:80, wood:80, stone:25, gold:0 },
+  {food:120,wood:120,stone:40, gold:10},
+  {food:200,wood:200,stone:100,gold:40},
+];
+const troopCost = (type,tier) => TROOP_COST[tier-1];
+const TRAIN_TIME=[2,30,120,360,720];     // сек за 1 юнита: T1..T5 (заданные игроком базовые тайминги)
+const trainTime = (type,tier) => TRAIN_TIME[tier-1];
 const TRAIN_BLD = {inf:"barracks",arc:"range",cav:"stable",sie:"siege"};
 const BLD_TRAIN = {barracks:"inf",range:"arc",stable:"cav",siege:"sie"};
 const trainCap = lv => 100 + lv*40;                            // максимум за один заказ
+// Лечение в лазарете стоит вдвое дешевле и вдвое быстрее набора того же юнита с нуля, и никогда не требует золота.
+function healUnitCost(p,type,tier){
+  const c=troopCost(type,tier), k=bonuses(p).heal;
+  return {food:Math.round((c.food||0)/2*k), wood:Math.round((c.wood||0)/2*k), stone:Math.round((c.stone||0)/2*k), gold:0};
+}
+const healUnitTime = (type,tier) => trainTime(type,tier)/2;
 // Опыт до след. уровня (лв.1..59) — интерполировано по реальной табличке легендарного
 // командира (контрольные точки 1/10/20/30/37/40/50/55/60), лог-линейно по кумулятиве,
 // затем сглажено до монотонности. Суммарно к 60 ур. ≈50.12 млн (табличная цель 50.107 млн).
@@ -1407,7 +1419,7 @@ function newPlayer(id,race,x,y,isBot){
   const p={id,race,x,y,isBot,name:"",nick:"",
     res:{food:100000,wood:100000,stone:100000,gold:100000},resAt:0,
     b:{},queues:[null,null],train:{inf:null,arc:null,cav:null,sie:null},
-    troops:{},wounded:{},
+    troops:{},wounded:{},heal:null,
     gen:{lv:1,xp:0,pts:0,tal:{},id:isBot?(aggr>0.5?0:1):null}, gear:{}, tech:{}, rsch:null,
     inventory:Object.fromEntries(GEAR_SLOTS.map(s=>[s.id,{bastion:[0,0,0,0,0],storm:[0,0,0,0,0]}])),
     materials:{ore:[0,0,0,0,0],leather:[0,0,0,0,0],bone:[0,0,0,0,0],ebony:[0,0,0,0,0]}, craft:null,
@@ -1586,7 +1598,7 @@ function production(p){ // единиц в час
   const handicap = p.isBot ? CFG.BOT_HANDICAP : 1;
   for(const r of RES){
     let base=0; p.b[map[r]].forEach(lv=>{ if(lv>0) base+=prodRate(lv)*(1+lateSpeed(lv)); });
-    let v=base * ({food:1.25,wood:1.25,stone:0.90,gold:0.50}[r]) * handicap;
+    let v=base * ({food:1.25,wood:1.25,stone:0.9375,gold:0.5515}[r]) * handicap;
     v*=1+B.prodAll;
     v*=1+(r==="food"?B.prodFood:r==="wood"?B.prodWood:r==="stone"?B.prodStone:B.prodGold);
     v*=1+((r==="food"||r==="wood")?B.prodFW:B.prodSG);
@@ -1667,7 +1679,7 @@ function armyPower(units,B,race){
     const hp=troopStat(t,i,"hp")*troopMod(race,t,"hp");
     v+=n*(a*(1+(B?B.atk:0))+d*(1+(B?B.def:0))+ma*(1+(B?B.matk:0))+md*(1+(B?B.mdef:0))+hp*(1+(B?B.hp:0)));
   }});
-  return Math.round(v/5);
+  return Math.round(v/150);   // T1 пехота без бонусов = 150 суммарных статов -> ~1 сила за юнита T1
 }
 function countUnits(u){let n=0;TKEYS.forEach(t=>{for(let i=1;i<=5;i++)n+=(u[t]&&u[t][i])||0});return n}
 function emptyUnits(){const u={};TKEYS.forEach(t=>{u[t]={};for(let i=1;i<=5;i++)u[t][i]=0});return u}
@@ -1906,19 +1918,23 @@ function raiseSkeletons(f,loss){
     }
   });
 }
-/* Раненые вместо убитых: часть потерь уходит в госпиталь */
-function splitLosses(p,loss,defending){
+/* Раненые вместо убитых — механика RoK: гибель насмерть только у атакующего при штурме
+   чужого города (mode="siege-attack"), без формул и госпиталя. Во всех прочих случаях
+   (оборона города, полевые стычки с разбойниками) потери сперва целиком идут в госпиталь
+   и гибнут только сверх его вместимости. */
+function splitLosses(p,loss,mode){
+  if(mode==="siege-attack"){
+    let dead=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) dead+=loss[t][i]||0});
+    return {dead,hurt:0};
+  }
   const B=bonuses(p);
-  const cap=Math.round(totalHospitalCap(p)*(1+B.hosp));
+  const cap=Math.round(totalHospitalCap(p)*(1+B.hosp+B.mercy));
   let inHosp=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) inHosp+=p.wounded[t][i]});
-  let base = defending?0.60:0.35;
-  base = Math.min(0.9, base + B.mercy);
   let dead=0, hurt=0;
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++){
     const n=loss[t][i]; if(!n)continue;
-    let w=Math.round(n*base);
     const room=Math.max(0,cap-inHosp);
-    w=Math.min(w,room); inHosp+=w;
+    const w=Math.min(n,room); inHosp+=w;
     p.wounded[t][i]+=w; hurt+=w; dead+=n-w;
   }});
   return {dead,hurt};
@@ -2018,9 +2034,11 @@ const EV = {
     herald("Тревога! Враг замечен на подходе к вашим землям.");
   },
   heal(d){
-    const p=W.players.find(q=>q.id===d.pid); if(!p)return;
-    TKEYS.forEach(t=>{for(let i=1;i<=5;i++){p.troops[t][i]+=p.wounded[t][i];p.wounded[t][i]=0}});
-    if(!p.isBot) logg("Раненые вернулись в строй.","good");
+    const p=W.players.find(q=>q.id===d.pid); if(!p||!p.heal)return;
+    const H=p.heal, n=Math.min(H.n, p.wounded[H.type][H.tier]||0);
+    p.wounded[H.type][H.tier]-=n; p.troops[H.type][H.tier]+=n;
+    p.heal=null;
+    if(!p.isBot) logg(unitName(H.type,H.tier,p.race)+" вылечено: ×"+n.toLocaleString("ru")+".","good");
   },
   arrive(d){ arriveMarch(W.marches.find(m=>m.id===d.mid)) },
   gathered(d){ const m=W.marches.find(m=>m.id===d.mid); if(m) recallMarch(m) },
@@ -2101,7 +2119,7 @@ function arriveMarch(m){
     D.B={atk:0,def:0,hp:0,matk:0,mdef:0,archer:0,raise:0};
     A.B.atk += B.bandit;
     const r=resolveBattle(A,D,{startA:countUnits(m.units)});
-    const sp=splitLosses(p,r.lossA,false);
+    const sp=splitLosses(p,r.lossA,"hospital");   // полевая стычка — потери идут в госпиталь, не насмерть
     if(r.win==="A"){
       const i=clamp(cell.lv,1,30), xp=BANDIT_XP[i-1];
       addXp(p,xp);
@@ -2190,8 +2208,8 @@ function battleCity(att,def,m){
   const A=makeForce(m.units,att,{name:att.name});
   const D=makeForce(garrison,def,{wall:def.b.wall+def.b.garrison*0.5,defending:true,name:def.name});
   const r=resolveBattle(A,D,{startA:countUnits(m.units),toDeath:false});
-  const la=splitLosses(att,r.lossA,false);
-  const ld=splitLosses(def,r.lossD,true);
+  const la=splitLosses(att,r.lossA,"siege-attack");   // штурмующий теряет войска насмерть, без госпиталя
+  const ld=splitLosses(def,r.lossD,"hospital");
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++)def.troops[t][i]=D.units[t][i]});
   m.units=A.units;
 
@@ -2370,10 +2388,13 @@ function botThink(p){
     });
   }
   /* --- лечение --- */
-  let hurt=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++)hurt+=p.wounded[t][i]});
-  if(hurt>0){
-    const c=healCost(p);
-    if(RES.every(r=>p.res[r]>=(c[r]||0))) acts.push({sc:40+hurt/50,run:()=>doHeal(p)});
+  if(!p.heal){
+    let best=null, bestN=0;
+    TKEYS.forEach(t=>{for(let i=1;i<=5;i++){ const n=p.wounded[t][i]||0; if(n>bestN){bestN=n;best={type:t,tier:i}} }});
+    if(best){
+      const n=healMaxN(p,best.type,best.tier);
+      if(n>0) acts.push({sc:40+bestN/50,run:()=>startHeal(p,best.type,best.tier,n)});
+    }
   }
   /* --- сбор ресурсов --- */
   if(freeSlots>0){
@@ -2498,6 +2519,38 @@ function startTrain(p,type,tier,n){
   schedule(t,"train",{pid:p.id,type});
   return {ok:1};
 }
+/* ---- Лазарет: лечение раненых по типу/тиру, отдельная очередь ---- */
+function woundedList(p){
+  const list=[];
+  TKEYS.forEach(t=>{for(let i=1;i<=5;i++) if(p.wounded[t][i]>0) list.push({type:t,tier:i})});
+  return list;
+}
+function healMaxN(p,type,tier){
+  const have=p.wounded[type][tier]||0;
+  const c=healUnitCost(p,type,tier), cap=trainCap(Math.max(0,...p.b.hospital));
+  const afford=Math.floor(Math.min.apply(null,RES.map(r=>c[r]?p.res[r]/c[r]:1e9)));
+  return Math.max(0,Math.min(have,cap,afford));
+}
+function healDuration(p,type,tier,n){
+  const blv=Math.max(0,...p.b.hospital);
+  return healUnitTime(type,tier)*n/((1+p.b.hall*0.06)*(1+bonuses(p).healSpeed)*(1+lateSpeed(blv)));
+}
+function startHeal(p,type,tier,n){
+  if(p.heal) return {err:"Лазарет уже занят лечением"};
+  n=Math.round(n);
+  if(n<1) return {err:"Выберите хотя бы одного раненого"};
+  if(n>(p.wounded[type][tier]||0)) return {err:"Столько раненых нет"};
+  const cap=trainCap(Math.max(0,...p.b.hospital));
+  if(n>cap) return {err:"За раз можно лечить не больше "+cap};
+  const c=healUnitCost(p,type,tier), tot={};
+  RES.forEach(r=>tot[r]=Math.round((c[r]||0)*n));
+  if(!canPay(p,tot)) return {err:"Не хватает ресурсов"};
+  pay(p,tot);
+  const t=healDuration(p,type,tier,n);
+  p.heal={type,tier,n,t0:W.t,t1:W.t+t};
+  schedule(t,"heal",{pid:p.id});
+  return {ok:1};
+}
 /* Переобучение: старые воины идут в зачёт следующего тира — платим и ждём
    только разницу между тирами, а не полную стоимость набора с нуля. */
 function retrainCost(type,fromTier,n){
@@ -2604,19 +2657,6 @@ function dismantleItem(p,slot,order,rarity){
   const refund=Math.round(200*rarity*rarity*0.5);
   p.res.gold=(p.res.gold||0)+refund;
   return {ok:1,refund};
-}
-function healCost(p){
-  const k=bonuses(p).heal;
-  let n=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++)n+=p.wounded[t][i]*TIER_MULT[i-1]});
-  return {food:Math.round(n*12*k),wood:Math.round(n*9*k),gold:Math.round(n*1.5*k)};
-}
-function doHeal(p){
-  const c=healCost(p);
-  if(!canPay(p,c)) return {err:"Не хватает ресурсов на лечение"};
-  pay(p,c);
-  const t=Math.max(30, Math.sqrt(RES.reduce((a,r)=>a+(c[r]||0),0))*1.4*bonuses(p).healSpeed);
-  schedule(t,"heal",{pid:p.id});
-  return {ok:1};
 }
 
 /* =========================================================================
@@ -3511,6 +3551,21 @@ function trainInfoHtml(p,type){
   }
   return "<div id='bm-tree'><button class='rnode-go' data-act='browsetrain' data-t='"+type+"'>Тренировать</button></div>";
 }
+function hospitalInfoHtml(p){
+  const hurt=woundedList(p).reduce((s,x)=>s+(p.wounded[x.type][x.tier]||0),0);
+  let h="<div id='bm-tree'>";
+  if(p.heal){
+    const H=p.heal;
+    h+="<div class='rgroup'>Идёт лечение</div>"+
+      "<div class='rnode'><div class='rnode-hd'>"+unitThumb(p,H.type,H.tier)+"<b>"+unitName(H.type,H.tier,p.race)+"</b>"+
+      "<span class='rnode-lv'>&times;"+RU(H.n)+"</span></div>"+
+      "<div class='rnode-eff'>Готовы через <em>"+fmtDur(H.t1-W.t)+"</em></div></div>";
+  }
+  h+= hurt>0 ? "<button class='rnode-go' data-act='browseheal'>Раненые ("+RU(hurt)+")</button>"
+             : "<div class='rgroup'>Раненых нет</div>";
+  h+="</div>";
+  return h;
+}
 function buildingStatDeltaHtml(bk,lv,nx){
   const B=BUILDINGS[bk];
   if(B.prod){
@@ -3574,6 +3629,7 @@ function buildingModalHtml(ci){
   else if(c.bk==="academy") h+=academyTreeHtml(p);
   else if(c.bk==="forge" && lv>0) h+=forgeInfoHtml(p);
   else if(BLD_TRAIN[c.bk] && lv>0) h+=trainInfoHtml(p,BLD_TRAIN[c.bk]);
+  else if(c.bk==="hospital" && lv>0) h+=hospitalInfoHtml(p);
   if(canGo){
     h+="<div id=\'bm-reqs\'>"+RES.map(r=>{
       const need=cst[r]||0; if(!need) return "";
@@ -3649,14 +3705,13 @@ function foArmy(){
   h+= rows.length ? "<div class='entry troop-list'>"+rows.join("")+"</div>"
                   : hollow("&#9876;","В столице пусто. Наберите войско в казармах, на стрельбище, в конюшне или мастерской на карте города.");
 
-  if(hurt>0){
-    const c=healCost(p);
+  if(hurt>0||p.heal){
     h+=rubric("Лазарет");
-    h+="<div class='entry war'><div class='line'><div class='fill'>"+
+    h+="<div class='entry "+(p.heal?"hot":"war")+"'><div class='line'><div class='fill'>"+
       "<div class='title'>Раненых: "+RU(hurt)+"</div>"+
-      "<div class='note'>Коек: <em>"+fmt(totalHospitalCap(p)*(1+B.hosp))+"</em>"+
-      (B.heal<1?" · нежить поднимает своих втрое дешевле":"")+"</div>"+priceRow(p,c)+"</div>"+
-      "<button class='seal' data-act='heal'>Поднять</button></div></div>";
+      "<div class='note'>Коек: <em>"+fmt(totalHospitalCap(p)*(1+B.hosp+B.mercy))+"</em>"+
+      (p.heal?" · лечится "+RU(p.heal.n)+" — готово через "+fmtDur(p.heal.t1-W.t):" · лечение — в госпитале города")+
+      (B.heal<1?" · нежить поднимает своих втрое дешевле":"")+"</div></div></div>";
   }
 
   h+=rubric("Отряды в поле",W.marches.filter(m=>m.pid===p.id).length+" из "+marchSlots(p.b.hall));
@@ -4173,7 +4228,28 @@ function handleAct(e){
     }
     return;
   }
-  else if(a==="heal"){ const r=doHeal(p); herald(r.err||"Лазарет принялся за работу.") }
+  else if(a==="browseheal"){
+    openHealCarousel();
+    return;
+  }
+  else if(a==="hcfocus"){
+    const type=b.dataset.type, tier=+b.dataset.tier;
+    const max=healMaxN(p,type,tier);
+    healCtx={type,tier,max,n:max,lastLocked:!!p.heal||max<1};
+    const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
+    $("#bm-body").innerHTML=healCarouselHtml();
+    updateHealSheet();
+    const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
+    return;
+  }
+  else if(a==="healgo"){
+    if(!healCtx) return;
+    const r=startHeal(p,healCtx.type,healCtx.tier,healCtx.n);
+    if(r.err){ herald(r.err); return; }
+    herald("Лечение начато: "+RU(healCtx.n)+".");
+    closeBuildingModal(); lastFolio=""; renderFolio();
+    return;
+  }
   else if(a==="research"){
     const r=startResearch(p,b.dataset.id);
     herald(r.err||"Исследование начато.");
@@ -4302,12 +4378,12 @@ function toggleView(){
 function toggleMenu(){ $("#side-menu").classList.toggle("open"); }
 let buildingModalSel=-1;
 function openBuildingModal(ci){
-  trainCtx=null; carouselCtx=null; forgeTab=null; forgeRarity=null; researchCtx=null;
+  trainCtx=null; carouselCtx=null; forgeTab=null; forgeRarity=null; researchCtx=null; healCarouselOpen=false; healCtx=null;
   buildingModalSel=ci;
   $("#bm-body").innerHTML = buildingModalHtml(ci);
   $("#building-modal").classList.add("open");
 }
-function closeBuildingModal(){ $("#building-modal").classList.remove("open"); buildingModalSel=-1; trainCtx=null; carouselCtx=null; researchCtx=null; }
+function closeBuildingModal(){ $("#building-modal").classList.remove("open"); buildingModalSel=-1; trainCtx=null; carouselCtx=null; researchCtx=null; healCarouselOpen=false; healCtx=null; }
 $("#building-modal").addEventListener("click",e=>{ if(e.target.id==="building-modal") closeBuildingModal(); });
 $("#building-modal").addEventListener("click",handleAct);
 $("#building-modal").addEventListener("input",e=>{
@@ -4315,14 +4391,18 @@ $("#building-modal").addEventListener("input",e=>{
   if((s==="qty-range"||s==="qty-num")&&trainCtx){
     trainCtx.n=clamp(Math.round(+e.target.value||0),0,trainCtx.max);
     updateTrainSheet();
+  } else if((s==="hqty-range"||s==="hqty-num")&&healCtx){
+    healCtx.n=clamp(Math.round(+e.target.value||0),0,healCtx.max);
+    updateHealSheet();
   }
 });
 
 /* ---- Витрина юнитов: все тиры листаются вправо-влево, обучение — прямо с той же карточки ---- */
 let carouselCtx=null, trainCtx=null;
+let healCtx=null, healCarouselOpen=false;
 function openUnitCarousel(type){
   const p=me(), maxT=tierUnlockedFor(p,type);
-  carouselCtx={type}; researchCtx=null;
+  carouselCtx={type}; researchCtx=null; healCarouselOpen=false; healCtx=null;
   buildingModalSel=-1;
   const max=trainMax(p,type,maxT);
   trainCtx={type,tier:maxT,mode:"train",max,n:max,lastLocked:!!p.train[type]||max<1};
@@ -4392,13 +4472,95 @@ function unitCarouselHtml(){
     "<button data-act='ucnav' data-dir='1'>Вперёд &rsaquo;</button></div>";
   return h;
 }
+/* ---- Лазарет: карусель раненых по типу/тиру, лечение с тем же ползунком, что и набор ---- */
+function healCardStatsHtml(p,type,tier){
+  const have=p.wounded[type][tier]||0;
+  return "<table id='bm-stats'>"+
+    "<tr><td>Раненых</td><td>"+RU(have)+"</td></tr>"+
+    "<tr><td>Лечение 1 воина</td><td>"+fmtDur(healUnitTime(type,tier))+"</td></tr>"+
+  "</table>";
+}
+function healInlineHtml(){
+  const p=me(), {type,tier,max,n}=healCtx;
+  const busy=!!p.heal, locked=busy||max<1;
+  let h="<div id='bm-qty'><div class='cap'><span>Доступно максимум</span><b>"+RU(max)+"</b></div>"+
+     "<div class='row'><input type='range' id='hqty-range' min='0' max='"+max+"' value='"+n+"' "+(locked?"disabled":"")+">"+
+     "<input type='number' id='hqty-num' min='0' max='"+max+"' value='"+n+"' "+(locked?"disabled":"")+"></div></div>";
+  if(busy){
+    h+="<div id='bm-time'>Лазарет занят лечением.</div>";
+  } else if(max<1){
+    h+="<div id='bm-time'>Не хватает ресурсов ни на одного раненого.</div>";
+  } else {
+    const c=healUnitCost(p,type,tier);
+    h+="<div id='bm-reqs'>"+RES.map(r=>{
+      if(!c[r]) return "";
+      return "<div class='req-row' data-r='"+r+"'><img src='images/ui/res-"+r+".png'>"+
+        "<span class='req-name'>"+RES_NAME[r]+"</span><span class='req-amt'></span></div>";
+    }).join("")+"</div>";
+    h+="<div id='bm-time'></div>";
+  }
+  h+="<button id='bm-btn' class='uc-go' data-act='healgo' "+((busy||max<1||n<=0)?"disabled":"")+">Лечить</button>";
+  return h;
+}
+function healCarouselHtml(){
+  const p=me(), list=woundedList(p);
+  let h="<div id='bm-title'>Лазарет</div>";
+  if(!list.length){
+    healCtx=null;
+    h+="<div id='bm-tree'><div class='rgroup'>Раненых нет</div></div>";
+    return h;
+  }
+  if(!healCtx || !list.some(x=>x.type===healCtx.type&&x.tier===healCtx.tier)){
+    const f=list[0], max=healMaxN(p,f.type,f.tier);
+    healCtx={type:f.type,tier:f.tier,max,n:max,lastLocked:!!p.heal||max<1};
+  }
+  h+="<div id='uc-track'>";
+  list.forEach(({type,tier})=>{
+    const active = healCtx.type===type && healCtx.tier===tier;
+    h+="<div class='uc-card'>"+
+      "<img class='uc-img' src='images/units/"+p.race+"-"+type+tier+".png' alt=''>"+
+      "<div class='uc-name'>"+unitName(type,tier,p.race)+"</div>"+
+      healCardStatsHtml(p,type,tier);
+    if(active) h+=healInlineHtml();
+    else h+="<button class='rnode-go uc-go' data-act='hcfocus' data-type='"+type+"' data-tier='"+tier+"'>Лечить</button>";
+    h+="</div>";
+  });
+  h+="</div>";
+  h+="<div id='uc-nav'><button data-act='ucnav' data-dir='-1'>&lsaquo; Назад</button>"+
+    "<button data-act='ucnav' data-dir='1'>Вперёд &rsaquo;</button></div>";
+  return h;
+}
+function updateHealSheet(){
+  const p=me(); if(!healCtx || !$("#hqty-range")) return;
+  const {type,tier,max,n}=healCtx;
+  $("#hqty-range").value=n; $("#hqty-num").value=n;
+  const unitC=healUnitCost(p,type,tier);
+  RES.forEach(r=>{
+    if(!unitC[r]) return;
+    const need=Math.round(unitC[r]*n), short=p.res[r]<need;
+    const el=document.querySelector("#bm-reqs [data-r='"+r+"'] .req-amt");
+    if(el){ el.textContent=fmt(need)+" / "+fmt(p.res[r]); el.classList.toggle("short",short) }
+  });
+  if($("#bm-reqs")){
+    const dur=healDuration(p,type,tier,n);
+    $("#bm-time").textContent = n>0 ? "Время лечения: "+fmtDur(dur) : "Выберите хотя бы одного раненого.";
+  }
+  $("#bm-btn").disabled = !!p.heal || max<1 || n<=0;
+}
+function openHealCarousel(){
+  trainCtx=null; carouselCtx=null; researchCtx=null; forgeTab=null; forgeRarity=null;
+  buildingModalSel=-1; healCarouselOpen=true; healCtx=null;
+  $("#bm-body").innerHTML = healCarouselHtml();
+  $("#building-modal").classList.add("open");
+  updateHealSheet();
+}
 let researchCtx=null;
 function researchNodeList(branch,p){
   return ACADEMY_TREE[branch].filter(n=>nodeVisibleFor(n,p));
 }
 function openResearchCarousel(branch,startId){
   const p=me();
-  trainCtx=null; carouselCtx=null; forgeTab=null; forgeRarity=null;
+  trainCtx=null; carouselCtx=null; forgeTab=null; forgeRarity=null; healCarouselOpen=false; healCtx=null;
   buildingModalSel=-1;
   const list=researchNodeList(branch,p);
   const idx=Math.max(0,list.findIndex(n=>n.id===startId));
@@ -4493,6 +4655,11 @@ function refreshOpenModal(){
     } else if(researchCtx){
       const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
       $("#bm-body").innerHTML=researchCarouselHtml();
+      const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
+    } else if(healCarouselOpen){
+      const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
+      $("#bm-body").innerHTML=healCarouselHtml();
+      updateHealSheet();
       const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
     } else if(buildingModalSel>=0){
       $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);    }
@@ -4627,7 +4794,6 @@ window.addEventListener("beforeunload",()=>{
   syncRibbons(); renderTop(); renderFolio(); renderCartouche();
   lastReal=Date.now();
   requestAnimationFrame(frame);
-  setTimeout(()=>herald("Колесо прокрутки — приближение, двойной щелчок по цели — поход."),900);
 })();
 </script>
 </body>
