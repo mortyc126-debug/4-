@@ -961,12 +961,27 @@ const GEAR_NAMES = {
   acc2:  {bastion:["Простой оберег","Оберег стражи","Оберег ветерана","Оберег несокрушимого","Реликвия Бастиона"],
           storm:  ["Походная подвеска","Подвеска разведчика","Подвеска стремительного","Подвеска бури","Знак Бури"]},
 };
-const GEAR_RARITY_MULT = [1, 2.3, 4.2, 7.5, 13];   // нелинейный рост: редкая вещь должна стоить риска
+// Бонусы снаряжения — теперь в процентах к статам (не флэт-числа), по заданным игроком
+// диапазонам на редкость: обычная 0.5-1%, необычная 1-2.5%, редкая 2-4%, эпическая 4.5-8%,
+// легендарная 7.5-11% (до 15% на топовом оружии). Основной стат предмета берёт верхнюю
+// границу диапазона, второстепенные — пониже, третий (у аксессуаров) — ещё меньше.
+const GEAR_PCT_PRIMARY  =[0.010, 0.025, 0.040, 0.075, 0.11 ];
+const GEAR_PCT_SECONDARY=[0.005, 0.012, 0.022, 0.045, 0.075];
+const GEAR_PCT_TERTIARY =[0.0025,0.006, 0.011, 0.0225,0.0375];
+// Мощь предмета за редкость (середина заданного диапазона) — учитывается, только пока надето.
+const GEAR_POWER=[1250, 2750, 6250, 15000, 37500];
 function gearItemStats(cat,order,r){     // r = редкость 1..5
-  const m=GEAR_RARITY_MULT[r-1];
-  if(cat==="armor") return order==="bastion" ? {def:Math.round(4*m),hp:Math.round(6*m)} : {def:Math.round(2*m),hp:Math.round(9*m)};
-  if(cat==="weapon") return order==="bastion" ? {atk:Math.round(4*m),def:Math.round(3*m)} : {atk:Math.round(8*m)};
-  return order==="bastion" ? {hp:Math.round(4*m),def:Math.round(2*m),atk:Math.round(1*m)} : {hp:Math.round(2*m),atk:Math.round(4*m),def:Math.round(1*m)};   // acc
+  const P=GEAR_PCT_PRIMARY[r-1], S=GEAR_PCT_SECONDARY[r-1], T=GEAR_PCT_TERTIARY[r-1];
+  if(cat==="armor") return order==="bastion" ? {def:P,hp:S} : {hp:P,def:S};
+  if(cat==="weapon"){
+    if(order==="storm") return {atk: r===5?0.15:P};   // буря — чистый урон, легендарное оружие — до 15%
+    return {atk:P,def:S};
+  }
+  return order==="bastion" ? {hp:P,def:S,atk:T} : {atk:P,hp:S,def:T};   // акссессуар
+}
+function gearPowerOf(p){     // мощь надетого снаряжения
+  let v=0; GEAR_SLOTS.forEach(s=>{ const it=p.gear&&p.gear[s.id]; if(it) v+=GEAR_POWER[it.rarity-1]; });
+  return v;
 }
 const gearIconSrc = (slot,order) => "images/ui/gear-"+slot+"-"+order+".png";
 const CRAFT_CHANCE = [1.0, 0.9, 0.75, 0.55, 0.35];  // шанс успеха ковки по редкости 1..5
@@ -1629,6 +1644,7 @@ function power(p){
     const lv=p.tech[n.id]||0; if(lv) v+=researchPower(n.branch,n.wave,lv);
   });
   v+=genPowerOf(p);
+  v+=gearPowerOf(p);
   return Math.round(v);
 }
 function genTalentSpent(p){ let s=0; for(const k in p.gen.tal) s+=p.gen.tal[k]||0; return s; }
@@ -3418,7 +3434,7 @@ function unitThumb(p,t,i){
 }
 let forgeTab=null, forgeRarity=null;
 function forgeInfoHtml(p){
-  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+st[k])).join(", ");
+  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+(st[k]*100).toFixed(1)+"%")).join(", ");
   let h="<div id='bm-tree'>";
   if(p.craft){
     const cf=(W.t-p.craft.t0)/Math.max(1,p.craft.t1-p.craft.t0);
@@ -3671,11 +3687,11 @@ function statIcon(kind){
 function genStats(p){
   // 1 ур. полководца ~= статы юнита Т5 (как в RoK), дальше растёт той же кривой, что и раньше
   const lv=p.gen.lv, B=bonuses(p), g=Math.pow(lv,1.15);
-  const gear=gearBonus(p);
+  const gear=gearBonus(p);   // теперь проценты — умножаем, а не прибавляем флэтом
   return {
-    hp:  Math.round((250+30*g)*(1+B.genHpMod))+gear.hp,
-    atk: Math.round((200+40*g)*(1+B.genAtkMod))+gear.atk,
-    def: Math.round((170+30*g)*(1+B.genDefMod))+gear.def,
+    hp:  Math.round((250+30*g)*(1+B.genHpMod)*(1+gear.hp)),
+    atk: Math.round((200+40*g)*(1+B.genAtkMod)*(1+gear.atk)),
+    def: Math.round((170+30*g)*(1+B.genDefMod)*(1+gear.def)),
   };
 }
 function genPortraitHtml(race,i){
@@ -3695,7 +3711,7 @@ function genSkillBadges(p){
 }
 const GEAR_LAYOUT = ["handL","helmet","handR","chest","acc1","gloves","pants","acc2","boots"];
 function genGearHtml(p){
-  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+st[k])).join(", ");
+  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+(st[k]*100).toFixed(1)+"%")).join(", ");
   let h=rubric("Экипировка","снаряжение куётся в горне, а не здесь");
   h+="<div class='gear-slots'>";
   GEAR_LAYOUT.forEach(id=>{
@@ -3704,7 +3720,7 @@ function genGearHtml(p){
       "<div class='gear-slot-icon'>"+(it?"<img src='"+gearIconSrc(s.id,it.order)+"' alt=''>":"")+"</div>"+
       "<div class='gear-slot-name'>"+s.name+"</div>"+
       "<div class='gear-slot-item'>"+(it?GEAR_NAMES[s.id][it.order][it.rarity-1]+"<span class='tag gilt'>"+RARITY_NAMES[it.rarity-1]+"</span>"
-        +"<div class='note'>"+statTxt(gearItemStats(s.cat,it.order,it.rarity))+"</div>":"пусто")+"</div>"+
+        +"<div class='note'>"+statTxt(gearItemStats(s.cat,it.order,it.rarity))+" · мощь "+RU(GEAR_POWER[it.rarity-1])+"</div>":"пусто")+"</div>"+
       (it?"<button class='seal' data-act='unequip' data-slot='"+s.id+"'>Снять</button>":"")+
       "</div>";
   });
@@ -3721,7 +3737,7 @@ function genGearHtml(p){
           "<img class='mat-icon' src='"+gearIconSrc(s.id,order)+"' alt=''></div>"+
           "<div class='fill'>"+
           "<div class='title'>"+GEAR_NAMES[s.id][order][r-1]+"<span class='tag'>×"+cnt+"</span></div>"+
-          "<div class='note'>"+s.name+" · "+statTxt(gearItemStats(s.cat,order,r))+"</div></div>"+
+          "<div class='note'>"+s.name+" · "+statTxt(gearItemStats(s.cat,order,r))+" · мощь "+RU(GEAR_POWER[r-1])+"</div></div>"+
           "<button class='seal' data-act='equip' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Надеть</button>"+
           "<button class='seal' data-act='dismantle' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Разобрать</button></div>";
       }
