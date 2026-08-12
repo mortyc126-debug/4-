@@ -2755,9 +2755,12 @@ async function load(){
     const s=JSON.parse(raw);
     if(!s||!s.players) return false;
     W=s; RNG=mulberry(W.seed+Math.floor(W.t));
-    // довооружаем старые сохранения полями, добавленными позже (иначе экраны,
-    // читающие их напрямую, падают на сейвах "довоенной" версии).
-    W.players.forEach(p=>{ if(!p.tomes) p.tomes={}; if(p.heal===undefined) p.heal=null; });
+    // довооружаем старые сохранения полями/зданиями, добавленными позже (иначе
+    // экраны, читающие их напрямую, падают или считают NaN на "довоенных" сейвах).
+    W.players.forEach(p=>{
+      if(!p.tomes) p.tomes={}; if(p.heal===undefined) p.heal=null;
+      BKEYS.forEach(k=>{ if(p.b[k]===undefined) p.b[k]=isMulti(k)?new Array(BUILDINGS[k].plots).fill(0):0; });
+    });
     // догоняем реальное время, прошедшее с последнего захода
     const away=Math.max(0,(Date.now()-W.savedAt)/1000);
     if(away>60){
