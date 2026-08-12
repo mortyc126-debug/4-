@@ -273,12 +273,10 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #uc-nav button{flex:1;padding:8px 4px;font-size:12.5px;text-align:center;
   background:rgba(90,69,48,.12);border:1px solid rgba(90,69,48,.3);border-radius:4px;
   color:#5a4530}
-.rtree{margin-bottom:6px}
-.rtree-row{position:relative;display:flex;flex-direction:column;align-items:center}
-.rtree-link{width:1px;height:14px;background:rgba(90,69,48,.4)}
-.rtree-wave-label{font-variant:small-caps;letter-spacing:.12em;font-size:11px;color:#8a6d2c;
-  margin:2px 0 6px}
-.rtree-nodes{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin-bottom:6px}
+.rtree{margin-bottom:6px;position:relative}
+.rtree-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;z-index:0}
+.rtree-row{position:relative;display:flex;flex-direction:column;align-items:center;z-index:1}
+.rtree-nodes{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin-bottom:22px}
 .rtree-node{position:relative;width:46px;height:46px;border-radius:50%;cursor:pointer;
   background:rgba(90,69,48,.12);border:2px solid rgba(90,69,48,.35);
   display:flex;align-items:center;justify-content:center;overflow:hidden}
@@ -799,8 +797,8 @@ const ACADEMY_TREE = {
     {id:"eco_food1",  name:"Ирригация",  max:5,wave:1,branch:"eco",field:"prodFood", total:0.15},
     {id:"eco_wood1",  name:"Лесное дело",max:5,wave:1,branch:"eco",field:"prodWood", total:0.15},
     {id:"eco_build1", name:"Кладка",     max:5,wave:1,branch:"eco",field:"build",kind:"mult",total:0.15},
-    {id:"eco_stone1", name:"Резец",      max:5,wave:1,branch:"eco",field:"prodStone",total:0.15},
-    {id:"eco_gold1",  name:"Металлообработка",max:5,wave:1,branch:"eco",field:"prodGold",total:0.15},
+    {id:"eco_stone1", name:"Резец",      max:5,wave:1,branch:"eco",field:"prodStone",total:0.15,requires:["eco_stone0"]},
+    {id:"eco_gold1",  name:"Металлообработка",max:5,wave:1,branch:"eco",field:"prodGold",total:0.15,requires:["eco_gold0"]},
     {id:"eco_rsch1",  name:"Письменность",max:5,wave:1,branch:"eco",field:"researchSpeed",total:0.10},
     {id:"eco_gfood1", name:"Серп",       max:5,wave:1,branch:"eco",field:"gatherFW",total:0.15},
     {id:"eco_gwood1", name:"Топор",      max:5,wave:1,branch:"eco",field:"gatherFW",total:0.15},
@@ -809,84 +807,89 @@ const ACADEMY_TREE = {
     {id:"eco_load1",  name:"Колесо",     max:5,wave:1,branch:"eco",field:"load",total:0.15},
     {id:"eco_cap1",   name:"Многослойная кладка",max:5,wave:1,branch:"eco",field:"cap",total:0.15},
     {id:"eco_crown_dwarf", name:"Венец: Родовые копи",  max:5,wave:4,branch:"eco",race:"dwarf",
-      effects:[{field:"prodStone",total:0.10},{field:"prodGold",total:0.10}]},
-    {id:"eco_crown_human", name:"Венец: Казённый оброк", max:5,wave:4,branch:"eco",race:"human", field:"prodGold", total:0.15},
+      requires:["eco_stone2","eco_gold2"], effects:[{field:"prodStone",total:0.10},{field:"prodGold",total:0.10}]},
+    {id:"eco_crown_human", name:"Венец: Казённый оброк", max:5,wave:4,branch:"eco",race:"human",
+      requires:["eco_gold2"], field:"prodGold", total:0.15},
     {id:"eco_crown_elf",   name:"Венец: Дары рощи",      max:5,wave:4,branch:"eco",race:"elf",
-      effects:[{field:"prodFood",total:0.10},{field:"prodWood",total:0.10}]},
+      requires:["eco_food2","eco_wood2"], effects:[{field:"prodFood",total:0.10},{field:"prodWood",total:0.10}]},
     {id:"eco_crown_undead",name:"Венец: Голод погоста",  max:5,wave:4,branch:"eco",race:"undead",
-      effects:[{field:"raise",total:0.10},{field:"mercy",total:0.05}]},
-    {id:"eco_wood2",  name:"Лесопилка",  max:10,wave:2,branch:"eco",field:"prodWood",total:0.55},
-    {id:"eco_food2",  name:"Плуг",       max:10,wave:2,branch:"eco",field:"prodFood",total:0.55},
-    {id:"eco_gwood2", name:"Пилорама",   max:10,wave:2,branch:"eco",field:"gatherFW",total:0.35},
-    {id:"eco_build2", name:"Инженерия",  max:10,wave:2,branch:"eco",field:"build",kind:"mult",total:0.35},
-    {id:"eco_gfood2", name:"Коса",       max:10,wave:2,branch:"eco",field:"gatherFW",total:0.35},
-    {id:"eco_rsch2",  name:"Математика", max:10,wave:2,branch:"eco",field:"researchSpeed",total:0.15},
-    {id:"eco_gold2",  name:"Монетное дело",max:10,wave:2,branch:"eco",field:"prodGold",total:0.55},
-    {id:"eco_stone2", name:"Открытый разрез",max:10,wave:2,branch:"eco",field:"prodStone",total:0.55},
-    {id:"eco_ggold2", name:"Шахтное дело",max:10,wave:2,branch:"eco",field:"gatherSG",total:0.35},
-    {id:"eco_gall2",  name:"Механизация",max:10,wave:2,branch:"eco",field:"gather",total:0.25},
-    {id:"eco_gstone2",name:"Каменная пила",max:10,wave:2,branch:"eco",field:"gatherSG",total:0.35},
-    {id:"eco_load2",  name:"Повозка",    max:10,wave:2,branch:"eco",field:"load",total:0.25},
+      requires:["eco_gall2"], effects:[{field:"raise",total:0.10},{field:"mercy",total:0.05}]},
+    {id:"eco_wood2",  name:"Лесопилка",  max:10,wave:2,branch:"eco",field:"prodWood",total:0.55,requires:["eco_wood1"]},
+    {id:"eco_food2",  name:"Плуг",       max:10,wave:2,branch:"eco",field:"prodFood",total:0.55,requires:["eco_food1"]},
+    {id:"eco_gwood2", name:"Пилорама",   max:10,wave:2,branch:"eco",field:"gatherFW",total:0.35,requires:["eco_gwood1"]},
+    {id:"eco_build2", name:"Инженерия",  max:10,wave:2,branch:"eco",field:"build",kind:"mult",total:0.35,requires:["eco_build1"]},
+    {id:"eco_gfood2", name:"Коса",       max:10,wave:2,branch:"eco",field:"gatherFW",total:0.35,requires:["eco_gfood1"]},
+    {id:"eco_rsch2",  name:"Математика", max:10,wave:2,branch:"eco",field:"researchSpeed",total:0.15,requires:["eco_rsch1"]},
+    {id:"eco_gold2",  name:"Монетное дело",max:10,wave:2,branch:"eco",field:"prodGold",total:0.55,requires:["eco_gold1"]},
+    {id:"eco_stone2", name:"Открытый разрез",max:10,wave:2,branch:"eco",field:"prodStone",total:0.55,requires:["eco_stone1"]},
+    {id:"eco_ggold2", name:"Шахтное дело",max:10,wave:2,branch:"eco",field:"gatherSG",total:0.35,requires:["eco_ggold1"]},
+    {id:"eco_gall2",  name:"Механизация",max:10,wave:2,branch:"eco",field:"gather",total:0.25,requires:["eco_gfood1","eco_gstone1"]},
+    {id:"eco_gstone2",name:"Каменная пила",max:10,wave:2,branch:"eco",field:"gatherSG",total:0.35,requires:["eco_gstone1"]},
+    {id:"eco_load2",  name:"Повозка",    max:10,wave:2,branch:"eco",field:"load",total:0.25,requires:["eco_load1","eco_cap1"]},
   ],
   mil: [
     {id:"mil_atk_inf1",name:"Пехота, атака I",   max:5, wave:1,branch:"mil",
       effects:[{field:"atkInf",total:0.10},{field:"matkInf",total:0.05}]},
-    {id:"mil_atk_inf2",name:"Пехота, атака II",  max:10,wave:2,branch:"mil",
+    {id:"mil_atk_inf2",name:"Пехота, атака II",  max:10,wave:2,branch:"mil",requires:["mil_atk_inf1"],
       effects:[{field:"atkInf",total:0.20},{field:"matkInf",total:0.10}]},
     {id:"mil_atk_arc1",name:"Лучники, атака I",  max:5, wave:1,branch:"mil",
       effects:[{field:"atkArc",total:0.10},{field:"matkArc",total:0.05}]},
-    {id:"mil_atk_arc2",name:"Лучники, атака II", max:10,wave:2,branch:"mil",
+    {id:"mil_atk_arc2",name:"Лучники, атака II", max:10,wave:2,branch:"mil",requires:["mil_atk_arc1"],
       effects:[{field:"atkArc",total:0.20},{field:"matkArc",total:0.10}]},
     {id:"mil_atk_cav1",name:"Кавалерия, атака I",max:5, wave:1,branch:"mil",
       effects:[{field:"atkCav",total:0.10},{field:"matkCav",total:0.05}]},
-    {id:"mil_atk_cav2",name:"Кавалерия, атака II",max:10,wave:2,branch:"mil",
+    {id:"mil_atk_cav2",name:"Кавалерия, атака II",max:10,wave:2,branch:"mil",requires:["mil_atk_cav1"],
       effects:[{field:"atkCav",total:0.20},{field:"matkCav",total:0.10}]},
     {id:"mil_atk_sie1",name:"Осада, атака I",    max:5, wave:1,branch:"mil",
       effects:[{field:"atkSie",total:0.10},{field:"matkSie",total:0.05}]},
-    {id:"mil_atk_sie2",name:"Осада, атака II",   max:10,wave:2,branch:"mil",
+    {id:"mil_atk_sie2",name:"Осада, атака II",   max:10,wave:2,branch:"mil",requires:["mil_atk_sie1"],
       effects:[{field:"atkSie",total:0.20},{field:"matkSie",total:0.10}]},
     {id:"mil_def_inf1",name:"Пехота, защита I",   max:5, wave:1,branch:"mil",
       effects:[{field:"defInf",total:0.10},{field:"mdefInf",total:0.05}]},
-    {id:"mil_def_inf2",name:"Пехота, защита II",  max:10,wave:2,branch:"mil",
+    {id:"mil_def_inf2",name:"Пехота, защита II",  max:10,wave:2,branch:"mil",requires:["mil_def_inf1"],
       effects:[{field:"defInf",total:0.20},{field:"mdefInf",total:0.10}]},
     {id:"mil_def_arc1",name:"Лучники, защита I",  max:5, wave:1,branch:"mil",
       effects:[{field:"defArc",total:0.10},{field:"mdefArc",total:0.05}]},
-    {id:"mil_def_arc2",name:"Лучники, защита II", max:10,wave:2,branch:"mil",
+    {id:"mil_def_arc2",name:"Лучники, защита II", max:10,wave:2,branch:"mil",requires:["mil_def_arc1"],
       effects:[{field:"defArc",total:0.20},{field:"mdefArc",total:0.10}]},
     {id:"mil_def_cav1",name:"Кавалерия, защита I",max:5, wave:1,branch:"mil",
       effects:[{field:"defCav",total:0.10},{field:"mdefCav",total:0.05}]},
-    {id:"mil_def_cav2",name:"Кавалерия, защита II",max:10,wave:2,branch:"mil",
+    {id:"mil_def_cav2",name:"Кавалерия, защита II",max:10,wave:2,branch:"mil",requires:["mil_def_cav1"],
       effects:[{field:"defCav",total:0.20},{field:"mdefCav",total:0.10}]},
     {id:"mil_def_sie1",name:"Осада, защита I",    max:5, wave:1,branch:"mil",
       effects:[{field:"defSie",total:0.10},{field:"mdefSie",total:0.05}]},
-    {id:"mil_def_sie2",name:"Осада, защита II",   max:10,wave:2,branch:"mil",
+    {id:"mil_def_sie2",name:"Осада, защита II",   max:10,wave:2,branch:"mil",requires:["mil_def_sie1"],
       effects:[{field:"defSie",total:0.20},{field:"mdefSie",total:0.10}]},
     {id:"mil_atk_all1",name:"Атака войск I",  max:10,wave:2,branch:"mil",
+      requires:["mil_atk_inf1","mil_atk_arc1","mil_atk_cav1","mil_atk_sie1"],
       effects:[{field:"atk",total:0.15},{field:"matk",total:0.075}]},
-    {id:"mil_atk_all2",name:"Атака войск II", max:10,wave:3,branch:"mil",
+    {id:"mil_atk_all2",name:"Атака войск II", max:10,wave:3,branch:"mil",requires:["mil_atk_all1"],
       effects:[{field:"atk",total:0.25},{field:"matk",total:0.125}]},
     {id:"mil_def_all1",name:"Защита войск I", max:10,wave:2,branch:"mil",
+      requires:["mil_def_inf1","mil_def_arc1","mil_def_cav1","mil_def_sie1"],
       effects:[{field:"def",total:0.15},{field:"mdef",total:0.075}]},
-    {id:"mil_def_all2",name:"Защита войск II",max:10,wave:3,branch:"mil",
+    {id:"mil_def_all2",name:"Защита войск II",max:10,wave:3,branch:"mil",requires:["mil_def_all1"],
       effects:[{field:"def",total:0.25},{field:"mdef",total:0.125}]},
-    {id:"mil_hp_all1", name:"Здоровье войск I", max:10,wave:2,branch:"mil",field:"hp",total:0.15},
-    {id:"mil_hp_all2", name:"Здоровье войск II",max:10,wave:3,branch:"mil",field:"hp",total:0.25},
+    {id:"mil_hp_all1", name:"Здоровье войск I", max:10,wave:2,branch:"mil",field:"hp",total:0.15,
+      requires:["mil_atk_all1","mil_def_all1"]},
+    {id:"mil_hp_all2", name:"Здоровье войск II",max:10,wave:3,branch:"mil",field:"hp",total:0.25,requires:["mil_hp_all1"]},
     {id:"mil_trainspd",name:"Дисциплина обучения",max:1,wave:1,branch:"mil",field:"trainSpeed",total:0.20},
     {id:"mil_march1",  name:"Следопытство", max:5,wave:1,branch:"mil",field:"march",kind:"mult",total:0.15},
-    {id:"mil_march2",  name:"Картография",  max:5,wave:1,branch:"mil",field:"march",kind:"mult",total:0.15},
+    {id:"mil_march2",  name:"Картография",  max:5,wave:1,branch:"mil",field:"march",kind:"mult",total:0.15,requires:["mil_march1"]},
     {id:"mil_scout1",  name:"Слежка",       max:5,wave:1,branch:"mil",field:"scoutBonus",total:5},
-    {id:"mil_scout2",  name:"Маскировка",   max:5,wave:1,branch:"mil",field:"scoutBonus",total:5},
+    {id:"mil_scout2",  name:"Маскировка",   max:5,wave:1,branch:"mil",field:"scoutBonus",total:5,requires:["mil_scout1"]},
     {id:"mil_crown_dwarf", name:"Венец: Секира предков", max:5,wave:4,branch:"mil",race:"dwarf",
-      effects:[{field:"atkInf",total:0.15},{field:"defInf",total:0.15}]},
+      requires:["mil_atk_inf2","mil_def_inf2"], effects:[{field:"atkInf",total:0.15},{field:"defInf",total:0.15}]},
     {id:"mil_crown_human", name:"Венец: Королевский указ",max:5,wave:4,branch:"mil",race:"human",
-      effects:[{field:"atkCav",total:0.15},{field:"defCav",total:0.15}]},
+      requires:["mil_atk_cav2","mil_def_cav2"], effects:[{field:"atkCav",total:0.15},{field:"defCav",total:0.15}]},
     {id:"mil_crown_elf",   name:"Венец: Лунная тетива",  max:5,wave:4,branch:"mil",race:"elf",
-      effects:[{field:"atkArc",total:0.15},{field:"defArc",total:0.15}]},
+      requires:["mil_atk_arc2","mil_def_arc2"], effects:[{field:"atkArc",total:0.15},{field:"defArc",total:0.15}]},
     {id:"mil_crown_undead",name:"Венец: Пир кургана",    max:5,wave:4,branch:"mil",race:"undead",
-      effects:[{field:"atkSie",total:0.15},{field:"defSie",total:0.15}]},
+      requires:["mil_atk_sie2","mil_def_sie2"], effects:[{field:"atkSie",total:0.15},{field:"defSie",total:0.15}]},
     ...["inf","arc","cav","sie"].flatMap(t=>[2,3,4,5].map(tier=>({
       id:"mil_tier_"+t+tier, name:({inf:"Пехота",arc:"Лучники",cav:"Кавалерия",sie:"Осада"}[t])+" T"+tier, max:1,
-      wave:tier-1, branch:"mil", unlock:{type:t,tier}
+      wave:tier-1, branch:"mil", unlock:{type:t,tier},
+      requires: tier>2 ? ["mil_tier_"+t+(tier-1)] : undefined
     }))),
   ],
 };
@@ -2454,10 +2457,7 @@ function startResearch(p,id){
   if(n.race && n.race!==p.race) return {err:"Не для вашей расы"};
   const cur=p.tech[id]||0;
   if(cur>=n.max) return {err:"Уже на максимуме"};
-  if(n.unlock && n.unlock.tier>2 && !(p.tech["mil_tier_"+n.unlock.type+(n.unlock.tier-1)]>=1))
-    return {err:"Сначала откройте предыдущий тир"};
-  if(!waveUnlocked(n.branch,n.wave,p))
-    return {err:"Сначала завершите исследования предыдущего этапа (и уровень ратуши)"};
+  if(researchLocked(n,p)) return {err:lockReason(n,p)};
   const lv=cur+1;
   const c=researchCost(n.branch,n.wave,lv);
   if(!canPay(p,c)) return {err:"Не хватает ресурсов"};
@@ -3239,35 +3239,50 @@ function nodeTitle(n){
   return n.name;
 }
 function waveLabel(w){ return {1:"Начало",2:"Развитие",3:"Расцвет",4:"Венец"}[w]||("Ступень "+w); }
-function waveUnlocked(branch,wave,p){
-  if(wave<=1) return true;
-  if(epochOf(p.b.hall)<wave) return false;
-  const prev=ACADEMY_TREE[branch].filter(n=>n.wave===wave-1 && (!n.race||n.race===p.race));
-  return prev.every(n=>(p.tech[n.id]||0)>=n.max);
+function missingRequires(n,p){
+  return (n.requires||[]).filter(id=>{ const rn=findNode(id); return !rn||(p.tech[id]||0)<rn.max; });
 }
 function researchLocked(n,p){
-  if(!waveUnlocked(n.branch,n.wave,p)) return true;
-  return !!(n.unlock && n.unlock.tier>2 && !(p.tech["mil_tier_"+n.unlock.type+(n.unlock.tier-1)]>=1));
+  if(epochOf(p.b.hall)<n.wave) return true;
+  return missingRequires(n,p).length>0;
 }
 const EPOCH_HALL_MIN=[1,7,13,19,25];
 function lockReason(n,p){
-  if(n.unlock && n.unlock.tier>2 && !(p.tech["mil_tier_"+n.unlock.type+(n.unlock.tier-1)]>=1))
-    return "нужен предыдущий тир бойца";
-  if(n.wave>1 && epochOf(p.b.hall)<n.wave) return "нужна ратуша "+EPOCH_HALL_MIN[n.wave-1]+" уровня";
-  if(n.wave>1) return "сначала завершите этап «"+waveLabel(n.wave-1)+"»";
+  if(epochOf(p.b.hall)<n.wave) return "нужна ратуша "+EPOCH_HALL_MIN[n.wave-1]+" уровня";
+  const missing=missingRequires(n,p);
+  if(missing.length) return "нужно закончить: "+missing.map(id=>nodeTitle(findNode(id))).join(", ");
   return "заблокировано";
 }
+function nodeDepth(n,arr,cache){
+  if(cache.has(n.id)) return cache.get(n.id);
+  cache.set(n.id,0); // защита от случайного цикла в данных
+  const reqs=n.requires||[];
+  const d = reqs.length ? 1+Math.max(...reqs.map(id=>{
+    const pn=arr.find(x=>x.id===id); return pn?nodeDepth(pn,arr,cache):0;
+  })) : 0;
+  cache.set(n.id,d);
+  return d;
+}
 function renderTreeMap(arr,p){
-  const byWave={};
-  arr.filter(n=>!n.race||n.race===p.race).forEach(n=>{ (byWave[n.wave]=byWave[n.wave]||[]).push(n); });
-  const waves=Object.keys(byWave).map(Number).sort((a,b)=>a-b);
-  let h="<div class='rtree'>";
-  waves.forEach((w,wi)=>{
-    h+="<div class='rtree-row'>"+
-      (wi>0?"<div class='rtree-link'></div>":"")+
-      "<div class='rtree-wave-label'>"+waveLabel(w)+"</div>"+
-      "<div class='rtree-nodes'>"+
-      byWave[w].map(n=>{
+  const visible=arr.filter(n=>!n.race||n.race===p.race);
+  const cache=new Map();
+  const byDepth={};
+  visible.forEach(n=>{ const d=nodeDepth(n,arr,cache); (byDepth[d]=byDepth[d]||[]).push(n); });
+  const depths=Object.keys(byDepth).map(Number).sort((a,b)=>a-b);
+  const orderPos={};   // барицентр: ставим потомков поближе к их родителям по горизонтали
+  depths.forEach(d=>{
+    const row=byDepth[d];
+    if(d>0) row.sort((a,b)=>{
+      const avg=n=>{ const ps=(n.requires||[]).map(id=>orderPos[id]).filter(x=>x!=null);
+        return ps.length?ps.reduce((s,x)=>s+x,0)/ps.length:999; };
+      return avg(a)-avg(b);
+    });
+    row.forEach((n,i)=>{ orderPos[n.id]=i; });
+  });
+  let h="<div class='rtree' id='rtree-graph'><svg class='rtree-svg' id='rtree-svg'></svg>";
+  depths.forEach(d=>{
+    h+="<div class='rtree-row'><div class='rtree-nodes'>"+
+      byDepth[d].map(n=>{
         const lv=p.tech[n.id]||0, maxed=lv>=n.max, locked=researchLocked(n,p);
         const state=maxed?"maxed":locked?"locked":lv>0?"started":"open";
         return "<div class='rtree-node "+state+"' data-act='rtreejump' data-id='"+n.id+"' title='"+nodeTitle(n)+"'>"+
@@ -3278,6 +3293,31 @@ function renderTreeMap(arr,p){
   });
   h+="</div>";
   return h;
+}
+function drawTreeConnectors(){
+  const container=document.getElementById("rtree-graph");
+  const svg=container&&document.getElementById("rtree-svg");
+  if(!container||!svg) return;
+  const rect=container.getBoundingClientRect();
+  svg.setAttribute("width",rect.width); svg.setAttribute("height",rect.height);
+  svg.setAttribute("viewBox","0 0 "+rect.width+" "+rect.height);
+  let paths="";
+  container.querySelectorAll(".rtree-node[data-id]").forEach(childEl=>{
+    const n=findNode(childEl.dataset.id);
+    if(!n||!n.requires) return;
+    const cr=childEl.getBoundingClientRect();
+    const cx=cr.left+cr.width/2-rect.left, cy=cr.top-rect.top;
+    n.requires.forEach(pid=>{
+      const parentEl=container.querySelector(".rtree-node[data-id='"+pid+"']");
+      if(!parentEl) return;
+      const pr=parentEl.getBoundingClientRect();
+      const px=pr.left+pr.width/2-rect.left, py=pr.bottom-rect.top;
+      const midY=(py+cy)/2;
+      paths+="<path d='M"+px+","+py+" C"+px+","+midY+" "+cx+","+midY+" "+cx+","+cy+
+        "' stroke='rgba(138,109,44,.35)' stroke-width='1.5' fill='none'/>";
+    });
+  });
+  svg.innerHTML=paths;
 }
 function nodeEffectRows(n,lv,nx){
   if(n.unlock) return [{label:"Открывает бойца",icon:"class-"+n.unlock.type,now:lv>=1?"открыто":"заперто",next:null}];
@@ -3986,7 +4026,7 @@ function handleAct(e){
     const r=startBuild(p,b.dataset.b,plot);
     herald(r.err||"Заложено.");
     lastFolio=""; renderFolio();
-    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);
+    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel); requestAnimationFrame(drawTreeConnectors);
     return;
   }
   if(a==="build"){
@@ -4087,15 +4127,15 @@ function handleAct(e){
   }
   else if(a==="academytab"){
     academyTab=b.dataset.t;
-    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);
+    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel); requestAnimationFrame(drawTreeConnectors);
   }
   else if(a==="forgetab"){
     forgeTab=b.dataset.t;
-    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);
+    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel); requestAnimationFrame(drawTreeConnectors);
   }
   else if(a==="forgerarity"){
     forgeRarity=+b.dataset.r;
-    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);
+    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel); requestAnimationFrame(drawTreeConnectors);
   }
   else if(a==="rtreejump"){
     const n=findNode(b.dataset.id);
@@ -4163,6 +4203,7 @@ function openBuildingModal(ci){
   buildingModalSel=ci;
   $("#bm-body").innerHTML = buildingModalHtml(ci);
   $("#building-modal").classList.add("open");
+  requestAnimationFrame(drawTreeConnectors);
 }
 function closeBuildingModal(){ $("#building-modal").classList.remove("open"); buildingModalSel=-1; trainCtx=null; carouselCtx=null; researchCtx=null; }
 $("#building-modal").addEventListener("click",e=>{ if(e.target.id==="building-modal") closeBuildingModal(); });
@@ -4352,7 +4393,7 @@ function refreshOpenModal(){
       $("#bm-body").innerHTML=researchCarouselHtml();
       const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
     } else if(buildingModalSel>=0){
-      $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);
+      $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel); requestAnimationFrame(drawTreeConnectors);
     }
   }
   const menu=$("#menu-modal");
