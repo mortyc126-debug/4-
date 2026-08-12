@@ -1087,7 +1087,7 @@ const BUILDINGS = {
   garrison:{name:"Гарнизон",      max:30, desc:"Доп. защита при осаде и предупреждение о марше врага"},
   scout:   {name:"Разведка",      max:30, desc:"Раскрывает сведения о войсках противника: чем выше эпоха здания, тем точнее разведданные"},
   forge:   {name:"Горн",          max:30, desc:"Добыча материалов и ковка снаряжения для полководца"},
-  portal:  {name:"Портал",        max:30, desc:"Врата в иные земли (механика в разработке)"},
+  portal:  {name:"Портал",        max:30, desc:"Пассивно ускоряет марш; с 3 эпохи открывает проход, сокращающий путь отрядов"},
 };
 const BKEYS = Object.keys(BUILDINGS);
 // Разметка карты города: координаты в % от изображения, bk — ключ здания (null = задел на будущее)
@@ -1350,6 +1350,13 @@ const totalHospitalCap = p => p.b.hospital.reduce((s,lv)=>s+hospitalCap(lv),0);
 const hallGateLevel = (p,k) => isMulti(k) ? p.b[k][0] : p.b[k];
 const maxWallHp = lv => 3000+lv*2500;
 const wallDefBonus = lv => lv<=0?0 : lv<=25 ? lv*0.005 : 25*0.005+(lv-25)*0.01;   // 0.5%/ур. до 25, затем 1%/ур.
+const portalMarchBonus = lv => lv<=0?0 : lv<=10 ? lv*0.005 : 10*0.005+(lv-10)*0.01;   // 0.5%/ур. до 10, затем 1%/ур. — макс. +25% на 30 ур.
+const PORTAL_GATE_LV = 13;   // уровень портала на начало 3 эпохи (=EPOCH_HALL_MIN[2]) — с него считаем сокращение марша
+function portalShortcut(p){    // доля (0..0.5), на которую портал укорачивает путь отряда
+  if(epochOf(p.b.hall)<3) return 0;
+  const lv=p.b.portal||0;
+  return Math.max(0, Math.min(0.5, (lv-PORTAL_GATE_LV)/(CFG.MAX_LEVEL-PORTAL_GATE_LV)*0.5));
+}
 function syncWall(p){
   const mx=maxWallHp(p.b.wall);
   if(p.wallHp==null) p.wallHp=mx;
@@ -1512,6 +1519,7 @@ function bonuses(p, defending){
     });
   }
   genOf(p).apply(b);
+  b.march*=1+portalMarchBonus(p.b.portal);
   const T=p.gen.tal||{};
   const g=id=>T[id]||0;
   b.atk+=g("w1")*.02; b.def+=g("w2")*.02; b.hp+=g("w3")*.02;
@@ -1886,7 +1894,7 @@ function sendMarch(p,tx,ty,units,mode){
     if(units[t][i]>p.troops[t][i]) units[t][i]=p.troops[t][i];
     p.troops[t][i]-=units[t][i];
   }});
-  const d=Math.hypot(tx-p.x,ty-p.y);
+  const d=Math.hypot(tx-p.x,ty-p.y)*(1-portalShortcut(p));
   const spd=marchSpeed(p,units);
   const travel=Math.max(20, d/spd*60);
   const m={id:W.nextId++,pid:p.id,mode,x0:p.x,y0:p.y,tx,ty,units,
@@ -1908,7 +1916,7 @@ function sendMarch(p,tx,ty,units,mode){
 function recallMarch(m){
   if(m.state==="back") return;
   const p=W.players.find(q=>q.id===m.pid);
-  const back=Math.max(15,Math.hypot(m.tx-p.x,m.ty-p.y)/marchSpeed(p,m.units)*60);
+  const back=Math.max(15,Math.hypot(m.tx-p.x,m.ty-p.y)*(1-portalShortcut(p))/marchSpeed(p,m.units)*60);
   m.state="back"; m.t0=W.t; m.t1=W.t+back;
   unschedule(e=>e.data&&e.data.mid===m.id);
   schedule(back,"home",{mid:m.id});
@@ -3452,6 +3460,13 @@ function buildingStatDeltaHtml(bk,lv,nx){
       "<tr><td>Прочность стены</td><td>"+fmt(maxWallHp(lv))+" &rarr; "+fmt(maxWallHp(nx))+"</td></tr>"+
       "<tr><td>Защита при обороне</td><td>+"+(wallDefBonus(lv)*100).toFixed(1)+"% &rarr; +"+(wallDefBonus(nx)*100).toFixed(1)+"%</td></tr></table>";
   }
+  if(bk==="portal"){
+    const p=me(), gated=epochOf(p.b.hall)<3;
+    const sc=l=>Math.max(0,Math.min(0.5,(l-PORTAL_GATE_LV)/(CFG.MAX_LEVEL-PORTAL_GATE_LV)*0.5));
+    return "<table id='bm-stats'>"+
+      "<tr><td>Скорость марша</td><td>+"+(portalMarchBonus(lv)*100).toFixed(1)+"% &rarr; +"+(portalMarchBonus(nx)*100).toFixed(1)+"%</td></tr>"+
+      "<tr><td>Сокращение пути отряда</td><td>"+(gated?"откроется на 3 эпохе":"&minus;"+(sc(lv)*100).toFixed(0)+"% &rarr; &minus;"+(sc(nx)*100).toFixed(0)+"%")+"</td></tr></table>";
+  }
   if(bk==="garrison"){
     return "<table id='bm-stats'><tr><td>Урон залпа гарнизона</td><td>"+fmt(lv*900)+" &rarr; "+fmt(nx*900)+"</td></tr></table>";
   }
@@ -3899,7 +3914,7 @@ function openLevy(cx,cy){
     TKEYS.forEach(t=>{for(let i=1;i<=5;i++){weight+=st[t+i]*TIER_MULT[i-1]; n+=st[t+i]}});
     const over=weight>capL;
     const u=emptyUnits(); TKEYS.forEach(t=>{for(let i=1;i<=5;i++)u[t][i]=st[t+i]});
-    const dd=Math.hypot(cx-p.x,cy-p.y), eta=n?dd/marchSpeed(p,u)*60:0;
+    const dd=Math.hypot(cx-p.x,cy-p.y)*(1-portalShortcut(p)), eta=n?dd/marchSpeed(p,u)*60:0;
     let load=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++)load+=st[t+i]*TROOP_TYPES[t].load*TIER_MULT[i-1]*troopMod(p.race,t,"load")});
     const mine=armyPower(u,bonuses(p),p.race);
 
