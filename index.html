@@ -806,13 +806,13 @@ const ACADEMY_TREE = {
     {id:"eco_ggold1", name:"Промывка",   max:5,wave:1,branch:"eco",field:"gatherSG",total:0.15},
     {id:"eco_load1",  name:"Колесо",     max:5,wave:1,branch:"eco",field:"load",total:0.15},
     {id:"eco_cap1",   name:"Многослойная кладка",max:5,wave:1,branch:"eco",field:"cap",total:0.15},
-    {id:"eco_crown_dwarf", name:"Венец: Родовые копи",  max:5,wave:4,branch:"eco",race:"dwarf",
+    {id:"eco_crown_dwarf", name:"Венец: Родовые копи",  max:5,wave:4,branch:"eco",race:"dwarf",gen:1,
       requires:["eco_stone2","eco_gold2"], effects:[{field:"prodStone",total:0.10},{field:"prodGold",total:0.10}]},
-    {id:"eco_crown_human", name:"Венец: Казённый оброк", max:5,wave:4,branch:"eco",race:"human",
+    {id:"eco_crown_human", name:"Венец: Казённый оброк", max:5,wave:4,branch:"eco",race:"human",gen:1,
       requires:["eco_gold2"], field:"prodGold", total:0.15},
-    {id:"eco_crown_elf",   name:"Венец: Дары рощи",      max:5,wave:4,branch:"eco",race:"elf",
+    {id:"eco_crown_elf",   name:"Венец: Дары рощи",      max:5,wave:4,branch:"eco",race:"elf",gen:1,
       requires:["eco_food2","eco_wood2"], effects:[{field:"prodFood",total:0.10},{field:"prodWood",total:0.10}]},
-    {id:"eco_crown_undead",name:"Венец: Голод погоста",  max:5,wave:4,branch:"eco",race:"undead",
+    {id:"eco_crown_undead",name:"Венец: Голод погоста",  max:5,wave:4,branch:"eco",race:"undead",gen:1,
       requires:["eco_gall2"], effects:[{field:"raise",total:0.10},{field:"mercy",total:0.05}]},
     {id:"eco_wood2",  name:"Лесопилка",  max:10,wave:2,branch:"eco",field:"prodWood",total:0.55,requires:["eco_wood1"]},
     {id:"eco_food2",  name:"Плуг",       max:10,wave:2,branch:"eco",field:"prodFood",total:0.55,requires:["eco_food1"]},
@@ -878,13 +878,13 @@ const ACADEMY_TREE = {
     {id:"mil_march2",  name:"Картография",  max:5,wave:1,branch:"mil",field:"march",kind:"mult",total:0.15,requires:["mil_march1"]},
     {id:"mil_scout1",  name:"Слежка",       max:5,wave:1,branch:"mil",field:"scoutBonus",total:5},
     {id:"mil_scout2",  name:"Маскировка",   max:5,wave:1,branch:"mil",field:"scoutBonus",total:5,requires:["mil_scout1"]},
-    {id:"mil_crown_dwarf", name:"Венец: Секира предков", max:5,wave:4,branch:"mil",race:"dwarf",
+    {id:"mil_crown_dwarf", name:"Венец: Секира предков", max:5,wave:4,branch:"mil",race:"dwarf",gen:0,
       requires:["mil_atk_inf2","mil_def_inf2"], effects:[{field:"atkInf",total:0.15},{field:"defInf",total:0.15}]},
-    {id:"mil_crown_human", name:"Венец: Королевский указ",max:5,wave:4,branch:"mil",race:"human",
+    {id:"mil_crown_human", name:"Венец: Королевский указ",max:5,wave:4,branch:"mil",race:"human",gen:0,
       requires:["mil_atk_cav2","mil_def_cav2"], effects:[{field:"atkCav",total:0.15},{field:"defCav",total:0.15}]},
-    {id:"mil_crown_elf",   name:"Венец: Лунная тетива",  max:5,wave:4,branch:"mil",race:"elf",
+    {id:"mil_crown_elf",   name:"Венец: Лунная тетива",  max:5,wave:4,branch:"mil",race:"elf",gen:0,
       requires:["mil_atk_arc2","mil_def_arc2"], effects:[{field:"atkArc",total:0.15},{field:"defArc",total:0.15}]},
-    {id:"mil_crown_undead",name:"Венец: Пир кургана",    max:5,wave:4,branch:"mil",race:"undead",
+    {id:"mil_crown_undead",name:"Венец: Пир кургана",    max:5,wave:4,branch:"mil",race:"undead",gen:0,
       requires:["mil_atk_sie2","mil_def_sie2"], effects:[{field:"atkSie",total:0.15},{field:"defSie",total:0.15}]},
     ...["inf","arc","cav","sie"].flatMap(t=>[2,3,4,5].map(tier=>({
       id:"mil_tier_"+t+tier, name:({inf:"Пехота",arc:"Лучники",cav:"Кавалерия",sie:"Осада"}[t])+" T"+tier, max:1,
@@ -901,6 +901,14 @@ function tierUnlockedFor(p,type){
 function findNode(id){
   for(const arr of [ACADEMY_TREE.eco, ACADEMY_TREE.mil]) for(const n of arr) if(n.id===id) return n;
   return null;
+}
+function nodeVisibleFor(n,p){                          // раса + выбор генерала (венец только один — в его ветке)
+  if(n.race && n.race!==p.race) return false;
+  if(n.gen!=null && n.gen!==(p.gen.id||0)) return false;
+  return true;
+}
+function nodeImgSrc(n,p){                               // открытие тира — портрет самого юнита, чтобы сразу видно, кого дают
+  return n.unlock ? "images/units/"+p.race+"-"+n.unlock.type+n.unlock.tier+".png" : "images/ui/research-"+n.id+".png";
 }
 
 /* ---- Снаряжение: заимствовано из RoK (материалы, редкость, крафт), без чертежей —
@@ -2245,7 +2253,7 @@ function botThink(p){
   /* --- исследования --- */
   if(!p.rsch && p.b.academy>0){
     const pool=[...ACADEMY_TREE.eco,...ACADEMY_TREE.mil].filter(n=>{
-      if(n.race && n.race!==p.race) return false;
+      if(!nodeVisibleFor(n,p)) return false;
       const cur=p.tech[n.id]||0; if(cur>=n.max) return false;
       if(n.unlock){ if(n.unlock.tier>2 && !(p.tech["mil_tier_"+n.unlock.type+(n.unlock.tier-1)]>=1)) return false; }
       const c=researchCost(n.branch,n.wave,cur+1);
@@ -2454,7 +2462,7 @@ function startRetrain(p,type,fromTier,n){
 function startResearch(p,id){
   if(p.rsch) return {err:"Академия занята"};
   const n=findNode(id); if(!n) return {err:"Неизвестное исследование"};
-  if(n.race && n.race!==p.race) return {err:"Не для вашей расы"};
+  if(!nodeVisibleFor(n,p)) return {err:"Недоступно вашей расе или генералу"};
   const cur=p.tech[id]||0;
   if(cur>=n.max) return {err:"Уже на максимуме"};
   if(researchLocked(n,p)) return {err:lockReason(n,p)};
@@ -3251,7 +3259,7 @@ function nodeDepth(n,arr,cache){
 }
 const ROW_SIZES=[4,3,4,2];    // рядами по 2-4 для красоты, а не одной длинной стеной
 function computeRows(arr,p){
-  const visible=arr.filter(n=>!n.race||n.race===p.race);
+  const visible=arr.filter(n=>nodeVisibleFor(n,p));
   const cache=new Map();
   const byDepth={};
   visible.forEach(n=>{ const d=nodeDepth(n,arr,cache); (byDepth[d]=byDepth[d]||[]).push(n); });
@@ -3296,7 +3304,7 @@ function renderTreeMap(arr,p){
         const lv=p.tech[n.id]||0, maxed=lv>=n.max, locked=researchLocked(n,p);
         const state=maxed?"maxed":locked?"locked":lv>0?"started":"open";
         return "<div class='rtree-node "+state+"' data-act='rtreejump' data-id='"+n.id+"' title='"+nodeTitle(n)+"'>"+
-          "<img src='images/ui/research-"+n.id+".png' alt='' onerror=\"this.style.display='none'\">"+
+          "<img src='"+nodeImgSrc(n,p)+"' alt='' onerror=\"this.style.display='none'\">"+
           "<span class='rtree-node-lv'>"+lv+"/"+n.max+"</span></div>";
       }).join("")+
       "</div></div>";
@@ -4276,7 +4284,7 @@ function unitCarouselHtml(){
 }
 let researchCtx=null;
 function researchNodeList(branch,p){
-  return ACADEMY_TREE[branch].filter(n=>!n.race||n.race===p.race);
+  return ACADEMY_TREE[branch].filter(n=>nodeVisibleFor(n,p));
 }
 function openResearchCarousel(branch,startId){
   const p=me();
@@ -4304,7 +4312,7 @@ function researchCarouselHtml(){
     const powNow=lv*RESEARCH_WAVE[n.wave]*3, powNext=nx*RESEARCH_WAVE[n.wave]*3;
     const rows=nodeEffectRows(n,lv,nx);
     h+="<div class='uc-card"+(locked?" locked":"")+"'>"+
-      "<img class='uc-img' style='max-height:170px;border-radius:50%' src='images/ui/research-"+n.id+".png' alt='' onerror=\"this.style.display='none'\">"+
+      "<img class='uc-img' style='max-height:170px;border-radius:50%' src='"+nodeImgSrc(n,p)+"' alt='' onerror=\"this.style.display='none'\">"+
       "<div class='uc-name'>"+nodeTitle(n)+(n.race?" · венец":"")+"</div>"+
       "<div class='uc-have'>"+waveLabel(n.wave)+" · уровень "+lv+"/"+n.max+"</div>"+
       (locked?"<div class='uc-lock'>&#128274; "+lockReason(n,p)+"</div>":"")+
