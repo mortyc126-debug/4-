@@ -273,10 +273,10 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #uc-nav button{flex:1;padding:8px 4px;font-size:12.5px;text-align:center;
   background:rgba(90,69,48,.12);border:1px solid rgba(90,69,48,.3);border-radius:4px;
   color:#5a4530}
-.rtree{margin-bottom:6px;position:relative}
-.rtree-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;z-index:0}
-.rtree-row{position:relative;display:flex;flex-direction:column;align-items:center;z-index:1}
-.rtree-nodes{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin-bottom:22px}
+.rtree{margin-bottom:6px}
+.rtree-row{position:relative;display:flex;flex-direction:column;align-items:center}
+.rtree-link{width:2px;height:16px;background:rgba(138,109,44,.5)}
+.rtree-nodes{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin-bottom:6px}
 .rtree-node{position:relative;width:46px;height:46px;border-radius:50%;cursor:pointer;
   background:rgba(90,69,48,.12);border:2px solid rgba(90,69,48,.35);
   display:flex;align-items:center;justify-content:center;overflow:hidden}
@@ -3269,20 +3269,22 @@ function renderTreeMap(arr,p){
   const byDepth={};
   visible.forEach(n=>{ const d=nodeDepth(n,arr,cache); (byDepth[d]=byDepth[d]||[]).push(n); });
   const depths=Object.keys(byDepth).map(Number).sort((a,b)=>a-b);
-  const orderPos={};   // барицентр: ставим потомков поближе к их родителям по горизонтали
+  const ROW_SIZES=[4,3,4,2];    // рядами по 2-4 для красоты, а не одной длинной стеной
+  let sizeIdx=0;
+  const rows=[];
   depths.forEach(d=>{
-    const row=byDepth[d];
-    if(d>0) row.sort((a,b)=>{
-      const avg=n=>{ const ps=(n.requires||[]).map(id=>orderPos[id]).filter(x=>x!=null);
-        return ps.length?ps.reduce((s,x)=>s+x,0)/ps.length:999; };
-      return avg(a)-avg(b);
-    });
-    row.forEach((n,i)=>{ orderPos[n.id]=i; });
+    let list=byDepth[d];
+    while(list.length){
+      const n=ROW_SIZES[sizeIdx%ROW_SIZES.length]; sizeIdx++;
+      rows.push(list.slice(0,n));
+      list=list.slice(n);
+    }
   });
-  let h="<div class='rtree' id='rtree-graph'><svg class='rtree-svg' id='rtree-svg'></svg>";
-  depths.forEach(d=>{
+  let h="<div class='rtree'>";
+  rows.forEach((row,ri)=>{
+    if(ri>0) h+="<div class='rtree-link'></div>";
     h+="<div class='rtree-row'><div class='rtree-nodes'>"+
-      byDepth[d].map(n=>{
+      row.map(n=>{
         const lv=p.tech[n.id]||0, maxed=lv>=n.max, locked=researchLocked(n,p);
         const state=maxed?"maxed":locked?"locked":lv>0?"started":"open";
         return "<div class='rtree-node "+state+"' data-act='rtreejump' data-id='"+n.id+"' title='"+nodeTitle(n)+"'>"+
@@ -3293,31 +3295,6 @@ function renderTreeMap(arr,p){
   });
   h+="</div>";
   return h;
-}
-function drawTreeConnectors(){
-  const container=document.getElementById("rtree-graph");
-  const svg=container&&document.getElementById("rtree-svg");
-  if(!container||!svg) return;
-  const rect=container.getBoundingClientRect();
-  svg.setAttribute("width",rect.width); svg.setAttribute("height",rect.height);
-  svg.setAttribute("viewBox","0 0 "+rect.width+" "+rect.height);
-  let paths="";
-  container.querySelectorAll(".rtree-node[data-id]").forEach(childEl=>{
-    const n=findNode(childEl.dataset.id);
-    if(!n||!n.requires) return;
-    const cr=childEl.getBoundingClientRect();
-    const cx=cr.left+cr.width/2-rect.left, cy=cr.top-rect.top;
-    n.requires.forEach(pid=>{
-      const parentEl=container.querySelector(".rtree-node[data-id='"+pid+"']");
-      if(!parentEl) return;
-      const pr=parentEl.getBoundingClientRect();
-      const px=pr.left+pr.width/2-rect.left, py=pr.bottom-rect.top;
-      const midY=(py+cy)/2;
-      paths+="<path d='M"+px+","+py+" C"+px+","+midY+" "+cx+","+midY+" "+cx+","+cy+
-        "' stroke='rgba(138,109,44,.35)' stroke-width='1.5' fill='none'/>";
-    });
-  });
-  svg.innerHTML=paths;
 }
 function nodeEffectRows(n,lv,nx){
   if(n.unlock) return [{label:"Открывает бойца",icon:"class-"+n.unlock.type,now:lv>=1?"открыто":"заперто",next:null}];
@@ -4026,8 +4003,7 @@ function handleAct(e){
     const r=startBuild(p,b.dataset.b,plot);
     herald(r.err||"Заложено.");
     lastFolio=""; renderFolio();
-    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel); requestAnimationFrame(drawTreeConnectors);
-    return;
+    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);    return;
   }
   if(a==="build"){
     const plot=b.dataset.plot!=null&&b.dataset.plot!==""?+b.dataset.plot:undefined;
@@ -4127,16 +4103,13 @@ function handleAct(e){
   }
   else if(a==="academytab"){
     academyTab=b.dataset.t;
-    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel); requestAnimationFrame(drawTreeConnectors);
-  }
+    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);  }
   else if(a==="forgetab"){
     forgeTab=b.dataset.t;
-    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel); requestAnimationFrame(drawTreeConnectors);
-  }
+    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);  }
   else if(a==="forgerarity"){
     forgeRarity=+b.dataset.r;
-    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel); requestAnimationFrame(drawTreeConnectors);
-  }
+    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);  }
   else if(a==="rtreejump"){
     const n=findNode(b.dataset.id);
     if(n) openResearchCarousel(n.branch,n.id);
@@ -4203,7 +4176,6 @@ function openBuildingModal(ci){
   buildingModalSel=ci;
   $("#bm-body").innerHTML = buildingModalHtml(ci);
   $("#building-modal").classList.add("open");
-  requestAnimationFrame(drawTreeConnectors);
 }
 function closeBuildingModal(){ $("#building-modal").classList.remove("open"); buildingModalSel=-1; trainCtx=null; carouselCtx=null; researchCtx=null; }
 $("#building-modal").addEventListener("click",e=>{ if(e.target.id==="building-modal") closeBuildingModal(); });
@@ -4393,8 +4365,7 @@ function refreshOpenModal(){
       $("#bm-body").innerHTML=researchCarouselHtml();
       const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
     } else if(buildingModalSel>=0){
-      $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel); requestAnimationFrame(drawTreeConnectors);
-    }
+      $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);    }
   }
   const menu=$("#menu-modal");
   const typingInModal = document.activeElement && $("#menu-modal-body").contains(document.activeElement) &&
