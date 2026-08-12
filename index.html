@@ -90,6 +90,8 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .gear-slot.crown{padding-top:16px}
 .gear-slot-icon{width:42px;height:42px;border-radius:3px;background:rgba(0,0,0,.35);
   border:1px solid rgba(194,153,60,.3);flex:0 0 auto}
+.gear-slot-icon img{width:100%;height:100%;object-fit:contain;border-radius:3px}
+.gear-slot.filled .gear-slot-icon{border-color:var(--pc,rgba(194,153,60,.3));box-shadow:inset 0 0 8px var(--pc,transparent)}
 .gear-slot-name{font-size:9.5px;color:var(--vellum-faint);letter-spacing:.07em;text-transform:uppercase}
 .gear-slot-item{font-size:10.5px;color:var(--vellum-dim);min-height:13px}
 .gear-slot-item .tag{margin-left:3px}
@@ -97,6 +99,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .gear-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(58px,1fr));gap:8px}
 .gear-cell{aspect-ratio:1;border:2px solid var(--pc,var(--rule-soft));border-radius:5px;
   background:rgba(20,15,8,.6);box-shadow:inset 0 0 10px var(--pc,transparent);position:relative}
+.gear-cell img{width:100%;height:100%;object-fit:contain;padding:6px;box-sizing:border-box}
 .gear-cell.equipped{background:rgba(194,153,60,.18);box-shadow:inset 0 0 10px var(--pc,transparent),0 0 6px var(--pc,transparent)}
 .gear-cell .cnt{position:absolute;bottom:2px;right:3px;font-family:var(--data);font-size:10px;
   color:var(--gilt-hi);text-shadow:0 1px 2px #000}
@@ -957,6 +960,7 @@ function gearItemStats(cat,order,r){     // r = редкость 1..5
   if(cat==="weapon") return order==="bastion" ? {atk:Math.round(4*m),def:Math.round(3*m)} : {atk:Math.round(8*m)};
   return order==="bastion" ? {hp:Math.round(4*m),def:Math.round(2*m),atk:Math.round(1*m)} : {hp:Math.round(2*m),atk:Math.round(4*m),def:Math.round(1*m)};   // acc
 }
+const gearIconSrc = (slot,order) => "images/ui/gear-"+slot+"-"+order+".png";
 const CRAFT_CHANCE = [1.0, 0.9, 0.75, 0.55, 0.35];  // шанс успеха ковки по редкости 1..5
 const CRAFT_MAT_NEED = [2, 1, 1, 1, 1];             // сколько единиц материала своего тира нужно
 function craftCost(mat,tier,r){          // r = редкость/тир материала 1..5 (индекс tier-1)
@@ -3405,7 +3409,9 @@ function forgeInfoHtml(p){
       (chance<1?" — при неудаче материал и время сгорают":"")+"</div>";
     GEAR_SLOTS.forEach(s=>{
       const have=p.materials[s.mat][r-1]||0, haveMat=have>=need;
-      h+="<div class='rnode'><div class='rnode-hd'><b>"+s.name+"</b></div>"+
+      h+="<div class='rnode'><div class='rnode-hd'>"+
+        "<span class='mat-icon-wrap' style='width:28px;height:28px'><img class='mat-icon' src='"+gearIconSrc(s.id,"bastion")+"' alt=''></span>"+
+        "<b>"+s.name+"</b></div>"+
         "<div class='rnode-eff'>нужно: "+need+"&times;<span class='pip mini' style='--pc:"+RARITY_COLOR[r-1]+"'></span> "+
         MATERIALS[s.mat].name+" ("+have+"/"+need+") · "+
         "бастион "+statTxt(gearItemStats(s.cat,"bastion",r))+" · буря "+statTxt(gearItemStats(s.cat,"storm",r))+"</div>"+
@@ -3626,8 +3632,8 @@ function genGearHtml(p){
   h+="<div class='gear-slots'>";
   GEAR_LAYOUT.forEach(id=>{
     const s=findGearSlot(id), it=p.gear[id];
-    h+="<div class='gear-slot"+(it?" filled":"")+(id==="helmet"?" crown":"")+"'>"+
-      "<div class='gear-slot-icon'></div>"+
+    h+="<div class='gear-slot"+(it?" filled":"")+(id==="helmet"?" crown":"")+"' "+(it?"style='--pc:"+RARITY_COLOR[it.rarity-1]+"'":"")+">"+
+      "<div class='gear-slot-icon'>"+(it?"<img src='"+gearIconSrc(s.id,it.order)+"' alt=''>":"")+"</div>"+
       "<div class='gear-slot-name'>"+s.name+"</div>"+
       "<div class='gear-slot-item'>"+(it?GEAR_NAMES[s.id][it.order][it.rarity-1]+"<span class='tag gilt'>"+RARITY_NAMES[it.rarity-1]+"</span>"
         +"<div class='note'>"+statTxt(gearItemStats(s.cat,it.order,it.rarity))+"</div>":"пусто")+"</div>"+
@@ -3642,7 +3648,10 @@ function genGearHtml(p){
       for(let r=1;r<=5;r++){
         const cnt=p.inventory[s.id][order][r-1]||0; if(!cnt) continue;
         any=true;
-        stored+="<div class='entry'><div class='line'><div class='fill'>"+
+        stored+="<div class='entry'><div class='line'>"+
+          "<div class='mat-icon-wrap' style='--pc:"+RARITY_COLOR[r-1]+";box-shadow:inset 0 0 8px var(--pc)'>"+
+          "<img class='mat-icon' src='"+gearIconSrc(s.id,order)+"' alt=''></div>"+
+          "<div class='fill'>"+
           "<div class='title'>"+GEAR_NAMES[s.id][order][r-1]+"<span class='tag'>×"+cnt+"</span></div>"+
           "<div class='note'>"+s.name+" · "+statTxt(gearItemStats(s.cat,order,r))+"</div></div>"+
           "<button class='seal' data-act='equip' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'>Надеть</button>"+
@@ -3782,12 +3791,12 @@ function foInv(){
   GEAR_SLOTS.forEach(s=>{
     const it=p.gear[s.id];
     if(it) cells.push("<div class='gear-cell equipped' style='--pc:"+RARITY_COLOR[it.rarity-1]+"' title='"+GEAR_NAMES[s.id][it.order][it.rarity-1]+" ("+s.name+", надето)'>"+
-      "<span class='eq'>&#9733;</span></div>");
+      "<img src='"+gearIconSrc(s.id,it.order)+"' alt=''><span class='eq'>&#9733;</span></div>");
     ["bastion","storm"].forEach(order=>{
       for(let r=1;r<=5;r++){
         const cnt=p.inventory[s.id][order][r-1]||0; if(!cnt) continue;
         cells.push("<div class='gear-cell' style='--pc:"+RARITY_COLOR[r-1]+"' title='"+GEAR_NAMES[s.id][order][r-1]+" ("+s.name+")'>"+
-          "<span class='cnt'>×"+cnt+"</span></div>");
+          "<img src='"+gearIconSrc(s.id,order)+"' alt=''><span class='cnt'>×"+cnt+"</span></div>");
       }
     });
   });
