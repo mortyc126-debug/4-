@@ -13,7 +13,8 @@ import { heightAt, HMAX } from "./terrain";
 import { mul, persp, look, modelMatrix, type Vec3 } from "./mat4";
 import { attachOrbitControls, type OrbitCamera } from "./camera";
 import { loadGLB } from "./glb";
-import { uploadGLB, createModelPipeline, type ModelInstance } from "./modelRenderer";
+import { uploadGLB, createModelPipeline, type GpuModel, type ModelInstance } from "./modelRenderer";
+import { loadRealEntities } from "./realData";
 
 const statusEl = document.getElementById("status") as HTMLDivElement;
 function setStatus(lines: string[]) {
@@ -23,19 +24,27 @@ function setStatus(lines: string[]) {
 async function main() {
   const lines: string[] = [];
 
-  // ---- bitECS: та же горстка сущностей, что и в шаге 1. ----
+  // ---- bitECS: настоящие данные партии, если движок открыт внутри игры
+  // (см. realData.ts — читает window.parent.W), иначе те же четыре
+  // придуманные сущности демо, что и раньше. Масштаб моделей — как в
+  // живой игре (город 10×, лагерь/точка 5×, форт покрупнее — 6.5×).
+  const real = loadRealEntities();
+  const usingReal = real !== null;
+  const seedEntities =
+    real ??
+    [
+      { x: 43, y: 14, kind: 0 as const, model: "/models/castles/human-1.glb", scale: 10 },
+      { x: 50, y: 20, kind: 1 as const, model: "/models/camps/barbarians.glb", scale: 5 },
+      { x: 55, y: 12, kind: 2 as const, model: "/models/resources/farm.glb", scale: 5 },
+      { x: 30, y: 30, kind: 2 as const, model: "/models/resources/quarry.glb", scale: 5 },
+    ];
+  lines.push(usingReal ? `данные: настоящая партия, сущностей — ${seedEntities.length}` : "данные: демо (window.parent.W недоступен)");
+
   const world = createWorld();
   const Position = { x: [] as number[], y: [] as number[] };
   const Kind = { value: [] as number[] }; // 0=city 1=camp 2=node
-  // model — путь к настоящему .glb для этой сущности (все четыре теперь
-  // получают реальные модели, ни одной метки-пирамидки не остаётся).
-  const seedEntities = [
-    { x: 43, y: 14, kind: 0, model: "/models/castles/human-1.glb" },
-    { x: 50, y: 20, kind: 1, model: "/models/camps/barbarians.glb" },
-    { x: 55, y: 12, kind: 2, model: "/models/resources/farm.glb" },
-    { x: 30, y: 30, kind: 2, model: "/models/resources/quarry.glb" },
-  ];
   const modelPathOf = new Map<number, string>();
+  const modelScaleOf = new Map<number, number>();
   for (const e of seedEntities) {
     const eid = addEntity(world);
     addComponent(world, eid, Position);
@@ -44,6 +53,7 @@ async function main() {
     Position.y[eid] = e.y;
     Kind.value[eid] = e.kind;
     modelPathOf.set(eid, e.model);
+    modelScaleOf.set(eid, e.scale);
   }
   const found = Array.from(query(world, [Position, Kind]));
   lines.push(`bitECS: сущностей — ${found.length}`);
@@ -76,8 +86,12 @@ async function main() {
   ctx.configure({ device, format, alphaMode: "opaque" });
   lines.push(`WebGPU: устройство получено, формат — ${format}`);
 
-  // ---- рельеф: кусок вокруг маркеров, тот же остров, что и в игре ----
-  const PATCH = { x0: 15, y0: 0, x1: 70, y1: 45 };
+  // ---- рельеф: кусок вокруг сущностей демо, тот же остров, что и в игре;
+  // с настоящими данными сущности разбросаны по всей карте (CFG.MAP=100
+  // в живой игре) — рельеф строим на весь размер. Ни то, ни другое пока
+  // не чанкуется/не стримится, как в живом 3D (это отдельный будущий шаг,
+  // сейчас цель — увидеть настоящую партию целиком хоть одним куском).
+  const PATCH = usingReal ? { x0: 0, y0: 0, x1: 100, y1: 100 } : { x0: 15, y0: 0, x1: 70, y1: 45 };
   const mesh = buildTerrainPatch(PATCH.x0, PATCH.y0, PATCH.x1, PATCH.y1, 1);
   lines.push(`рельеф: патч ${PATCH.x1 - PATCH.x0}×${PATCH.y1 - PATCH.y0} клеток, ${mesh.vertexCount} вершин`);
   setStatus(lines);
@@ -91,6 +105,11 @@ async function main() {
   // /engine/dist/, а модели — в /models/ у корня репозитория, который
   // Render отдаёт целиком как одну статику.
   //
+  // Кэш по пути к файлу: с настоящей партией десятки лагерей/точек делят
+  // одну и ту же модель (barbarians.glb на все лагеря/форты и т.п.) —
+  // без кэша каждый инстанс заново качал бы и парсил тот же файл. Тот же
+  // приём, что и modelCache в живом obyom-3d-infinite.html.
+  //
   // Грузим и закачиваем всё в GPU ДО первого кадра цикла отрисовки, не
   // параллельно с ним: в тестах закачка текстуры ПОСЛЕ нескольких секунд
   // непрерывного рендера стабильно валила WebGPU-соединение именно в этой
@@ -99,30 +118,44 @@ async function main() {
   // делался до старта цикла. Не тратить GPU на рендер кадров, пока сцена
   // ещё не готова, — разумно само по себе, не только обход этой
   // особенности песочницы.
-  const MODEL_SCALE: Record<number, number> = { 0: 10, 1: 5, 2: 5 }; // город/лагерь/точка — как в живой игре
   const modelPipeline = createModelPipeline(device, format);
+  const modelCache = new Map<string, Promise<GpuModel>>();
+  function getModel(path: string): Promise<GpuModel> {
+    let p = modelCache.get(path);
+    if (!p) {
+      p = loadGLB(path).then((parsed) => uploadGLB(device, parsed));
+      modelCache.set(path, p);
+    }
+    return p;
+  }
   const instances: ModelInstance[] = [];
+  let loadedCount = 0, failedCount = 0;
   for (const eid of found) {
     const wx = Position.x[eid], wz = Position.y[eid];
     const groundY = heightAt(wx, wz) * HMAX;
-    const mat = modelMatrix(wx, groundY, wz, 0, MODEL_SCALE[Kind.value[eid]] ?? 5);
+    const mat = modelMatrix(wx, groundY, wz, 0, modelScaleOf.get(eid) ?? 5);
     const path = modelPathOf.get(eid)!;
     try {
-      const parsed = await loadGLB(path);
-      const gm = await uploadGLB(device, parsed);
+      const gm = await getModel(path);
       instances.push(modelPipeline.createInstance(gm, mat));
-      lines.push(`модель: ${path} загружена`);
+      loadedCount++;
     } catch (err) {
-      lines.push(`модель: ${path} — ошибка: ${err instanceof Error ? err.message : String(err)}`);
+      failedCount++;
+      lines.push(`модель: ошибка на ${path} — ${err instanceof Error ? err.message : String(err)}`);
     }
-    setStatus(lines);
   }
+  lines.push(`модели: загружено ${loadedCount}/${found.length}${failedCount ? ", ошибок: " + failedCount : ""}`);
+  setStatus(lines);
 
-  // ---- камера: орбита вокруг центра патча, теперь управляемая —
-  // перетаскивание вращает, колесо/щипок масштабирует (см. camera.ts).
-  // Пока не тронули экран — тихо продолжает медленный автооблёт из
-  // прошлого шага, чтобы страница не выглядела застывшей картинкой.
-  const cx = (PATCH.x0 + PATCH.x1) / 2, cz = (PATCH.y0 + PATCH.y1) / 2;
+  // ---- камера: с настоящими данными старт — у своего города (та же
+  // логика, что уже прижилась в живой 3D-вкладке после жалобы "почему
+  // камера стартует у 0:0, а не у моего города"), без данных — центр
+  // демо-патча. Управляемая — перетаскивание вращает, колесо/щипок
+  // масштабирует (см. camera.ts); пока не тронули экран — тихо продолжает
+  // медленный автооблёт, чтобы страница не выглядела застывшей картинкой.
+  const own = real?.find((e) => e.own);
+  const cx = own ? own.x : (PATCH.x0 + PATCH.x1) / 2;
+  const cz = own ? own.y : (PATCH.y0 + PATCH.y1) / 2;
   const cy = heightAt(cx, cz) * HMAX;
   const cam: OrbitCamera = { yaw: 0, pitch: 0.55, dist: 42, target: [cx, cy + 2, cz] };
   const controls = attachOrbitControls(canvas, cam);
