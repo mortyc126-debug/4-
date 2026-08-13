@@ -204,6 +204,12 @@ async function main() {
     }
     return best >= 0 ? best : null;
   }
+  // Пин-маркер (пирамидка) из renderer.ts был готов ещё с ранних шагов
+  // прототипа, но с тех пор, как все сущности получили настоящие .glb-
+  // модели, ни разу не вызывался — пригодился как раз тут: подсветка
+  // выбранной сущности парящим над ней золотым маркером, без нового
+  // WGSL-пайплайна.
+  const HILITE_COLOR: [number, number, number] = [0.95, 0.78, 0.35];
   canvas.addEventListener("click", (ev) => {
     const rect = canvas.getBoundingClientRect();
     const px = (ev.clientX - rect.left) * (canvas.width / rect.width);
@@ -211,10 +217,16 @@ async function main() {
     const eid = findEntityAtScreen(px, py);
     const label = eid !== null ? labelOf.get(eid) ?? null : null;
     (window as any).__selectedLabel = label;
-    if (label) {
+    if (eid !== null && label) {
+      const wx = Position.x[eid], wz = Position.y[eid];
+      const wy = heightAt(wx, wz) * HMAX + (modelScaleOf.get(eid) ?? 5) * 0.9 + 2;
+      renderer.setMarkers([{ x: wx, y: wy, z: wz, color: HILITE_COLOR }]);
+      (window as any).__markerActive = true;
       selectedEl.textContent = label;
-      selectedEl.style.display = "";
+      selectedEl.style.display = "block";
     } else {
+      renderer.setMarkers([]);
+      (window as any).__markerActive = false;
       selectedEl.style.display = "none";
     }
   });
