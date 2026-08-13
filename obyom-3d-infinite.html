@@ -243,7 +243,7 @@ const SEAC_S=[0.14,0.24,0.28], SEAC_D=[0.05,0.11,0.19];
    решаются хэшем координат чанка, так что результат один и тот же при любой
    повторной генерации того же чанка. ---- */
 const RK=["human","dwarf","elf","undead"];
-const CASTLE_PAD_HW=3, CASTLE_MAX_SLOPE_DEG=9;
+const CASTLE_PAD_HW=4, CASTLE_MAX_SLOPE_DEG=9;
 // Общая проверка площадки: пятачок padHw×padHw без воды и без резкого уклона.
 // Замку нужен просторный, ровный пятачок — лагерю и ресурсной точке хватает
 // пятачка поменьше (см. chunkCampCandidate/chunkResourceCandidate ниже).
@@ -257,7 +257,9 @@ function siteBuildableParams(x,y,padHw,maxSlopeDeg){
   return (mx-mn) < 2*padHw*Math.tan(maxSlopeDeg*Math.PI/180);
 }
 function siteBuildable(x,y){ return siteBuildableParams(x,y,CASTLE_PAD_HW,CASTLE_MAX_SLOPE_DEG); }
-const MODEL_SCALE_BY_EPOCH=[0,1,2,3,4,5];   // footprint эпоха×эпоха клеток, как просил игрок
+// ЭКСПЕРИМЕНТ: замки маленькими терялись в лесу/траве — тестируем крупный
+// фиксированный масштаб вместо footprint'а по эпохе (тот был 1×1..5×5).
+const MODEL_SCALE_BY_EPOCH=[5,5,5,5,5,5];   // все замки игроков — 5×5, вне зависимости от эпохи
 const TILT_SAMPLE=0.6, TILT_MAX=6*Math.PI/180;
 function groundTiltAt(x,y){
   const hL=H(x-TILT_SAMPLE,y), hR=H(x+TILT_SAMPLE,y);
@@ -280,10 +282,14 @@ function chunkCityCandidate(cx,cy){
   const e=heightAt(x,y);
   if(e<=SEA+0.06||e>=0.72) return null;
   if(!siteBuildable(x,y)) return null;
-  const ER=[0,1.5,2.0,2.6,3.3,4.4];
   const SPR={human:1.00,dwarf:0.92,elf:1.10,undead:1.00}[race];
-  const r=ER[epoch]*SPR+0.9;
-  const yy=H(x,y), yaw=hash2(cx,cy,SEED+900)*Math.PI*2, scale=MODEL_SCALE_BY_EPOCH[epoch];
+  const scale=MODEL_SCALE_BY_EPOCH[epoch];
+  // Радиус расчистки леса/травы вокруг замка считаем от РЕАЛЬНОГО масштаба
+  // модели, а не от эпохи отдельно — иначе при фиксированном 5×5 маленький
+  // (по старой логике) замок ранней эпохи получил бы тесную расчистку под
+  // старый footprint и всё равно тонул бы в кронах, несмотря на новый размер.
+  const r=(scale*0.9+1.2)*SPR;
+  const yy=H(x,y), yaw=hash2(cx,cy,SEED+900)*Math.PI*2;
   const {tiltX,tiltZ}=groundTiltAt(x,y);
   return { race,epoch,x,y:yy,z:y,r,yaw,scale,
     mat:M4.modelTilt(x,yy,y,yaw,tiltX,tiltZ,scale) };
@@ -291,11 +297,14 @@ function chunkCityCandidate(cx,cy){
 
 // Лагеря разбойников и ресурсные точки — та же лотерея, что и у городов:
 // свой шанс на чанк, своя позиция, та же проверка площадки (только пятачок
-// поменьше и уклон подобрее — модель мелкая, эпох/рас у неё нет). Просто
-// заметно чаще, как и просил игрок. Каждая проверяет, что не легла поверх
-// того, что решил поставить в этом же чанке город (а ресурсная точка — ещё
-// и лагерь): иначе с такой частотой они бы то и дело слипались.
-const CAMP_CHANCE=0.30, CAMP_PAD_HW=2, CAMP_MAX_SLOPE_DEG=11;
+// поменьше и уклон подобрее — рас/эпох у них нет). Просто заметно чаще, как
+// и просил игрок. Каждая проверяет, что не легла поверх того, что решил
+// поставить в этом же чанке город (а ресурсная точка — ещё и лагерь):
+// иначе с такой частотой они бы то и дело слипались.
+// ЭКСПЕРИМЕНТ (тот же, что и с замками): масштаб 3×3 вместо исходного
+// 1×1 — при маленьком размере модели терялись в траве и кронах.
+const MINOR_MODEL_SCALE=3, MINOR_R=MINOR_MODEL_SCALE*0.9+1.2;
+const CAMP_CHANCE=0.30, CAMP_PAD_HW=3, CAMP_MAX_SLOPE_DEG=11;
 function chunkCampCandidate(cx,cy,city){
   if(hash2(cx,cy,SEED+821)>CAMP_CHANCE) return null;
   const margin=CAMP_PAD_HW+2;
@@ -304,15 +313,15 @@ function chunkCampCandidate(cx,cy,city){
   const x=cx*CHUNK+lx, y=cy*CHUNK+ly;
   const e=heightAt(x,y);
   if(e<=SEA+0.04||e>=0.86) return null;
-  if(city && Math.hypot(city.x-x,city.z-y)<city.r+1.5) return null;
+  if(city && Math.hypot(city.x-x,city.z-y)<city.r+MINOR_R) return null;
   if(!siteBuildableParams(x,y,CAMP_PAD_HW,CAMP_MAX_SLOPE_DEG)) return null;
   const yy=H(x,y), yaw=hash2(cx,cy,SEED+901)*Math.PI*2;
   const {tiltX,tiltZ}=groundTiltAt(x,y);
-  return { x,y:yy,z:y,r:2.0,yaw, mat:M4.modelTilt(x,yy,y,yaw,tiltX,tiltZ,1) };
+  return { x,y:yy,z:y,r:MINOR_R,yaw, mat:M4.modelTilt(x,yy,y,yaw,tiltX,tiltZ,MINOR_MODEL_SCALE) };
 }
 
 const RESOURCE_TYPES=["farm","gold-mine","quarry","sawmill"];
-const RESOURCE_CHANCE=0.42, RES_PAD_HW=2, RES_MAX_SLOPE_DEG=11;
+const RESOURCE_CHANCE=0.42, RES_PAD_HW=3, RES_MAX_SLOPE_DEG=11;
 function chunkResourceCandidate(cx,cy,city,camp){
   if(hash2(cx,cy,SEED+841)>RESOURCE_CHANCE) return null;
   const type=RESOURCE_TYPES[Math.floor(hash2(cx,cy,SEED+842)*RESOURCE_TYPES.length)];
@@ -322,12 +331,12 @@ function chunkResourceCandidate(cx,cy,city,camp){
   const x=cx*CHUNK+lx, y=cy*CHUNK+ly;
   const e=heightAt(x,y);
   if(e<=SEA+0.04||e>=0.86) return null;
-  if(city && Math.hypot(city.x-x,city.z-y)<city.r+1.5) return null;
-  if(camp && Math.hypot(camp.x-x,camp.z-y)<camp.r+1.5) return null;
+  if(city && Math.hypot(city.x-x,city.z-y)<city.r+MINOR_R) return null;
+  if(camp && Math.hypot(camp.x-x,camp.z-y)<camp.r+MINOR_R) return null;
   if(!siteBuildableParams(x,y,RES_PAD_HW,RES_MAX_SLOPE_DEG)) return null;
   const yy=H(x,y), yaw=hash2(cx,cy,SEED+902)*Math.PI*2;
   const {tiltX,tiltZ}=groundTiltAt(x,y);
-  return { type,x,y:yy,z:y,r:2.0,yaw, mat:M4.modelTilt(x,yy,y,yaw,tiltX,tiltZ,1) };
+  return { type,x,y:yy,z:y,r:MINOR_R,yaw, mat:M4.modelTilt(x,yy,y,yaw,tiltX,tiltZ,MINOR_MODEL_SCALE) };
 }
 
 /* =======================================================================
@@ -1356,7 +1365,7 @@ function projectToScreen(x,y,z){
 }
 function goToCity(inst){
   cam.tx=inst.x; cam.tz=inst.z; cam.ty=H(inst.x,inst.z)+1.2;
-  cam.dist=inst.epoch?[0,8,10,13,16,20][inst.epoch]:9; cam.pitch=0.34;
+  cam.dist=inst.epoch?20:12; cam.pitch=0.34;   // замки теперь всегда 5×5, точки/лагеря — 3×3
 }
 function tryTap(clientX,clientY){
   if(!lastVP) return;
