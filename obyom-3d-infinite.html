@@ -866,7 +866,7 @@ const BACKDROP_STEP=6;
 // проплешина (дыра до неба) на скриншоте. Теперь — щедрый нахлёст, а не
 // z-fighting в нём отдельно гасит polygonOffset при отрисовке (см. frame()).
 const BACKDROP_INNER=CHUNK*Math.max(1,LOAD_RADIUS-2);
-const BACKDROP_OUTER=200;                        // дальше и так съедает туман (uFog)
+const BACKDROP_OUTER=450;                        // дальше и так съедает туман (uFog, см. DEFAULT_FOG)
 function genBackdrop(cx0,cy0){
   CUR={pos:[],col:[],knd:[],nrm:[]};
   const n=Math.ceil(BACKDROP_OUTER/BACKDROP_STEP);
@@ -1578,6 +1578,15 @@ demolishBtn.addEventListener("click",()=>{
   setTimeout(()=>{ demolishBtn.textContent="Снести (тест)"; },1500);
 });
 
+// Дальность видимости регулируется ТУМАНОМ (uFog), не радиусом прогрузки
+// чанков — детальные чанки (лес/трава/постройки) по-прежнему грузятся только
+// в LOAD_RADIUS, дальше их сменяет дешёвый BACKDROP-рельеф без деталей (см.
+// комментарий у BACKDROP_OUTER выше). Раздвигаем именно fog: силуэт гор и
+// воды на BACKDROP-кольце виден дальше, а не только "до какого чанка долетел
+// воркер". Меньше uFog — туман начинается позже. BACKDROP_OUTER раздвинут
+// вместе с ним, иначе кольцо кончилось бы раньше, чем спрятал бы туман, и
+// вместо мягкого затухания в дымке был бы резкий обрыв мира в упор.
+const DEFAULT_FOG=0.004;   // было 0.0095 — видимость эксперимента ради сдвинута на пару сотен клеток дальше
 const hudStats=document.getElementById("hudStats");
 let lastHud=0;
 
@@ -1641,7 +1650,7 @@ function frame(){
   gl.uniform3fv(uEye,new Float32Array(eye));
   gl.uniform3fv(uSun,new Float32Array(SUN));
   gl.uniform1f(uTime,t);
-  gl.uniform1f(uFog,window.__fog!==undefined?window.__fog:0.0095);
+  gl.uniform1f(uFog,window.__fog!==undefined?window.__fog:DEFAULT_FOG);
   gl.uniform1f(uNbias,0.03);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,shadowTex);
   gl.uniform1i(uShadow,0);
@@ -1677,7 +1686,7 @@ function frame(){
   gl.uniform3fv(mUEye,new Float32Array(eye));
   gl.uniform3fv(mUSun,new Float32Array(SUN));
   gl.uniform1f(mUTime,t);
-  gl.uniform1f(mUFog,window.__fog!==undefined?window.__fog:0.0095);
+  gl.uniform1f(mUFog,window.__fog!==undefined?window.__fog:DEFAULT_FOG);
   gl.uniform1f(mUNbias,0.03);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,shadowTex);
   gl.uniform1i(mUShadow,0);
