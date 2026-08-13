@@ -7,6 +7,7 @@
    на экране и непустой результат ECS-запроса в одном месте.
    ========================================================================= */
 import { createWorld, addEntity, addComponent, query } from "bitecs";
+import { createRenderer, type MarkerEntity } from "./renderer";
 
 const statusEl = document.getElementById("status") as HTMLDivElement;
 function setStatus(lines: string[]) {
@@ -76,24 +77,23 @@ async function main() {
   lines.push(`WebGPU: устройство получено, формат канвы — ${format}`);
   setStatus(lines);
 
-  let frame = 0;
+  // Раскраска маркеров как в игре: золото — город, гранат — лагерь,
+  // изумруд — точка ресурсов (см. shieldSvg/палитру в index.html).
+  const KIND_COLOR: Record<number, [number, number, number]> = {
+    0: [0.85, 0.68, 0.29], // город — gilt
+    1: [0.63, 0.16, 0.2], // лагерь — garnet
+    2: [0.29, 0.55, 0.38], // точка — verdigris
+  };
+  const renderer = createRenderer(device, ctx, format);
+  const markers: MarkerEntity[] = Array.from(found).map((eid) => ({
+    x: Position.x[eid],
+    y: Position.y[eid],
+    color: KIND_COLOR[Kind.value[eid]],
+  }));
+  renderer.setEntities(markers);
+
   function draw() {
-    frame++;
-    const t = frame / 60;
-    const encoder = device.createCommandEncoder();
-    const view = ctx!.getCurrentTexture().createView();
-    const pass = encoder.beginRenderPass({
-      colorAttachments: [
-        {
-          view,
-          clearValue: { r: 0.05 + 0.03 * Math.sin(t), g: 0.04, b: 0.03, a: 1 },
-          loadOp: "clear",
-          storeOp: "store",
-        },
-      ],
-    });
-    pass.end();
-    device.queue.submit([encoder.finish()]);
+    renderer.frame({ r: 0.043, g: 0.039, b: 0.035, a: 1 });
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
