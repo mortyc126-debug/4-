@@ -1453,6 +1453,15 @@ const BOT_NAMES = {
   elf:["Сильваниэль","Тихая Роща","Аэлендор","Лунный Предел","Тэрровен"],
   undead:["Мортгард","Пепельный Курган","Некрополь Вар","Тлен","Хладная Длань"],
 };
+// Личный ник правителя — не то же самое, что имя его столицы (у игрока то же
+// самое различие: "Ваш город" vs ник из поля профиля). В 3D-мире над замком
+// подписывают именно ник, как в RoK, а не название города.
+const BOT_NICKS = {
+  human:["Эдмунд","Готфрид","Освальд","Ричард","Альбрехт","Леопольд","Вильгельм"],
+  dwarf:["Торин","Балин","Грим","Дурин","Скальд","Улаф","Хротгар"],
+  elf:["Элронд","Талион","Сильвас","Айриэль","Кальдор","Финдариэль","Ленвэ"],
+  undead:["Мортимер","Кровеслав","Ужаслав","Гримхольд","Некрос","Тленар","Мракс"],
+};
 
 // Общее правило посадки лагерей/точек — используется и при первой генерации
 // мира, и при респауне (истощившаяся точка, разгромленный лагерь появляются
@@ -1540,6 +1549,8 @@ function genWorld(seed){
     const pool = BOT_NAMES[race];
     used[race]=(used[race]||0);
     b.name = pool[used[race]%pool.length] + (used[race]>=pool.length?" II":"");
+    const nickPool = BOT_NICKS[race];
+    b.nick = nickPool[used[race]%nickPool.length] + (used[race]>=nickPool.length?" II":"");
     used[race]++;
     // боты стартуют не с нуля, иначе мир мёртвый
     const head = ri(2,5);
@@ -3044,9 +3055,12 @@ async function load(){
     W=s; RNG=mulberry(W.seed+Math.floor(W.t));
     // довооружаем старые сохранения полями/зданиями, добавленными позже (иначе
     // экраны, читающие их напрямую, падают или считают NaN на "довоенных" сейвах).
-    W.players.forEach(p=>{
+    W.players.forEach((p,i)=>{
       if(!p.tomes) p.tomes={}; if(p.heal===undefined) p.heal=null;
       BKEYS.forEach(k=>{ if(p.b[k]===undefined) p.b[k]=isMulti(k)?new Array(BUILDINGS[k].plots).fill(0):0; });
+      // Старые боты создавались до появления личных ников (см. BOT_NICKS) —
+      // над их замком в 3D теперь должен висеть ник, не пустая строка.
+      if(p.isBot && !p.nick){ const pool=BOT_NICKS[p.race]||BOT_NICKS.human; p.nick=pool[i%pool.length]; }
     });
     thinMapDensity();
     thinMapDensity2();
@@ -3109,6 +3123,13 @@ const mini=$("#mini"), mg=mini.getContext("2d");
 // теперь его так же пишет 3D-вкладка (см. renderCartoucheFor, вызывается
 // из obyom-3d-infinite.html при тапе по замку/лагерю/точке).
 let sel=null;
+// "Разведка" в карточке правителя — сворачиваемый блок, не отдельный поход:
+// пассивная разведка уже была всегда (см. renderCartouche), кнопка просто
+// открывает то, что уже посчитано. Ключ, не булев флаг — чтобы открытая
+// разведка сама закрывалась при переключении на другую клетку без лишней
+// проводки через все места, где меняется sel.
+let scoutOpenKey=null;
+const RES_SITE_NAME={food:"Пашня",wood:"Лесопилка",stone:"Каменоломня",gold:"Рудник"};
 let tab="city", tempo=1, lastReal=Date.now(), lastFolio="", lastMenuBody="", academyTab="mil", invTab="res", genTab="overview";
 
 /* ---- Рельеф в буфер ---------------------------------------------------- */
@@ -3315,26 +3336,42 @@ function renderTop(){
   $("#daytime").textContent="д."+(d+1)+" "+String(hh).padStart(2,"0")+":"+String(mm).padStart(2,"0");
 }
 
-/* ---- Картуш: что выбрано на карте ---- */
+/* ---- Картуш: что выбрано на карте. Ник/уровень ратуши у каждого замка
+   теперь висят прямо в 3D над моделью (см. updateLabels в obyom-3d-infinite.
+   html) — панели тут остаются только там, где нужно ДЕЙСТВИЕ (собрать,
+   атаковать, разведать), а не просто повторить то, что уже подписано в
+   мире. Пустошь и своя столица не открывают панель вовсе. ---- */
 let lastCart="";
 function renderCartouche(){
   const el=$("#cartouche");
-  const put=h=>{ if(h!==lastCart){ lastCart=h; el.innerHTML=h } };
-  if(!sel){ put("<div class='hd'>Штабной стол</div>"+
-      "<div class='hint'>Выберите клетку на чертеже, чтобы рассмотреть её.</div>"); return }
+  const put=h=>{ if(h!==lastCart){ lastCart=h; el.innerHTML=h } el.style.display=h?"":"none"; };
+  if(!sel){ put(""); return }
   const o=W.map[key(sel.x,sel.y)], p=me();
   const coord="<span class='n' style='font-family:var(--data);font-size:10px;color:var(--vellum-faint)'>"+
     sel.x+" · "+sel.y+"</span>";
-  if(!o){
-    put("<div class='hd'>Пустошь "+coord+"</div>"+
-      "<div class='hint'>Ни поселений, ни припасов. Земля ждёт хозяина.</div>"); return;
-  }
+  if(!o){ put(""); return; }
+
   if(o.t==="node"){
-    put("<div class='hd'>"+RES_NAME[o.res]+" "+coord+"</div>"+
-      "<div class='co'><span>Богатство жилы</span><b>"+o.lv+" из 5</b></div>"+
-      "<div class='co'><span>Осталось</span><b>"+fmt(o.amount)+"</b></div>"+
-      "<div class='co'><span>Расстояние</span><b>"+Math.round(dist(p,o))+" кл.</b></div>"+
-      "<button class='seal wide' style='margin-top:9px' data-act='march' data-x='"+o.x+"' data-y='"+o.y+"'>Выслать обоз</button>");
+    // "Сборщик" — кто сейчас черпает эту жилу (o.busy хранит id игрока,
+    // ставится в arriveMarch при входе в режим gather); своя добыча
+    // показывает прогресс и позволяет отозвать обоз вместо повторной
+    // отправки — как отозвать в списке маршей, но прямо с карты.
+    const g=W.marches.find(m=>m.tx===o.x&&m.ty===o.y&&m.state==="gather");
+    const gp=o.busy!=null?W.players.find(q=>q.id===o.busy):null;
+    const mine=g&&g.pid===p.id;
+    let body="<div class='hd'>"+RES_SITE_NAME[o.res]+" "+coord+"</div>"+
+      "<div class='co'><span>Уровень</span><b>"+o.lv+" из 5</b></div>"+
+      "<div class='co'><span>Резервы</span><b>"+fmt(o.amount)+"</b></div>"+
+      "<div class='co'><span>Сборщик</span><b>"+(gp?gp.nick:"Никто")+"</b></div>";
+    if(mine){
+      const f=clamp((W.t-g.t0)/Math.max(1,g.t1-g.t0),0,1);
+      const target=(g.carry&&g.carry[o.res])||0, got=Math.round(target*f);
+      body+="<div class='co'><span>Собрано</span><b>"+fmt(got)+" / "+fmt(target)+"</b></div>"+
+        "<button class='seal wide' style='margin-top:9px' data-act='recall' data-m='"+g.id+"'>Отозвать</button>";
+    } else {
+      body+="<button class='seal wide' style='margin-top:9px' data-act='march' data-x='"+o.x+"' data-y='"+o.y+"'>Собрать</button>";
+    }
+    put(body);
     return;
   }
   if(o.t==="camp"||o.t==="fort"){
@@ -3348,15 +3385,16 @@ function renderCartouche(){
       "<div class='co'><span>Сила заставы</span><b>"+fmt(fp)+"</b></div>"+
       "<div class='co'><span>Ваше войско</span><b>"+fmt(my)+"</b></div>"+
       "<div class='co'><span>Прогноз</span><b style='color:"+ok[1]+"'>"+ok[0]+"</b></div>"+
-      "<button class='seal wide' style='margin-top:9px' data-act='march' data-x='"+o.x+"' data-y='"+o.y+"'>Выступить</button>");
+      "<button class='seal wide blood' style='margin-top:9px' data-act='march' data-x='"+o.x+"' data-y='"+o.y+"'>Атаковать</button>");
     return;
   }
   if(o.t==="city"){
     const q=W.players.find(z=>z.id===o.pid);
-    if(!q){ put("<div class='hd'>Руины</div>"); return }
-    const own=q.id===p.id;
+    if(!q){ put(""); return }
+    if(q.id===p.id){ put(""); return }   // своя столица — подпись в 3D, панель тут ни к чему
+    const cellKey=o.x+","+o.y, scoutOpen=scoutOpenKey===cellKey;
     let scout="";
-    if(!own){
+    if(scoutOpen){
       const sl=p.b.scout||0;
       if(sl<=0) scout="<div class='hint'>Постройте "+buildingName("scout",p).toLowerCase()+", чтобы узнать состав войск.</div>";
       else {
@@ -3382,15 +3420,18 @@ function renderCartouche(){
         }
       }
     }
-    put("<div class='hd'>"+shieldSvg(q.race,14)+q.name+" "+coord+"</div>"+
+    const shielded=W.t<q.shieldUntil;
+    put("<div class='hd'>"+shieldSvg(q.race,14)+q.nick+" "+coord+"</div>"+
+      "<div class='co'><span>Город</span><b>"+q.name+"</b></div>"+
       "<div class='co'><span>Знамя</span><b>"+RACES[q.race].name+"</b></div>"+
       "<div class='co'><span>Ратуша</span><b>"+q.b.hall+" · эпоха "+epochOf(q.b.hall)+"</b></div>"+
       "<div class='co'><span>Сила</span><b>"+fmt(power(q))+"</b></div>"+
+      (shielded?"<div class='co'><span>Статус</span><b style='color:#7ab2e0'>Под щитом мира</b></div>":"")+
       scout+
-      (own?"<div class='hint'>Ваша столица.</div>"
-          :(W.t<q.shieldUntil
-            ?"<div class='hint' style='color:#7ab2e0'>Под щитом мира ещё "+fmtDur(q.shieldUntil-W.t)+".</div>"
-            :"<button class='seal wide blood' style='margin-top:9px' data-act='march' data-x='"+o.x+"' data-y='"+o.y+"'>Идти войной</button>")));
+      "<div class='chips' style='margin-top:9px'>"+
+        "<button class='seal' data-act='scouttoggle' data-x='"+o.x+"' data-y='"+o.y+"'>"+(scoutOpen?"Скрыть":"Разведка")+"</button>"+
+        (shielded?"":"<button class='seal blood' data-act='march' data-x='"+o.x+"' data-y='"+o.y+"'>Атака</button>")+
+      "</div>");
   }
 }
 // Обёртка для 3D-вкладки: тап по замку/лагерю/точке там вызывает её через
@@ -4470,7 +4511,13 @@ function handleAct(e){
     if(menu.classList.contains("open")&&menu.dataset.tab==="inv"){ lastMenuBody=foInv(); $("#menu-modal-body").innerHTML=lastMenuBody; }
   }
   else if(a==="recall"){ const m=W.marches.find(x=>x.id==b.dataset.m);
-    if(m){ recallMarch(m); herald("Отряд поворачивает домой.") } }
+    if(m){ recallMarch(m); renderCartouche(); herald("Отряд поворачивает домой.") } }
+  else if(a==="scouttoggle"){
+    const k=b.dataset.x+","+b.dataset.y;
+    scoutOpenKey = scoutOpenKey===k ? null : k;
+    renderCartouche();
+    return;
+  }
   else if(a==="shield"){
     const s=CFG.SHIELD_COST[+b.dataset.i];
     if(p.res.gold>=s[1]){ p.res.gold-=s[1];

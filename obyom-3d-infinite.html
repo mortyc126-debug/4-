@@ -9,45 +9,48 @@
     font:14px/1.5 "Palatino Linotype","Book Antiqua",Palatino,Georgia,serif;color:#ece2ca}
   canvas{display:block;width:100%;height:100%;cursor:grab;touch-action:none}
   canvas.drag{cursor:grabbing}
-  #hud{position:fixed;left:12px;bottom:12px;cursor:pointer;user-select:none;background:rgba(22,17,11,.84);
-    border:1px solid #3d3121;padding:12px 15px;font-size:12.5px;max-width:262px;
-    box-shadow:0 8px 30px rgba(0,0,0,.65);backdrop-filter:blur(3px)}
-  #hud b{color:#e6c273;font-variant:small-caps;letter-spacing:.13em;display:block;margin-bottom:6px}
-  #hud i{font-style:normal;color:#a2967b;display:block;margin-top:8px;font-size:11.5px}
-  #hud.min{max-width:none;padding:7px 11px}
-  #hud.min p,#hud.min i{display:none}
   #ui{position:fixed;inset:0;pointer-events:none;z-index:20}
-  #coordBar{position:fixed;left:50%;top:64px;transform:translateX(-50%);
-    display:flex;align-items:center;gap:6px;pointer-events:auto;
-    background:rgba(22,17,11,.84);border:1px solid #3d3121;border-radius:8px;
-    padding:7px 10px;box-shadow:0 8px 30px rgba(0,0,0,.65);backdrop-filter:blur(3px)}
-  #coordBar label{font-size:12px;color:#a2967b;display:flex;align-items:center;gap:4px}
-  #coordBar input{width:64px;background:#1c160e;border:1px solid #4a3b26;border-radius:4px;
-    color:#ece2ca;font:inherit;font-size:13px;padding:3px 5px}
-  #coordBar button{background:#3d3121;border:1px solid #4a3b26;border-radius:4px;
-    color:#e6c273;font:inherit;font-size:12.5px;padding:4px 10px;cursor:pointer}
-  #coordBar button:active{background:#4a3b26}
+  /* Голая координатная строка — только значения и поля ввода, без рамки/
+     плашки: тестовая функция ("сказать другу координаты"), не часть
+     основного HUD, оттого и не должна выглядеть как ещё одна панель. */
+  #coordBar{position:fixed;left:50%;top:112px;transform:translateX(-50%);
+    display:flex;align-items:center;gap:5px;pointer-events:auto}
+  #coordBar label{font-size:11.5px;color:#c9b98f;display:flex;align-items:center;gap:3px;
+    text-shadow:0 1px 3px rgba(0,0,0,.9)}
+  #coordBar input{width:52px;background:transparent;border:none;border-bottom:1px solid rgba(198,166,107,.4);
+    color:#ece2ca;font:inherit;font-size:12px;padding:2px 3px;text-shadow:0 1px 3px rgba(0,0,0,.9)}
+  #coordBar input:focus{outline:none;border-bottom-color:#e6c273}
+  #coordBar button{background:none;border:none;color:#e6c273;font:inherit;font-size:11.5px;
+    padding:2px 4px;cursor:pointer;text-shadow:0 1px 3px rgba(0,0,0,.9)}
+  #coordBar button:active{opacity:.7}
+  /* Подписи над замками/лагерями/точками — плавают в 3D-пространстве вслед
+     за камерой (см. updateLabels), позиция ставится через transform каждый
+     кадр, а не left/top, чтобы не дёргать layout. */
+  #labels{position:fixed;inset:0;pointer-events:none;z-index:12;overflow:hidden}
+  .wlabel{position:absolute;left:0;top:0;transform:translate(-50%,-100%);
+    display:flex;flex-direction:column;align-items:center;white-space:nowrap;
+    text-shadow:0 1px 4px rgba(0,0,0,.95),0 0 8px rgba(0,0,0,.6)}
+  .wlabel .nm{font-size:12.5px;color:#f0dfae;font-variant:small-caps;letter-spacing:.04em}
+  .wlabel .nm.mine{color:#8fd0a0}
+  .wlabel .lv{font-size:10px;color:#c9b98f;margin-top:1px}
   @media (max-width:760px){
-    #hud{max-width:none;right:12px;font-size:12px;padding:9px 11px}
-    #hud i{font-size:10.5px}
-    #coordBar{padding:6px 8px;gap:4px}
-    #coordBar input{width:52px;font-size:12px}
+    #coordBar{padding:2px;gap:3px;top:100px}
+    #coordBar input{width:44px;font-size:11px}
+    .wlabel .nm{font-size:11.5px}
+    .wlabel .lv{font-size:9px}
   }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+<div id="labels"></div>
 <div id="ui">
   <div id="coordBar">
     <label>X: <input id="coordX" type="number" step="any" inputmode="decimal"></label>
     <label>Y: <input id="coordY" type="number" step="any" inputmode="decimal"></label>
     <button id="coordGo">Перейти</button>
-    <button id="demolishBtn" title="Тест: снести ближайший объект и посмотреть, как зарастает расчистка">Снести (тест)</button>
   </div>
 </div>
-<div id="hud"><b>Четыре Знамени</b>
-<p>Один палец — перемещение по карте, два пальца — масштаб, поворот и наклон. Коснитесь замка, чтобы подойти к нему.</p>
-<i id="hudStats">Мир прогружается вокруг вас по мере полёта, как чанки в песочнице: впереди появляется, позади пропадает. Коснитесь, чтобы свернуть.</i></div>
 <script>
 "use strict";
 /* =======================================================================
@@ -393,7 +396,7 @@ function buildRealCandidate(o,nearby,removals){
     const SPR={human:1.00,dwarf:0.92,elf:1.10,undead:1.00}[race];
     scale=MODEL_SCALE_BY_EPOCH[epoch];
     baseR=(scale*0.9+1.2)*SPR;
-    extra={race,epoch}; kind="city";
+    extra={race,epoch,nick:o.nick,hall:o.hall,own:!!o.own}; kind="city";
   } else if(o.t==="camp"||o.t==="fort"){
     // Модель разбойников одна на оба — форт крупнее лагеря тем же приёмом,
     // что и в 2D (там тоже только масштаб иконки различает форт от лагеря).
@@ -1072,8 +1075,6 @@ var {M4,sub,cross,norm,H,heightAt,SEA,SUN,CHUNK,LOAD_RADIUS,UNLOAD_RADIUS,BACKDR
 /* =======================================================================
    WebGL
    ======================================================================= */
-document.getElementById("hud").addEventListener("click",e=>
-  e.currentTarget.classList.toggle("min"));
 const cv=document.getElementById("c");
 const gl=cv.getContext("webgl2",{antialias:true});
 if(!gl) throw new Error("нужен WebGL 2");
@@ -1591,10 +1592,14 @@ function rebuildRealIndex(){
     let entry=o;
     if(o.t==="city"){
       const pl=W.players && W.players.find(p=>p.id===o.pid);
-      // Раса/эпоха запись W.map сама не хранит (только pid) — прикладываем
-      // здесь один раз на весь индекс, а не при каждой генерации чанка.
-      // epochOf живёт в родительском окне (это его функция), не здесь.
-      entry=Object.assign({},o,{race:pl?pl.race:"human", epoch:pl?window.parent.epochOf(pl.b.hall):1});
+      // Раса/эпоха/ник/уровень ратуши запись W.map сама не хранит (только
+      // pid) — прикладываем здесь один раз на весь индекс, а не при каждой
+      // генерации чанка. Ник — то, что висит подписью над замком в 3D (как
+      // в RoK), а не название города. own — чтобы подпись/цвет своего
+      // замка отличались от чужих без повторного поиска игрока в рендере.
+      entry=Object.assign({},o,{race:pl?pl.race:"human", epoch:pl?window.parent.epochOf(pl.b.hall):1,
+        nick:pl?pl.nick:"?", hall:pl?pl.b.hall:1,
+        own: !!(pl && W.players[0] && pl.id===W.players[0].id)});
     }
     const cx=Math.floor(o.x/CHUNK), cy=Math.floor(o.y/CHUNK);
     const ck=chunkKey(cx,cy);
@@ -1731,6 +1736,14 @@ function demolishNearest(x,z){
 /* ---- Точка старта: ищем поблизости от мирового начала координат сушу,
    чтобы не начинать полёт над голым океаном. ---- */
 function findSpawn(){
+  // Внутри игры (не отдельный тест-показ файла) старт — всегда своя столица,
+  // а не случайная точка у мирового нуля: игрок открывает вкладку "Мир",
+  // чтобы посмотреть на СВОЙ город, а не блуждать в её поисках.
+  try{
+    const pW=window.parent && window.parent!==window && window.parent.W;
+    const me=pW && pW.players && pW.players[0];
+    if(me) return {x:me.x, y:me.y};
+  }catch(_){ /* кросс-origin — считаем, что настоящих данных нет */ }
   if(heightAt(0,0)>SEA+0.05) return {x:0,y:0};
   for(let r=4;r<200;r+=4){
     for(let a=0;a<10;a++){
@@ -1817,6 +1830,56 @@ function projectToScreen(x,y,z){
   const r=cv.getBoundingClientRect();
   return {x:(cx/w*0.5+0.5)*r.width, y:(1-(cy/w*0.5+0.5))*r.height};
 }
+
+/* ---- Подписи над замками/лагерями/точками (как в RoK: ник/тип + уровень
+   плавают над моделью). Обычный WebGL сюда текст без своей системы
+   растеризации шрифта не положит — дешевле и надёжнее держать их обычными
+   DOM-узлами поверх канвы и каждый кадр переставлять transform по
+   проекции 3D-точки на экран (см. projectToScreen), чем городить текстуры
+   с текстом. Пул divов переиспускается по ключу объекта — не пересоздаём
+   на каждый кадр, только показываем/прячем/двигаем то, что уже есть. ---- */
+const RES_TYPE_NAME={farm:"Пашня",sawmill:"Лесопилка",quarry:"Каменоломня","gold-mine":"Рудник"};
+const labelTargets=[];
+const labelEl=new Map();
+const labelsRoot=document.getElementById("labels");
+function labelKey(kind,o){ return kind+":"+o.x+":"+o.z; }
+function labelContent(kind,o){
+  if(kind==="city") return {nm:o.nick||"?", lv:"Ур. "+(o.hall||1), mine:!!o.own};
+  if(kind==="camp") return {nm:o.fort?"Форт":"Лагерь", lv:"Ур. "+o.lv, mine:false};
+  return {nm:RES_TYPE_NAME[o.type]||o.type, lv:"Ур. "+o.lv, mine:false};
+}
+function updateLabels(targets){
+  const seen=new Set();
+  for(const {kind,o} of targets){
+    const k=labelKey(kind,o); seen.add(k);
+    // Верх модели — от масштаба (scale коррелирует с footprint/высотой
+    // модели, точной высоты меша тут не знаем), с запасом, чтобы подпись
+    // не утыкалась в крышу.
+    const topY=o.y+o.scale*0.6+1.1;
+    const pt=projectToScreen(o.x,topY,o.z);
+    let el=labelEl.get(k);
+    if(!pt){ if(el) el.style.display="none"; continue; }
+    const r=cv.getBoundingClientRect();
+    if(pt.x<-40||pt.x>r.width+40||pt.y<-40||pt.y>r.height+40){ if(el) el.style.display="none"; continue; }
+    if(!el){
+      el=document.createElement("div"); el.className="wlabel";
+      el.innerHTML="<div class='nm'></div><div class='lv'></div>";
+      labelsRoot.appendChild(el); labelEl.set(k,el);
+    }
+    const c=labelContent(kind,o);
+    el.querySelector(".nm").textContent=c.nm;
+    el.querySelector(".nm").classList.toggle("mine",c.mine);
+    el.querySelector(".lv").textContent=c.lv;
+    el.style.display="";
+    // #labels — position:fixed;inset:0, тот же viewport-отсчёт, что и у
+    // projectToScreen (через canvas.getBoundingClientRect(), тоже во весь
+    // экран) — пересчитывать смещение контейнера не нужно.
+    el.style.transform="translate("+pt.x.toFixed(1)+"px,"+pt.y.toFixed(1)+"px) translate(-50%,-100%)";
+  }
+  for(const [k,el] of labelEl){
+    if(!seen.has(k)){ el.remove(); labelEl.delete(k); }
+  }
+}
 function goToCity(inst){
   // inst.y — уже точная высота посадки самого объекта (для настоящих данных
   // партии это сглаженная/приподнятая над рельефом высота, см. buildRealCandidate
@@ -1882,15 +1945,6 @@ document.getElementById("coordGo").addEventListener("click",goToCoords);
 [coordX,coordY].forEach(inp=>inp.addEventListener("keydown",e=>{
   if(e.key==="Enter"){ e.preventDefault(); goToCoords(); inp.blur(); }
 }));
-// Тестовая кнопка сноса: сносит ближайший к камере ЗАГРУЖЕННЫЙ город/лагерь/
-// точку, чтобы наглядно проверить, что модель исчезает сразу, а расчистка
-// вокруг неё зарастает травой/лесом со временем (см. demolishNearest выше).
-const demolishBtn=document.getElementById("demolishBtn");
-demolishBtn.addEventListener("click",()=>{
-  const res=demolishNearest(cam.tx,cam.tz);
-  demolishBtn.textContent=res ? "Снесено: "+res.kind : "Нечего сносить рядом";
-  setTimeout(()=>{ demolishBtn.textContent="Снести (тест)"; },1500);
-});
 
 // Дальность видимости регулируется ТУМАНОМ (uFog), не радиусом прогрузки
 // чанков — детальные чанки (лес/трава/постройки) по-прежнему грузятся только
@@ -1901,9 +1955,6 @@ demolishBtn.addEventListener("click",()=>{
 // вместе с ним, иначе кольцо кончилось бы раньше, чем спрятал бы туман, и
 // вместо мягкого затухания в дымке был бы резкий обрыв мира в упор.
 const DEFAULT_FOG=0.004;   // было 0.0095 — видимость эксперимента ради сдвинута на пару сотен клеток дальше
-const hudStats=document.getElementById("hudStats");
-let lastHud=0;
-
 const t0=performance.now();
 function frame(){
   const t=(performance.now()-t0)/1000;
@@ -2032,32 +2083,36 @@ function frame(){
   // для них пропускаем (сам чанк и трава на месте остаются).
   const MODEL_DRAW_R2=40*40;
   let citiesLoaded=0;
+  labelTargets.length=0;
   for(const c of chunks.values()){
     // removed:true — снесено, но ещё не заросло полностью (r у объекта
     // сжимается со временем и продолжает теснить траву/лес, см. applyRegrowth
     // в WORLD_SRC); саму модель при этом рисовать уже не нужно. Массивы, а не
     // одно значение на чанк — у настоящих данных партии плотность настоящей
     // карты (объектов на чанк может быть много), не одна лотерейная запись.
-    for(const city of c.cities){ citiesLoaded++; if(!city.removed) drawModel(castleModel(city.race,city.epoch),city.mat); }
+    for(const city of c.cities){
+      citiesLoaded++;
+      if(city.removed) continue;
+      drawModel(castleModel(city.race,city.epoch),city.mat);
+      labelTargets.push({kind:"city",o:city});
+    }
     for(const camp of c.camps){
       if(camp.removed) continue;
       const dx=camp.x-cam.tx, dz=camp.z-cam.tz;
       if(dx*dx+dz*dz>MODEL_DRAW_R2) continue;
       drawModel(campModel(),camp.mat);
+      labelTargets.push({kind:"camp",o:camp});
     }
     for(const res of c.resources){
       if(res.removed) continue;
       const dx=res.x-cam.tx, dz=res.z-cam.tz;
       if(dx*dx+dz*dz>MODEL_DRAW_R2) continue;
       drawModel(resourceModel(res.type),res.mat);
+      labelTargets.push({kind:"resource",o:res});
     }
   }
+  updateLabels(labelTargets);
 
-  if(t-lastHud>0.5 && !document.getElementById("hud").classList.contains("min")){
-    lastHud=t;
-    hudStats.textContent="Чанков в памяти: "+chunks.size+" · строится: "+inFlight.size+"/"+genQueue.length+
-      " · городов рядом: "+citiesLoaded+" · треугольников: "+Math.round(totalTris/1000)+"к";
-  }
   // Поля координат показывают, где игрок находится СЕЙЧАС — чтобы было что
   // продиктовать другу. Останавливаем обновление, как только начали
   // печатать (coordDirty), а не только пока поле в фокусе — иначе таб с X
