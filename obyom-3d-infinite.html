@@ -339,6 +339,52 @@ function chunkResourceCandidate(cx,cy,city,camp){
   return { type,x,y:yy,z:y,r:MINOR_R,yaw, mat:M4.modelTilt(x,yy,y,yaw,tiltX,tiltZ,MINOR_MODEL_SCALE) };
 }
 
+// chunkCampCandidate/chunkResourceCandidate только страхуют от перехлёста
+// ВНУТРИ своего чанка — соседний чанк они не видят и не могут увидеть,
+// иначе генерация чанков перестала бы быть независимой (пришлось бы тянуть
+// соседей, чтобы построить один). Но именно поэтому два соседних чанка
+// могли поставить, скажем, город и лагерь впритык друг к другу на границе.
+// Раз кандидаты — чистые функции координат чанка, задачу можно решить не
+// трогая независимость: при разрешении чанка (cx,cy) пересчитываем
+// кандидатов и у всех восьми соседей (дёшево — это только проверка
+// площадки, не полная генерация), кладём все найденные в одну кучу и
+// разбираем перехлёсты по общему для всех правилу приоритета: город старше
+// лагеря старше точки, а при равном приоритете побеждает чанк с меньшими
+// (cx,cy). Это правило детерминировано и не зависит от того, чанк какого
+// соседа считается первым — все рано или поздно посчитают его одинаково.
+const NEIGHBOR_OFFSETS=[[-1,-1],[-1,0],[-1,1],[0,-1],[0,0],[0,1],[1,-1],[1,0],[1,1]];
+function chunkCandidatesRaw(cx,cy){
+  const city=chunkCityCandidate(cx,cy);
+  const camp=chunkCampCandidate(cx,cy,city);
+  const resource=chunkResourceCandidate(cx,cy,city,camp);
+  return {city,camp,resource};
+}
+function resolveChunkPlacements(cx,cy){
+  const all=[];
+  for(const [di,dj] of NEIGHBOR_OFFSETS){
+    const ncx=cx+di, ncy=cy+dj;
+    const c=chunkCandidatesRaw(ncx,ncy);
+    if(c.city) all.push({kind:0,cx:ncx,cy:ncy,obj:c.city});
+    if(c.camp) all.push({kind:1,cx:ncx,cy:ncy,obj:c.camp});
+    if(c.resource) all.push({kind:2,cx:ncx,cy:ncy,obj:c.resource});
+  }
+  all.sort((a,b)=>a.kind-b.kind || a.cx-b.cx || a.cy-b.cy);
+  const accepted=[];
+  for(const cand of all){
+    let ok=true;
+    for(const acc of accepted){
+      if(Math.hypot(cand.obj.x-acc.obj.x,cand.obj.z-acc.obj.z)<cand.obj.r+acc.obj.r){ ok=false; break; }
+    }
+    if(ok) accepted.push(cand);
+  }
+  let city=null,camp=null,resource=null;
+  for(const a of accepted){
+    if(a.cx!==cx||a.cy!==cy) continue;
+    if(a.kind===0) city=a.obj; else if(a.kind===1) camp=a.obj; else resource=a.obj;
+  }
+  return {city,camp,resource};
+}
+
 /* =======================================================================
    Геометрия. kind: 0 — земля, 1 — постройки/камни/деревья, 2+ — вода (целая
    часть плюс глубина в дробной). Каждый чанк копит свою geometрию в
@@ -572,12 +618,10 @@ function genChunk(cx,cy){
   CUR={pos:[],col:[],knd:[],nrm:[]};
   const x0=cx*CHUNK, x1=x0+CHUNK, y0=cy*CHUNK, y1=y0+CHUNK;
 
-  // Город, лагерь и ресурсную точку решаем первыми, по очереди (каждый
-  // следующий проверяет, что не лёг поверх предыдущего) — остальной посадке
-  // (лес/камни/трава) нужно знать, куда не лезть.
-  const city=chunkCityCandidate(cx,cy);
-  const camp=chunkCampCandidate(cx,cy,city);
-  const resource=chunkResourceCandidate(cx,cy,city,camp);
+  // Город, лагерь и ресурсную точку решаем первыми — через resolveChunkPlacements,
+  // которая заодно сверяется с соседними чанками (см. комментарий там),
+  // остальной посадке (лес/камни/трава) нужно знать, куда не лезть.
+  const {city,camp,resource}=resolveChunkPlacements(cx,cy);
   function structOverlapLocal(px,pz){
     let m=0;
     if(city) m=Math.max(m, city.r/Math.max(0.001,Math.hypot(city.x-px,city.z-pz)));
