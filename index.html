@@ -1454,6 +1454,42 @@ const BOT_NAMES = {
   undead:["Мортгард","Пепельный Курган","Некрополь Вар","Тлен","Хладная Длань"],
 };
 
+// Общее правило посадки лагерей/точек — используется и при первой генерации
+// мира, и при респауне (истощившаяся точка, разгромленный лагерь появляются
+// заново, см. respawn/nodeback ниже): без общей функции респаун жил бы своей
+// жизнью и постепенно свёл бы на нет весь смысл фильтра — залил бы карту
+// заново без зазора и вперемешку с водой, стоило бы поиграть подольше.
+// STRUCT_CHUNK/STRUCT_CHUNK_CHANCE — вторая (независимая от зазора) причина
+// пустых мест: раньше даже с зазором в 6 клеток жадная выборка добирала
+// плотность до предела в КАЖДОМ уголке карты (жадная лотерея не оставляет
+// пропусков сама по себе — только раздвигает соседей). Само наличие точки
+// в квадрате 16×16 клеток теперь ещё и монетка (своя для точек, своя для
+// лагерей — не спаяны в один бросок, иначе они бы либо всегда встречались
+// вместе, либо никогда), кроме зазора это даёт настоящие пустые области.
+const MIN_STRUCT_GAP=6, STRUCT_TRIES=150, STRUCT_CHUNK=16, STRUCT_CHUNK_CHANCE=0.5;
+const STRUCT_SALT_NODE=501, STRUCT_SALT_CAMP=502;
+function structFarEnough(x,y){
+  for(const k in W.map){ if(Math.hypot(W.map[k].x-x,W.map[k].y-y)<MIN_STRUCT_GAP) return false; }
+  return true;
+}
+function structChunkOk(x,y,salt){
+  const cx=Math.floor(x/STRUCT_CHUNK), cy=Math.floor(y/STRUCT_CHUNK);
+  return hash2(cx,cy,W.seed+salt) < STRUCT_CHUNK_CHANCE;
+}
+// Вода — жёсткое исключение (см. isRealWater ниже, портированное 1:1 из
+// 3D-рельефа): клетка либо проходит, либо нет, без компромиссов вроде
+// поднятия земли под объектом постфактум.
+function findFreeCell(salt){
+  for(let t=0;t<STRUCT_TRIES;t++){
+    const x=ri(0,CFG.MAP-1), y=ri(0,CFG.MAP-1);
+    if(W.map[key(x,y)]) continue;
+    if(isRealWater(x,y)) continue;
+    if(!structChunkOk(x,y,salt)) continue;
+    if(!structFarEnough(x,y)) continue;
+    return {x,y};
+  }
+  return null;
+}
 function genWorld(seed){
   RNG = mulberry(seed);
   W = { seed, t:0, born:Date.now(), map:{}, players:[], marches:[], events:[],
@@ -1472,7 +1508,16 @@ function genWorld(seed){
       const x=ri(3,CFG.MAP-4), y=ri(3,CFG.MAP-4);
       const d=centerDist({x,y});
       if(d<minD||d>maxD) continue;
+      if(isRealWater(x,y)) continue;   // город на воде — нельзя, вода исключение без компромиссов
       if(spots.some(s=>Math.hypot(s.x-x,s.y-y)<minGap)) continue;
+      spots.push({x,y}); return {x,y};
+    }
+    // 4000 честных попыток исчерпаны (совсем зажатый регион) — берём что
+    // есть, но воду всё равно не нарушаем: без города игра не работает,
+    // а без воды — работает, эти два требования не равнозначны.
+    for(let tries=0;tries<2000;tries++){
+      const x=ri(3,CFG.MAP-4),y=ri(3,CFG.MAP-4);
+      if(isRealWater(x,y)) continue;
       spots.push({x,y}); return {x,y};
     }
     const x=ri(3,CFG.MAP-4),y=ri(3,CFG.MAP-4); spots.push({x,y}); return {x,y};
@@ -1528,27 +1573,21 @@ function genWorld(seed){
   // почти всё, что просилось, находит место, редкие неудачники просто не
   // появляются в этот раз (не наматывают тысячи попыток и не блокируют
   // остальных).
-  const MIN_STRUCT_GAP=6, STRUCT_TRIES=150;
-  function farEnough(x,y){
-    for(const k in W.map){ if(Math.hypot(W.map[k].x-x,W.map[k].y-y)<MIN_STRUCT_GAP) return false; }
-    return true;
-  }
-  function findFreeCell(){
-    for(let t=0;t<STRUCT_TRIES;t++){
-      const x=ri(0,CFG.MAP-1), y=ri(0,CFG.MAP-1);
-      if(W.map[key(x,y)]) continue;
-      if(!farEnough(x,y)) continue;
-      return {x,y};
-    }
-    return null;
-  }
-  // Ресурсные точки: чем ближе к центру, тем богаче. Было 900 — вместе с
-  // прежним отсутствием зазора это и создавало кучу-малу; при новом зазоре
-  // (см. MIN_STRUCT_GAP) 900 попыток всё равно физически не влезли бы на
-  // карту, оставляем разумное число исходя из реальной вместимости.
-  const nodeCount = 130;
+  // findFreeCell (общая, top-level — см. выше genWorld) сама проверяет
+  // зазор, воду и "монетку" на чанк 16×16. Числа ниже — то, СКОЛЬКО раз
+  // вообще пробуем кинуть точку/лагерь, не то, сколько гарантированно
+  // появится: часть попыток естественно уходит в воду/занятые чанки и
+  // просто не находит места (см. findFreeCell) — так на карте остаются
+  // настоящие пустые участки, а не сплошной ковёр до предела зазора.
+  // Было 900/520 без зазора и без монетки на чанк — тот самый "ковёр".
+  // Было 130/75 (зазор уже есть, монетки на чанк ещё нет) — тоже жаловались,
+  // что заполнено "будто на 100% каждого чанка": сама выборка без монетки
+  // жадно раздвигает соседей до предела зазора В КАЖДОМ углу карты, не
+  // оставляя пропусков. Обе причины исправлены разом — считаем попытки
+  // от исходных чисел вдвое меньше.
+  const nodeCount = 65;
   for(let i=0;i<nodeCount;i++){
-    const spot=findFreeCell(); if(!spot) continue;
+    const spot=findFreeCell(STRUCT_SALT_NODE); if(!spot) continue;
     const {x,y}=spot;
     const d=centerDist({x,y});
     let lv = clamp(Math.round(5 - d*4 + (RNG()*1.6-0.8)),1,5);
@@ -1557,11 +1596,9 @@ function genWorld(seed){
       amount: Math.round(6000*Math.pow(2.6,lv-1)), max: Math.round(6000*Math.pow(2.6,lv-1)),
       busy:null};
   }
-  // Разбойники: лагеря 1–15, форты 16–30. Было 520 — та же причина сокращения,
-  // что и у ресурсных точек выше.
-  const campCount = 75;
+  const campCount = 38;
   for(let i=0;i<campCount;i++){
-    const spot=findFreeCell(); if(!spot) continue;
+    const spot=findFreeCell(STRUCT_SALT_CAMP); if(!spot) continue;
     const {x,y}=spot;
     const d=centerDist({x,y});
     const raw = clamp(Math.round(30 - d*26 + (RNG()*8-4)),1,30);
@@ -1570,7 +1607,9 @@ function genWorld(seed){
       hp:1, power: banditPower(raw), busy:null};
   }
 
-  W.densityMigrated=true;   // уже построен с зазором MIN_STRUCT_GAP — thinMapDensity() ниже нечего тут делать
+  // Свежий мир уже построен через findFreeCell (зазор + вода + "монетка"
+  // на чанк) — обеим миграциям ниже тут нечего делать.
+  W.densityMigrated=true; W.densityMigrated2=true;
   logg("Мир создан. Зерно "+seed+". Городов: "+W.players.length+".", "good");
   return W;
 }
@@ -1597,6 +1636,29 @@ function thinMapDensity(){
   for(const o of drop) delete W.map[key(o.x,o.y)];
   W.densityMigrated=true;
   if(drop.length) logg("Карта разрежена: убрано "+drop.length+" тесно стоявших точек/лагерей.","good");
+}
+// Вторая волна: даже с зазором в 6 клеток жадный отбор без "монетки" на
+// чанк раздвигает соседей до предела зазора В КАЖДОМ углу карты — заполнено
+// выглядит "на 100%" везде, без настоящих пустых мест. И раз 2D-генератор
+// изначально не знал о рельефе 3D-мира, часть точек/лагерей (а изредка и
+// городов) могла лечь прямо в воду. Правит оба разом, той же безопасной
+// механикой удаления, что и thinMapDensity() (арест — не рост боли: см.
+// комментарий там). relocate() уже умеет искать не-водное место и правит
+// разом и W.map, и p.x/p.y — переиспользуем её для города на воде вместо
+// отдельной логики.
+function thinMapDensity2(){
+  if(W.densityMigrated2) return;
+  W.players.forEach(p=>{ if(isRealWater(p.x,p.y)) relocate(p,"Город стоял на воде — перенесён на сушу."); });
+  const drop=[];
+  for(const k in W.map){
+    const o=W.map[k];
+    if(o.t==="city") continue;
+    const salt=o.t==="node"?STRUCT_SALT_NODE:STRUCT_SALT_CAMP;
+    if(isRealWater(o.x,o.y) || !structChunkOk(o.x,o.y,salt)) drop.push(o);
+  }
+  for(const o of drop) delete W.map[key(o.x,o.y)];
+  W.densityMigrated2=true;
+  if(drop.length) logg("Карта разрежена ещё раз: убрано "+drop.length+" точек/лагерей (вода или повторный отбор).","good");
 }
 function clearArea(x,y,r){for(let i=-r;i<=r;i++)for(let j=-r;j<=r;j++)delete W.map[key(x+i,y+j)]}
 function banditPower(lv){
@@ -2135,27 +2197,23 @@ const EV = {
   },
   respawn(d){
     if(W.map[key(d.x,d.y)]) return;
-    // новый лагерь появляется в другом месте
-    for(let i=0;i<80;i++){
-      const x=ri(0,CFG.MAP-1),y=ri(0,CFG.MAP-1);
-      if(W.map[key(x,y)]) continue;
-      const dd=centerDist({x,y});
-      const lv=clamp(Math.round(30-dd*26+(RNG()*8-4)),1,30);
-      W.map[key(x,y)]={t:lv>15?"fort":"camp",x,y,lv,power:banditPower(lv),busy:null};
-      return;
-    }
+    // новый лагерь появляется в другом месте — той же findFreeCell, что и
+    // при первой генерации мира: без неё респаун за час-другой игры тихо
+    // свёл бы на нет и зазор, и запрет на воду, и пропуски по чанкам.
+    const spot=findFreeCell(STRUCT_SALT_CAMP); if(!spot) return;
+    const {x,y}=spot;
+    const dd=centerDist({x,y});
+    const lv=clamp(Math.round(30-dd*26+(RNG()*8-4)),1,30);
+    W.map[key(x,y)]={t:lv>15?"fort":"camp",x,y,lv,power:banditPower(lv),busy:null};
   },
   nodeback(d){
     if(W.map[key(d.x,d.y)]) return;
-    for(let i=0;i<80;i++){
-      const x=ri(0,CFG.MAP-1),y=ri(0,CFG.MAP-1);
-      if(W.map[key(x,y)]) continue;
-      const dd=centerDist({x,y});
-      const lv=clamp(Math.round(5-dd*4+(RNG()*1.6-.8)),1,5);
-      const amt=Math.round(6000*Math.pow(2.6,lv-1));
-      W.map[key(x,y)]={t:"node",x,y,res:pick(RES),lv,amount:amt,max:amt,busy:null};
-      return;
-    }
+    const spot=findFreeCell(STRUCT_SALT_NODE); if(!spot) return;
+    const {x,y}=spot;
+    const dd=centerDist({x,y});
+    const lv=clamp(Math.round(5-dd*4+(RNG()*1.6-.8)),1,5);
+    const amt=Math.round(6000*Math.pow(2.6,lv-1));
+    W.map[key(x,y)]={t:"node",x,y,res:pick(RES),lv,amount:amt,max:amt,busy:null};
   },
   think(d){
     const p=W.players.find(q=>q.id===d.pid); if(!p||!p.isBot)return;
@@ -2324,12 +2382,13 @@ function logMsg(att,def,forAtt,forDef){
   if(!att.isBot) logg(forAtt,"war");
   if(!def.isBot) logg(forDef,"war");
 }
-function relocate(p){
+function relocate(p,msg){
   // после разгрома город переносится туда, где меньше всего соседей
   let best=null,bestScore=-1;
   for(let i=0;i<400;i++){
     const x=ri(4,CFG.MAP-5), y=ri(4,CFG.MAP-5);
     if(W.map[key(x,y)]) continue;
+    if(isRealWater(x,y)) continue;   // город на воде — нельзя, даже при переносе
     let near=1e9;
     W.players.forEach(q=>{ if(q.id!==p.id) near=Math.min(near,Math.hypot(q.x-x,q.y-y)) });
     if(near>bestScore){ bestScore=near; best={x,y} }
@@ -2339,7 +2398,7 @@ function relocate(p){
   p.x=best.x; p.y=best.y;
   clearArea(p.x,p.y,1);
   W.map[key(p.x,p.y)]={t:"city",x:p.x,y:p.y,pid:p.id};
-  if(!p.isBot) logg("Город разрушен и перенесён в безопасный край карты.","war");
+  if(!p.isBot) logg(msg||"Город разрушен и перенесён в безопасный край карты.","war");
 }
 
 /* =========================================================================
@@ -2841,6 +2900,7 @@ async function load(){
       BKEYS.forEach(k=>{ if(p.b[k]===undefined) p.b[k]=isMulti(k)?new Array(BUILDINGS[k].plots).fill(0):0; });
     });
     thinMapDensity();
+    thinMapDensity2();
     // догоняем реальное время, прошедшее с последнего захода
     const away=Math.max(0,(Date.now()-W.savedAt)/1000);
     if(away>60){
@@ -2902,6 +2962,56 @@ function noise(x,y,s){
   return (a*(1-u)+b*u)*(1-v)+(c*(1-u)+d*u)*v;
 }
 function ridge(x,y,s){ return 1-Math.abs(2*noise(x,y,s)-1) }   // излом шума даёт хребты
+
+/* ---- Настоящая вода 3D-мира (obyom-3d-infinite.html): её сеет ФИКСИРОВАННЫЙ
+   RW_SEED, один и тот же на любой партии (не W.seed) — рельеф там не зависит
+   от того, чья это карта. Раньше 2D-генератор клеток вообще не знал про
+   рельеф и мог посадить город/лагерь/точку прямо в море: 3D-сторона потом
+   искусственно поднимала landtу ПОД объектом (flattenNear), но саму воду
+   вокруг это не убирало — выглядело как замок в озере. Порт heightAt/isWater
+   сюда даёт 2D-генератору спросить "тут вода?" ДО того, как объект лёг на
+   карту, вместо косметической подчистки постфактум. Формула — дословная
+   копия heightRaw/heightAt из obyom-3d-infinite.html; hash2/noise/ridge выше
+   уже совпадают с тамошними один в один. ---- */
+const RW_SEED=12345, RW_SEA=0.235;
+function rwSstep(a,b,x){ const t=Math.min(1,Math.max(0,(x-a)/(b-a))); return t*t*(3-2*t) }
+function rwRegionKind(x,y){
+  return { mount: rwSstep(0.40,0.72, noise(x/40,y/40,RW_SEED+55)),
+           plat:  rwSstep(0.62,0.84, noise(x/34,y/34,RW_SEED+88)),
+           rough: noise(x/26,y/26,RW_SEED+123) };
+}
+function rwHeightRaw(x,y){
+  const wx=(noise(x/34,y/34,RW_SEED+101)*2-1)*13;
+  const wy=(noise(x/34,y/34,RW_SEED+102)*2-1)*13;
+  const X=x+wx, Y=y+wy;
+  const R=rwRegionKind(x,y);
+  const cont=noise(X/62,Y/62,RW_SEED+201);
+  let e=0.16+cont*0.50;
+  const amp=0.16+0.84*R.mount+0.35*R.rough;
+  e+=(noise(X/27,Y/27,RW_SEED)*0.20+noise(X/13,Y/13,RW_SEED+9)*0.10
+     +noise(X/6,Y/6,RW_SEED+21)*0.045)*amp;
+  e+=ridge(X/17,Y/17,RW_SEED+37)*0.33*R.mount;
+  e+=R.mount*0.10-(1-R.mount)*0.05;
+  if(R.plat>0.02){
+    const terr=Math.round(e*6.0)/6.0;
+    e=e*(1-R.plat*0.80)+terr*(R.plat*0.80);
+  }
+  if(e>=0.42){
+    const k=rwSstep(0.42,0.68,e);
+    e+=(noise(x/2.4,y/2.4,RW_SEED+180)-0.5)*0.075*k
+      +(noise(x/5.5,y/5.5,RW_SEED+181)-0.5)*0.055*k;
+  }
+  return Math.max(0.02,Math.min(1,e));
+}
+function rwHeightAt(x,y){
+  const c=rwHeightRaw(x,y);
+  const s=(rwHeightRaw(x+0.7,y)+rwHeightRaw(x-0.7,y)+rwHeightRaw(x,y+0.7)+rwHeightRaw(x,y-0.7))*0.25;
+  return c*0.55+s*0.45;
+}
+// Клетка (x,y) — центр клетки (+0.5), та же точка, что 3D берёт под объект
+// (см. buildRealCandidate в obyom-3d-infinite.html).
+function isRealWater(x,y){ return rwHeightAt(x+0.5,y+0.5)<RW_SEA }
+
 function elevation(x,y,s){
   let e = noise(x/23,y/23,s)*.42 + noise(x/11,y/11,s+9)*.24 + noise(x/5,y/5,s+21)*.10;
   e += ridge(x/15,y/15,s+37)*.24;
