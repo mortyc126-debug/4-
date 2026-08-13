@@ -1,19 +1,19 @@
 /* =========================================================================
-   Шаг 2 нового движка: настоящий 3D-кадр — не плоская проекция координат
-   в клип-спейс (как в шаге 1), а честная перспективная камера над куском
+   Честная перспективная камера (управляемая — см. camera.ts) над куском
    ТОГО ЖЕ рельефа, что и в живой игре (тот же SEED, см. terrain.ts) —
-   остров узнаваем. Маркеры городов/лагерей/точек стоят прямо на рельефе
-   (высота берётся из heightAt в их мировой точке) и рисуются настоящим
-   инстансингом на одной VP-матрице с рельефом.
+   остров узнаваем. Город/лагерь/точки — настоящие .glb-модели той же игры
+   (см. glb.ts/modelRenderer.ts), стоят прямо на рельефе на своей мировой
+   высоте. Метки-пирамидки из ранних шагов прототипа отсюда убраны — ни
+   одна сущность в них больше не нуждается.
    ========================================================================= */
 import { createWorld, addEntity, addComponent, query } from "bitecs";
-import { createRenderer, type MarkerEntity } from "./renderer";
+import { createRenderer } from "./renderer";
 import { buildTerrainPatch } from "./terrainMesh";
 import { heightAt, HMAX } from "./terrain";
 import { mul, persp, look, modelMatrix, type Vec3 } from "./mat4";
 import { attachOrbitControls, type OrbitCamera } from "./camera";
 import { loadGLB } from "./glb";
-import { uploadGLB, createModelPipeline, type GpuModel } from "./modelRenderer";
+import { uploadGLB, createModelPipeline, type ModelInstance } from "./modelRenderer";
 
 const statusEl = document.getElementById("status") as HTMLDivElement;
 function setStatus(lines: string[]) {
@@ -27,17 +27,15 @@ async function main() {
   const world = createWorld();
   const Position = { x: [] as number[], y: [] as number[] };
   const Kind = { value: [] as number[] }; // 0=city 1=camp 2=node
-  const KIND_COLOR: Record<number, [number, number, number]> = {
-    0: [0.85, 0.68, 0.29], // город — gilt
-    1: [0.63, 0.16, 0.2], // лагерь — garnet
-    2: [0.29, 0.55, 0.38], // точка — verdigris
-  };
+  // model — путь к настоящему .glb для этой сущности (все четыре теперь
+  // получают реальные модели, ни одной метки-пирамидки не остаётся).
   const seedEntities = [
-    { x: 43, y: 14, kind: 0 },
-    { x: 50, y: 20, kind: 1 },
-    { x: 55, y: 12, kind: 2 },
-    { x: 30, y: 30, kind: 2 },
+    { x: 43, y: 14, kind: 0, model: "/models/castles/human-1.glb" },
+    { x: 50, y: 20, kind: 1, model: "/models/camps/barbarians.glb" },
+    { x: 55, y: 12, kind: 2, model: "/models/resources/farm.glb" },
+    { x: 30, y: 30, kind: 2, model: "/models/resources/quarry.glb" },
   ];
+  const modelPathOf = new Map<number, string>();
   for (const e of seedEntities) {
     const eid = addEntity(world);
     addComponent(world, eid, Position);
@@ -45,6 +43,7 @@ async function main() {
     Position.x[eid] = e.x;
     Position.y[eid] = e.y;
     Kind.value[eid] = e.kind;
+    modelPathOf.set(eid, e.model);
   }
   const found = Array.from(query(world, [Position, Kind]));
   lines.push(`bitECS: сущностей — ${found.length}`);
@@ -86,43 +85,35 @@ async function main() {
   const renderer = createRenderer(device, ctx, format);
   renderer.setTerrain(mesh);
 
-  // Город (kind=0) получит настоящую 3D-модель замка вместо метки-
-  // пирамидки, как только она догрузится — метками остаются только
-  // лагерь/точка, у них до модели дело дойдёт отдельным шагом.
-  const markers: MarkerEntity[] = found
-    .filter((eid) => Kind.value[eid] !== 0)
-    .map((eid) => {
-      const wx = Position.x[eid], wz = Position.y[eid];
-      const groundY = heightAt(wx, wz) * HMAX;
-      return { x: wx, y: groundY, z: wz, color: KIND_COLOR[Kind.value[eid]] };
-    });
-  renderer.setMarkers(markers);
-
-  // ---- настоящая модель замка (тот же .glb, что и в живой игре) ----
-  // Путь абсолютный от корня сайта: этот прототип живёт в /engine/dist/,
-  // а модели — в /models/ у корня репозитория, который Render отдаёт
-  // целиком как одну статику. Грузим и закачиваем в GPU ДО первого кадра
-  // цикла отрисовки, не параллельно с ним: в тестах загрузка текстуры
-  // ПОСЛЕ нескольких секунд непрерывного рендера стабильно валила
-  // WebGPU-соединение именно в этой песочнице ("A valid external Instance
-  // reference no longer exists") — тот же вызов, с тем же файлом, отрабатывал
-  // без единой ошибки, если делался до старта цикла. Не тратить GPU на
-  // рендер кадров, пока критичный ассет ещё не готов, — разумно само по
-  // себе, а не только обход именно этой особенности песочницы.
-  const cityEid = found.find((eid) => Kind.value[eid] === 0);
-  let cityModel: GpuModel | null = null;
-  let cityModelMat: Float32Array | null = null;
+  // ---- настоящие 3D-модели (те же .glb, что и в живой игре) для ВСЕХ
+  // сущностей — метка-пирамидка из прошлых шагов больше не нужна ни для
+  // кого. Путь абсолютный от корня сайта: этот прототип живёт в
+  // /engine/dist/, а модели — в /models/ у корня репозитория, который
+  // Render отдаёт целиком как одну статику.
+  //
+  // Грузим и закачиваем всё в GPU ДО первого кадра цикла отрисовки, не
+  // параллельно с ним: в тестах закачка текстуры ПОСЛЕ нескольких секунд
+  // непрерывного рендера стабильно валила WebGPU-соединение именно в этой
+  // песочнице ("A valid external Instance reference no longer exists") —
+  // тот же вызов с тем же файлом отрабатывал без единой ошибки, если
+  // делался до старта цикла. Не тратить GPU на рендер кадров, пока сцена
+  // ещё не готова, — разумно само по себе, не только обход этой
+  // особенности песочницы.
+  const MODEL_SCALE: Record<number, number> = { 0: 10, 1: 5, 2: 5 }; // город/лагерь/точка — как в живой игре
   const modelPipeline = createModelPipeline(device, format);
-  if (cityEid !== undefined) {
-    const wx = Position.x[cityEid], wz = Position.y[cityEid];
+  const instances: ModelInstance[] = [];
+  for (const eid of found) {
+    const wx = Position.x[eid], wz = Position.y[eid];
     const groundY = heightAt(wx, wz) * HMAX;
-    cityModelMat = modelMatrix(wx, groundY, wz, 0, 10);
+    const mat = modelMatrix(wx, groundY, wz, 0, MODEL_SCALE[Kind.value[eid]] ?? 5);
+    const path = modelPathOf.get(eid)!;
     try {
-      const parsed = await loadGLB("/models/castles/human-1.glb");
-      cityModel = await uploadGLB(device, parsed);
-      lines.push("модель замка: human-1.glb загружена");
+      const parsed = await loadGLB(path);
+      const gm = await uploadGLB(device, parsed);
+      instances.push(modelPipeline.createInstance(gm, mat));
+      lines.push(`модель: ${path} загружена`);
     } catch (err) {
-      lines.push("модель замка: ошибка — " + (err instanceof Error ? err.message : String(err)));
+      lines.push(`модель: ${path} — ошибка: ${err instanceof Error ? err.message : String(err)}`);
     }
     setStatus(lines);
   }
@@ -147,7 +138,7 @@ async function main() {
     const vp = mul(persp(0.72, aspect, 0.5, 300), look(eye, cam.target, [0, 1, 0]));
     renderer.setVP(vp);
     renderer.frame({ r: 0.043, g: 0.039, b: 0.035, a: 1 }, (pass) => {
-      if (cityModel && cityModelMat) modelPipeline.draw(pass, cityModel, vp, cityModelMat);
+      for (const inst of instances) modelPipeline.draw(pass, inst, vp);
     });
     requestAnimationFrame(draw);
   }
