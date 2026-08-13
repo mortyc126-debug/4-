@@ -206,6 +206,24 @@ function ground(x,y,aoCache){
   if(oc>0.01){ const k=1-oc*0.50; c=[c[0]*k, c[1]*k, c[2]*(k*0.96+0.04)]; }
   return c;
 }
+// Дешёвая версия ground() для дальнего фона (см. genBackdrop ниже): без AO
+// (это 24 лишних вызова шума на КАЖДУЮ клетку) и без мелких пятен/осыпи —
+// на удалении в сотню с лишним клеток, да ещё сквозь туман, эти детали всё
+// равно неразличимы, а вершин там на порядок больше, чем в одном чанке.
+function groundSimple(x,y){
+  const e=heightAt(x,y);
+  const R=regionKind(x,y);
+  const t=Math.max(0,Math.min(1,(e-SEA)/(1-SEA)));
+  let c;
+  if      (t<0.06) c=MIX(SAND,GRASS,t/0.06);
+  else if (t<0.30) c=MIX(GRASS,MEAD,(t-0.06)/0.24);
+  else if (t<0.52) c=MIX(MEAD,DRYG,(t-0.30)/0.22);
+  else if (t<0.72) c=MIX(DRYG,SCRUB,(t-0.52)/0.20);
+  else             c=MIX(SCRUB,SCREE,Math.min(1,(t-0.72)/0.28));
+  c=MIX(c,[c[0]*1.06,c[1]*0.94,c[2]*0.92],R.mount*0.5);
+  c=MIX(c,[c[0]*0.92,c[1]*1.08,c[2]*0.94],(1-R.mount)*0.35);
+  return c;
+}
 const SEAC_S=[0.14,0.24,0.28], SEAC_D=[0.05,0.11,0.19];
 
 /* ---- Города: место под замок выбираем чистой функцией, без списка
@@ -700,14 +718,49 @@ function genChunk(cx,cy){
       "ms trees="+trees+" rocks="+rocks+" grass="+grass+" bushes="+bushes+" camps="+camps); }
   return {pos:CUR.pos,col:CUR.col,knd:CUR.knd,nrm:CUR.nrm, city, stats:{trees,rocks,grass,bushes,camps}};
 }
+
+/* =======================================================================
+   Дальний фон. Детальные чанки кончаются резким обрывом на границе
+   UNLOAD_RADIUS — дальше только туман, и на большом расстоянии от центра
+   это видно как ровный край мира. Полноценные geometry clipmaps (та
+   техника, которой рендерят бесшовный горизонт в настоящих открытых мирах)
+   — сложная многоуровневая система; здесь — её дешёвый привет: одно редкое
+   кольцо геометрии вокруг детальной зоны, без леса и построек, по той же
+   heightAt() (тот же рельеф, никакого расхождения силуэта), но в 12 раз
+   реже сеткой и без AO. Достаточно, чтобы горы не обрывались в упор — а на
+   дистанции, где это кольцо само кончается, уже почти всё съедает туман.
+   ======================================================================= */
+const BACKDROP_STEP=6;
+const BACKDROP_INNER=CHUNK*(UNLOAD_RADIUS+0.5);  // чуть дальше, чем держатся детальные чанки — без нахлёста и щели
+const BACKDROP_OUTER=200;                        // дальше и так съедает туман (uFog)
+function genBackdrop(cx0,cy0){
+  CUR={pos:[],col:[],knd:[],nrm:[]};
+  const n=Math.ceil(BACKDROP_OUTER/BACKDROP_STEP);
+  for(let j=-n;j<=n;j++)for(let i=-n;i<=n;i++){
+    const x=cx0+i*BACKDROP_STEP, y=cy0+j*BACKDROP_STEP;
+    const d=Math.hypot(i*BACKDROP_STEP,j*BACKDROP_STEP);
+    if(d<BACKDROP_INNER||d>BACKDROP_OUTER) continue;
+    const x1=x+BACKDROP_STEP, y1=y+BACKDROP_STEP;
+    const h00=heightAt(x,y), h10=heightAt(x1,y), h11=heightAt(x1,y1), h01=heightAt(x,y1);
+    if(h00<SEA||h10<SEA||h11<SEA||h01<SEA){
+      const lv=SEA*HMAX, col=MIX(SEAC_S,SEAC_D,0.5);
+      tri([x,lv,y],[x1,lv,y],[x1,lv,y1],col,2.3);
+      tri([x,lv,y],[x1,lv,y1],[x,lv,y1],col,2.3);
+    } else {
+      const c=groundSimple(x,y);
+      quad([x,h00*HMAX,y],[x1,h10*HMAX,y],[x1,h11*HMAX,y1],[x,h01*HMAX,y1],c,0);
+    }
+  }
+  return {pos:CUR.pos,col:CUR.col,knd:CUR.knd,nrm:CUR.nrm};
+}
 `;
 // Единый исходник мира/геометрии выполняется дважды: здесь, в главном потоке
 // (нужен H()/heightAt() под камерой каждый кадр — без похода в воркер), и
 // ещё раз внутри воркера ниже (для самой генерации чанков). Один текст —
 // одна логика, никакого ручного дублирования на расхождение.
 const __worldMain = new Function(WORLD_SRC +
-  "\nreturn {M4,sub,cross,norm,H,heightAt,SEA,SUN,CHUNK,LOAD_RADIUS,UNLOAD_RADIUS};")();
-const {M4,sub,cross,norm,H,heightAt,SEA,SUN,CHUNK,LOAD_RADIUS,UNLOAD_RADIUS} = __worldMain;
+  "\nreturn {M4,sub,cross,norm,H,heightAt,SEA,SUN,CHUNK,LOAD_RADIUS,UNLOAD_RADIUS,BACKDROP_INNER};")();
+const {M4,sub,cross,norm,H,heightAt,SEA,SUN,CHUNK,LOAD_RADIUS,UNLOAD_RADIUS,BACKDROP_INNER} = __worldMain;
 
 /* =======================================================================
    WebGL
@@ -1021,11 +1074,11 @@ function castleModel(race,epoch){
 const NWORKERS=Math.max(1,Math.min(4,(navigator.hardwareConcurrency||4)-1));
 const CHUNK_WORKER_TAIL=`
 self.onmessage=function(e){
-  const {cx,cy,reqId}=e.data;
-  const data=genChunk(cx,cy);
+  const {cx,cy,reqId,backdrop}=e.data;
+  const data=backdrop ? genBackdrop(cx,cy) : genChunk(cx,cy);
   const pos=new Float32Array(data.pos), col=new Float32Array(data.col),
         knd=new Float32Array(data.knd), nrm=new Float32Array(data.nrm);
-  postMessage({reqId,cx,cy,pos,col,knd,nrm,city:data.city,stats:data.stats},
+  postMessage({reqId,cx,cy,backdrop,pos,col,knd,nrm,city:data.city,stats:data.stats},
     [pos.buffer,col.buffer,knd.buffer,nrm.buffer]);
 };`;
 const chunkWorkerUrl=URL.createObjectURL(
@@ -1061,8 +1114,44 @@ function disposeChunk(c){
   gl.deleteVertexArray(c.vao); gl.deleteVertexArray(c.depthVao);
   for(const b of c.bufs) gl.deleteBuffer(b);
 }
+
+/* ---- Дальний фон (см. genBackdrop в WORLD_SRC): одна редкая сетка вокруг
+   игрока, без леса и построек, вместо резкого обрыва мира на границе
+   прогрузки. Не участвует в чанк-стриминге (не в chunks, не в тенях) —
+   отдельный объект, который целиком пересоздаётся раз в несколько секунд,
+   когда камера отходит от центра, на котором он был построен. ---- */
+let backdropMesh=null, backdropPendingReqId=null, backdropCenter=null;
+function createBackdropGL(cx,cy,data){
+  const vao=gl.createVertexArray(); gl.bindVertexArray(vao);
+  const posBuf=attach(prog,data.pos,"aPos",3);
+  const colBuf=attach(prog,data.col,"aCol",3);
+  const kndBuf=attach(prog,data.knd,"aKind",1);
+  const nrmBuf=attach(prog,data.nrm,"aNrm",3);
+  const vertCount=data.pos.length/3;
+  const old=backdropMesh;
+  backdropMesh={vao,bufs:[posBuf,colBuf,kndBuf,nrmBuf],vertCount};
+  backdropCenter={x:cx,y:cy};
+  if(old){ gl.deleteVertexArray(old.vao); for(const b of old.bufs) gl.deleteBuffer(b); }
+}
+function maybeRequestBackdrop(camX,camY){
+  if(backdropPendingReqId!==null) return;
+  if(backdropCenter){
+    const d=Math.hypot(camX-backdropCenter.x,camY-backdropCenter.y);
+    if(d<BACKDROP_INNER*0.4) return;   // ещё не отошли настолько, чтобы кольцо съехало заметно
+  }
+  const reqId=reqSeq++;
+  backdropPendingReqId=reqId;
+  chunkWorkers[nextWorker].postMessage({cx:camX,cy:camY,reqId,backdrop:true});
+  nextWorker=(nextWorker+1)%chunkWorkers.length;
+}
 chunkWorkers.forEach(w=>w.onmessage=(e)=>{
-  const {reqId,cx,cy,pos,col,knd,nrm,city,stats}=e.data;
+  const {reqId,cx,cy,backdrop,pos,col,knd,nrm,city,stats}=e.data;
+  if(backdrop){
+    if(reqId!==backdropPendingReqId) return;   // устаревший ответ — новый уже запрошен позже
+    backdropPendingReqId=null;
+    createBackdropGL(cx,cy,{pos,col,knd,nrm});
+    return;
+  }
   inFlight.delete(reqId);
   const k=chunkKey(cx,cy);
   queuedSet.delete(k);
@@ -1267,6 +1356,7 @@ function frame(){
   const camChunkX=Math.floor(cam.tx/CHUNK), camChunkY=Math.floor(cam.tz/CHUNK);
   updateStreaming(camChunkX,camChunkY);
   dispatchToWorkers();
+  maybeRequestBackdrop(cam.tx,cam.tz);
 
   const {lightVP,lightVPB}=computeLightVPB(cam.tx,cam.tz);
 
@@ -1319,6 +1409,14 @@ function frame(){
     gl.drawArrays(gl.TRIANGLES,0,c.vertCount);
     totalTris+=c.vertCount/3;
   }
+  // Дальний фон рисуется тем же проходом, теми же юниформами (кольцо снаружи
+  // детальных чанков, см. genBackdrop) — отдельных теней ему не нужно, на
+  // таком расстоянии внутрь карты теней он всё равно не попадает.
+  if(backdropMesh){
+    gl.bindVertexArray(backdropMesh.vao);
+    gl.drawArrays(gl.TRIANGLES,0,backdropMesh.vertCount);
+    totalTris+=backdropMesh.vertCount/3;
+  }
 
   // Проход 3: замки (GLB) — по одному на чанк, у которого он есть.
   gl.useProgram(modelProg);
@@ -1365,7 +1463,8 @@ window.__errs=()=>{const e=[];let g;while((g=gl.getError())!==gl.NO_ERROR)e.push
 window.__chunkStats=()=>({loaded:chunks.size, queued:genQueue.length, inFlight:inFlight.size,
   workers:chunkWorkers.length,
   tris:[...chunks.values()].reduce((s,c)=>s+c.vertCount,0)/3,
-  cities:[...chunks.values()].filter(c=>c.city).length});
+  cities:[...chunks.values()].filter(c=>c.city).length,
+  backdrop: backdropMesh?{tris:backdropMesh.vertCount/3, center:backdropCenter}:null});
 </script>
 </body>
 </html>
