@@ -3,10 +3,11 @@
    ТОГО ЖЕ рельефа, что и в живой игре (тот же SEED, см. terrain.ts) —
    остров узнаваем. Город/лагерь/точки — настоящие .glb-модели той же игры
    (см. glb.ts/modelRenderer.ts), стоят прямо на рельефе на своей мировой
-   высоте. Метки-пирамидки из ранних шагов прототипа отсюда убраны — ни
-   одна сущность в них больше не нуждается.
+   высоте. Пин-маркер (пирамидка) из ранних шагов прототипа переиспользован
+   как подсветка выбранной сущности (см. клик ниже) — больше он ни для чего
+   не нужен.
    ========================================================================= */
-import { createWorld, addEntity, addComponent, query } from "bitecs";
+import { createWorld, addEntity, addComponent, removeEntity, query } from "bitecs";
 import { createRenderer } from "./renderer";
 import { buildTerrainPatch } from "./terrainMesh";
 import { heightAt, HMAX } from "./terrain";
@@ -14,7 +15,7 @@ import { mul, persp, look, modelMatrix, transformPoint, type Vec3, type Mat4 } f
 import { attachOrbitControls, type OrbitCamera } from "./camera";
 import { loadGLB } from "./glb";
 import { uploadGLB, createModelPipeline, type GpuModel, type ModelInstance } from "./modelRenderer";
-import { loadRealEntities } from "./realData";
+import { loadRealEntities, type RealEntity } from "./realData";
 
 const statusEl = document.getElementById("status") as HTMLDivElement;
 function setStatus(lines: string[]) {
@@ -30,13 +31,13 @@ async function main() {
   // живой игре (город 10×, лагерь/точка 5×, форт покрупнее — 6.5×).
   const real = loadRealEntities();
   const usingReal = real !== null;
-  const seedEntities =
+  const seedEntities: RealEntity[] =
     real ??
     [
-      { x: 43, y: 14, kind: 0 as const, model: "/models/castles/human-1.glb", scale: 10, label: "Замок (демо)" },
-      { x: 50, y: 20, kind: 1 as const, model: "/models/camps/barbarians.glb", scale: 5, label: "Лагерь (демо)" },
-      { x: 55, y: 12, kind: 2 as const, model: "/models/resources/farm.glb", scale: 5, label: "Пашня (демо)" },
-      { x: 30, y: 30, kind: 2 as const, model: "/models/resources/quarry.glb", scale: 5, label: "Каменоломня (демо)" },
+      { key: "demo-0", x: 43, y: 14, kind: 0 as const, model: "/models/castles/human-1.glb", scale: 10, label: "Замок (демо)" },
+      { key: "demo-1", x: 50, y: 20, kind: 1 as const, model: "/models/camps/barbarians.glb", scale: 5, label: "Лагерь (демо)" },
+      { key: "demo-2", x: 55, y: 12, kind: 2 as const, model: "/models/resources/farm.glb", scale: 5, label: "Пашня (демо)" },
+      { key: "demo-3", x: 30, y: 30, kind: 2 as const, model: "/models/resources/quarry.glb", scale: 5, label: "Каменоломня (демо)" },
     ];
   lines.push(usingReal ? `данные: настоящая партия, сущностей — ${seedEntities.length}` : "данные: демо (window.parent.W недоступен)");
 
@@ -46,7 +47,12 @@ async function main() {
   const modelPathOf = new Map<number, string>();
   const modelScaleOf = new Map<number, number>();
   const labelOf = new Map<number, string>();
-  for (const e of seedEntities) {
+  // Ключ клетки карты ("x,y", как в W.map) -> bitECS id — нужен только для
+  // диффа при живой синхронизации ниже (syncLiveEntities): по нему находим,
+  // какая сущность уже есть, а какая пропала между двумя опросами
+  // window.parent.W. В демо-режиме не используется (там синка нет).
+  const keyToEid = new Map<string, number>();
+  function spawnEntity(e: RealEntity): number {
     const eid = addEntity(world);
     addComponent(world, eid, Position);
     addComponent(world, eid, Kind);
@@ -56,8 +62,11 @@ async function main() {
     modelPathOf.set(eid, e.model);
     modelScaleOf.set(eid, e.scale);
     labelOf.set(eid, e.label);
+    keyToEid.set(e.key, eid);
+    return eid;
   }
-  const found = Array.from(query(world, [Position, Kind]));
+  for (const e of seedEntities) spawnEntity(e);
+  let found = Array.from(query(world, [Position, Kind]));
   lines.push(`bitECS: сущностей — ${found.length}`);
 
   // ---- WebGPU ----
@@ -102,15 +111,17 @@ async function main() {
   renderer.setTerrain(mesh);
 
   // ---- настоящие 3D-модели (те же .glb, что и в живой игре) для ВСЕХ
-  // сущностей — метка-пирамидка из прошлых шагов больше не нужна ни для
-  // кого. Путь абсолютный от корня сайта: этот прототип живёт в
+  // сущностей. Путь абсолютный от корня сайта: этот прототип живёт в
   // /engine/dist/, а модели — в /models/ у корня репозитория, который
   // Render отдаёт целиком как одну статику.
   //
   // Кэш по пути к файлу: с настоящей партией десятки лагерей/точек делят
   // одну и ту же модель (barbarians.glb на все лагеря/форты и т.п.) —
   // без кэша каждый инстанс заново качал бы и парсил тот же файл. Тот же
-  // приём, что и modelCache в живом obyom-3d-infinite.html.
+  // приём, что и modelCache в живом obyom-3d-infinite.html. Кэш живёт всё
+  // время работы страницы, поэтому пригождается и при живой синхронизации
+  // ниже — новая сущность с уже встречавшимся путём модели не грузит её
+  // заново.
   //
   // Грузим и закачиваем всё в GPU ДО первого кадра цикла отрисовки, не
   // параллельно с ним: в тестах закачка текстуры ПОСЛЕ нескольких секунд
@@ -138,12 +149,16 @@ async function main() {
   // реальной партии) это стабильно давало ~4.8с до кадра. Запуск всех
   // уникальных путей ПАРАЛЛЕЛЬНО сокращает это до времени самой медленной
   // отдельной модели вместо суммы всех. Всё ещё строго до
-  // requestAnimationFrame(draw) — см. комментарий ниже про сбой
+  // requestAnimationFrame(draw) — см. комментарий выше про сбой
   // copyExternalImageToTexture при закачке параллельно с уже идущим циклом
   // рендера.
   const uniquePaths = new Set(Array.from(found, (eid) => modelPathOf.get(eid)!));
   await Promise.allSettled(Array.from(uniquePaths, (p) => getModel(p)));
-  const instances: ModelInstance[] = [];
+  // Инстансы — по bitECS id, не плоский массив: живая синхронизация ниже
+  // добавляет/убирает отдельные записи по мере появления/исчезновения
+  // сущностей в партии, массив под это не годится (пришлось бы искать
+  // индекс каждый раз).
+  const instances = new Map<number, ModelInstance>();
   let loadedCount = 0, failedCount = 0;
   for (const eid of found) {
     const wx = Position.x[eid], wz = Position.y[eid];
@@ -152,7 +167,7 @@ async function main() {
     const path = modelPathOf.get(eid)!;
     try {
       const gm = await getModel(path);
-      instances.push(modelPipeline.createInstance(gm, mat));
+      instances.set(eid, modelPipeline.createInstance(gm, mat));
       loadedCount++;
     } catch (err) {
       failedCount++;
@@ -161,6 +176,7 @@ async function main() {
   }
   lines.push(`модели: загружено ${loadedCount}/${found.length}${failedCount ? ", ошибок: " + failedCount : ""}`);
   setStatus(lines);
+  (window as any).__ecsFound = found.length;
 
   // ---- камера: с настоящими данными старт — у своего города (та же
   // логика, что уже прижилась в живой 3D-вкладке после жалобы "почему
@@ -178,14 +194,34 @@ async function main() {
   // ---- клик/тап по сущности: RoK-стиль (см. вживую уже реализованное
   // tryTap()+renderCartouche() в obyom-3d-infinite.html/index.html) — тут,
   // за неимением полноценной панели в изолированном прототипе, просто
-  // подпись выбранной сущности (ник+ратуша/уровень — см. realData.ts).
-  // Точечный проекционный тест по текущей VP вместо честного рейкаста по
-  // мешу — сущностей может быть тысяча с лишним (см. стресс-тест), гонять
-  // на каждый клик полный intersect с геометрией моделей избыточно, а
-  // экранная дистанция до спроецированного центра даёт тот же результат
-  // для выбора одной ближайшей метки.
+  // подпись выбранной сущности (ник+ратуша/уровень — см. realData.ts) плюс
+  // золотой пин-маркер над ней. Точечный проекционный тест по текущей VP
+  // вместо честного рейкаста по мешу — сущностей может быть тысяча с лишним
+  // (см. стресс-тест), гонять на каждый клик полный intersect с геометрией
+  // моделей избыточно, а экранная дистанция до спроецированного центра
+  // даёт тот же результат для выбора одной ближайшей метки.
   let currentVP: Mat4 = new Float32Array(16);
   const selectedEl = document.getElementById("selected") as HTMLDivElement;
+  const HILITE_COLOR: [number, number, number] = [0.95, 0.78, 0.35];
+  let selectedEid: number | null = null;
+  function showSelection(eid: number) {
+    selectedEid = eid;
+    const label = labelOf.get(eid) ?? "?";
+    const wx = Position.x[eid], wz = Position.y[eid];
+    const wy = heightAt(wx, wz) * HMAX + (modelScaleOf.get(eid) ?? 5) * 0.9 + 2;
+    renderer.setMarkers([{ x: wx, y: wy, z: wz, color: HILITE_COLOR }]);
+    (window as any).__markerActive = true;
+    (window as any).__selectedLabel = label;
+    selectedEl.textContent = label;
+    selectedEl.style.display = "block";
+  }
+  function clearSelection() {
+    selectedEid = null;
+    renderer.setMarkers([]);
+    (window as any).__markerActive = false;
+    (window as any).__selectedLabel = null;
+    selectedEl.style.display = "none";
+  }
   function findEntityAtScreen(px: number, py: number): number | null {
     let best = -1;
     let bestDist = 46; // px — совпадает по духу с радиусом попадания в 2D
@@ -204,32 +240,82 @@ async function main() {
     }
     return best >= 0 ? best : null;
   }
-  // Пин-маркер (пирамидка) из renderer.ts был готов ещё с ранних шагов
-  // прототипа, но с тех пор, как все сущности получили настоящие .glb-
-  // модели, ни разу не вызывался — пригодился как раз тут: подсветка
-  // выбранной сущности парящим над ней золотым маркером, без нового
-  // WGSL-пайплайна.
-  const HILITE_COLOR: [number, number, number] = [0.95, 0.78, 0.35];
   canvas.addEventListener("click", (ev) => {
     const rect = canvas.getBoundingClientRect();
     const px = (ev.clientX - rect.left) * (canvas.width / rect.width);
     const py = (ev.clientY - rect.top) * (canvas.height / rect.height);
     const eid = findEntityAtScreen(px, py);
-    const label = eid !== null ? labelOf.get(eid) ?? null : null;
-    (window as any).__selectedLabel = label;
-    if (eid !== null && label) {
-      const wx = Position.x[eid], wz = Position.y[eid];
-      const wy = heightAt(wx, wz) * HMAX + (modelScaleOf.get(eid) ?? 5) * 0.9 + 2;
-      renderer.setMarkers([{ x: wx, y: wy, z: wz, color: HILITE_COLOR }]);
-      (window as any).__markerActive = true;
-      selectedEl.textContent = label;
-      selectedEl.style.display = "block";
-    } else {
-      renderer.setMarkers([]);
-      (window as any).__markerActive = false;
-      selectedEl.style.display = "none";
-    }
+    if (eid !== null) showSelection(eid);
+    else clearSelection();
   });
+
+  // ---- живая синхронизация: партия внутри игры не стоит на месте —
+  // ресурсные точки истощаются и появляются заново в другом месте, лагеря
+  // разбиты, города растут (уровень ратуши меняет и подпись, и саму
+  // модель — эпоха замка). Однократного чтения window.parent.W при
+  // загрузке недостаточно, если движок когда-нибудь встанет на место
+  // живой 3D-вкладки. Опрос по таймеру, не по кадру — 60 раз в секунду
+  // пересчитывать разницу по тысяче с лишним записей незачем, партия не
+  // меняется настолько быстро.
+  const SYNC_INTERVAL_MS = 3000;
+  let syncCount = 0;
+  async function syncLiveEntities() {
+    const fresh = loadRealEntities();
+    if (!fresh) return; // связь с window.parent.W пропала — оставляем сцену как есть
+    const seenKeys = new Set<string>();
+    const pendingLoads: Promise<void>[] = [];
+    for (const e of fresh) {
+      seenKeys.add(e.key);
+      const existingEid = keyToEid.get(e.key);
+      if (existingEid !== undefined) {
+        labelOf.set(existingEid, e.label);
+        if (selectedEid === existingEid) showSelection(existingEid); // подпись/маркер могли устареть (level up)
+        if (modelPathOf.get(existingEid) !== e.model) {
+          // город вырос до новой эпохи и т.п. — модель меняется, позиция нет
+          modelPathOf.set(existingEid, e.model);
+          modelScaleOf.set(existingEid, e.scale);
+          const wx = Position.x[existingEid], wz = Position.y[existingEid];
+          const groundY = heightAt(wx, wz) * HMAX;
+          const mat = modelMatrix(wx, groundY, wz, 0, e.scale);
+          pendingLoads.push(
+            getModel(e.model)
+              .then((gm) => void instances.set(existingEid, modelPipeline.createInstance(gm, mat)))
+              .catch(() => {})
+          );
+        }
+        continue;
+      }
+      // новая сущность — появилась с прошлого опроса
+      const eid = spawnEntity(e);
+      const groundY = heightAt(e.x, e.y) * HMAX;
+      const mat = modelMatrix(e.x, groundY, e.y, 0, e.scale);
+      pendingLoads.push(
+        getModel(e.model)
+          .then((gm) => void instances.set(eid, modelPipeline.createInstance(gm, mat)))
+          .catch(() => {})
+      );
+    }
+    for (const [key, eid] of Array.from(keyToEid)) {
+      if (seenKeys.has(key)) continue;
+      removeEntity(world, eid);
+      instances.delete(eid);
+      modelPathOf.delete(eid);
+      modelScaleOf.delete(eid);
+      labelOf.delete(eid);
+      keyToEid.delete(key);
+      if (selectedEid === eid) clearSelection();
+    }
+    await Promise.allSettled(pendingLoads);
+    found = Array.from(query(world, [Position, Kind]));
+    syncCount++;
+    (window as any).__ecsFound = found.length;
+    (window as any).__syncCount = syncCount;
+  }
+  if (usingReal) {
+    setInterval(() => {
+      syncLiveEntities().catch((err) => console.error("live sync:", err));
+    }, SYNC_INTERVAL_MS);
+  }
 
   function draw(tMs: number) {
     if (controls.isAutoOrbiting()) cam.yaw = tMs * 0.00015;
@@ -243,14 +329,16 @@ async function main() {
     currentVP = vp;
     renderer.setVP(vp);
     renderer.frame({ r: 0.043, g: 0.039, b: 0.035, a: 1 }, (pass) => {
-      for (const inst of instances) modelPipeline.draw(pass, inst, vp);
+      for (const eid of found) {
+        const inst = instances.get(eid);
+        if (inst) modelPipeline.draw(pass, inst, vp);
+      }
     });
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
 
   (window as any).__engineReady = true;
-  (window as any).__ecsFound = found.length;
 }
 
 main().catch((err) => {
