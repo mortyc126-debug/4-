@@ -176,15 +176,24 @@ const SAND=[0.68,0.60,0.42], GRASS=[0.31,0.41,0.21], MEAD=[0.40,0.45,0.23],
 
 // aoAt само по себе — 24 вызова шума. В исходной демке общая AO-карта была
 // одна ячейка на клетку (не на подразбиение SUB×SUB), и в ground() бралась
-// готовым значением из массива. Здесь та же экономия — кэш на чанк, ключ —
-// целая клетка, а не дробная подсетка: SUB×SUB подквадов внутри одной клетки
-// делят один и тот же расчёт AO вместо четырёх независимых.
-function cachedAo(x,y,aoCache){
-  if(!aoCache) return aoAt(Math.round(x),Math.round(y));
-  const ix=Math.round(x), iy=Math.round(y), key=ix*100003+iy;
+// готовым значением из массива — резким, без сглаживания между соседними
+// клетками. Здесь та же экономия по стоимости (кэш всё ещё на целую клетку,
+// SUB×SUB подквадов внутри неё делят одни и те же четыре расчёта AO вместо
+// нескольких независимых), но сами четыре соседних значения билинейно
+// смешиваются по дробной части координаты — так пропадает ступенька на
+// границе клетки, а не только становится дешевле её считать.
+function cachedAoAt(ix,iy,aoCache){
+  const key=ix*100003+iy;
   let v=aoCache.get(key);
   if(v===undefined){ v=aoAt(ix,iy); aoCache.set(key,v); }
   return v;
+}
+function cachedAo(x,y,aoCache){
+  if(!aoCache) return aoAt(Math.round(x),Math.round(y));
+  const x0=Math.floor(x), y0=Math.floor(y), fx=x-x0, fy=y-y0;
+  const a=cachedAoAt(x0,y0,aoCache), b=cachedAoAt(x0+1,y0,aoCache);
+  const c=cachedAoAt(x0,y0+1,aoCache), d=cachedAoAt(x0+1,y0+1,aoCache);
+  return (a*(1-fx)+b*fx)*(1-fy) + (c*(1-fx)+d*fx)*fy;
 }
 function ground(x,y,aoCache){
   const e=heightAt(x,y);
@@ -731,7 +740,16 @@ function genChunk(cx,cy){
    дистанции, где это кольцо само кончается, уже почти всё съедает туман.
    ======================================================================= */
 const BACKDROP_STEP=6;
-const BACKDROP_INNER=CHUNK*(UNLOAD_RADIUS+0.5);  // чуть дальше, чем держатся детальные чанки — без нахлёста и щели
+// Кольцо не следует за камерой каждый кадр — оно переезжает только когда
+// камера отойдёт от центра постройки на BACKDROP_INNER*0.4 (см. main-поток
+// ниже). Значит real-чанки успевают уехать на столько же от СВОЕГО центра,
+// пока кольцо ещё стоит на старом месте — щель между "где сейчас реальные
+// чанки" и "где начинается старое кольцо" может быть в разы больше, чем
+// просто зазор UNLOAD_RADIUS. Раньше здесь стоял узкий отступ без нахлёста
+// (CHUNK*(UNLOAD_RADIUS+0.5)) — из-за этого именно и была видна голая
+// проплешина (дыра до неба) на скриншоте. Теперь — щедрый нахлёст, а не
+// z-fighting в нём отдельно гасит polygonOffset при отрисовке (см. frame()).
+const BACKDROP_INNER=CHUNK*Math.max(1,LOAD_RADIUS-2);
 const BACKDROP_OUTER=200;                        // дальше и так съедает туман (uFog)
 function genBackdrop(cx0,cy0){
   CUR={pos:[],col:[],knd:[],nrm:[]};
@@ -1412,10 +1430,17 @@ function frame(){
   // Дальний фон рисуется тем же проходом, теми же юниформами (кольцо снаружи
   // детальных чанков, см. genBackdrop) — отдельных теней ему не нужно, на
   // таком расстоянии внутрь карты теней он всё равно не попадает.
+  // Кольцо нарочно ЗАХОДИТ внутрь области детальных чанков (см. комментарий
+  // у BACKDROP_INNER) — щедрый нахлёст вместо щели до неба. Чтобы нахлёст не
+  // мигал z-fighting'ом там, где обе геометрии близко по высоте, отодвигаем
+  // фон чуть дальше по глубине: настоящий чанк, если он там есть, всегда
+  // выигрывает тест глубины.
   if(backdropMesh){
+    gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1.0,4.0);
     gl.bindVertexArray(backdropMesh.vao);
     gl.drawArrays(gl.TRIANGLES,0,backdropMesh.vertCount);
     totalTris+=backdropMesh.vertCount/3;
+    gl.disable(gl.POLYGON_OFFSET_FILL);
   }
 
   // Проход 3: замки (GLB) — по одному на чанк, у которого он есть.
