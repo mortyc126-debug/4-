@@ -41,10 +41,6 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 
 #app{position:relative;z-index:1;display:flex;flex-direction:column;height:100%}
 
-/* ─────────────── Верхний фриз ─────────────── */
-#banners{flex:0 0 auto;display:flex;height:3px}
-#banners i{flex:1;display:block}
-
 #top{position:fixed;top:10px;left:10px;z-index:15;display:flex;flex-direction:row;
   align-items:center;gap:8px;max-width:calc(100vw - 16px)}
 
@@ -579,11 +575,6 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 </head>
 <body>
 <div id="app" class="view-city">
-  <div id="banners">
-    <i style="background:var(--t-human)"></i><i style="background:var(--t-dwarf)"></i>
-    <i style="background:var(--t-elf)"></i><i style="background:var(--t-undead)"></i>
-  </div>
-
   <header id="top">
     <div id="crest">
       <span class="mark">&#9884;</span><img id="crest-avatar" class="avatar" alt="" style="display:none">
