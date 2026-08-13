@@ -471,8 +471,18 @@ function chunkCandidatesRaw(cx,cy,removals){
 // лотереи (там массив просто содержит 0 или 1 запись) — единая форма для
 // остального конвейера (воркер → главный поток → рендер), плотность
 // настоящей карты не укладывается в "одно на чанк".
-function resolveChunkPlacements(cx,cy,removals,realNearby){
-  if(realNearby) return realStructuresFor(cx,cy,realNearby,removals);
+function resolveChunkPlacements(cx,cy,removals,realNearby,hasRealData){
+  // hasRealData отличает "настоящих соседей тут просто нет" (пустая клетка
+  // реальной экономии — нужна голая земля) от "3D открыт сам по себе, без
+  // игры позади" (единственный случай для лотереи). realNearby сам по себе
+  // для этого не годится: у него пусто в ОБОИХ случаях — при малой плотности
+  // настоящей карты (после сужения фильтра расстояния между городами/
+  // лагерями/точками) большинство чанков честно ничего не содержат, и без
+  // этого флага такие чанки тоже скатывались бы в лотерею — плотную,
+  // никак не связанную с настоящей партией, поверх и так урезанной
+  // реальной застройки (то и давало видимое на скриншоте скопище хижин
+  // там, где по-настоящему на карте пусто).
+  if(hasRealData) return realStructuresFor(cx,cy,realNearby,removals);
   const pool=[];
   for(const [di,dj] of NEIGHBOR_OFFSETS){
     const ncx=cx+di, ncy=cy+dj;
@@ -727,7 +737,7 @@ const CHUNK=16;          // клеток на сторону чанка — ме
 const LOAD_RADIUS=4;     // чанков вокруг камеры держим прогруженными (по кругу)
 const UNLOAD_RADIUS=5.5; // с запасом, чтобы не дёргать чанк на границе туда-сюда
 
-function genChunk(cx,cy,removals,realEntities){
+function genChunk(cx,cy,removals,realEntities,hasRealData){
   const __prof=self.__profileChunks, __t=__prof?[performance.now()]:null;
   CUR={pos:[],col:[],knd:[],nrm:[]};
   const x0=cx*CHUNK, x1=x0+CHUNK, y0=cy*CHUNK, y1=y0+CHUNK;
@@ -737,7 +747,7 @@ function genChunk(cx,cy,removals,realEntities){
   // остальной посадке (лес/камни/трава) нужно знать, куда не лезть. all
   // включает и соседей (см. комментарий у realStructuresFor) — расчистке и
   // сглаживанию рельефа у границы чанка это тоже нужно знать.
-  const {cities,camps,resources,all}=resolveChunkPlacements(cx,cy,removals,realEntities);
+  const {cities,camps,resources,all}=resolveChunkPlacements(cx,cy,removals,realEntities,hasRealData);
   // structOverlapLocal/flattenNear вызываются на КАЖДУЮ клетку чанка да ещё
   // на каждого кандидата дерева/куста/травинки в ней (см. цикл посадки ниже)
   // — де-факто десятки тысяч раз за чанк (в основном из-за травы, её на
@@ -1429,8 +1439,8 @@ function resourceModel(type){ return loadModelCached("models/resources/"+type+".
 const NWORKERS=Math.max(1,Math.min(4,(navigator.hardwareConcurrency||4)-1));
 const CHUNK_WORKER_TAIL=`
 self.onmessage=function(e){
-  const {cx,cy,reqId,backdrop,removals,force,realEntities}=e.data;
-  const data=backdrop ? genBackdrop(cx,cy) : genChunk(cx,cy,removals,realEntities);
+  const {cx,cy,reqId,backdrop,removals,force,realEntities,hasRealData}=e.data;
+  const data=backdrop ? genBackdrop(cx,cy) : genChunk(cx,cy,removals,realEntities,hasRealData);
   const pos=new Float32Array(data.pos), col=new Float32Array(data.col),
         knd=new Float32Array(data.knd), nrm=new Float32Array(data.nrm);
   postMessage({reqId,cx,cy,backdrop,force,pos,col,knd,nrm,
@@ -1627,7 +1637,7 @@ function dispatchToWorkers(){
     const [cx,cy]=genQueue.shift();
     const reqId=reqSeq++;
     inFlight.set(reqId,{cx,cy});
-    chunkWorkers[nextWorker].postMessage({cx,cy,reqId,removals,realEntities:realEntitiesFor(cx,cy)});
+    chunkWorkers[nextWorker].postMessage({cx,cy,reqId,removals,realEntities:realEntitiesFor(cx,cy),hasRealData:!!realIndex});
     nextWorker=(nextWorker+1)%chunkWorkers.length;
   }
 }
@@ -1659,7 +1669,7 @@ function forceRegenChunk(cx,cy){
   const reqId=reqSeq++;
   inFlight.set(reqId,{cx,cy});
   chunkWorkers[nextWorker].postMessage({cx,cy,reqId,removals:removalsSnapshot(),
-    realEntities:realEntitiesFor(cx,cy),force:true});
+    realEntities:realEntitiesFor(cx,cy),hasRealData:!!realIndex,force:true});
   nextWorker=(nextWorker+1)%chunkWorkers.length;
 }
 // Раз в несколько секунд перегенерируем окрестность каждого снесённого
