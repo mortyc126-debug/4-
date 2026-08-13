@@ -281,7 +281,7 @@ function siteBuildableParams(x,y,padHw,maxSlopeDeg){
 function siteBuildable(x,y){ return siteBuildableParams(x,y,CASTLE_PAD_HW,CASTLE_MAX_SLOPE_DEG); }
 // ЭКСПЕРИМЕНТ: замки маленькими терялись в лесу/траве — тестируем крупный
 // фиксированный масштаб вместо footprint'а по эпохе (тот был 1×1..5×5).
-const MODEL_SCALE_BY_EPOCH=[5,5,5,5,5,5];   // все замки игроков — 5×5, вне зависимости от эпохи
+const MODEL_SCALE_BY_EPOCH=[10,10,10,10,10,10];   // все замки игроков — 10×10, вне зависимости от эпохи
 const TILT_SAMPLE=0.6, TILT_MAX=6*Math.PI/180;
 function groundTiltAt(x,y){
   const hL=H(x-TILT_SAMPLE,y), hR=H(x+TILT_SAMPLE,y);
@@ -326,7 +326,7 @@ function chunkCityCandidate(cx,cy,removals){
 // иначе с такой частотой они бы то и дело слипались.
 // ЭКСПЕРИМЕНТ (тот же, что и с замками): масштаб 3×3 вместо исходного
 // 1×1 — при маленьком размере модели терялись в траве и кронах.
-const MINOR_MODEL_SCALE=3, MINOR_R=MINOR_MODEL_SCALE*0.9+1.2;
+const MINOR_MODEL_SCALE=5, MINOR_R=MINOR_MODEL_SCALE*0.9+1.2;
 const CAMP_CHANCE=0.30, CAMP_PAD_HW=3, CAMP_MAX_SLOPE_DEG=11;
 function chunkCampCandidate(cx,cy,city,removals){
   if(hash2(cx,cy,SEED+821)>CAMP_CHANCE) return null;
