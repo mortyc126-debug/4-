@@ -33,6 +33,7 @@
    Матрицы. Всё в столбцовом порядке, как ждёт WebGL. Ни одной картинки и
    ни одной библиотеки — как и в исходной демке.
    ======================================================================= */
+const WORLD_SRC = `
 const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]];
 const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
 const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
@@ -466,7 +467,7 @@ const LOAD_RADIUS=4;     // чанков вокруг камеры держим 
 const UNLOAD_RADIUS=5.5; // с запасом, чтобы не дёргать чанк на границе туда-сюда
 
 function genChunk(cx,cy){
-  const __prof=window.__profileChunks, __t=__prof?[performance.now()]:null;
+  const __prof=self.__profileChunks, __t=__prof?[performance.now()]:null;
   CUR={pos:[],col:[],knd:[],nrm:[]};
   const x0=cx*CHUNK, x1=x0+CHUNK, y0=cy*CHUNK, y1=y0+CHUNK;
 
@@ -679,6 +680,14 @@ function genChunk(cx,cy){
       "ms trees="+trees+" rocks="+rocks+" grass="+grass+" bushes="+bushes+" camps="+camps); }
   return {pos:CUR.pos,col:CUR.col,knd:CUR.knd,nrm:CUR.nrm, city, stats:{trees,rocks,grass,bushes,camps}};
 }
+`;
+// Единый исходник мира/геометрии выполняется дважды: здесь, в главном потоке
+// (нужен H()/heightAt() под камерой каждый кадр — без похода в воркер), и
+// ещё раз внутри воркера ниже (для самой генерации чанков). Один текст —
+// одна логика, никакого ручного дублирования на расхождение.
+const __worldMain = new Function(WORLD_SRC +
+  "\nreturn {M4,sub,cross,norm,H,heightAt,SEA,SUN,CHUNK,LOAD_RADIUS,UNLOAD_RADIUS};")();
+const {M4,sub,cross,norm,H,heightAt,SEA,SUN,CHUNK,LOAD_RADIUS,UNLOAD_RADIUS} = __worldMain;
 
 /* =======================================================================
    WebGL
@@ -975,21 +984,44 @@ function castleModel(race,epoch){
 }
 
 /* =======================================================================
-   Чанк-стриминг: держим карту загруженных чанков, каждый со своим VAO
-   (основной проход + отдельный depth-VAO на тот же буфер позиций для
-   теневого прохода). Каждый кадр смотрим, в каком чанке камера, догружаем
-   недостающие в круге LOAD_RADIUS и выгружаем те, что вышли за UNLOAD_RADIUS.
-   Генерация чанка — недёшева (шум по сотням клеток), поэтому её не делаем
-   всю в один кадр: очередь обрабатывается порциями по времени, чтобы кадр
-   не проседал при полёте на большой скорости.
+   Чанк-стриминг. Раньше генерация чанка (шум по сотням клеток — земля,
+   вода, лес, камни) шла прямо в главном потоке, разово по бюджету времени
+   на кадр — но один чанк всё равно занимал ~30-50мс синхронно, и кадр на
+   это время проседал: JS не умеет прервать функцию на середине. Настоящее
+   решение — считать чанк НЕ в главном потоке вовсе.
+
+   WORLD_SRC уже содержит genChunk и всё, что ему нужно, в виде текста —
+   тот же текст становится телом фонового воркера (через Blob-URL, без
+   единого файла на стороне и без библиотек). Несколько воркеров разбирают
+   очередь параллельно, каждый шлёт назад уже готовые типизированные массивы
+   вершин; главный поток только заливает их в GPU-буферы — это быстро и не
+   вызывает пауз кадра, сколько бы чанков ни строилось одновременно позади
+   сцены.
    ======================================================================= */
+const NWORKERS=Math.max(1,Math.min(4,(navigator.hardwareConcurrency||4)-1));
+const CHUNK_WORKER_TAIL=`
+self.onmessage=function(e){
+  const {cx,cy,reqId}=e.data;
+  const data=genChunk(cx,cy);
+  const pos=new Float32Array(data.pos), col=new Float32Array(data.col),
+        knd=new Float32Array(data.knd), nrm=new Float32Array(data.nrm);
+  postMessage({reqId,cx,cy,pos,col,knd,nrm,city:data.city,stats:data.stats},
+    [pos.buffer,col.buffer,knd.buffer,nrm.buffer]);
+};`;
+const chunkWorkerUrl=URL.createObjectURL(
+  new Blob([WORLD_SRC+CHUNK_WORKER_TAIL],{type:"application/javascript"}));
+const chunkWorkers=Array.from({length:NWORKERS},()=>new Worker(chunkWorkerUrl));
+
 const chunks=new Map();
 const chunkKey=(cx,cy)=>cx+","+cy;
-const genQueue=[];
-const queuedSet=new Set();
+const genQueue=[];           // [cx,cy] хотим, но ещё не отправили воркеру
+const queuedSet=new Set();   // ключи того, что уже в очереди ИЛИ в работе у воркера
+const inFlight=new Map();    // reqId -> {cx,cy}
+let reqSeq=0, nextWorker=0;
+const IN_FLIGHT_CAP=NWORKERS*2;   // не заваливаем воркеры дальше, чем реально нужно прямо сейчас
+let lastCamChunkX=0, lastCamChunkY=0;
 
-function ensureChunk(cx,cy){
-  const data=genChunk(cx,cy);
+function createChunkGL(cx,cy,data){
   const vao=gl.createVertexArray(); gl.bindVertexArray(vao);
   const posBuf=attach(prog,data.pos,"aPos",3);
   const colBuf=attach(prog,data.col,"aCol",3);
@@ -1009,12 +1041,28 @@ function disposeChunk(c){
   gl.deleteVertexArray(c.vao); gl.deleteVertexArray(c.depthVao);
   for(const b of c.bufs) gl.deleteBuffer(b);
 }
+chunkWorkers.forEach(w=>w.onmessage=(e)=>{
+  const {reqId,cx,cy,pos,col,knd,nrm,city,stats}=e.data;
+  inFlight.delete(reqId);
+  const k=chunkKey(cx,cy);
+  queuedSet.delete(k);
+  if(chunks.has(k)) return;   // уже успели получить/создать (не должно случаться, но не страшно)
+  // Пока чанк считался, камера могла улететь дальше — тогда результат уже
+  // не нужен и не стоит тратить на него видеопамять; лишняя работа воркера
+  // окупается тем, что она вообще не блокировала кадр, пока шла.
+  const dx=cx-lastCamChunkX, dy=cy-lastCamChunkY;
+  if(dx*dx+dy*dy>UNLOAD_RADIUS*UNLOAD_RADIUS) return;
+  createChunkGL(cx,cy,{pos,col,knd,nrm,city,stats});
+});
 function updateStreaming(camChunkX,camChunkY){
+  lastCamChunkX=camChunkX; lastCamChunkY=camChunkY;
   // Резкий скачок камеры (телепорт, рывок мышью) может за один кадр набить
   // очередь чанками у СТАРОЙ позиции, которые к моменту их обработки уже не
   // нужны. Выбрасываем из очереди всё, что вышло за радиус загрузки, и
   // сортируем оставшееся по расстоянию до камеры — ближние чанки прогружаются
   // первыми, дальний хвост не блокирует то, что игрок видит прямо перед собой.
+  // Заявки, уже улетевшие воркеру (inFlight), не отменить — но их результат
+  // проверяется на актуальность в onmessage выше.
   for(let i=genQueue.length-1;i>=0;i--){
     const [cx,cy]=genQueue[i], dx=cx-camChunkX, dy=cy-camChunkY;
     if(dx*dx+dy*dy>LOAD_RADIUS*LOAD_RADIUS+1){
@@ -1038,13 +1086,18 @@ function updateStreaming(camChunkX,camChunkY){
     if(dx*dx+dy*dy>UNLOAD_RADIUS*UNLOAD_RADIUS){ disposeChunk(c); chunks.delete(k); }
   }
 }
-function processQueue(budgetMs){
-  const t0=performance.now();
-  while(genQueue.length && performance.now()-t0<budgetMs){
+function dispatchToWorkers(){
+  // Рассылка заявок ничего не считает сама — только раздаёт чанки по
+  // воркерам, поэтому её не нужно ограничивать по времени, как раньше
+  // ограничивалась синхронная генерация. Кап на inFlight не даёт очереди
+  // одного воркера раздуться, если камера долго стоит на месте с пустым
+  // диском вокруг — заявки идут по мере готовности предыдущих.
+  while(genQueue.length && inFlight.size<IN_FLIGHT_CAP){
     const [cx,cy]=genQueue.shift();
-    const k=chunkKey(cx,cy); queuedSet.delete(k);
-    if(chunks.has(k)) continue;
-    ensureChunk(cx,cy);
+    const reqId=reqSeq++;
+    inFlight.set(reqId,{cx,cy});
+    chunkWorkers[nextWorker].postMessage({cx,cy,reqId});
+    nextWorker=(nextWorker+1)%chunkWorkers.length;
   }
 }
 
@@ -1167,7 +1220,7 @@ function frame(){
 
   const camChunkX=Math.floor(cam.tx/CHUNK), camChunkY=Math.floor(cam.tz/CHUNK);
   updateStreaming(camChunkX,camChunkY);
-  processQueue(9);
+  dispatchToWorkers();
 
   const {lightVP,lightVPB}=computeLightVPB(cam.tx,cam.tz);
 
@@ -1247,7 +1300,7 @@ function frame(){
 
   if(t-lastHud>0.5 && !document.getElementById("hud").classList.contains("min")){
     lastHud=t;
-    hudStats.textContent="Чанков в памяти: "+chunks.size+" · в очереди: "+genQueue.length+
+    hudStats.textContent="Чанков в памяти: "+chunks.size+" · строится: "+inFlight.size+"/"+genQueue.length+
       " · городов рядом: "+citiesLoaded+" · треугольников: "+Math.round(totalTris/1000)+"к";
   }
 
@@ -1255,7 +1308,8 @@ function frame(){
 }
 frame();
 window.__errs=()=>{const e=[];let g;while((g=gl.getError())!==gl.NO_ERROR)e.push(g);return e};
-window.__chunkStats=()=>({loaded:chunks.size, queued:genQueue.length,
+window.__chunkStats=()=>({loaded:chunks.size, queued:genQueue.length, inFlight:inFlight.size,
+  workers:chunkWorkers.length,
   tris:[...chunks.values()].reduce((s,c)=>s+c.vertCount,0)/3,
   cities:[...chunks.values()].filter(c=>c.city).length});
 </script>
