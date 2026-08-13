@@ -10,7 +10,7 @@ import { createWorld, addEntity, addComponent, query } from "bitecs";
 import { createRenderer } from "./renderer";
 import { buildTerrainPatch } from "./terrainMesh";
 import { heightAt, HMAX } from "./terrain";
-import { mul, persp, look, modelMatrix, type Vec3 } from "./mat4";
+import { mul, persp, look, modelMatrix, transformPoint, type Vec3, type Mat4 } from "./mat4";
 import { attachOrbitControls, type OrbitCamera } from "./camera";
 import { loadGLB } from "./glb";
 import { uploadGLB, createModelPipeline, type GpuModel, type ModelInstance } from "./modelRenderer";
@@ -33,10 +33,10 @@ async function main() {
   const seedEntities =
     real ??
     [
-      { x: 43, y: 14, kind: 0 as const, model: "/models/castles/human-1.glb", scale: 10 },
-      { x: 50, y: 20, kind: 1 as const, model: "/models/camps/barbarians.glb", scale: 5 },
-      { x: 55, y: 12, kind: 2 as const, model: "/models/resources/farm.glb", scale: 5 },
-      { x: 30, y: 30, kind: 2 as const, model: "/models/resources/quarry.glb", scale: 5 },
+      { x: 43, y: 14, kind: 0 as const, model: "/models/castles/human-1.glb", scale: 10, label: "Замок (демо)" },
+      { x: 50, y: 20, kind: 1 as const, model: "/models/camps/barbarians.glb", scale: 5, label: "Лагерь (демо)" },
+      { x: 55, y: 12, kind: 2 as const, model: "/models/resources/farm.glb", scale: 5, label: "Пашня (демо)" },
+      { x: 30, y: 30, kind: 2 as const, model: "/models/resources/quarry.glb", scale: 5, label: "Каменоломня (демо)" },
     ];
   lines.push(usingReal ? `данные: настоящая партия, сущностей — ${seedEntities.length}` : "данные: демо (window.parent.W недоступен)");
 
@@ -45,6 +45,7 @@ async function main() {
   const Kind = { value: [] as number[] }; // 0=city 1=camp 2=node
   const modelPathOf = new Map<number, string>();
   const modelScaleOf = new Map<number, number>();
+  const labelOf = new Map<number, string>();
   for (const e of seedEntities) {
     const eid = addEntity(world);
     addComponent(world, eid, Position);
@@ -54,6 +55,7 @@ async function main() {
     Kind.value[eid] = e.kind;
     modelPathOf.set(eid, e.model);
     modelScaleOf.set(eid, e.scale);
+    labelOf.set(eid, e.label);
   }
   const found = Array.from(query(world, [Position, Kind]));
   lines.push(`bitECS: сущностей — ${found.length}`);
@@ -173,6 +175,50 @@ async function main() {
   const cam: OrbitCamera = { yaw: 0, pitch: 0.55, dist: 42, target: [cx, cy + 2, cz] };
   const controls = attachOrbitControls(canvas, cam);
 
+  // ---- клик/тап по сущности: RoK-стиль (см. вживую уже реализованное
+  // tryTap()+renderCartouche() в obyom-3d-infinite.html/index.html) — тут,
+  // за неимением полноценной панели в изолированном прототипе, просто
+  // подпись выбранной сущности (ник+ратуша/уровень — см. realData.ts).
+  // Точечный проекционный тест по текущей VP вместо честного рейкаста по
+  // мешу — сущностей может быть тысяча с лишним (см. стресс-тест), гонять
+  // на каждый клик полный intersect с геометрией моделей избыточно, а
+  // экранная дистанция до спроецированного центра даёт тот же результат
+  // для выбора одной ближайшей метки.
+  let currentVP: Mat4 = new Float32Array(16);
+  const selectedEl = document.getElementById("selected") as HTMLDivElement;
+  function findEntityAtScreen(px: number, py: number): number | null {
+    let best = -1;
+    let bestDist = 46; // px — совпадает по духу с радиусом попадания в 2D
+    for (const eid of found) {
+      const wx = Position.x[eid], wz = Position.y[eid];
+      const wy = heightAt(wx, wz) * HMAX + (modelScaleOf.get(eid) ?? 5) * 0.35;
+      const clip = transformPoint(currentVP, [wx, wy, wz]);
+      if (clip.w <= 0.001) continue; // за спиной камеры
+      const sx = (clip.x / clip.w * 0.5 + 0.5) * canvas.width;
+      const sy = (1 - (clip.y / clip.w * 0.5 + 0.5)) * canvas.height;
+      const d = Math.hypot(sx - px, sy - py);
+      if (d < bestDist) {
+        bestDist = d;
+        best = eid;
+      }
+    }
+    return best >= 0 ? best : null;
+  }
+  canvas.addEventListener("click", (ev) => {
+    const rect = canvas.getBoundingClientRect();
+    const px = (ev.clientX - rect.left) * (canvas.width / rect.width);
+    const py = (ev.clientY - rect.top) * (canvas.height / rect.height);
+    const eid = findEntityAtScreen(px, py);
+    const label = eid !== null ? labelOf.get(eid) ?? null : null;
+    (window as any).__selectedLabel = label;
+    if (label) {
+      selectedEl.textContent = label;
+      selectedEl.style.display = "";
+    } else {
+      selectedEl.style.display = "none";
+    }
+  });
+
   function draw(tMs: number) {
     if (controls.isAutoOrbiting()) cam.yaw = tMs * 0.00015;
     const eye: Vec3 = [
@@ -182,6 +228,7 @@ async function main() {
     ];
     const aspect = canvas.width / Math.max(1, canvas.height);
     const vp = mul(persp(0.72, aspect, 0.5, 300), look(eye, cam.target, [0, 1, 0]));
+    currentVP = vp;
     renderer.setVP(vp);
     renderer.frame({ r: 0.043, g: 0.039, b: 0.035, a: 1 }, (pass) => {
       for (const inst of instances) modelPipeline.draw(pass, inst, vp);

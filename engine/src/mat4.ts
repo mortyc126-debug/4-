@@ -54,6 +54,20 @@ export function modelMatrix(tx: number, ty: number, tz: number, yaw: number, sca
   ]);
 }
 
+// Проекция мировой точки в клип-пространство через готовую VP — для
+// клика/тапа по сущности (см. main.ts): дешёвый point-projection тест
+// вместо честного рейкаста по мешу, тот же приём, что и projectToScreen в
+// живом obyom-3d-infinite.html.
+export function transformPoint(m: Mat4, p: Vec3): { x: number; y: number; z: number; w: number } {
+  const [x, y, z] = p;
+  return {
+    x: m[0] * x + m[4] * y + m[8] * z + m[12],
+    y: m[1] * x + m[5] * y + m[9] * z + m[13],
+    z: m[2] * x + m[6] * y + m[10] * z + m[14],
+    w: m[3] * x + m[7] * y + m[11] * z + m[15],
+  };
+}
+
 export function look(eye: Vec3, center: Vec3, up: Vec3): Mat4 {
   const z = norm(sub(eye, center));
   const x = norm(cross(up, z));
