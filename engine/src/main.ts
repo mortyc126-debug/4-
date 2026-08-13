@@ -34,10 +34,10 @@ async function main() {
   const seedEntities: RealEntity[] =
     real ??
     [
-      { key: "demo-0", x: 43, y: 14, kind: 0 as const, model: "/models/castles/human-1.glb", scale: 10, label: "Замок (демо)" },
-      { key: "demo-1", x: 50, y: 20, kind: 1 as const, model: "/models/camps/barbarians.glb", scale: 5, label: "Лагерь (демо)" },
-      { key: "demo-2", x: 55, y: 12, kind: 2 as const, model: "/models/resources/farm.glb", scale: 5, label: "Пашня (демо)" },
-      { key: "demo-3", x: 30, y: 30, kind: 2 as const, model: "/models/resources/quarry.glb", scale: 5, label: "Каменоломня (демо)" },
+      { key: "demo-0", x: 43, y: 14, gx: 43, gy: 14, kind: 0 as const, model: "/models/castles/human-1.glb", scale: 10, label: "Замок (демо)" },
+      { key: "demo-1", x: 50, y: 20, gx: 50, gy: 20, kind: 1 as const, model: "/models/camps/barbarians.glb", scale: 5, label: "Лагерь (демо)" },
+      { key: "demo-2", x: 55, y: 12, gx: 55, gy: 12, kind: 2 as const, model: "/models/resources/farm.glb", scale: 5, label: "Пашня (демо)" },
+      { key: "demo-3", x: 30, y: 30, gx: 30, gy: 30, kind: 2 as const, model: "/models/resources/quarry.glb", scale: 5, label: "Каменоломня (демо)" },
     ];
   lines.push(usingReal ? `данные: настоящая партия, сущностей — ${seedEntities.length}` : "данные: демо (window.parent.W недоступен)");
 
@@ -47,6 +47,10 @@ async function main() {
   const modelPathOf = new Map<number, string>();
   const modelScaleOf = new Map<number, number>();
   const labelOf = new Map<number, string>();
+  // Целая клетка карты (не мировая x+0.5/y+0.5 из Position) — нужна только
+  // для window.parent.renderCartoucheFor(gx,gy) при клике (см. ниже): та же
+  // клетка, которую ждёт cartouche в index.html.
+  const gridOf = new Map<number, { x: number; y: number }>();
   // Ключ клетки карты ("x,y", как в W.map) -> bitECS id — нужен только для
   // диффа при живой синхронизации ниже (syncLiveEntities): по нему находим,
   // какая сущность уже есть, а какая пропала между двумя опросами
@@ -62,6 +66,7 @@ async function main() {
     modelPathOf.set(eid, e.model);
     modelScaleOf.set(eid, e.scale);
     labelOf.set(eid, e.label);
+    gridOf.set(eid, { x: e.gx, y: e.gy });
     keyToEid.set(e.key, eid);
     return eid;
   }
@@ -240,13 +245,35 @@ async function main() {
     }
     return best >= 0 ? best : null;
   }
+  // Если движок открыт внутри игры (тот же приём, что и readLiveWorld в
+  // realData.ts), клик по сущности не просто подсвечивает её локально, но
+  // и зовёт УЖЕ ГОТОВУЮ настоящую панель cartouche в index.html — ту же,
+  // что открывает и старый 3D-рендер (obyom-3d-infinite.html). Она уже умеет
+  // показывать профиль/атаку/разведку/поход, лежит поверх iframe по
+  // z-index (см. комментарий у .plate в index.html) — переизобретать эти
+  // кнопки внутри WebGPU-канвы не нужно.
+  function notifyParentCartouche(gx: number, gy: number) {
+    try {
+      const w = window.parent;
+      if (w && w !== window && typeof (w as any).renderCartoucheFor === "function") {
+        (w as any).renderCartoucheFor(gx, gy);
+      }
+    } catch (_) {
+      /* кросс-origin или не встроено — тихо игнорируем, локальная подпись уже показана */
+    }
+  }
   canvas.addEventListener("click", (ev) => {
     const rect = canvas.getBoundingClientRect();
     const px = (ev.clientX - rect.left) * (canvas.width / rect.width);
     const py = (ev.clientY - rect.top) * (canvas.height / rect.height);
     const eid = findEntityAtScreen(px, py);
-    if (eid !== null) showSelection(eid);
-    else clearSelection();
+    if (eid !== null) {
+      showSelection(eid);
+      const g = gridOf.get(eid);
+      if (g) notifyParentCartouche(g.x, g.y);
+    } else {
+      clearSelection();
+    }
   });
 
   // ---- живая синхронизация: партия внутри игры не стоит на месте —
@@ -302,6 +329,7 @@ async function main() {
       modelPathOf.delete(eid);
       modelScaleOf.delete(eid);
       labelOf.delete(eid);
+      gridOf.delete(eid);
       keyToEid.delete(key);
       if (selectedEid === eid) clearSelection();
     }
