@@ -738,9 +738,47 @@ function genChunk(cx,cy,removals,realEntities){
   // включает и соседей (см. комментарий у realStructuresFor) — расчистке и
   // сглаживанию рельефа у границы чанка это тоже нужно знать.
   const {cities,camps,resources,all}=resolveChunkPlacements(cx,cy,removals,realEntities);
+  // structOverlapLocal/flattenNear вызываются на КАЖДУЮ клетку чанка да ещё
+  // на каждого кандидата дерева/куста/травинки в ней (см. цикл посадки ниже)
+  // — де-факто десятки тысяч раз за чанк (в основном из-за травы, её на
+  // клетку заметно больше, чем деревьев). Прямой перебор all на каждый такой
+  // вызов был бы O(длина all) — у процедурной лотереи all это 0–3 записи и
+  // незаметно, а вот у настоящих данных партии (см. buildRealCandidate) в
+  // тесной области может набраться и несколько десятков: десятки тысяч
+  // вызовов × десятки записей — секунды на чанк, тот самый зависон.
+  // Первая версия бакетов держала их в Map со строковым ключом ("x,y") —
+  // сам перебор объектов внутри бакета стал дешёвым, но конкатенация строки
+  // и хеш-поиск в Map на КАЖДЫЙ из 9 бакетов на КАЖДЫЙ из десятков тысяч
+  // вызовов — уже сама по себе заметная стоимость. Вместо Map — плоский
+  // массив с индексом по целым координатам бакета (обычная арифметика,
+  // без строк и без хеширования): all всегда лежит в чанке (cx,cy) и его
+  // восьми соседях — фиксированная и небольшая область, под неё можно
+  // один раз посчитать размер сетки и просто индексировать.
+  // BUCKET заметно больше любого реального R/r (максимум у самого крупного
+  // города — flatten-радиус ~8.5): 3×3 соседних бакета должны гарантированно
+  // накрывать зону влияния объекта, а не срезать её по краю бакета.
+  const BUCKET=12;
+  const gridMinX=(cx-1)*CHUNK, gridMinZ=(cy-1)*CHUNK;
+  const gridDim=Math.ceil(3*CHUNK/BUCKET)+2;   // +2 — запас на случай объекта чуть за границей блока
+  const grid=new Array(gridDim*gridDim);
+  function gridIdx(x,z){
+    const bx=Math.floor((x-gridMinX)/BUCKET), bz=Math.floor((z-gridMinZ)/BUCKET);
+    if(bx<0||bz<0||bx>=gridDim||bz>=gridDim) return -1;
+    return bz*gridDim+bx;
+  }
+  for(const o of all){
+    const idx=gridIdx(o.x,o.z); if(idx<0) continue;
+    (grid[idx]=grid[idx]||[]).push(o);
+  }
   function structOverlapLocal(px,pz){
     let m=0;
-    for(const o of all) m=Math.max(m, o.r/Math.max(0.001,Math.hypot(o.x-px,o.z-pz)));
+    const bx=Math.floor((px-gridMinX)/BUCKET), bz=Math.floor((pz-gridMinZ)/BUCKET);
+    for(let j=-1;j<=1;j++)for(let i=-1;i<=1;i++){
+      const gx=bx+i, gz=bz+j;
+      if(gx<0||gz<0||gx>=gridDim||gz>=gridDim) continue;
+      const arr=grid[gz*gridDim+gx]; if(!arr) continue;
+      for(const o of arr) m=Math.max(m, o.r/Math.max(0.001,Math.hypot(o.x-px,o.z-pz)));
+    }
     return m;
   }
   // Только у реальных данных объекты несут flattenE (см. buildRealCandidate)
@@ -749,12 +787,18 @@ function genChunk(cx,cy,removals,realEntities){
   // все записи без flattenE на первой же проверке).
   function flattenNear(px,pz,e){
     let best=0,target=e;
-    for(const o of all){
-      if(o.flattenE===undefined) continue;
-      const R=o.r*1.35, d=Math.hypot(o.x-px,o.z-pz);
-      if(d>=R) continue;
-      const t=1-d/R;
-      if(t>best){ best=t; target=o.flattenE; }
+    const bx=Math.floor((px-gridMinX)/BUCKET), bz=Math.floor((pz-gridMinZ)/BUCKET);
+    for(let j=-1;j<=1;j++)for(let i=-1;i<=1;i++){
+      const gx=bx+i, gz=bz+j;
+      if(gx<0||gz<0||gx>=gridDim||gz>=gridDim) continue;
+      const arr=grid[gz*gridDim+gx]; if(!arr) continue;
+      for(const o of arr){
+        if(o.flattenE===undefined) continue;
+        const R=o.r*1.35, d=Math.hypot(o.x-px,o.z-pz);
+        if(d>=R) continue;
+        const t=1-d/R;
+        if(t>best){ best=t; target=o.flattenE; }
+      }
     }
     return best<=0 ? e : e*(1-best)+Math.max(e,target)*best;
   }
@@ -893,11 +937,17 @@ function genChunk(cx,cy,removals,realEntities){
     /* --- подлесок --- */
     const open=1-Math.min(1,Math.max(0,(dens-0.40)/0.6));
     if(e<0.80){
-      // Плотность травы и кустов возвращена к уровню исходной демки — раньше
-      // была урезана вдвое-втрое ради синхронной генерации на главном потоке,
-      // но теперь чанк строится в воркере (см. ниже по файлу), и лишние
-      // tri()-вызовы там больше не стоят кадра.
-      const bn=hash2(x,y,120)<0.22*open+0.06 ? 1+Math.floor(hash2(x,y,121)*2) : 0;
+      // Плотность травы и кустов была возвращена к уровню исходной демки,
+      // когда генерация чанка переехала в воркер (лишние tri()-вызовы там не
+      // стоят кадра CPU-стороны) — но это учло только стоимость СЧИТАТЬ
+      // геометрию, не стоимость её каждый кадр ОТРИСОВАТЬ: результат всё
+      // равно ложится в один general буфер чанка и растеризуется на главном
+      // потоке. Профиль зависания у плотной застройки показал, что frame()
+      // на реальных чанках проседает до ~1 раза в секунду именно из-за
+      // объёма геометрии (сотни тысяч треугольников, большая часть — трава),
+      // а не из-за самой генерации (та укладывается в десятки мс). Урезано
+      // обратно, теперь по GPU-бюджету, а не по CPU-бюджету воркера.
+      const bn=hash2(x,y,120)<0.11*open+0.03 ? 1+Math.floor(hash2(x,y,121)*2) : 0;
       for(let i=0;i<bn;i++){
         const bx=x+hash2(x,y,122+i)*0.9, bz=y+hash2(x,y,132+i)*0.9;
         if(heightRaw(bx,bz)<SEA+0.035||structOverlapLocal(bx,bz)>1) continue;
@@ -905,7 +955,7 @@ function genChunk(cx,cy,removals,realEntities){
              BUSHC[Math.floor(hash2(x,y,152+i)*BUSHC.length)], (x*3+y*5+i)|0);
         bushes++;
       }
-      const gn=Math.floor((1.4+open*6.0)*(0.45+hash2(x,y,160)*1.3));
+      const gn=Math.floor((1.4+open*6.0)*(0.45+hash2(x,y,160)*1.3)/3.5);
       for(let i=0;i<gn;i++){
         const gx=x+hash2(x,y,170+i*3)*0.96, gz=y+hash2(x,y,185+i*5)*0.96;
         if(heightRaw(gx,gz)<SEA+0.035||structOverlapLocal(gx,gz)>1) continue;
@@ -947,7 +997,7 @@ function genChunk(cx,cy,removals,realEntities){
   if(__prof){ __t.push(performance.now());
     console.log("chunk("+cx+","+cy+") ground+water:"+(__t[1]-__t[0]).toFixed(1)+
       "ms trees/rocks:"+(__t[2]-__t[1]).toFixed(1)+"ms total:"+(__t[2]-__t[0]).toFixed(1)+
-      "ms trees="+trees+" rocks="+rocks+" grass="+grass+" bushes="+bushes); }
+      "ms trees="+trees+" rocks="+rocks+" grass="+grass+" bushes="+bushes+" all="+all.length); }
   return {pos:CUR.pos,col:CUR.col,knd:CUR.knd,nrm:CUR.nrm, cities, camps, resources,
     stats:{trees,rocks,grass,bushes}};
 }
@@ -1961,6 +2011,16 @@ function frame(){
     gl.uniformMatrix4fv(mUModel,false,new Float32Array(mat));
     gl.drawElements(gl.TRIANGLES,m.indexCount,m.indexType,0);
   };
+  // Отдельный draw call на КАЖДУЮ модель (текстура/матрица меняются каждый
+  // раз — инстансинг сюда не подставить без переписывания шейдера). У
+  // настоящих данных партии, в отличие от лотереи, в одном загруженном
+  // радиусе может оказаться сотня лагерей/точек разом — профиль зависания
+  // показал, что именно объём таких call'ов на кадр (не объём геометрии
+  // внутри них) держит frame() на секундах вместо миллисекунд. Города
+  // немногочисленны и важны для ориентации — рисуем всегда; лагеря и точки
+  // дальше вот этого радиуса всё равно неотличимы от фона, отрисовку модели
+  // для них пропускаем (сам чанк и трава на месте остаются).
+  const MODEL_DRAW_R2=40*40;
   let citiesLoaded=0;
   for(const c of chunks.values()){
     // removed:true — снесено, но ещё не заросло полностью (r у объекта
@@ -1969,8 +2029,18 @@ function frame(){
     // одно значение на чанк — у настоящих данных партии плотность настоящей
     // карты (объектов на чанк может быть много), не одна лотерейная запись.
     for(const city of c.cities){ citiesLoaded++; if(!city.removed) drawModel(castleModel(city.race,city.epoch),city.mat); }
-    for(const camp of c.camps) if(!camp.removed) drawModel(campModel(),camp.mat);
-    for(const res of c.resources) if(!res.removed) drawModel(resourceModel(res.type),res.mat);
+    for(const camp of c.camps){
+      if(camp.removed) continue;
+      const dx=camp.x-cam.tx, dz=camp.z-cam.tz;
+      if(dx*dx+dz*dz>MODEL_DRAW_R2) continue;
+      drawModel(campModel(),camp.mat);
+    }
+    for(const res of c.resources){
+      if(res.removed) continue;
+      const dx=res.x-cam.tx, dz=res.z-cam.tz;
+      if(dx*dx+dz*dz>MODEL_DRAW_R2) continue;
+      drawModel(resourceModel(res.type),res.mat);
+    }
   }
 
   if(t-lastHud>0.5 && !document.getElementById("hud").classList.contains("min")){

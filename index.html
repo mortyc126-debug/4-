@@ -1459,29 +1459,12 @@ function genWorld(seed){
   W = { seed, t:0, born:Date.now(), map:{}, players:[], marches:[], events:[],
         log:[], nextId:1, savedAt:Date.now() };
 
-  // Ресурсные точки: чем ближе к центру, тем богаче
-  const nodeCount = 900;
-  for(let i=0;i<nodeCount;i++){
-    const x=ri(0,CFG.MAP-1), y=ri(0,CFG.MAP-1);
-    if(W.map[key(x,y)]) continue;
-    const d=centerDist({x,y});
-    let lv = clamp(Math.round(5 - d*4 + (RNG()*1.6-0.8)),1,5);
-    const type = pick(RES);
-    W.map[key(x,y)] = {t:"node",x,y,res:type,lv,
-      amount: Math.round(6000*Math.pow(2.6,lv-1)), max: Math.round(6000*Math.pow(2.6,lv-1)),
-      busy:null};
-  }
-  // Разбойники: лагеря 1–15, форты 16–30
-  for(let i=0;i<520;i++){
-    const x=ri(0,CFG.MAP-1), y=ri(0,CFG.MAP-1);
-    if(W.map[key(x,y)]) continue;
-    const d=centerDist({x,y});
-    const raw = clamp(Math.round(30 - d*26 + (RNG()*8-4)),1,30);
-    const isFort = raw>15;
-    W.map[key(x,y)] = {t:isFort?"fort":"camp",x,y,lv:raw,
-      hp:1, power: banditPower(raw), busy:null};
-  }
-  // Города: игрок ближе к краю, боты рассыпаны
+  // Города — первыми и с гарантией места (findSpot ниже всегда что-нибудь
+  // найдёт, пусть и с нарушением зазора после 4000 попыток): без города
+  // игра не работает, а лагерь или точка — необязательны, могут просто не
+  // появиться, если вокруг тесно. Раньше было наоборот (города — последними),
+  // из-за чего с добавленным ниже зазором между лагерями/точками город иногда
+  // просто не находил бы себе места вовсе.
   const spots=[];
   const minGap=9;
   function findSpot(minD,maxD){
@@ -1529,6 +1512,64 @@ function genWorld(seed){
     clearArea(s.x,s.y,1); W.map[key(s.x,s.y)]={t:"city",x:s.x,y:s.y,pid:b.id};
     schedule(ri(0,CFG.BOT_THINK), "think", {pid:b.id});
   }
+
+  // Лагеря/точки — раньше сыпались совсем без разбора: единственная защита
+  // была "не на ту же клетку", а между соседними клетками — вообще никакой.
+  // На карте 100×100 c ~1400 такими объектами ближайший сосед города нередко
+  // оказывался всего в 2 клетках. В 2D это было незаметно — там это мелкие
+  // иконки-точки на плоской карте; когда те же координаты стали объёмными
+  // моделями в 3D-вкладке "Мир", это превратилось в кучу-малу и сажало
+  // кадр — генерация одного перегруженного чанка занимала секунды, а таких
+  // чанков рядом с любым городом было по десятку разом. MIN_STRUCT_GAP —
+  // настоящий минимальный зазор между ЛЮБЫМИ двумя объектами на карте (не
+  // только городами, как раньше): кандидат, что лёг бы теснее, просто
+  // пробует ещё раз. STRUCT_TRIES ограничивает число попыток на одну точку —
+  // при таком зазоре это мягкое, не жёсткое ограничение итогового числа:
+  // почти всё, что просилось, находит место, редкие неудачники просто не
+  // появляются в этот раз (не наматывают тысячи попыток и не блокируют
+  // остальных).
+  const MIN_STRUCT_GAP=6, STRUCT_TRIES=150;
+  function farEnough(x,y){
+    for(const k in W.map){ if(Math.hypot(W.map[k].x-x,W.map[k].y-y)<MIN_STRUCT_GAP) return false; }
+    return true;
+  }
+  function findFreeCell(){
+    for(let t=0;t<STRUCT_TRIES;t++){
+      const x=ri(0,CFG.MAP-1), y=ri(0,CFG.MAP-1);
+      if(W.map[key(x,y)]) continue;
+      if(!farEnough(x,y)) continue;
+      return {x,y};
+    }
+    return null;
+  }
+  // Ресурсные точки: чем ближе к центру, тем богаче. Было 900 — вместе с
+  // прежним отсутствием зазора это и создавало кучу-малу; при новом зазоре
+  // (см. MIN_STRUCT_GAP) 900 попыток всё равно физически не влезли бы на
+  // карту, оставляем разумное число исходя из реальной вместимости.
+  const nodeCount = 130;
+  for(let i=0;i<nodeCount;i++){
+    const spot=findFreeCell(); if(!spot) continue;
+    const {x,y}=spot;
+    const d=centerDist({x,y});
+    let lv = clamp(Math.round(5 - d*4 + (RNG()*1.6-0.8)),1,5);
+    const type = pick(RES);
+    W.map[key(x,y)] = {t:"node",x,y,res:type,lv,
+      amount: Math.round(6000*Math.pow(2.6,lv-1)), max: Math.round(6000*Math.pow(2.6,lv-1)),
+      busy:null};
+  }
+  // Разбойники: лагеря 1–15, форты 16–30. Было 520 — та же причина сокращения,
+  // что и у ресурсных точек выше.
+  const campCount = 75;
+  for(let i=0;i<campCount;i++){
+    const spot=findFreeCell(); if(!spot) continue;
+    const {x,y}=spot;
+    const d=centerDist({x,y});
+    const raw = clamp(Math.round(30 - d*26 + (RNG()*8-4)),1,30);
+    const isFort = raw>15;
+    W.map[key(x,y)] = {t:isFort?"fort":"camp",x,y,lv:raw,
+      hp:1, power: banditPower(raw), busy:null};
+  }
+
   logg("Мир создан. Зерно "+seed+". Городов: "+W.players.length+".", "good");
   return W;
 }
