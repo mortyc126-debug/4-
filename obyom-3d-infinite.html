@@ -1002,7 +1002,12 @@ function genBackdrop(cx0,cy0){
 // одна логика, никакого ручного дублирования на расхождение.
 const __worldMain = new Function(WORLD_SRC +
   "\nreturn {M4,sub,cross,norm,H,heightAt,SEA,SUN,CHUNK,LOAD_RADIUS,UNLOAD_RADIUS,BACKDROP_INNER};")();
-const {M4,sub,cross,norm,H,heightAt,SEA,SUN,CHUNK,LOAD_RADIUS,UNLOAD_RADIUS,BACKDROP_INNER} = __worldMain;
+// var, не const: index.html управляет 3D-камерой из родительского окна через
+// iframe.contentWindow.cam/H (см. world3dWin() и #t-in/#t-out/#t-home там) —
+// а window.parent.X (или, как здесь, в обратную сторону, iframe.contentWindow.X)
+// видит только настоящие свойства window, не const/let-привязки лексической
+// области видимости скрипта (тот же нюанс, что и с W в index.html).
+var {M4,sub,cross,norm,H,heightAt,SEA,SUN,CHUNK,LOAD_RADIUS,UNLOAD_RADIUS,BACKDROP_INNER} = __worldMain;
 
 /* =======================================================================
    WebGL
@@ -1685,7 +1690,9 @@ const SPAWN=findSpawn();
    случайное лёгкое дрожание одного пальца при обычном перемещении не
    дёргало угол обзора. Цель по-прежнему не зажата границами карты — мир
    бесконечен, лететь можно куда угодно. ---- */
-let cam={yaw:0.72,pitch:0.55,dist:74,tx:SPAWN.x,tz:SPAWN.y,ty:H(SPAWN.x,SPAWN.y)+3}, drag=null;
+// var cam — та же причина, что и у var {...} = __worldMain чуть выше:
+// index.html читает и пишет iframe.contentWindow.cam напрямую.
+var cam={yaw:0.72,pitch:0.55,dist:74,tx:SPAWN.x,tz:SPAWN.y,ty:H(SPAWN.x,SPAWN.y)+3}, drag=null;
 const pts=new Map();
 let pinch=null;
 const mid=()=>{const a=[...pts.values()];
