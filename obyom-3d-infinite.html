@@ -1486,7 +1486,11 @@ cv.addEventListener("pointermove",e=>{
     cam.pitch=Math.max(0.08,Math.min(1.42,pinch.pitch+(m.y-pinch.y)*0.005));
   } else if(drag){
     const k=cam.dist*0.0022;
-    const dx=(e.clientX-drag.x)*k, dy=(e.clientY-drag.y)*k;
+    // dy — намеренно (drag.y - clientY), а не наоборот: у камеры, наклонённой
+    // вниз, экранное "вверх" — это направление вглубь сцены (дальше от
+    // игрока). Палец тянет землю на себя: движение пальца вниз должно
+    // придвинуть БЛИЖНИЙ край карты, а не дальний.
+    const dx=(e.clientX-drag.x)*k, dy=(drag.y-e.clientY)*k;
     const c=Math.cos(cam.yaw), s2=Math.sin(cam.yaw);
     cam.tx=drag.tx - (dx*c - dy*s2);
     cam.tz=drag.tz + (dx*s2 + dy*c);
