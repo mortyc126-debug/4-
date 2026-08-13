@@ -698,9 +698,14 @@ function wcolAt(x,y,lv){
 }
 let waterCells=0;
 const SUBW=2, STW=1/SUBW;
+// Береговая кромка раньше шла точно по узлам сетки — с воздуха читалась
+// лестницей. Суша дрожит по вершинам (JXs/JZs) уже давно, а вода — нет:
+// на стыке ровный край воды подчёркивал прямые углы суши ещё сильнее.
+// Раз SUB===SUBW, те же функции и тот же хэш дают воде идентичный дрожащий
+// край БЕЗ трещин на стыке (общая вершина сдвигается туда же с обеих сторон).
 for(let yi=0;yi<(N-1)*SUBW;yi++)for(let xi=0;xi<(N-1)*SUBW;xi++){
   const x=xi*STW, y=yi*STW;
-  const C=[[x,y],[x,y+STW],[x+STW,y+STW],[x+STW,y]];
+  const C=[[x,y],[x,y+STW],[x+STW,y+STW],[x+STW,y]].map(q=>[JXs(q[0],q[1]),JZs(q[0],q[1])]);
   const lv=C.map(q=>wvAt(q[0],q[1]));
   const known=lv.filter(v=>v>=0);
   if(!known.length) continue;
