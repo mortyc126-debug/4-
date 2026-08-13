@@ -1,0 +1,1263 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Четыре Знамени — бесконечный мир</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0b0a09;
+    font:14px/1.5 "Palatino Linotype","Book Antiqua",Palatino,Georgia,serif;color:#ece2ca}
+  canvas{display:block;width:100%;height:100%;cursor:grab;touch-action:none}
+  canvas.drag{cursor:grabbing}
+  #hud{position:fixed;left:12px;bottom:12px;cursor:pointer;user-select:none;background:rgba(22,17,11,.84);
+    border:1px solid #3d3121;padding:12px 15px;font-size:12.5px;max-width:262px;
+    box-shadow:0 8px 30px rgba(0,0,0,.65);backdrop-filter:blur(3px)}
+  #hud b{color:#e6c273;font-variant:small-caps;letter-spacing:.13em;display:block;margin-bottom:6px}
+  #hud i{font-style:normal;color:#a2967b;display:block;margin-top:8px;font-size:11.5px}
+  #hud.min{max-width:none;padding:7px 11px}
+  #hud.min p,#hud.min i{display:none}
+  @media (max-width:760px){
+    #hud{max-width:none;right:12px;font-size:12px;padding:9px 11px}
+    #hud i{font-size:10.5px}
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"><b>Четыре Знамени</b>
+<p>Один палец — поворот и наклон, два пальца — щипок и перенос взгляда. Коснитесь замка, чтобы подойти к нему.</p>
+<i id="hudStats">Мир прогружается вокруг вас по мере полёта, как чанки в песочнице: впереди появляется, позади пропадает. Коснитесь, чтобы свернуть.</i></div>
+<script>
+"use strict";
+/* =======================================================================
+   Матрицы. Всё в столбцовом порядке, как ждёт WebGL. Ни одной картинки и
+   ни одной библиотеки — как и в исходной демке.
+   ======================================================================= */
+const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]];
+const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+const norm=a=>{const l=Math.hypot(a[0],a[1],a[2])||1;return[a[0]/l,a[1]/l,a[2]/l]};
+const M4={
+  mul(a,b){const o=new Array(16);
+    for(let i=0;i<4;i++)for(let j=0;j<4;j++){let s=0;
+      for(let k=0;k<4;k++)s+=a[k*4+j]*b[i*4+k];o[i*4+j]=s}return o},
+  persp(f,a,n,z){const t=1/Math.tan(f/2);
+    return[t/a,0,0,0, 0,t,0,0, 0,0,(z+n)/(n-z),-1, 0,0,2*z*n/(n-z),0]},
+  ortho(l,r,b,t,n,f){
+    return[2/(r-l),0,0,0, 0,2/(t-b),0,0, 0,0,-2/(f-n),0,
+      -(r+l)/(r-l),-(t+b)/(t-b),-(f+n)/(f-n),1]},
+  look(e,c,u){const z=norm(sub(e,c)),x=norm(cross(u,z)),y=cross(z,x);
+    return[x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0,
+      -dot(x,e),-dot(y,e),-dot(z,e),1]},
+  modelTilt(tx,ty,tz,ry,tiltX,tiltZ,s){
+    const cy=Math.cos(ry),sy=Math.sin(ry);
+    const cx=Math.cos(tiltX),sx=Math.sin(tiltX);
+    const cz=Math.cos(tiltZ),sz=Math.sin(tiltZ);
+    const Ry=[cy,0,-sy,0, 0,1,0,0, sy,0,cy,0, 0,0,0,1];
+    const Rx=[1,0,0,0, 0,cx,sx,0, 0,-sx,cx,0, 0,0,0,1];
+    const Rz=[cz,sz,0,0, -sz,cz,0,0, 0,0,1,0, 0,0,0,1];
+    const S=[s,0,0,0, 0,s,0,0, 0,0,s,0, 0,0,0,1];
+    let m=M4.mul(Rx,M4.mul(Rz,S));
+    m=M4.mul(Ry,m);
+    m[12]=tx; m[13]=ty; m[14]=tz;
+    return m;
+  },
+};
+
+/* =======================================================================
+   Мир. В прежней демке рельеф, реки и города считались один раз в общие
+   массивы N×N. Бесконечный мир не может иметь массив на весь мир — вместо
+   этого высота, вода и затенение стали ЧИСТЫМИ функциями мировых координат:
+   heightAt(x,y) даёт одно и то же число независимо от того, кто и когда его
+   спросил. Именно это свойство позволяет считать соседние чанки порознь,
+   в любом порядке, и получать на стыке идентичные вершины без швов.
+   ======================================================================= */
+const SEED=12345, HMAX=13.0, SEA=0.235;
+const SUN=norm([0.62,0.38,0.30]);   // низкое закатное солнце
+
+function hash2(x,y,s){let h=x*374761393+y*668265263+s*1274126177;
+  h=Math.imul(h^(h>>>13),1274126177);return((h^(h>>>16))>>>0)/4294967296}
+function noise(x,y,s){
+  const xi=Math.floor(x),yi=Math.floor(y),xf=x-xi,yf=y-yi;
+  const u=xf*xf*(3-2*xf),v=yf*yf*(3-2*yf);
+  const a=hash2(xi,yi,s),b=hash2(xi+1,yi,s),c=hash2(xi,yi+1,s),d=hash2(xi+1,yi+1,s);
+  return(a*(1-u)+b*u)*(1-v)+(c*(1-u)+d*u)*v}
+const ridge=(x,y,s)=>1-Math.abs(2*noise(x,y,s)-1);
+const sstep=(a,b,x)=>{const t=Math.min(1,Math.max(0,(x-a)/(b-a)));return t*t*(3-2*t)};
+
+// Область определяет характер: где-то горы, где-то равнина, где-то столовые
+// плато. Чистая функция — как и всё в этом разделе.
+function regionKind(x,y){
+  return { mount: sstep(0.40,0.72, noise(x/40,y/40,SEED+55)),
+           plat:  sstep(0.62,0.84, noise(x/34,y/34,SEED+88)),
+           rough: noise(x/26,y/26,SEED+123) };
+}
+// Сырая высота в точке — тот же рецепт, что считал прежний общий массив
+// (искривление области, материковый шум, гряды, ступени плато, шершавость
+// нагорий), но без вырезания рек и без обрезки по краю карты: у бесконечного
+// мира нет края, а реки в чанк-независимом виде — это разговор ниже.
+function heightRaw(x,y){
+  const wx=(noise(x/34,y/34,SEED+101)*2-1)*13;
+  const wy=(noise(x/34,y/34,SEED+102)*2-1)*13;
+  const X=x+wx, Y=y+wy;
+  const R=regionKind(x,y);
+  const cont=noise(X/62,Y/62,SEED+201);
+  let e=0.16+cont*0.50;
+  const amp=0.16+0.84*R.mount+0.35*R.rough;
+  e+=(noise(X/27,Y/27,SEED)*0.20+noise(X/13,Y/13,SEED+9)*0.10
+     +noise(X/6,Y/6,SEED+21)*0.045)*amp;
+  e+=ridge(X/17,Y/17,SEED+37)*0.33*R.mount;
+  e+=R.mount*0.10-(1-R.mount)*0.05;
+  if(R.plat>0.02){
+    const terr=Math.round(e*6.0)/6.0;
+    e=e*(1-R.plat*0.80)+terr*(R.plat*0.80);
+  }
+  if(e>=0.42){
+    const k=sstep(0.42,0.68,e);
+    e+=(noise(x/2.4,y/2.4,SEED+180)-0.5)*0.075*k
+      +(noise(x/5.5,y/5.5,SEED+181)-0.5)*0.055*k;
+  }
+  return Math.max(0.02,Math.min(1,e));
+}
+// Прежние проходы сглаживания читали соседей по массиву — здесь их заменяет
+// пятиточечный крест поверх той же чистой функции. Дороже на четыре лишних
+// вызова за клетку, зато работает одинаково в любом чанке.
+function heightAt(x,y){
+  const c=heightRaw(x,y);
+  const s=(heightRaw(x+0.7,y)+heightRaw(x-0.7,y)+heightRaw(x,y+0.7)+heightRaw(x,y-0.7))*0.25;
+  return c*0.55+s*0.45;
+}
+// Реки-потоки требовали глобальной симуляции стока по всему массиву — с
+// чанками это несовместимо. Взамен вода — просто всё, что лежит ниже уровня
+// моря по той же карте высот: озёра и заливы вместо текущих рек, зато
+// абсолютно бесшовно на любой границе. Игрок увидит разницу, но не увидит шва.
+function isWater(x,y){ return heightAt(x,y)<SEA; }
+function H(x,y){ return heightAt(x,y)*HMAX; }
+
+// Затенение впадин — тоже было общим массивом с радиусом 5 и двумя проходами
+// сглаживания. Для чанков считаем то же самое напрямую по сырой высоте
+// (без пятиточечного сглаживания — так дешевле) и урезаем радиус до 3, иначе
+// генерация одного чанка тянула бы по 20+ лишних вызовов noise на вершину.
+function aoAt(x,y){
+  const h=heightRaw(x,y);
+  let sum=0,n=0;
+  for(let r=1;r<=3;r++)for(let a=0;a<8;a++){
+    const nx=x+Math.cos(a*0.7854)*r, ny=y+Math.sin(a*0.7854)*r;
+    sum+=Math.max(0,(heightRaw(nx,ny)-h)/r); n++;
+  }
+  return n?Math.min(1,sum/n*17):0;
+}
+
+/* ---- Палитра земли ---- */
+const MIX=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t];
+const SAND=[0.68,0.60,0.42], GRASS=[0.31,0.41,0.21], MEAD=[0.40,0.45,0.23],
+      DRYG=[0.47,0.42,0.25], SCRUB=[0.38,0.33,0.22], SCREE=[0.36,0.34,0.31];
+
+// aoAt само по себе — 24 вызова шума. В исходной демке общая AO-карта была
+// одна ячейка на клетку (не на подразбиение SUB×SUB), и в ground() бралась
+// готовым значением из массива. Здесь та же экономия — кэш на чанк, ключ —
+// целая клетка, а не дробная подсетка: SUB×SUB подквадов внутри одной клетки
+// делят один и тот же расчёт AO вместо четырёх независимых.
+function cachedAo(x,y,aoCache){
+  if(!aoCache) return aoAt(Math.round(x),Math.round(y));
+  const ix=Math.round(x), iy=Math.round(y), key=ix*100003+iy;
+  let v=aoCache.get(key);
+  if(v===undefined){ v=aoAt(ix,iy); aoCache.set(key,v); }
+  return v;
+}
+function ground(x,y,aoCache){
+  const e=heightAt(x,y);
+  const R=regionKind(x,y);
+  const t=Math.max(0,Math.min(1,(e-SEA)/(1-SEA)));
+  let c;
+  if      (t<0.06) c=MIX(SAND,GRASS,t/0.06);
+  else if (t<0.30) c=MIX(GRASS,MEAD,(t-0.06)/0.24);
+  else if (t<0.52) c=MIX(MEAD,DRYG,(t-0.30)/0.22);
+  else if (t<0.72) c=MIX(DRYG,SCRUB,(t-0.52)/0.20);
+  else             c=MIX(SCRUB,SCREE,Math.min(1,(t-0.72)/0.28));
+  c=MIX(c,[c[0]*1.06,c[1]*0.94,c[2]*0.92],R.mount*0.5);
+  c=MIX(c,[c[0]*0.92,c[1]*1.08,c[2]*0.94],(1-R.mount)*0.35);
+  const scr=sstep(0.52,0.80, noise(x/12,y/12,SEED+140))*sstep(0.48,0.70,e);
+  if(scr>0.02) c=MIX(c,[0.40,0.40,0.43],scr*0.72);
+  const patch=noise(x/16,y/16,SEED+160)*0.5+noise(x/6,y/6,SEED+161)*0.5;
+  c=[c[0]*(0.90+patch*0.20), c[1]*(0.90+patch*0.19), c[2]*(0.91+patch*0.16)];
+  const oc=cachedAo(x,y,aoCache);
+  if(oc>0.01){ const k=1-oc*0.50; c=[c[0]*k, c[1]*k, c[2]*(k*0.96+0.04)]; }
+  return c;
+}
+const SEAC_S=[0.14,0.24,0.28], SEAC_D=[0.05,0.11,0.19];
+
+/* ---- Города: место под замок выбираем чистой функцией, без списка
+   существующих городов — при бесконечном мире полный список не поместится
+   в память, а спрашивать "какие города уже есть рядом" через сеть значило бы
+   не показать замок, пока не придёт ответ. Вместо этого — что-то вроде
+   лотереи: у каждого чанка свой шанс получить город, и раса/эпоха/место
+   решаются хэшем координат чанка, так что результат один и тот же при любой
+   повторной генерации того же чанка. ---- */
+const RK=["human","dwarf","elf","undead"];
+const CASTLE_PAD_HW=3, CASTLE_MAX_SLOPE_DEG=9;
+function siteBuildable(x,y){
+  let mn=1e9,mx=-1e9;
+  for(let j=-CASTLE_PAD_HW;j<=CASTLE_PAD_HW;j++)for(let i=-CASTLE_PAD_HW;i<=CASTLE_PAD_HW;i++){
+    if(isWater(x+i,y+j)) return false;
+    const e=heightAt(x+i,y+j)*HMAX;
+    if(e<mn)mn=e; if(e>mx)mx=e;
+  }
+  return (mx-mn) < 2*CASTLE_PAD_HW*Math.tan(CASTLE_MAX_SLOPE_DEG*Math.PI/180);
+}
+const MODEL_SCALE_BY_EPOCH=[0,1,2,3,4,5];   // footprint эпоха×эпоха клеток, как просил игрок
+const TILT_SAMPLE=0.6, TILT_MAX=6*Math.PI/180;
+function groundTiltAt(x,y){
+  const hL=H(x-TILT_SAMPLE,y), hR=H(x+TILT_SAMPLE,y);
+  const hD=H(x,y-TILT_SAMPLE), hU=H(x,y+TILT_SAMPLE);
+  const clampT=v=>Math.max(-TILT_MAX,Math.min(TILT_MAX,v));
+  return {
+    tiltZ: clampT(Math.atan2(hR-hL, TILT_SAMPLE*2)),
+    tiltX: clampT(-Math.atan2(hU-hD, TILT_SAMPLE*2)),
+  };
+}
+const CITY_CHANCE=0.16;    // доля чанков, где ВООБЩЕ пробуем поставить город
+function chunkCityCandidate(cx,cy){
+  if(hash2(cx,cy,SEED+777)>CITY_CHANCE) return null;
+  const race=RK[Math.floor(hash2(cx,cy,SEED+778)*4)];
+  const epoch=1+Math.floor(hash2(cx,cy,SEED+779)*5);
+  const margin=CASTLE_PAD_HW+2;
+  const lx=margin+hash2(cx,cy,SEED+780)*(CHUNK-margin*2);
+  const ly=margin+hash2(cx,cy,SEED+781)*(CHUNK-margin*2);
+  const x=cx*CHUNK+lx, y=cy*CHUNK+ly;
+  const e=heightAt(x,y);
+  if(e<=SEA+0.06||e>=0.72) return null;
+  if(!siteBuildable(x,y)) return null;
+  const ER=[0,1.5,2.0,2.6,3.3,4.4];
+  const SPR={human:1.00,dwarf:0.92,elf:1.10,undead:1.00}[race];
+  const r=ER[epoch]*SPR+0.9;
+  const yy=H(x,y), yaw=hash2(cx,cy,SEED+900)*Math.PI*2, scale=MODEL_SCALE_BY_EPOCH[epoch];
+  const {tiltX,tiltZ}=groundTiltAt(x,y);
+  return { race,epoch,x,y:yy,z:y,r,yaw,scale,
+    mat:M4.modelTilt(x,yy,y,yaw,tiltX,tiltZ,scale) };
+}
+
+/* =======================================================================
+   Геометрия. kind: 0 — земля, 1 — постройки/камни/деревья, 2+ — вода (целая
+   часть плюс глубина в дробной). Каждый чанк копит свою geometрию в
+   отдельных массивах (CUR) — общего буфера на весь мир больше нет.
+   ======================================================================= */
+let CUR=null;
+function tri(a,b,c,rgb,k){
+  CUR.pos.push(a[0],a[1],a[2], b[0],b[1],b[2], c[0],c[1],c[2]);
+  const r=rgb[0],g2=rgb[1],b2=rgb[2];
+  CUR.col.push(r,g2,b2, r,g2,b2, r,g2,b2);
+  CUR.knd.push(k,k,k);
+  const ux=b[0]-a[0], uy=b[1]-a[1], uz=b[2]-a[2];
+  const vx=c[0]-a[0], vy=c[1]-a[1], vz=c[2]-a[2];
+  let nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
+  const L=Math.hypot(nx,ny,nz)||1; nx/=L; ny/=L; nz/=L;
+  if(ny<0){ nx=-nx; ny=-ny; nz=-nz; }
+  CUR.nrm.push(nx,ny,nz, nx,ny,nz, nx,ny,nz);
+}
+function quad(a,b,c,d,rgb,k){tri(a,b,c,rgb,k);tri(a,c,d,rgb,k)}
+
+// Дробим клетку на SUB×SUB, как в исходной демке. Дрожание вершин
+// (JXs/JZs) — функция АБСОЛЮТНЫХ мировых координат, округлённых до подсетки:
+// два независимо построенных соседних чанка дадут на общем ребре ИДЕНТИЧНЫЕ
+// вершины автоматически, без единой строчки кода про "сшивание границ".
+const SUB=2, ST=1/SUB;
+const JXs=(i,j)=>i+(hash2(Math.round(i*SUB),Math.round(j*SUB),91)-.5)*0.44*ST;
+const JZs=(i,j)=>j+(hash2(Math.round(i*SUB),Math.round(j*SUB),92)-.5)*0.44*ST;
+
+function box(cx,cz,w,d,y0,y1,rgb,k){
+  const x0=cx-w/2,x1=cx+w/2,z0=cz-d/2,z1=cz+d/2;
+  quad([x0,y1,z0],[x0,y1,z1],[x1,y1,z1],[x1,y1,z0],[rgb[0]*1.1,rgb[1]*1.1,rgb[2]*1.1],k);
+  quad([x0,y0,z1],[x0,y1,z1],[x1,y1,z1],[x1,y0,z1],rgb,k);
+  quad([x1,y0,z0],[x1,y1,z0],[x0,y1,z0],[x0,y0,z0],rgb,k);
+  quad([x1,y0,z1],[x1,y1,z1],[x1,y1,z0],[x1,y0,z0],rgb,k);
+  quad([x0,y0,z0],[x0,y1,z0],[x0,y1,z1],[x0,y0,z1],rgb,k);
+}
+function cone(cx,cz,r,y0,y1,rgb,seg,k,jit,seed){
+  seg=seg||6; jit=jit||0; seed=seed||0;
+  for(let i=0;i<seg;i++){
+    const a0=i/seg*6.2832,a1=(i+1)/seg*6.2832;
+    let c=rgb;
+    if(jit>0){
+      const v=1+(hash2(seed,i,61)-0.5)*jit;
+      const w=1+(hash2(seed,i,62)-0.5)*jit*0.7;
+      c=[rgb[0]*v*w, rgb[1]*v, rgb[2]*v*(2-w)];
+    }
+    tri([cx+Math.cos(a0)*r,y0,cz+Math.sin(a0)*r],[cx,y1,cz],
+        [cx+Math.cos(a1)*r,y0,cz+Math.sin(a1)*r],c,k);
+  }
+}
+function rockHex(cx,cz,y,r,h,rot,rgb,seed,rough,tilt){
+  rough=rough||0.34; tilt=tilt||0;
+  const S=6, top=[], bot=[];
+  const tc=Math.cos(rot+1.1), ts=Math.sin(rot+1.1);
+  for(let i=0;i<S;i++){
+    const a=i/S*6.2832+rot;
+    const ca=Math.cos(a), sa=Math.sin(a);
+    const rt=r*0.74*(1+(hash2(seed,i,31)-0.5)*rough);
+    const rb=r*(1+(hash2(seed,i,34)-0.5)*rough);
+    const lean=(ca*tc+sa*ts)*tilt*r;
+    const ht=h*(0.72+hash2(seed,i,32)*0.56);
+    top.push([cx+ca*rt, y+ht+lean, cz+sa*rt]);
+    bot.push([cx+ca*rb, y-h*0.30+lean*0.6, cz+sa*rb]);
+  }
+  const cap=[cx,y+h*(1.02+hash2(seed,9,33)*0.34),cz];
+  for(let i=0;i<S;i++){
+    const j=(i+1)%S;
+    const v=0.60+hash2(seed,i,41)*0.62, w=0.93+hash2(seed,i,42)*0.16;
+    quad(bot[i],top[i],top[j],bot[j],[rgb[0]*v*w,rgb[1]*v,rgb[2]*v*(2-w)],1);
+    const v2=0.86+hash2(seed,i,43)*0.42;
+    tri(top[i],cap,top[j],[rgb[0]*v2*w,rgb[1]*v2,rgb[2]*v2*(2-w)],1);
+  }
+}
+function ball(cx,cz,cy,r,rgb,seed,squash){
+  const S=6, off=hash2(seed,0,71)*6.2832, sq=squash||0.62;
+  const hi=[], lo=[];
+  for(let i=0;i<S;i++){
+    const a=i/S*6.2832+off;
+    const ca=Math.cos(a), sa=Math.sin(a);
+    const r1=r*0.66*(0.80+hash2(seed,i,72)*0.42);
+    const r2=r*(0.82+hash2(seed,i,73)*0.40);
+    hi.push([cx+ca*r1, cy+r*(0.44+hash2(seed,i,74)*0.20), cz+sa*r1]);
+    lo.push([cx+ca*r2, cy+r*(hash2(seed,i,75)-0.5)*0.26, cz+sa*r2]);
+  }
+  const tp=[cx+(hash2(seed,7,76)-0.5)*r*0.28, cy+r*(0.92+hash2(seed,8,77)*0.34),
+            cz+(hash2(seed,9,78)-0.5)*r*0.28];
+  const bp=[cx, cy-r*sq, cz];
+  for(let i=0;i<S;i++){
+    const j=(i+1)%S;
+    const v=0.80+hash2(seed,i,79)*0.40, w=0.98+hash2(seed,i,80)*0.045;
+    const C=k=>[rgb[0]*k*w, rgb[1]*k, rgb[2]*k*(2-w)];
+    tri(hi[i],tp,hi[j],C(v*1.08));
+    quad(lo[i],hi[i],hi[j],lo[j],C(v));
+    tri(lo[j],bp,lo[i],C(0.60+hash2(seed,i,81)*0.42));
+  }
+}
+function stoneCluster(cx,cz,scale,rgb,seed,kind){
+  const g=H(cx,cz);
+  if(kind==="plate"){
+    rockHex(cx,cz,g+0.14*scale, 0.92*scale, 0.40*scale,
+            hash2(seed,1,7)*3.14, rgb, seed, 0.34, 0.22);
+    rockHex(cx+0.42*scale,cz-0.26*scale,g+0.08*scale, 0.44*scale, 0.26*scale,
+            hash2(seed,2,7)*3.14, rgb, seed+3, 0.42, 0.3);
+  } else if(kind==="block"){
+    rockHex(cx,cz,g+0.10*scale, 0.56*scale, 0.72*scale,
+            hash2(seed,1,8)*3.14, rgb, seed, 0.40, 0.1);
+    rockHex(cx+0.30*scale,cz+0.22*scale,g+0.05*scale, 0.34*scale, 0.44*scale,
+            hash2(seed,2,8)*3.14, rgb, seed+5, 0.46, 0.18);
+    if(hash2(seed,3,8)>0.4)
+      rockHex(cx-0.30*scale,cz+0.14*scale,g+0.04*scale, 0.26*scale, 0.30*scale,
+              hash2(seed,4,8)*3.14, rgb, seed+9, 0.5, 0.25);
+  } else {
+    const n=2+Math.floor(hash2(seed,5,9)*3);
+    for(let i=0;i<n;i++){
+      const a=hash2(seed,i,10)*6.2832, r=hash2(seed,i,11)*0.45*scale;
+      const bx=cx+Math.cos(a)*r, bz=cz+Math.sin(a)*r;
+      const sc=(0.07+hash2(seed,i,12)*0.10)*scale;
+      rockHex(bx,bz,H(bx,bz)+sc*0.3, sc*1.2, sc*0.9, hash2(seed,i,13)*3.14, rgb, seed+i*7, 0.5, 0.2);
+    }
+  }
+}
+function grassTuft(x,z,sc,rgb,seed){
+  const y=H(x,z);
+  for(let i=0;i<3;i++){
+    const a=hash2(seed,i,51)*6.2832;
+    const dx=Math.cos(a)*0.032*sc, dz=Math.sin(a)*0.032*sc;
+    const h=(0.07+hash2(seed,i,52)*0.09)*sc;
+    const v=0.78+hash2(seed,i,53)*0.5;
+    tri([x-dx,y,z-dz],[x+dx,y,z+dz],[x+dx*0.35,y+h,z+dz*0.35],
+        [rgb[0]*v,rgb[1]*v*(0.95+hash2(seed,i,54)*0.2),rgb[2]*v],1);
+  }
+}
+function bush(x,z,sc,rgb,seed){
+  const y=H(x,z);
+  const n=3+Math.floor(hash2(seed,0,55)*2);
+  for(let i=0;i<n;i++){
+    const a=i/n*6.2832+hash2(seed,i,56)*1.2, r=(0.06+hash2(seed,i,57)*0.16)*sc;
+    ball(x+Math.cos(a)*r, z+Math.sin(a)*r, y+(0.12+hash2(seed,i,59)*0.13)*sc,
+         (0.15+hash2(seed,i,58)*0.11)*sc,
+         [rgb[0]*(0.85+hash2(seed,i,60)*0.35), rgb[1]*(0.85+hash2(seed,i,61)*0.35),
+          rgb[2]*(0.85+hash2(seed,i,62)*0.3)], seed+i*13, 0.75);
+  }
+}
+
+const PINE=[[0.13,0.22,0.14],[0.17,0.28,0.16],[0.11,0.19,0.13],
+            [0.20,0.31,0.19],[0.15,0.26,0.20],[0.22,0.30,0.14]];
+const LEAF=[[0.28,0.34,0.15],[0.36,0.39,0.18],[0.23,0.30,0.14],
+            [0.42,0.36,0.14],[0.31,0.27,0.12],[0.34,0.41,0.20],[0.45,0.40,0.17]];
+const TRUNK=[0.19,0.13,0.08], BIRCH=[0.62,0.58,0.48];
+const ROCKC=[0.47,0.45,0.41], ROCKW=[0.55,0.52,0.46], ROCKD=[0.40,0.39,0.36];
+const GRASSC=[[0.30,0.38,0.16],[0.36,0.42,0.18],[0.26,0.33,0.14],[0.41,0.43,0.20]];
+const BUSHC =[[0.24,0.31,0.14],[0.29,0.36,0.16],[0.20,0.28,0.13],[0.33,0.38,0.18],
+              [0.26,0.34,0.19]];
+
+function treeSpruce(x,z,sc,c,seed){
+  const g=H(x,z);
+  cone(x,z,0.10*sc,g-0.1,g+0.42*sc,TRUNK,4,1,0.2,seed);
+  for(let i=0;i<5;i++){
+    const t=i/5;
+    cone(x,z,(0.36-0.055*i)*sc, g+(0.14+0.30*i)*sc, g+(0.95+0.24*i)*sc,
+         [c[0]*(0.84+t*0.42),c[1]*(0.84+t*0.42),c[2]*(0.84+t*0.4)],
+         5+(i%2), 1, 0.42, seed+i);
+  }
+}
+function treePine(x,z,sc,c,seed){
+  const g=H(x,z);
+  const th=1.05*sc;
+  cone(x,z,0.11*sc,g-0.1,g+th,TRUNK,5,1,0.25,seed);
+  for(let i=0;i<3;i++)
+    cone(x,z,(0.44-0.10*i)*sc, g+th-0.18*sc+0.22*i*sc, g+th+(0.52+0.22*i)*sc,
+         [c[0]*(0.9+i*0.16),c[1]*(0.9+i*0.16),c[2]*(0.9+i*0.14)], 6, 1, 0.45, seed+i*3);
+}
+function treeBroad(x,z,sc,c,seed){
+  const g=H(x,z), th=g+0.78*sc;
+  cone(x,z,0.13*sc,g-0.12,th,TRUNK,5,1,0.22,seed);
+  const CC=i=>{const k=0.88+hash2(seed,i,74)*0.22; return [c[0]*k,c[1]*k,c[2]*k]};
+  const n=3+Math.floor(hash2(seed,0,71)*2);
+  for(let i=0;i<n;i++){
+    const a=i*2.399+hash2(seed,i,72)*0.7;
+    const rr=(0.16+0.22*(i/n))*sc;
+    const bx=x+Math.cos(a)*rr, bz=z+Math.sin(a)*rr;
+    const by=th+(0.04+0.20*i)*sc;
+    ball(bx,bz,by+0.10*sc, (0.28+hash2(seed,i,77)*0.07)*sc, CC(i), seed+i*17, 0.62);
+  }
+  ball(x,z,th+(0.16+0.20*n)*sc, (0.30+hash2(seed,9,78)*0.06)*sc, CC(9), seed+99, 0.72);
+}
+function treeBirch(x,z,sc,c,seed){
+  const g=H(x,z), th=g+0.95*sc;
+  cone(x,z,0.085*sc,g-0.1,th,BIRCH,5,1,0.18,seed);
+  ball(x,z,th+0.02*sc, 0.26*sc,
+       [c[0]*1.02,c[1]*1.06,c[2]*0.92], seed, 0.85);
+  for(let i=0;i<3;i++){
+    const a=i/3*6.2832+hash2(seed,i,81)*0.8;
+    ball(x+Math.cos(a)*0.15*sc, z+Math.sin(a)*0.15*sc, th+(0.14+i*0.15)*sc,
+         (0.18+hash2(seed,i,82)*0.11)*sc,
+         (k=>[c[0]*k,c[1]*k,c[2]*k])(0.92+hash2(seed,i,83)*0.24),
+         seed+i*23, 0.7);
+  }
+}
+function treeDead(x,z,sc,seed){
+  const g=H(x,z), th=g+0.9*sc;
+  cone(x,z,0.09*sc,g-0.1,th,[0.30,0.25,0.18],5,1,0.3,seed);
+  for(let i=0;i<3;i++){
+    const a=hash2(seed,i,91)*6.2832, L=(0.24+hash2(seed,i,92)*0.22)*sc;
+    const y0=g+(0.45+i*0.18)*sc;
+    box(x+Math.cos(a)*L*0.5, z+Math.sin(a)*L*0.5, L, 0.05*sc, y0, y0+0.05*sc,
+        [0.28,0.23,0.16],1);
+  }
+}
+
+/* =======================================================================
+   Чанки. Мир делится на плоскости CHUNK×CHUNK клеток. Каждый чанк
+   собирается независимо, целиком из чистых функций выше — соседний чанк
+   ему для этого не нужен. Игрок летает свободно в любую сторону: чанки
+   вокруг камеры подгружаются по мере приближения и выгружаются, когда
+   остаются позади, — тот же приём, что и в Майнкрафте.
+
+   Бухгалтерия "до 50 правителей на плоскость 500×500 или 1000×1000, дальше
+   переход на следующую по спирали" сюда не входит нарочно: это уже про то,
+   какие игроки/данные привязаны к какому куску мира — вопрос серверной
+   модели самой игры, а не рендера. Здесь — только несущий слой: чанк
+   сгенерировался, отрисовался, выгрузился, когда стал не нужен.
+   ======================================================================= */
+const CHUNK=16;          // клеток на сторону чанка — меньше чанк, дешевле и
+                          // незаметнее каждая отдельная генерация в полёте
+const LOAD_RADIUS=4;     // чанков вокруг камеры держим прогруженными (по кругу)
+const UNLOAD_RADIUS=5.5; // с запасом, чтобы не дёргать чанк на границе туда-сюда
+
+function genChunk(cx,cy){
+  const __prof=window.__profileChunks, __t=__prof?[performance.now()]:null;
+  CUR={pos:[],col:[],knd:[],nrm:[]};
+  const x0=cx*CHUNK, x1=x0+CHUNK, y0=cy*CHUNK, y1=y0+CHUNK;
+
+  // Город решаем первым: остальной посадке (лес/камни) нужно знать, куда не лезть.
+  const city=chunkCityCandidate(cx,cy);
+  function cityOverlapLocal(px,pz){
+    if(!city) return 0;
+    return city.r/Math.max(0.001,Math.hypot(city.x-px,city.z-pz));
+  }
+
+  // Земля и вода строятся одним проходом по общей сетке SUB×SUB. Каждый угол
+  // клетки (jx,jz,высота,вода?) считаем ОДИН раз и кладём в кэш чанка — без
+  // этого соседние подквады пересчитывали бы общий угол заново (до четырёх
+  // раз на землю и ещё раз на воду), а именно это и стоило демке ~130мс на
+  // чанк. AO — свой кэш на целую клетку (см. cachedAo выше), как в исходной
+  // демке, где затенение бралось одно на клетку, а не на подразбиение.
+  const cornerCache=new Map();
+  function corner(xi,yi){
+    const key=xi*100003+yi;
+    let v=cornerCache.get(key);
+    if(v) return v;
+    const jx=JXs(xi*ST,yi*ST), jz=JZs(xi*ST,yi*ST);
+    const e=heightAt(jx,jz);
+    v={jx,jz,h:e*HMAX,e};
+    cornerCache.set(key,v);
+    return v;
+  }
+  const aoCache=new Map();
+  const xi0=Math.round(x0*SUB), xi1=Math.round(x1*SUB);
+  const yi0=Math.round(y0*SUB), yi1=Math.round(y1*SUB);
+  for(let yi=yi0; yi<yi1; yi++) for(let xi=xi0; xi<xi1; xi++){
+    const c00=corner(xi,yi), c01=corner(xi,yi+1), c11=corner(xi+1,yi+1), c10=corner(xi+1,yi);
+    const x=xi*ST, y=yi*ST;
+    const gc=ground(x,y,aoCache);
+    const j=(hash2(xi,yi,7)-.5)*0.035;
+    quad([c00.jx,c00.h,c00.jz],[c01.jx,c01.h,c01.jz],[c11.jx,c11.h,c11.jz],[c10.jx,c10.h,c10.jz],
+         [gc[0]+j,gc[1]+j,gc[2]+j],0);
+
+    // Вода: плоская гладь на уровне моря везде, где хоть один угол клетки
+    // залит. Раньше уровень воды считался разгоном русла по всему общему
+    // массиву — здесь озёра и берег вместо текущей реки, зато ЧИСТАЯ функция:
+    // любой чанк видит одно и то же море на стыке, без общего состояния.
+    const arr=[c00,c01,c11,c10];
+    let wet=false;
+    for(const cc of arr) if(cc.e<SEA){ wet=true; break }
+    if(!wet) continue;
+    const P=arr.map(cc=>[cc.jx, SEA*HMAX, cc.jz]);
+    const K=arr.map(cc=>MIX(SEAC_S,SEAC_D,Math.min(1,Math.max(0,(SEA-cc.e)*11))));
+    const mix3=(a,b,c2)=>[(a[0]+b[0]+c2[0])/3,(a[1]+b[1]+c2[1])/3,(a[2]+b[2]+c2[2])/3];
+    const dep=Math.max(0,SEA-(c00.e+c01.e+c11.e+c10.e)/4);
+    const KIND=2.0+Math.min(1,dep*11);
+    tri(P[0],P[1],P[2],mix3(K[0],K[1],K[2]),KIND);
+    tri(P[0],P[2],P[3],mix3(K[0],K[2],K[3]),KIND);
+  }
+  if(__prof) __t.push(performance.now());
+
+  // Занятость крон — своя на каждый чанк: у самой границы лес не всегда
+  // идеально избегает соседского дерева (как и в Майнкрафте), это принятый
+  // компромисс ради независимости чанков друг от друга.
+  const treeGrid={};
+  function canPlant(x,z,r){
+    const cx2=Math.floor(x), cz2=Math.floor(z);
+    for(let j=-1;j<=1;j++)for(let i=-1;i<=1;i++){
+      const a=treeGrid[(cx2+i)+","+(cz2+j)];
+      if(!a) continue;
+      for(let k=0;k<a.length;k++)
+        if(Math.hypot(a[k][0]-x, a[k][1]-z) < (r+a[k][2])*0.82) return false;
+    }
+    return true;
+  }
+  function plant(x,z,r){
+    const k=Math.floor(x)+","+Math.floor(z);
+    (treeGrid[k]=treeGrid[k]||[]).push([x,z,r]);
+  }
+
+  // Посадка леса/камней/травы отсеивает большинство кандидатов ещё до того,
+  // как что-то реально ставится — эти проверки на порядок чаще самой посадки,
+  // поэтому здесь берём heightRaw (одно вычисление шума) вместо heightAt
+  // (пять, ради сглаживания сетки): для грубой отбраковки "тут вода/обрыв"
+  // разница не видна на глаз, а на профиле именно эти проверки съедали
+  // основное время генерации чанка. Итоговая высота под каждым конкретным
+  // деревом/камнем всё равно берётся точной функцией H() внутри их builder'ов.
+  const rawCache=new Map();
+  function rawAt(x,y){
+    const key=Math.round(x*4)*400013+Math.round(y*4);
+    let v=rawCache.get(key);
+    if(v===undefined){ v=heightRaw(x,y); rawCache.set(key,v); }
+    return v;
+  }
+  let trees=0,rocks=0,grass=0,bushes=0,camps=0;
+  for(let y=y0; y<y1; y++) for(let x=x0; x<x1; x++){
+    const e=rawAt(x,y);
+    if(cityOverlapLocal(x,y)>1) continue;
+    let wet=false;
+    for(let j=-1;j<=1&&!wet;j++)for(let i=-1;i<=1;i++) if(rawAt(x+i,y+j)<SEA){wet=true;break}
+    if(wet) continue;
+    if(e<SEA+0.03) continue;
+
+    const R=regionKind(x,y);
+    const tone=0.86+noise(x/21,y/21,SEED+211)*0.30;
+    const warm=0.94+noise(x/17,y/17,SEED+212)*0.16;
+    const TINT=q=>[q[0]*tone*warm, q[1]*tone, q[2]*tone*(2-warm)];
+
+    /* --- лес --- */
+    const dens=noise(x/9,y/9,SEED+61);
+    if(e<0.88 && dens>0.40){
+      const t=(dens-0.40)/0.60, raw=t*t*14.0;
+      let n=Math.floor(raw);
+      if(hash2(x,y,999)<raw-n) n++;
+      if(n>8) n=8;
+      for(let i=0;i<n;i++){
+        const ang=i*2.399+hash2(x,y,100+i)*0.9;
+        const rad=(n===1?0.18:0.20+0.26*Math.sqrt(i/n))+hash2(x,y,210+i)*0.10;
+        const jx=x+0.5+Math.cos(ang)*rad*1.7, jz=y+0.5+Math.sin(ang)*rad*1.7;
+        if(heightRaw(jx,jz)<SEA+0.035) continue;
+        if(cityOverlapLocal(jx,jz)>1) continue;
+        const sc=0.55+hash2(x,y,300+i)*0.75;
+        const seed=(x*7+y*13+i*29)|0;
+        const pick=hash2(x,y,305+i);
+        const conif=e>0.50;
+        const foot=(conif
+          ? (pick<0.62?0.30:pick<0.94?0.38:0.16)
+          : (pick<0.58?0.52:pick<0.80?0.30:pick<0.94?0.26:0.16))*sc;
+        if(!canPlant(jx,jz,foot)) continue;
+        plant(jx,jz,foot);
+        if(conif){
+          const c=TINT(PINE[Math.floor(hash2(x,y,400+i)*PINE.length)]);
+          if(pick<0.62) treeSpruce(jx,jz,sc,c,seed);
+          else if(pick<0.94) treePine(jx,jz,sc,c,seed);
+          else treeDead(jx,jz,sc*0.9,seed);
+        } else {
+          const c=TINT(LEAF[Math.floor(hash2(x,y,400+i)*LEAF.length)]);
+          if(pick<0.58) treeBroad(jx,jz,sc,c,seed);
+          else if(pick<0.80) treeBirch(jx,jz,sc,c,seed);
+          else if(pick<0.94) treeSpruce(jx,jz,sc*0.8,TINT(PINE[Math.floor(hash2(x,y,401+i)*PINE.length)]),seed);
+          else treeDead(jx,jz,sc*0.85,seed);
+        }
+        trees++;
+      }
+    }
+
+    /* --- подлесок --- */
+    const open=1-Math.min(1,Math.max(0,(dens-0.40)/0.6));
+    if(e<0.80){
+      // Плотность травы и кустов вдвое-втрое ниже, чем в исходной демке: там
+      // вся карта считалась один раз при загрузке, а здесь то же самое
+      // повторяется на лету при каждом новом чанке — по профилю именно трава
+      // (сотни tri() на клетку) была основной статьёй времени генерации.
+      const bn=hash2(x,y,120)<0.13*open+0.04 ? 1+Math.floor(hash2(x,y,121)*2) : 0;
+      for(let i=0;i<bn;i++){
+        const bx=x+hash2(x,y,122+i)*0.9, bz=y+hash2(x,y,132+i)*0.9;
+        if(heightRaw(bx,bz)<SEA+0.035||cityOverlapLocal(bx,bz)>1) continue;
+        bush(bx,bz,0.5+hash2(x,y,142+i)*0.5,
+             BUSHC[Math.floor(hash2(x,y,152+i)*BUSHC.length)], (x*3+y*5+i)|0);
+        bushes++;
+      }
+      const gn=Math.floor((0.5+open*2.2)*(0.45+hash2(x,y,160)*1.3));
+      for(let i=0;i<gn;i++){
+        const gx=x+hash2(x,y,170+i*3)*0.96, gz=y+hash2(x,y,185+i*5)*0.96;
+        if(heightRaw(gx,gz)<SEA+0.035||cityOverlapLocal(gx,gz)>1) continue;
+        grassTuft(gx,gz,0.5+hash2(x,y,200+i)*0.5,
+                  GRASSC[Math.floor(hash2(x,y,210+i)*GRASSC.length)], (x*11+y*3+i)|0);
+        grass++;
+      }
+    }
+
+    /* --- камни трёх калибров --- */
+    const stony=R.mount*0.6+Math.max(0,(e-0.55))*1.6;
+    if(hash2(x,y,77)<0.004+stony*0.042){
+      const rx=x+hash2(x,y,78)*0.8, rz=y+hash2(x,y,79)*0.8;
+      if(heightRaw(rx,rz)>SEA+0.04 && cityOverlapLocal(rx,rz)<=1){
+        const r=hash2(x,y,80);
+        const pal=r<0.35?ROCKD : r<0.75?ROCKC : ROCKW;
+        const kind=r<0.12?"plate" : r<0.55?"block" : "rubble";
+        const scale=kind==="plate" ? 0.40+hash2(x,y,81)*0.55
+                  : kind==="block" ? 0.30+hash2(x,y,82)*0.45
+                  : 0.24+hash2(x,y,83)*0.30;
+        stoneCluster(rx,rz,scale,pal,(x*17+y*23)|0,kind);
+        rocks++;
+      }
+    }
+    /* --- скальные выходы на вершинах --- */
+    if(e>0.80 && hash2(x,y,84)<0.09){
+      const rx=x+hash2(x,y,85)*0.8, rz=y+hash2(x,y,86)*0.8;
+      const sc=0.34+hash2(x,y,87)*0.5;
+      rockHex(rx,rz,H(rx,rz)+0.06*sc, 0.48*sc, 0.58*sc,
+              hash2(x,y,88)*3.14, ROCKW, (x*5+y*29)|0, 0.30, 0.12);
+      if(hash2(x,y,89)>0.5)
+        rockHex(rx+0.34*sc,rz+0.24*sc,H(rx+0.34*sc,rz+0.24*sc)+0.04*sc,
+                0.30*sc, 0.36*sc, hash2(x,y,90)*3.14, ROCKD, (x*5+y*31)|0, 0.32, 0.2);
+      rocks++;
+    }
+
+    /* --- заставы разбойников --- */
+    if(hash2(x,y,995)<0.006 && e>SEA+0.04 && e<0.86 && cityOverlapLocal(x,y)<=0.55){
+      const h=H(x,y);
+      for(let t=0;t<3;t++){
+        const a=t/3*6.2832+hash2(x,y,3+t)*2, tx=x+Math.cos(a)*0.45, tz=y+Math.sin(a)*0.45;
+        cone(tx,tz,0.32,H(tx,tz),H(tx,tz)+0.68,[0.50,0.40,0.25],4,1);
+      }
+      box(x,y,0.26,0.26,h,h+0.05,[0.34,0.28,0.21],1);
+      box(x,y,0.12,0.12,h+0.05,h+0.19,[0.62,0.30,0.11],1);
+      camps++;
+    }
+  }
+
+  if(__prof){ __t.push(performance.now());
+    console.log("chunk("+cx+","+cy+") ground+water:"+(__t[1]-__t[0]).toFixed(1)+
+      "ms trees/rocks:"+(__t[2]-__t[1]).toFixed(1)+"ms total:"+(__t[2]-__t[0]).toFixed(1)+
+      "ms trees="+trees+" rocks="+rocks+" grass="+grass+" bushes="+bushes+" camps="+camps); }
+  return {pos:CUR.pos,col:CUR.col,knd:CUR.knd,nrm:CUR.nrm, city, stats:{trees,rocks,grass,bushes,camps}};
+}
+
+/* =======================================================================
+   WebGL
+   ======================================================================= */
+document.getElementById("hud").addEventListener("click",e=>
+  e.currentTarget.classList.toggle("min"));
+const cv=document.getElementById("c");
+const gl=cv.getContext("webgl2",{antialias:true});
+if(!gl) throw new Error("нужен WebGL 2");
+
+const VS=`#version 300 es
+in vec3 aPos; in vec3 aCol; in float aKind; in vec3 aNrm;
+uniform mat4 uVP, uLightVP;
+out vec3 vCol, vWorld, vNrm; out float vKind; out vec4 vLight;
+void main(){ vCol=aCol; vWorld=aPos; vKind=aKind; vNrm=aNrm;
+  vLight=uLightVP*vec4(aPos,1.0);
+  gl_Position=uVP*vec4(aPos,1.0); }`;
+
+const FS=`#version 300 es
+precision highp float;
+in vec3 vCol, vWorld, vNrm; in float vKind; in vec4 vLight;
+uniform vec3 uEye, uSun; uniform float uTime, uFog, uNbias;
+uniform mat4 uLightVP;
+uniform highp sampler2DShadow uShadow;
+out vec4 frag;
+float shadow(vec3 n, float ndl){
+  float k = uNbias * (1.0 + 2.6*(1.0-ndl));
+  vec4 lp = uLightVP * vec4(vWorld + n*k, 1.0);
+  vec3 p = lp.xyz / lp.w;
+  if(p.x<0.0||p.x>1.0||p.y<0.0||p.y>1.0||p.z>1.0) return 1.0;
+  float s=0.0; float o=1.0/2048.0;
+  s+=textureProj(uShadow, vec4(p.xy+vec2(-o,-o), p.z, 1.0));
+  s+=textureProj(uShadow, vec4(p.xy+vec2( o,-o), p.z, 1.0));
+  s+=textureProj(uShadow, vec4(p.xy+vec2(-o, o), p.z, 1.0));
+  s+=textureProj(uShadow, vec4(p.xy+vec2( o, o), p.z, 1.0));
+  return s*0.25;
+}
+void main(){
+  vec3 n = normalize(vNrm);
+  vec3 base = vCol;
+  if(vKind < 0.5){
+    float steep = 1.0 - n.y;
+    base = mix(base, vec3(0.36,0.33,0.30), smoothstep(0.30,0.70,steep));
+    float snow = smoothstep(11.0,12.4,vWorld.y) * smoothstep(0.34,0.12,steep);
+    base = mix(base, vec3(0.72,0.73,0.72), snow);
+  }
+  float d  = max(dot(n,uSun),0.0);
+  float sh = d>0.015 ? shadow(n,d) : 1.0;
+  vec3 warm = vec3(1.22,0.94,0.62);
+  vec3 sky  = vec3(0.26,0.34,0.50);
+  vec3 bounce = vec3(0.34,0.26,0.16) * (1.0-n.y) * 0.30;
+  vec3 lit = base * (sky*(0.30+0.24*(n.y*0.5+0.5)) + warm*d*sh*1.22 + bounce);
+  lit = mix(lit*vec3(0.86,0.92,1.10), lit, sh);
+  if(vKind > 1.5){
+    float depth = clamp(vKind - 2.0, 0.0, 1.0);
+    vec3 v = normalize(uEye - vWorld);
+    float fres = pow(1.0 - max(dot(v,vec3(0,1,0)),0.0), 3.0);
+    float rip = sin(vWorld.x*1.7 + vWorld.z*0.9 + uTime*0.7)*0.45
+              + sin(vWorld.x*-0.8 + vWorld.z*2.1 - uTime*0.5)*0.33
+              + sin(vWorld.x*2.6 + vWorld.z*-1.9 + uTime*1.1)*0.22;
+    lit *= 0.96 + 0.06*rip;
+    lit += fres*vec3(0.035,0.048,0.060);
+    float foam = smoothstep(0.055,0.0,depth) * (0.55+0.45*sin(vWorld.x*3.4+vWorld.z*2.9+uTime*1.2));
+    lit += vec3(0.16,0.19,0.19)*foam;
+    vec3 hv2 = normalize(uSun + v);
+    lit += pow(max(dot(vec3(0,1,0),hv2),0.0), 320.0) * vec3(0.9,0.78,0.58);
+  }
+  float dist = length(vWorld-uEye);
+  float fog = 1.0-exp(-pow(dist*uFog,2.2));
+  frag = vec4(mix(lit, vec3(0.50,0.45,0.38), clamp(fog,0.0,0.72)), 1.0);
+}`;
+
+const SKY_VS=`#version 300 es
+in vec2 aP; out vec2 vNdc;
+void main(){ vNdc=aP; gl_Position=vec4(aP,0.999999,1.0); }`;
+const SKY_FS=`#version 300 es
+precision highp float;
+in vec2 vNdc; out vec4 frag;
+uniform vec3 uR,uU,uF,uSun; uniform float uTan,uAsp,uT;
+float h21(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
+float vn(vec2 p){ vec2 i=floor(p),f=fract(p); f=f*f*(3.0-2.0*f);
+  return mix(mix(h21(i),h21(i+vec2(1,0)),f.x), mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x), f.y); }
+float fbm2(vec2 p){ float v=0.0,a=0.5;
+  for(int k=0;k<5;k++){ v+=a*vn(p); p*=2.03; a*=0.5; } return v; }
+void main(){
+  vec3 dir=normalize(uF + uR*vNdc.x*uTan*uAsp + uU*vNdc.y*uTan);
+  float h=clamp(dir.y*0.5+0.5,0.0,1.0);
+  vec3 low =vec3(0.62,0.50,0.36);
+  vec3 mid =vec3(0.42,0.44,0.46);
+  vec3 high=vec3(0.16,0.22,0.34);
+  vec3 c = h<0.52 ? mix(low,mid,h/0.52) : mix(mid,high,(h-0.52)/0.48);
+  float s=max(dot(dir,uSun),0.0);
+  c += vec3(1.0,0.78,0.44)*pow(s,26.0)*0.85;
+  c += vec3(0.85,0.62,0.36)*pow(s,3.2)*0.16;
+  if(dir.y>0.012){
+    vec2 uv = dir.xz/dir.y*0.10 + vec2(uT*0.0035, uT*0.0012);
+    float n = fbm2(uv);
+    float cover = smoothstep(0.46,0.78,n) * smoothstep(0.012,0.16,dir.y);
+    float lit = smoothstep(0.40,0.85,n);
+    vec3 cc = mix(vec3(0.42,0.40,0.42), vec3(1.02,0.90,0.76), lit);
+    cc += vec3(0.9,0.6,0.3)*pow(s,7.0)*0.5*lit;
+    c = mix(c, cc, cover*0.80);
+  }
+  frag=vec4(c,1.0);
+}`;
+
+const MVS=`#version 300 es
+in vec3 aPos; in vec3 aNrm; in vec2 aUv;
+uniform mat4 uVP, uModel, uLightVP;
+out vec3 vWorld, vNrm; out vec2 vUv; out vec4 vLight;
+void main(){
+  vec4 w = uModel*vec4(aPos,1.0);
+  vWorld = w.xyz;
+  vNrm = mat3(uModel)*aNrm;
+  vUv = aUv;
+  vLight = uLightVP*w;
+  gl_Position = uVP*w;
+}`;
+const MFS=`#version 300 es
+precision highp float;
+in vec3 vWorld, vNrm; in vec2 vUv; in vec4 vLight;
+uniform vec3 uEye, uSun; uniform float uTime, uFog, uNbias;
+uniform mat4 uLightVP; uniform highp sampler2DShadow uShadow; uniform sampler2D uTex;
+out vec4 frag;
+float shadow(vec3 n, float ndl){
+  float k = uNbias * (1.0 + 2.6*(1.0-ndl));
+  vec4 lp = uLightVP * vec4(vWorld + n*k, 1.0);
+  vec3 p = lp.xyz / lp.w;
+  if(p.x<0.0||p.x>1.0||p.y<0.0||p.y>1.0||p.z>1.0) return 1.0;
+  float s=0.0; float o=1.0/2048.0;
+  s+=textureProj(uShadow, vec4(p.xy+vec2(-o,-o), p.z, 1.0));
+  s+=textureProj(uShadow, vec4(p.xy+vec2( o,-o), p.z, 1.0));
+  s+=textureProj(uShadow, vec4(p.xy+vec2(-o, o), p.z, 1.0));
+  s+=textureProj(uShadow, vec4(p.xy+vec2( o, o), p.z, 1.0));
+  return s*0.25;
+}
+void main(){
+  vec3 n = normalize(vNrm);
+  vec3 base = texture(uTex, vUv).rgb;
+  float d = max(dot(n,uSun),0.0);
+  float sh = d>0.015 ? shadow(n,d) : 1.0;
+  vec3 warm = vec3(1.22,0.94,0.62);
+  vec3 sky  = vec3(0.26,0.34,0.50);
+  vec3 bounce = vec3(0.34,0.26,0.16) * (1.0-max(n.y,0.0)) * 0.30;
+  vec3 lit = base * (sky*(0.30+0.24*(n.y*0.5+0.5)) + warm*d*sh*1.22 + bounce);
+  lit = mix(lit*vec3(0.86,0.92,1.10), lit, sh);
+  float dist = length(vWorld-uEye);
+  float fog = 1.0-exp(-pow(dist*uFog,2.2));
+  frag = vec4(mix(lit, vec3(0.50,0.45,0.38), clamp(fog,0.0,0.72)), 1.0);
+}`;
+
+function mkProg(vs,fs){
+  const sh=(t,s)=>{const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);
+    if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(o));return o};
+  const p=gl.createProgram();
+  gl.attachShader(p,sh(gl.VERTEX_SHADER,vs)); gl.attachShader(p,sh(gl.FRAGMENT_SHADER,fs));
+  gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+const prog=mkProg(VS,FS), skyProg=mkProg(SKY_VS,SKY_FS);
+const depthProg=mkProg(
+  `#version 300 es
+   in vec3 aPos; uniform mat4 uVP;
+   void main(){ gl_Position=uVP*vec4(aPos,1.0); }`,
+  `#version 300 es
+   precision highp float; out vec4 f;
+   void main(){ f=vec4(1.0); }`);
+
+function attach(pr,data,name,size){
+  const b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.STATIC_DRAW);
+  const l=gl.getAttribLocation(pr,name);
+  if(l>=0){gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,size,gl.FLOAT,false,0,0)}
+  return b;
+}
+
+const skyVao=gl.createVertexArray(); gl.bindVertexArray(skyVao);
+attach(skyProg,[-1,-1, 3,-1, -1,3],"aP",2);
+
+/* ---- Карта теней ---- */
+const SM=2048;
+const shadowTex=gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D,shadowTex);
+gl.texImage2D(gl.TEXTURE_2D,0,gl.DEPTH_COMPONENT24,SM,SM,0,gl.DEPTH_COMPONENT,gl.UNSIGNED_INT,null);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_COMPARE_MODE,gl.COMPARE_REF_TO_TEXTURE);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_COMPARE_FUNC,gl.LEQUAL);
+const shadowFbo=gl.createFramebuffer();
+gl.bindFramebuffer(gl.FRAMEBUFFER,shadowFbo);
+gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.TEXTURE_2D,shadowTex,0);
+gl.drawBuffers([gl.NONE]); gl.readBuffer(gl.NONE);
+const fboOk=gl.checkFramebufferStatus(gl.FRAMEBUFFER)===gl.FRAMEBUFFER_COMPLETE;
+gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+
+const BIAS=[0.5,0,0,0, 0,0.5,0,0, 0,0,0.5,0, 0.5,0.5,0.5,1];
+// Прежде матрица света считалась один раз, привязанная к центру фиксированной
+// карты. У бесконечного мира центра нет — пересчитываем её каждый кадр вокруг
+// цели камеры, с охватом чуть шире загруженного кольца чанков.
+function computeLightVPB(centerX,centerZ){
+  const half=CHUNK*(LOAD_RADIUS+1);
+  const lightVP=M4.mul(
+    M4.ortho(-half,half,-half,half,1,half*4.2),
+    M4.look([centerX+SUN[0]*half*1.8, SUN[1]*half*1.8, centerZ+SUN[2]*half*1.8],
+            [centerX,3,centerZ],[0,1,0]));
+  return {lightVP, lightVPB:M4.mul(BIAS,lightVP)};
+}
+const FAR_VPB=M4.mul(BIAS,M4.mul(M4.ortho(-9e4,-8.9e4,-9e4,-8.9e4,1,10),
+  M4.look([1e5,1e5,1e5],[0,0,0],[0,1,0])));
+
+const U=n=>gl.getUniformLocation(prog,n);
+const uVP=U("uVP"),uLightVP=U("uLightVP"),uEye=U("uEye"),uSun=U("uSun"),
+      uTime=U("uTime"),uShadow=U("uShadow"),uFog=U("uFog"),uNbias=U("uNbias");
+const uDepthVP=gl.getUniformLocation(depthProg,"uVP");
+const SU=n=>gl.getUniformLocation(skyProg,n);
+
+gl.enable(gl.DEPTH_TEST);
+gl.disable(gl.CULL_FACE);
+
+/* ---- ЗАМКИ: настоящие GLB-модели, свой мини-загрузчик glTF2 (JSON+BIN),
+   без анимаций и расширений — как и в исходной демке, без единой библиотеки. */
+const modelProg=mkProg(MVS,MFS);
+const mU=n=>gl.getUniformLocation(modelProg,n);
+const mUVP=mU("uVP"), mUModel=mU("uModel"), mULightVP=mU("uLightVP"),
+      mUEye=mU("uEye"), mUSun=mU("uSun"), mUTime=mU("uTime"),
+      mUShadow=mU("uShadow"), mUFog=mU("uFog"), mUNbias=mU("uNbias"), mUTex=mU("uTex");
+
+async function loadGLB(url){
+  const buf=await (await fetch(url)).arrayBuffer();
+  const dv=new DataView(buf);
+  if(dv.getUint32(0,true)!==0x46546C67) throw new Error("не glTF-контейнер: "+url);
+  const length=dv.getUint32(8,true);
+  let off=12, json=null, bin=null;
+  while(off<length){
+    const clen=dv.getUint32(off,true), ctype=dv.getUint32(off+4,true);
+    const cdata=buf.slice(off+8,off+8+clen);
+    if(ctype===0x4E4F534A) json=JSON.parse(new TextDecoder().decode(cdata));
+    else if(ctype===0x004E4942) bin=cdata;
+    off+=8+clen;
+  }
+  const CTYPE={5121:Uint8Array,5123:Uint16Array,5125:Uint32Array,5126:Float32Array};
+  const NCOMP={SCALAR:1,VEC2:2,VEC3:3,VEC4:4};
+  const acc=i=>json.accessors[i], bv=i=>json.bufferViews[i];
+  function accArr(i){
+    const a=acc(i), v=bv(a.bufferView), Ctor=CTYPE[a.componentType];
+    const byteOff=(v.byteOffset||0)+(a.byteOffset||0);
+    return new Ctor(bin, byteOff, a.count*NCOMP[a.type]);
+  }
+  const prim=json.meshes[0].primitives[0];
+  const positions=accArr(prim.attributes.POSITION);
+  const normals=accArr(prim.attributes.NORMAL);
+  const uvs=accArr(prim.attributes.TEXCOORD_0);
+  const indices=accArr(prim.indices);
+  const mat=json.materials[prim.material];
+  const bcIdx=mat.pbrMetallicRoughness.baseColorTexture.index;
+  const img=json.images[json.textures[bcIdx].source];
+  const iv=bv(img.bufferView);
+  const bytes=bin.slice(iv.byteOffset||0, (iv.byteOffset||0)+iv.byteLength);
+  const bitmap=await createImageBitmap(new Blob([bytes],{type:img.mimeType}));
+
+  const mvao=gl.createVertexArray(); gl.bindVertexArray(mvao);
+  const battach=(name,data,size)=>{
+    const b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b);
+    gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);
+    const l=gl.getAttribLocation(modelProg,name);
+    if(l>=0){gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,size,gl.FLOAT,false,0,0)}
+  };
+  battach("aPos",positions,3); battach("aNrm",normals,3); battach("aUv",uvs,2);
+  const ibo=gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ibo);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,indices,gl.STATIC_DRAW);
+  const tex=gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,bitmap);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  bitmap.close();
+  return {vao:mvao, tex, indexType:indices.BYTES_PER_ELEMENT===2?gl.UNSIGNED_SHORT:gl.UNSIGNED_INT,
+    indexCount:indices.length};
+}
+const castleModelCache={};
+function castleModel(race,epoch){
+  const key=race+"-"+epoch;
+  if(!castleModelCache[key]) castleModelCache[key]=loadGLB("models/castles/"+key+".glb")
+    .then(m=>{castleModelCache[key]=m; return m})
+    .catch(e=>{console.warn("замок не загрузился:",key,e); castleModelCache[key]=null; return null});
+  const v=castleModelCache[key];
+  return (v&&v.then)?null:v;
+}
+
+/* =======================================================================
+   Чанк-стриминг: держим карту загруженных чанков, каждый со своим VAO
+   (основной проход + отдельный depth-VAO на тот же буфер позиций для
+   теневого прохода). Каждый кадр смотрим, в каком чанке камера, догружаем
+   недостающие в круге LOAD_RADIUS и выгружаем те, что вышли за UNLOAD_RADIUS.
+   Генерация чанка — недёшева (шум по сотням клеток), поэтому её не делаем
+   всю в один кадр: очередь обрабатывается порциями по времени, чтобы кадр
+   не проседал при полёте на большой скорости.
+   ======================================================================= */
+const chunks=new Map();
+const chunkKey=(cx,cy)=>cx+","+cy;
+const genQueue=[];
+const queuedSet=new Set();
+
+function ensureChunk(cx,cy){
+  const data=genChunk(cx,cy);
+  const vao=gl.createVertexArray(); gl.bindVertexArray(vao);
+  const posBuf=attach(prog,data.pos,"aPos",3);
+  const colBuf=attach(prog,data.col,"aCol",3);
+  const kndBuf=attach(prog,data.knd,"aKind",1);
+  const nrmBuf=attach(prog,data.nrm,"aNrm",3);
+  const vertCount=data.pos.length/3;
+  const depthVao=gl.createVertexArray(); gl.bindVertexArray(depthVao);
+  gl.bindBuffer(gl.ARRAY_BUFFER,posBuf);
+  { const l=gl.getAttribLocation(depthProg,"aPos");
+    gl.enableVertexAttribArray(l); gl.vertexAttribPointer(l,3,gl.FLOAT,false,0,0); }
+  chunks.set(chunkKey(cx,cy),{
+    cx,cy,vao,depthVao,bufs:[posBuf,colBuf,kndBuf,nrmBuf],vertCount,
+    city:data.city, stats:data.stats,
+  });
+}
+function disposeChunk(c){
+  gl.deleteVertexArray(c.vao); gl.deleteVertexArray(c.depthVao);
+  for(const b of c.bufs) gl.deleteBuffer(b);
+}
+function updateStreaming(camChunkX,camChunkY){
+  // Резкий скачок камеры (телепорт, рывок мышью) может за один кадр набить
+  // очередь чанками у СТАРОЙ позиции, которые к моменту их обработки уже не
+  // нужны. Выбрасываем из очереди всё, что вышло за радиус загрузки, и
+  // сортируем оставшееся по расстоянию до камеры — ближние чанки прогружаются
+  // первыми, дальний хвост не блокирует то, что игрок видит прямо перед собой.
+  for(let i=genQueue.length-1;i>=0;i--){
+    const [cx,cy]=genQueue[i], dx=cx-camChunkX, dy=cy-camChunkY;
+    if(dx*dx+dy*dy>LOAD_RADIUS*LOAD_RADIUS+1){
+      queuedSet.delete(chunkKey(cx,cy)); genQueue.splice(i,1);
+    }
+  }
+  for(let dy=-LOAD_RADIUS; dy<=LOAD_RADIUS; dy++)
+    for(let dx=-LOAD_RADIUS; dx<=LOAD_RADIUS; dx++){
+      if(dx*dx+dy*dy>LOAD_RADIUS*LOAD_RADIUS+1) continue;
+      const cx=camChunkX+dx, cy=camChunkY+dy, k=chunkKey(cx,cy);
+      if(chunks.has(k)||queuedSet.has(k)) continue;
+      genQueue.push([cx,cy]); queuedSet.add(k);
+    }
+  genQueue.sort((a,b)=>{
+    const da=(a[0]-camChunkX)**2+(a[1]-camChunkY)**2;
+    const db=(b[0]-camChunkX)**2+(b[1]-camChunkY)**2;
+    return da-db;
+  });
+  for(const [k,c] of chunks){
+    const dx=c.cx-camChunkX, dy=c.cy-camChunkY;
+    if(dx*dx+dy*dy>UNLOAD_RADIUS*UNLOAD_RADIUS){ disposeChunk(c); chunks.delete(k); }
+  }
+}
+function processQueue(budgetMs){
+  const t0=performance.now();
+  while(genQueue.length && performance.now()-t0<budgetMs){
+    const [cx,cy]=genQueue.shift();
+    const k=chunkKey(cx,cy); queuedSet.delete(k);
+    if(chunks.has(k)) continue;
+    ensureChunk(cx,cy);
+  }
+}
+
+/* ---- Точка старта: ищем поблизости от мирового начала координат сушу,
+   чтобы не начинать полёт над голым океаном. ---- */
+function findSpawn(){
+  if(heightAt(0,0)>SEA+0.05) return {x:0,y:0};
+  for(let r=4;r<200;r+=4){
+    for(let a=0;a<10;a++){
+      const ang=a/10*6.2832;
+      const x=Math.cos(ang)*r, y=Math.sin(ang)*r;
+      if(heightAt(x,y)>SEA+0.05) return {x,y};
+    }
+  }
+  return {x:0,y:0};
+}
+const SPAWN=findSpawn();
+
+/* ---- Камера: орбита вокруг подвижной цели. Как и раньше — один палец
+   крутит и наклоняет, два — щипок/перенос. Отличие от прежней демки: цель
+   больше не зажата границами карты — мир бесконечен, лететь можно куда
+   угодно. ---- */
+let cam={yaw:0.72,pitch:0.55,dist:74,tx:SPAWN.x,tz:SPAWN.y,ty:H(SPAWN.x,SPAWN.y)+3}, drag=null;
+const pts=new Map();
+let pinch=null;
+const mid=()=>{const a=[...pts.values()];
+  return {x:(a[0].x+a[1].x)/2, y:(a[0].y+a[1].y)/2,
+          d:Math.hypot(a[0].x-a[1].x, a[0].y-a[1].y)}};
+let tapCand=null;
+const TAP_MOVE=10, TAP_TIME=380;
+cv.addEventListener("pointerdown",e=>{
+  e.preventDefault();
+  pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  try{ cv.setPointerCapture(e.pointerId) }catch(_){}
+  if(pts.size===1){ drag={x:e.clientX,y:e.clientY,yaw:cam.yaw,pitch:cam.pitch};
+    tapCand={x:e.clientX,y:e.clientY,t:performance.now()};
+    cv.classList.add("drag") }
+  else if(pts.size===2){ drag=null; tapCand=null;
+    const m=mid(); pinch={d:m.d, x:m.x, y:m.y, dist:cam.dist, tx:cam.tx, tz:cam.tz} }
+});
+cv.addEventListener("pointermove",e=>{
+  if(!pts.has(e.pointerId)) return;
+  e.preventDefault();
+  pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(tapCand && Math.hypot(e.clientX-tapCand.x,e.clientY-tapCand.y)>TAP_MOVE) tapCand=null;
+  if(pts.size>=2 && pinch){
+    const m=mid();
+    cam.dist=Math.max(9,Math.min(240, pinch.dist*(pinch.d/Math.max(12,m.d))));
+    const k=cam.dist*0.0022;
+    const dx=(m.x-pinch.x)*k, dy=(m.y-pinch.y)*k;
+    const c=Math.cos(cam.yaw), s2=Math.sin(cam.yaw);
+    cam.tx=pinch.tx - (dx*c - dy*s2);
+    cam.tz=pinch.tz + (dx*s2 + dy*c);
+    cam.ty=H(cam.tx,cam.tz)+1;
+  } else if(drag){
+    cam.yaw=drag.yaw+(e.clientX-drag.x)*0.006;
+    cam.pitch=Math.max(0.08,Math.min(1.42,drag.pitch+(e.clientY-drag.y)*0.005));
+  }
+});
+function lift(e){
+  if(tapCand && pts.size===1 && performance.now()-tapCand.t<TAP_TIME) tryTap(tapCand.x,tapCand.y);
+  tapCand=null;
+  pts.delete(e.pointerId);
+  if(pts.size<2) pinch=null;
+  if(pts.size===0){ drag=null; cv.classList.remove("drag") }
+  else if(pts.size===1){ const a=[...pts.values()][0];
+    drag={x:a.x,y:a.y,yaw:cam.yaw,pitch:cam.pitch} }
+}
+cv.addEventListener("pointerup",lift);
+cv.addEventListener("pointercancel",()=>{ tapCand=null; lift(...arguments) });
+cv.addEventListener("wheel",e=>{e.preventDefault();
+  cam.dist=Math.max(9,Math.min(240,cam.dist*(e.deltaY<0?0.9:1.11)))},{passive:false});
+
+let lastVP=null;
+function projectToScreen(x,y,z){
+  const v=lastVP, w=v[3]*x+v[7]*y+v[11]*z+v[15];
+  const cx=v[0]*x+v[4]*y+v[8]*z+v[12], cy=v[1]*x+v[5]*y+v[9]*z+v[13];
+  if(w<=0.001) return null;
+  const r=cv.getBoundingClientRect();
+  return {x:(cx/w*0.5+0.5)*r.width, y:(1-(cy/w*0.5+0.5))*r.height};
+}
+function goToCity(inst){
+  cam.tx=inst.x; cam.tz=inst.z; cam.ty=H(inst.x,inst.z)+1.2;
+  cam.dist=[0,8,10,13,16,20][inst.epoch]; cam.pitch=0.34;
+}
+function tryTap(clientX,clientY){
+  if(!lastVP) return;
+  const r=cv.getBoundingClientRect();
+  const lx=clientX-r.left, ly=clientY-r.top;
+  let best=null, bestD=46;
+  for(const c of chunks.values()){
+    if(!c.city) continue;
+    const p=projectToScreen(c.city.x, c.city.y+1, c.city.z); if(!p) continue;
+    const d=Math.hypot(p.x-lx, p.y-ly);
+    if(d<bestD){ bestD=d; best=c.city }
+  }
+  if(best) goToCity(best);
+}
+function goHome(){ cam.tx=SPAWN.x; cam.tz=SPAWN.y; cam.ty=H(SPAWN.x,SPAWN.y)+2;
+  cam.dist=95; cam.pitch=0.45 }
+addEventListener("keydown",e=>{ if(e.key==="Home") goHome(); });
+
+function resize(){const d=Math.min(2,devicePixelRatio||1);
+  cv.width=cv.clientWidth*d; cv.height=cv.clientHeight*d}
+addEventListener("resize",resize); resize();
+
+const hudStats=document.getElementById("hudStats");
+let lastHud=0;
+
+const t0=performance.now();
+function frame(){
+  const t=(performance.now()-t0)/1000;
+  if(!drag) cam.yaw+=0.0007;
+  const ex=cam.tx+Math.sin(cam.yaw)*Math.cos(cam.pitch)*cam.dist;
+  const ez=cam.tz+Math.cos(cam.yaw)*Math.cos(cam.pitch)*cam.dist;
+  let ey=Math.sin(cam.pitch)*cam.dist+cam.ty+0.5;
+  const groundAtEye=H(ex,ez);
+  if(ey<groundAtEye+0.6) ey=groundAtEye+0.6;
+  const eye=[ex,ey,ez], tgt=[cam.tx,cam.ty,cam.tz];
+
+  const camChunkX=Math.floor(cam.tx/CHUNK), camChunkY=Math.floor(cam.tz/CHUNK);
+  updateStreaming(camChunkX,camChunkY);
+  processQueue(9);
+
+  const {lightVP,lightVPB}=computeLightVPB(cam.tx,cam.tz);
+
+  // Проход 1: глубина со стороны солнца, по всем загруженным чанкам разом.
+  gl.bindFramebuffer(gl.FRAMEBUFFER,shadowFbo);
+  gl.viewport(0,0,SM,SM);
+  gl.clear(gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1.1,1.6);
+  gl.useProgram(depthProg);
+  gl.uniformMatrix4fv(uDepthVP,false,new Float32Array(lightVP));
+  for(const c of chunks.values()){
+    gl.bindVertexArray(c.depthVao);
+    gl.drawArrays(gl.TRIANGLES,0,c.vertCount);
+  }
+  gl.disable(gl.POLYGON_OFFSET_FILL);
+
+  // Проход 2: небо и мир
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  gl.viewport(0,0,cv.width,cv.height);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+
+  const fwd=norm(sub(tgt,eye)), right=norm(cross(fwd,[0,1,0])), up=cross(right,fwd);
+  gl.useProgram(skyProg); gl.bindVertexArray(skyVao);
+  gl.depthMask(false);
+  gl.uniform3fv(SU("uR"),new Float32Array(right));
+  gl.uniform3fv(SU("uU"),new Float32Array(up));
+  gl.uniform3fv(SU("uF"),new Float32Array(fwd));
+  gl.uniform3fv(SU("uSun"),new Float32Array(SUN));
+  gl.uniform1f(SU("uTan"),Math.tan(0.82/2));
+  gl.uniform1f(SU("uAsp"),cv.width/cv.height);
+  gl.uniform1f(SU("uT"),t);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+  gl.depthMask(true);
+
+  gl.useProgram(prog);
+  const VP=M4.mul(M4.persp(0.82,cv.width/cv.height,0.5,460),M4.look(eye,tgt,[0,1,0]));
+  lastVP=VP;
+  gl.uniformMatrix4fv(uVP,false,new Float32Array(VP));
+  gl.uniformMatrix4fv(uLightVP,false,new Float32Array(window.__noShadow?FAR_VPB:lightVPB));
+  gl.uniform3fv(uEye,new Float32Array(eye));
+  gl.uniform3fv(uSun,new Float32Array(SUN));
+  gl.uniform1f(uTime,t);
+  gl.uniform1f(uFog,window.__fog!==undefined?window.__fog:0.0095);
+  gl.uniform1f(uNbias,0.03);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,shadowTex);
+  gl.uniform1i(uShadow,0);
+  let totalTris=0;
+  for(const c of chunks.values()){
+    gl.bindVertexArray(c.vao);
+    gl.drawArrays(gl.TRIANGLES,0,c.vertCount);
+    totalTris+=c.vertCount/3;
+  }
+
+  // Проход 3: замки (GLB) — по одному на чанк, у которого он есть.
+  gl.useProgram(modelProg);
+  gl.uniformMatrix4fv(mUVP,false,new Float32Array(VP));
+  gl.uniformMatrix4fv(mULightVP,false,new Float32Array(window.__noShadow?FAR_VPB:lightVPB));
+  gl.uniform3fv(mUEye,new Float32Array(eye));
+  gl.uniform3fv(mUSun,new Float32Array(SUN));
+  gl.uniform1f(mUTime,t);
+  gl.uniform1f(mUFog,window.__fog!==undefined?window.__fog:0.0095);
+  gl.uniform1f(mUNbias,0.03);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,shadowTex);
+  gl.uniform1i(mUShadow,0);
+  gl.uniform1i(mUTex,1);
+  let citiesLoaded=0;
+  for(const c of chunks.values()){
+    if(!c.city) continue;
+    citiesLoaded++;
+    const m=castleModel(c.city.race,c.city.epoch);
+    if(!m) continue;
+    gl.bindVertexArray(m.vao);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,m.tex);
+    gl.uniformMatrix4fv(mUModel,false,new Float32Array(c.city.mat));
+    gl.drawElements(gl.TRIANGLES,m.indexCount,m.indexType,0);
+  }
+
+  if(t-lastHud>0.5 && !document.getElementById("hud").classList.contains("min")){
+    lastHud=t;
+    hudStats.textContent="Чанков в памяти: "+chunks.size+" · в очереди: "+genQueue.length+
+      " · городов рядом: "+citiesLoaded+" · треугольников: "+Math.round(totalTris/1000)+"к";
+  }
+
+  requestAnimationFrame(frame);
+}
+frame();
+window.__errs=()=>{const e=[];let g;while((g=gl.getError())!==gl.NO_ERROR)e.push(g);return e};
+window.__chunkStats=()=>({loaded:chunks.size, queued:genQueue.length,
+  tris:[...chunks.values()].reduce((s,c)=>s+c.vertCount,0)/3,
+  cities:[...chunks.values()].filter(c=>c.city).length});
+</script>
+</body>
+</html>
