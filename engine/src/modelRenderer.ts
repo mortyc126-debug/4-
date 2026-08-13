@@ -58,8 +58,24 @@ export async function uploadGLB(device: GPUDevice, parsed: ParsedGLB): Promise<G
   device.queue.writeBuffer(nrmBuf, 0, parsed.normals);
   const uvBuf = device.createBuffer({ size: parsed.uvs.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(uvBuf, 0, parsed.uvs);
-  const idxBuf = device.createBuffer({ size: parsed.indices.byteLength, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST });
-  device.queue.writeBuffer(idxBuf, 0, parsed.indices);
+  // WebGPU требует, чтобы размер записи в буфер (не только размер самого
+  // буфера) был кратен 4 байтам. У Uint16Array-индексов (2 байта на штуку)
+  // это ломается на моделях с НЕЧЁТНЫМ числом индексов — ровно то, на чём
+  // упали лагерь и обе точки ресурсов (у замка индексов оказалось чётное
+  // число, потому там и не заметили). Досыпаем один нулевой индекс до
+  // кратного 4 байтам размера; на indexCount (используется в drawIndexed)
+  // это не влияет — он по-прежнему исходный, лишний хвост просто не
+  // читается растеризацией.
+  const idxBytes = parsed.indices.byteLength;
+  const idxAligned = Math.ceil(idxBytes / 4) * 4;
+  const idxBuf = device.createBuffer({ size: idxAligned, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST });
+  if (idxAligned === idxBytes) {
+    device.queue.writeBuffer(idxBuf, 0, parsed.indices);
+  } else {
+    const padded = new Uint8Array(idxAligned);
+    padded.set(new Uint8Array(parsed.indices.buffer, parsed.indices.byteOffset, idxBytes));
+    device.queue.writeBuffer(idxBuf, 0, padded);
+  }
 
   // Модели замков несут полноразмерные (4096×4096) JPEG-текстуры — то, что
   // разумно для GLB, отданного целиком браузеру на растеризацию через
@@ -121,15 +137,14 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat)
   });
   const sampler = device.createSampler({ magFilter: "linear", minFilter: "linear", mipmapFilter: "linear" });
 
-  // ВРЕМЕННО: новый uniform-буфер и bind group на каждый draw() каждый
-  // кадр — то самое "по вызову на объект", от которого в живой игре как
-  // раз избавлялись инстансингом маркеров (см. renderer.ts). Для одной
-  // модели на экране это незаметно; для настоящей плотности замков —
-  // нельзя, нужно будет либо переиспользовать буфер/bind group между
-  // кадрами, либо тоже перейти на инстансинг с текстурным атласом.
-  function draw(pass: GPURenderPassEncoder, model: GpuModel, vp: Mat4, modelMat: Mat4) {
+  // Буфер/bind group на каждый ИНСТАНС модели заводятся ОДИН раз (см.
+  // createInstance), а не на каждый draw() каждый кадр — тот самый "лишний
+  // вызов на объект", от которого в живой игре как раз избавлялись
+  // инстансингом маркеров (см. renderer.ts), сюда так заходить не должен.
+  // Каждый кадр меняется только VP (позиция объекта на карте не двигается
+  // сама по себе) — записываем только эти 16 float, не весь буфер.
+  function createInstance(model: GpuModel, modelMat: Mat4): ModelInstance {
     const uniformBuf = device.createBuffer({ size: 32 * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    device.queue.writeBuffer(uniformBuf, 0, vp);
     device.queue.writeBuffer(uniformBuf, 16 * 4, modelMat);
     const bindGroup = device.createBindGroup({
       layout: pipeline.getBindGroupLayout(0),
@@ -139,14 +154,25 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat)
         { binding: 2, resource: model.texture.createView() },
       ],
     });
-    pass.setPipeline(pipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.setVertexBuffer(0, model.vao.posBuf);
-    pass.setVertexBuffer(1, model.vao.nrmBuf);
-    pass.setVertexBuffer(2, model.vao.uvBuf);
-    pass.setIndexBuffer(model.vao.idxBuf, model.vao.indexFormat);
-    pass.drawIndexed(model.vao.indexCount);
+    return { model, uniformBuf, bindGroup };
   }
 
-  return { draw };
+  function draw(pass: GPURenderPassEncoder, instance: ModelInstance, vp: Mat4) {
+    device.queue.writeBuffer(instance.uniformBuf, 0, vp);
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, instance.bindGroup);
+    pass.setVertexBuffer(0, instance.model.vao.posBuf);
+    pass.setVertexBuffer(1, instance.model.vao.nrmBuf);
+    pass.setVertexBuffer(2, instance.model.vao.uvBuf);
+    pass.setIndexBuffer(instance.model.vao.idxBuf, instance.model.vao.indexFormat);
+    pass.drawIndexed(instance.model.vao.indexCount);
+  }
+
+  return { createInstance, draw };
+}
+
+export interface ModelInstance {
+  model: GpuModel;
+  uniformBuf: GPUBuffer;
+  bindGroup: GPUBindGroup;
 }
