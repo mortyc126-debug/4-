@@ -636,7 +636,7 @@ function genChunk(cx,cy){
 
     /* --- камни трёх калибров --- */
     const stony=R.mount*0.6+Math.max(0,(e-0.55))*1.6;
-    if(hash2(x,y,77)<0.004+stony*0.042){
+    if(hash2(x,y,77)<(0.004+stony*0.042)*0.3){   // плотность убавлена на 70% — камней было слишком много
       const rx=x+hash2(x,y,78)*0.8, rz=y+hash2(x,y,79)*0.8;
       if(heightRaw(rx,rz)>SEA+0.04 && cityOverlapLocal(rx,rz)<=1){
         const r=hash2(x,y,80);
@@ -650,7 +650,7 @@ function genChunk(cx,cy){
       }
     }
     /* --- скальные выходы на вершинах --- */
-    if(e>0.80 && hash2(x,y,84)<0.09){
+    if(e>0.80 && hash2(x,y,84)<0.027){   // плотность убавлена на 70%
       const rx=x+hash2(x,y,85)*0.8, rz=y+hash2(x,y,86)*0.8;
       const sc=0.34+hash2(x,y,87)*0.5;
       rockHex(rx,rz,H(rx,rz)+0.06*sc, 0.48*sc, 0.58*sc,
