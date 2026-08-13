@@ -1583,9 +1583,9 @@ function genWorld(seed){
   // Было 130/75 (зазор уже есть, монетки на чанк ещё нет) — тоже жаловались,
   // что заполнено "будто на 100% каждого чанка": сама выборка без монетки
   // жадно раздвигает соседей до предела зазора В КАЖДОМ углу карты, не
-  // оставляя пропусков. Обе причины исправлены разом — считаем попытки
-  // от исходных чисел вдвое меньше.
-  const nodeCount = 65;
+  // оставляя пропусков. Было 65/38 (зазор + монетка есть) — всё равно
+  // "мозолят глаза": срезано ещё втрое.
+  const nodeCount = 22;
   for(let i=0;i<nodeCount;i++){
     const spot=findFreeCell(STRUCT_SALT_NODE); if(!spot) continue;
     const {x,y}=spot;
@@ -1596,7 +1596,7 @@ function genWorld(seed){
       amount: Math.round(6000*Math.pow(2.6,lv-1)), max: Math.round(6000*Math.pow(2.6,lv-1)),
       busy:null};
   }
-  const campCount = 38;
+  const campCount = 13;
   for(let i=0;i<campCount;i++){
     const spot=findFreeCell(STRUCT_SALT_CAMP); if(!spot) continue;
     const {x,y}=spot;
@@ -1608,8 +1608,9 @@ function genWorld(seed){
   }
 
   // Свежий мир уже построен через findFreeCell (зазор + вода + "монетка"
-  // на чанк) — обеим миграциям ниже тут нечего делать.
-  W.densityMigrated=true; W.densityMigrated2=true;
+  // на чанк, числа уже втрое меньше) — всем трём миграциям ниже тут нечего
+  // делать.
+  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true;
   logg("Мир создан. Зерно "+seed+". Городов: "+W.players.length+".", "good");
   return W;
 }
@@ -1659,6 +1660,27 @@ function thinMapDensity2(){
   for(const o of drop) delete W.map[key(o.x,o.y)];
   W.densityMigrated2=true;
   if(drop.length) logg("Карта разрежена ещё раз: убрано "+drop.length+" точек/лагерей (вода или повторный отбор).","good");
+}
+// Третья волна: даже после первых двух проходов лагерей и точек всё ещё
+// "мозолит глаза" — режем то, что осталось, ещё втрое. Не перевызываем
+// structChunkOk (уже применена в thinMapDensity2, второй раз тем же порогом
+// ничего бы не убрала) — независимый бросок монеты с шансом оставить 1 из 3,
+// свой на каждую клетку (детерминированный от координаты и сида партии, не
+// Math.random() — при повторном заходе даёт тот же результат, не срезает
+// снова и снова при каждой загрузке).
+const STRUCT_SALT_NODE2=701, STRUCT_SALT_CAMP2=702, THIRD_WAVE_KEEP=1/3;
+function thinMapDensity3(){
+  if(W.densityMigrated3) return;
+  const drop=[];
+  for(const k in W.map){
+    const o=W.map[k];
+    if(o.t==="city") continue;
+    const salt=o.t==="node"?STRUCT_SALT_NODE2:STRUCT_SALT_CAMP2;
+    if(hash2(Math.round(o.x),Math.round(o.y),W.seed+salt)>=THIRD_WAVE_KEEP) drop.push(o);
+  }
+  for(const o of drop) delete W.map[key(o.x,o.y)];
+  W.densityMigrated3=true;
+  if(drop.length) logg("Карта разрежена в третий раз: убрано ещё "+drop.length+" точек/лагерей.","good");
 }
 function clearArea(x,y,r){for(let i=-r;i<=r;i++)for(let j=-r;j<=r;j++)delete W.map[key(x+i,y+j)]}
 function banditPower(lv){
@@ -2082,8 +2104,132 @@ function splitLosses(p,loss,mode){
 }
 
 /* =========================================================================
-   МАРШИ
+   МАРШИ — маршрут в обход воды. Раньше поход двигался по прямой между
+   точкой отправления и целью: пока воды на карте не было, это было не
+   заметно, но с настоящим рельефом прямая нередко режет через озеро — отряд
+   визуально шёл прямо по воде. Города/лагеря/точки сами уже никогда не
+   стоят в воде (см. isRealWater ниже), но путь МЕЖДУ ними может её
+   пересекать. Решение — A* по клеточной сетке карты (вода = стена), с
+   упрощением пути (string pulling: выпрямляем везде, где прямая между двумя
+   узлами не задевает воду) — иначе путь дёргался бы по клеткам сетки
+   зигзагом. Больщинство маршей вообще не встречают воду по пути — для них
+   есть быстрый выход без A*.
    ========================================================================= */
+function segmentCrossesWater(x0,y0,x1,y1){
+  const d=Math.hypot(x1-x0,y1-y0);
+  const steps=Math.max(1,Math.ceil(d*2));
+  for(let i=0;i<=steps;i++){
+    const t=i/steps;
+    if(isRealWater(x0+(x1-x0)*t, y0+(y1-y0)*t)) return true;
+  }
+  return false;
+}
+function simplifyWaterPath(path){
+  if(path.length<=2) return path;
+  const out=[path[0]];
+  let i=0;
+  while(i<path.length-1){
+    let j=path.length-1;
+    while(j>i+1 && segmentCrossesWater(path[i].x,path[i].y,path[j].x,path[j].y)) j--;
+    out.push(path[j]);
+    i=j;
+  }
+  return out;
+}
+function miniHeap(){
+  const arr=[];
+  function up(i){ while(i>0){ const p=(i-1)>>1; if(arr[p].f<=arr[i].f) break; [arr[p],arr[i]]=[arr[i],arr[p]]; i=p; } }
+  function down(i){
+    for(;;){ let s=i,l=2*i+1,r=2*i+2;
+      if(l<arr.length && arr[l].f<arr[s].f) s=l;
+      if(r<arr.length && arr[r].f<arr[s].f) s=r;
+      if(s===i) break; [arr[s],arr[i]]=[arr[i],arr[s]]; i=s; }
+  }
+  return {
+    push(v){ arr.push(v); up(arr.length-1); },
+    pop(){ const top=arr[0]; const last=arr.pop(); if(arr.length){ arr[0]=last; down(0); } return top; },
+    get size(){ return arr.length; }
+  };
+}
+const WPATH_DIRS=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+// Сама сетка клеток (вода/суша) на всю карту меняется только раз в игру
+// (рельеф — чистая функция от фиксированного RW_SEED) — считаем её один
+// раз лениво, а не на каждый A*.
+let _waterGrid=null;
+function waterBlocked(x,y){
+  if(!_waterGrid){
+    const N=CFG.MAP; _waterGrid=new Uint8Array(N*N);
+    // isRealWater(x,y) уже сама берёт центр клетки (+0.5 внутри неё) —
+    // прибавлять здесь ещё раз нельзя, иначе сетка A* сдвинется на целую
+    // клетку относительно настоящей воды, и найденный "обход" будет обходить
+    // не ту клетку.
+    for(let yy=0;yy<N;yy++)for(let xx=0;xx<N;xx++) _waterGrid[yy*N+xx]=isRealWater(xx,yy)?1:0;
+  }
+  if(x<0||y<0||x>=CFG.MAP||y>=CFG.MAP) return false;
+  return _waterGrid[y*CFG.MAP+x]===1;
+}
+function waterPath(x0,y0,x1,y1){
+  if(!segmentCrossesWater(x0,y0,x1,y1)) return [{x:x0,y:y0},{x:x1,y:y1}];
+  const N=CFG.MAP;
+  const gx0=clamp(Math.round(x0),0,N-1), gy0=clamp(Math.round(y0),0,N-1);
+  const gx1=clamp(Math.round(x1),0,N-1), gy1=clamp(Math.round(y1),0,N-1);
+  if(waterBlocked(gx0,gy0)||waterBlocked(gx1,gy1)) return [{x:x0,y:y0},{x:x1,y:y1}];
+  const idx=(x,y)=>y*N+x;
+  const h=(x,y)=>Math.hypot(gx1-x,gy1-y);
+  const gScore=new Map(), came=new Map();
+  gScore.set(idx(gx0,gy0),0);
+  const open=miniHeap();
+  open.push({x:gx0,y:gy0,f:h(gx0,gy0)});
+  let found=false, iter=0;
+  while(open.size && iter<20000){
+    iter++;
+    const cur=open.pop();
+    if(cur.x===gx1&&cur.y===gy1){ found=true; break; }
+    const curG=gScore.get(idx(cur.x,cur.y));
+    for(const [dx,dy] of WPATH_DIRS){
+      const nx=cur.x+dx, ny=cur.y+dy;
+      if(nx<0||ny<0||nx>=N||ny>=N||waterBlocked(nx,ny)) continue;
+      const ng=curG+(dx&&dy?Math.SQRT2:1);
+      const nk=idx(nx,ny);
+      if(gScore.has(nk)&&gScore.get(nk)<=ng) continue;
+      gScore.set(nk,ng); came.set(nk,idx(cur.x,cur.y));
+      open.push({x:nx,y:ny,f:ng+h(nx,ny)});
+    }
+  }
+  if(!found) return [{x:x0,y:y0},{x:x1,y:y1}];   // не нашли обход — лучше прямая, чем не дать походу случиться
+  const path=[{x:gx1,y:gy1}];
+  let ck=idx(gx1,gy1);
+  while(came.has(ck)){ ck=came.get(ck); path.push({x:ck%N,y:Math.floor(ck/N)}); }
+  path.reverse();
+  path[0]={x:x0,y:y0}; path[path.length-1]={x:x1,y:y1};
+  return simplifyWaterPath(path);
+}
+function pathLength(path){
+  let total=0;
+  for(let i=1;i<path.length;i++) total+=Math.hypot(path[i].x-path[i-1].x,path[i].y-path[i-1].y);
+  return total;
+}
+function setMarchPath(m,path){
+  m.path=path;
+  const cum=[0]; let total=0;
+  for(let i=1;i<path.length;i++){ total+=Math.hypot(path[i].x-path[i-1].x,path[i].y-path[i-1].y); cum.push(total); }
+  m.pathCum=cum; m.pathLen=total;
+}
+function pathPointAt(m,f){
+  const path=m.path, cum=m.pathCum;
+  if(!path||path.length<2) return (path&&path[0])||{x:0,y:0};
+  const target=f*m.pathLen;
+  for(let i=1;i<cum.length;i++){
+    if(cum[i]>=target){
+      const segLen=cum[i]-cum[i-1];
+      const segF=segLen>0?(target-cum[i-1])/segLen:0;
+      const a=path[i-1], b=path[i];
+      return {x:a.x+(b.x-a.x)*segF, y:a.y+(b.y-a.y)*segF};
+    }
+  }
+  return path[path.length-1];
+}
+
 function marchSpeed(p,units){
   let s=99; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) if(units[t][i]>0) s=Math.min(s,TROOP_TYPES[t].speed*troopMod(p.race,t,"speed"))});
   if(s>90) s=1;
@@ -2097,11 +2243,13 @@ function sendMarch(p,tx,ty,units,mode){
     if(units[t][i]>p.troops[t][i]) units[t][i]=p.troops[t][i];
     p.troops[t][i]-=units[t][i];
   }});
-  const d=Math.hypot(tx-p.x,ty-p.y)*(1-portalShortcut(p));
+  const path=waterPath(p.x,p.y,tx,ty);
+  const d=pathLength(path)*(1-portalShortcut(p));
   const spd=marchSpeed(p,units);
   const travel=Math.max(20, d/spd*60);
   const m={id:W.nextId++,pid:p.id,mode,x0:p.x,y0:p.y,tx,ty,units,
     t0:W.t,t1:W.t+travel,state:"go",carry:null,gatherEnd:0};
+  setMarchPath(m,path);
   W.marches.push(m);
   schedule(travel,"arrive",{mid:m.id});
   // Оборонявшийся узнаёт о марше немедленно — боты «сидят в игре» 24/7
@@ -2119,17 +2267,18 @@ function sendMarch(p,tx,ty,units,mode){
 function recallMarch(m){
   if(m.state==="back") return;
   const p=W.players.find(q=>q.id===m.pid);
-  const back=Math.max(15,Math.hypot(m.tx-p.x,m.ty-p.y)*(1-portalShortcut(p))/marchSpeed(p,m.units)*60);
+  const cur=marchPos(m);   // текущее положение на маршруте — новый путь домой считаем от него, не от цели
+  const path=waterPath(cur.x,cur.y,p.x,p.y);
+  const back=Math.max(15,pathLength(path)*(1-portalShortcut(p))/marchSpeed(p,m.units)*60);
   m.state="back"; m.t0=W.t; m.t1=W.t+back;
+  setMarchPath(m,path);
   unschedule(e=>e.data&&e.data.mid===m.id);
   schedule(back,"home",{mid:m.id});
 }
 function marchPos(m){
   const f=clamp((W.t-m.t0)/Math.max(1,m.t1-m.t0),0,1);
-  const p=W.players.find(q=>q.id===m.pid);
-  if(m.state==="back") return {x:m.tx+(p.x-m.tx)*f, y:m.ty+(p.y-m.ty)*f};
   if(m.state==="gather"||m.state==="siege") return {x:m.tx,y:m.ty};
-  return {x:m.x0+(m.tx-m.x0)*f, y:m.y0+(m.ty-m.y0)*f};
+  return pathPointAt(m,f);
 }
 
 /* =========================================================================
@@ -2901,6 +3050,17 @@ async function load(){
     });
     thinMapDensity();
     thinMapDensity2();
+    thinMapDensity3();
+    // Старые походы в старом сохранении не несут m.path (маршрут в обход
+    // воды появился позже) — без него marchPos() не может интерполировать
+    // позицию и упал бы на (0,0). Достраиваем маршрут задним числом по тем
+    // же концам, что использовали бы sendMarch/recallMarch в своё время.
+    W.marches.forEach(m=>{
+      if(m.path) return;
+      const p=W.players.find(q=>q.id===m.pid);
+      if(m.state==="back"&&p) setMarchPath(m,waterPath(m.tx,m.ty,p.x,p.y));
+      else setMarchPath(m,waterPath(m.x0,m.y0,m.tx,m.ty));
+    });
     // догоняем реальное время, прошедшее с последнего захода
     const away=Math.max(0,(Date.now()-W.savedAt)/1000);
     if(away>60){
