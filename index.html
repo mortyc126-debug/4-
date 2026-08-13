@@ -1570,8 +1570,33 @@ function genWorld(seed){
       hp:1, power: banditPower(raw), busy:null};
   }
 
+  W.densityMigrated=true;   // уже построен с зазором MIN_STRUCT_GAP — thinMapDensity() ниже нечего тут делать
   logg("Мир создан. Зерно "+seed+". Городов: "+W.players.length+".", "good");
   return W;
+}
+// Старые сохранения несут в себе плотность ДО фильтра зазора (были созданы
+// до того, как genWorld() научился требовать MIN_STRUCT_GAP=6) — сам факт
+// починки genWorld() их не трогает: он не запускается повторно для
+// существующего сохранения (см. load() ниже). Прорежаем то, что уже лежит
+// в W.map, тем же правилом, что и свежая генерация. Города не трогаем
+// вовсе — они привязаны к W.players (pid), удалить город значило бы снести
+// чей-то замок; лагеря/точки удалять безопасно и без города: arriveMarch()
+// уже штатно обрабатывает исчезнувшую клетку (marches.recallMarch), это тот
+// же путь, что при обычном истощении точки или разгроме лагеря игроком.
+function thinMapDensity(){
+  if(W.densityMigrated) return;
+  const MIN_STRUCT_GAP=6;
+  const kept=[], drop=[];
+  for(const k in W.map){
+    const o=W.map[k];
+    if(o.t==="city"){ kept.push(o); continue; }
+    let ok=true;
+    for(const c of kept){ if(Math.hypot(c.x-o.x,c.y-o.y)<MIN_STRUCT_GAP){ ok=false; break; } }
+    if(ok) kept.push(o); else drop.push(o);
+  }
+  for(const o of drop) delete W.map[key(o.x,o.y)];
+  W.densityMigrated=true;
+  if(drop.length) logg("Карта разрежена: убрано "+drop.length+" тесно стоявших точек/лагерей.","good");
 }
 function clearArea(x,y,r){for(let i=-r;i<=r;i++)for(let j=-r;j<=r;j++)delete W.map[key(x+i,y+j)]}
 function banditPower(lv){
@@ -2815,6 +2840,7 @@ async function load(){
       if(!p.tomes) p.tomes={}; if(p.heal===undefined) p.heal=null;
       BKEYS.forEach(k=>{ if(p.b[k]===undefined) p.b[k]=isMulti(k)?new Array(BUILDINGS[k].plots).fill(0):0; });
     });
+    thinMapDensity();
     // догоняем реальное время, прошедшее с последнего захода
     const away=Math.max(0,(Date.now()-W.savedAt)/1000);
     if(away>60){
