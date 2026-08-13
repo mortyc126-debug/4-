@@ -1,13 +1,16 @@
 /* =========================================================================
-   Шаг 0 нового движка: не рендер мира, а доказательство, что сама связка
-   WebGPU + bitECS + Vite/TS вообще заводится в этом окружении, прежде чем
-   переносить сюда хоть одну строчку логики из obyom-3d-infinite.html.
-   Компонент City/CampOrNode ниже — заготовка под реальную форму W.map
-   ({t, x, y, ...}), не финальная схема: цель прямо сейчас — увидеть кадр
-   на экране и непустой результат ECS-запроса в одном месте.
+   Шаг 2 нового движка: настоящий 3D-кадр — не плоская проекция координат
+   в клип-спейс (как в шаге 1), а честная перспективная камера над куском
+   ТОГО ЖЕ рельефа, что и в живой игре (тот же SEED, см. terrain.ts) —
+   остров узнаваем. Маркеры городов/лагерей/точек стоят прямо на рельефе
+   (высота берётся из heightAt в их мировой точке) и рисуются настоящим
+   инстансингом на одной VP-матрице с рельефом.
    ========================================================================= */
 import { createWorld, addEntity, addComponent, query } from "bitecs";
 import { createRenderer, type MarkerEntity } from "./renderer";
+import { buildTerrainPatch } from "./terrainMesh";
+import { heightAt, HMAX } from "./terrain";
+import { mul, persp, look, type Vec3 } from "./mat4";
 
 const statusEl = document.getElementById("status") as HTMLDivElement;
 function setStatus(lines: string[]) {
@@ -17,14 +20,16 @@ function setStatus(lines: string[]) {
 async function main() {
   const lines: string[] = [];
 
-  // ---- bitECS: минимальный мир с горсткой сущностей той же формы,
-  // что и настоящие структуры карты (город/лагерь/точка). ----
+  // ---- bitECS: та же горстка сущностей, что и в шаге 1. ----
   const world = createWorld();
   const Position = { x: [] as number[], y: [] as number[] };
   const Kind = { value: [] as number[] }; // 0=city 1=camp 2=node
-
-  const KIND_NAME = ["city", "camp", "node"];
-  const seedEntities: Array<{ x: number; y: number; kind: number }> = [
+  const KIND_COLOR: Record<number, [number, number, number]> = {
+    0: [0.85, 0.68, 0.29], // город — gilt
+    1: [0.63, 0.16, 0.2], // лагерь — garnet
+    2: [0.29, 0.55, 0.38], // точка — verdigris
+  };
+  const seedEntities = [
     { x: 43, y: 14, kind: 0 },
     { x: 50, y: 20, kind: 1 },
     { x: 55, y: 12, kind: 2 },
@@ -38,30 +43,24 @@ async function main() {
     Position.y[eid] = e.y;
     Kind.value[eid] = e.kind;
   }
-  const found = query(world, [Position, Kind]);
-  lines.push(`bitECS: мир создан, сущностей найдено запросом — ${found.length}`);
-  for (const eid of found) {
-    lines.push(`  #${eid} ${KIND_NAME[Kind.value[eid]]} @ ${Position.x[eid]},${Position.y[eid]}`);
-  }
+  const found = Array.from(query(world, [Position, Kind]));
+  lines.push(`bitECS: сущностей — ${found.length}`);
 
-  // ---- WebGPU: запрос адаптера/устройства и один очищенный кадр. ----
+  // ---- WebGPU ----
   if (!("gpu" in navigator)) {
-    lines.push("WebGPU: navigator.gpu отсутствует — браузер/контекст не поддерживает.");
-    setStatus(lines);
+    setStatus([...lines, "WebGPU: navigator.gpu отсутствует."]);
     return;
   }
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) {
-    lines.push("WebGPU: адаптер не найден (requestAdapter вернул null).");
-    setStatus(lines);
+    setStatus([...lines, "WebGPU: адаптер не найден."]);
     return;
   }
   const device = await adapter.requestDevice();
   const canvas = document.getElementById("gpu") as HTMLCanvasElement;
   const ctx = canvas.getContext("webgpu");
   if (!ctx) {
-    lines.push("WebGPU: canvas.getContext('webgpu') вернул null.");
-    setStatus(lines);
+    setStatus([...lines, "WebGPU: getContext('webgpu') вернул null."]);
     return;
   }
   const format = navigator.gpu.getPreferredCanvasFormat();
@@ -73,26 +72,38 @@ async function main() {
   resize();
   window.addEventListener("resize", resize);
   ctx.configure({ device, format, alphaMode: "opaque" });
+  lines.push(`WebGPU: устройство получено, формат — ${format}`);
 
-  lines.push(`WebGPU: устройство получено, формат канвы — ${format}`);
+  // ---- рельеф: кусок вокруг маркеров, тот же остров, что и в игре ----
+  const PATCH = { x0: 15, y0: 0, x1: 70, y1: 45 };
+  const mesh = buildTerrainPatch(PATCH.x0, PATCH.y0, PATCH.x1, PATCH.y1, 1);
+  lines.push(`рельеф: патч ${PATCH.x1 - PATCH.x0}×${PATCH.y1 - PATCH.y0} клеток, ${mesh.vertexCount} вершин`);
   setStatus(lines);
 
-  // Раскраска маркеров как в игре: золото — город, гранат — лагерь,
-  // изумруд — точка ресурсов (см. shieldSvg/палитру в index.html).
-  const KIND_COLOR: Record<number, [number, number, number]> = {
-    0: [0.85, 0.68, 0.29], // город — gilt
-    1: [0.63, 0.16, 0.2], // лагерь — garnet
-    2: [0.29, 0.55, 0.38], // точка — verdigris
-  };
   const renderer = createRenderer(device, ctx, format);
-  const markers: MarkerEntity[] = Array.from(found).map((eid) => ({
-    x: Position.x[eid],
-    y: Position.y[eid],
-    color: KIND_COLOR[Kind.value[eid]],
-  }));
-  renderer.setEntities(markers);
+  renderer.setTerrain(mesh);
 
-  function draw() {
+  const markers: MarkerEntity[] = found.map((eid) => {
+    const wx = Position.x[eid], wz = Position.y[eid];
+    const groundY = heightAt(wx, wz) * HMAX;
+    return { x: wx, y: groundY, z: wz, color: KIND_COLOR[Kind.value[eid]] };
+  });
+  renderer.setMarkers(markers);
+
+  // ---- камера: медленная орбита вокруг центра патча — то же ощущение
+  // "облёта города", что и в живой игре, без ввода пользователя (это ещё
+  // не интерактивный шаг, только показать честную перспективу). ----
+  const cx = (PATCH.x0 + PATCH.x1) / 2, cz = (PATCH.y0 + PATCH.y1) / 2;
+  const cy = heightAt(cx, cz) * HMAX;
+  const dist = 42, pitchY = 26;
+
+  function draw(tMs: number) {
+    const yaw = tMs * 0.00015;
+    const eye: Vec3 = [cx + Math.sin(yaw) * dist, cy + pitchY, cz + Math.cos(yaw) * dist];
+    const target: Vec3 = [cx, cy + 2, cz];
+    const aspect = canvas.width / Math.max(1, canvas.height);
+    const vp = mul(persp(0.72, aspect, 0.5, 300), look(eye, target, [0, 1, 0]));
+    renderer.setVP(vp);
     renderer.frame({ r: 0.043, g: 0.039, b: 0.035, a: 1 });
     requestAnimationFrame(draw);
   }
