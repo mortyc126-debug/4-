@@ -143,8 +143,6 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #main{flex:1;display:flex;min-height:0}
 
 #chart{flex:1;position:relative;min-width:0;background:var(--wood-deep);overflow:hidden}
-#map{display:block;width:100%;height:100%;touch-action:none;cursor:crosshair}
-#map.grabbing{cursor:grabbing}
 /* Виньетка свечи: край стола уходит в темноту */
 #chart::after{content:"";position:absolute;inset:0;pointer-events:none;
   background:radial-gradient(125% 95% at 50% 45%,transparent 62%,rgba(8,5,2,.30) 100%);
@@ -604,7 +602,6 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 
   <div id="main">
     <div id="chart">
-      <canvas id="map"></canvas>
       <div id="key" class="plate">
         <span class="kl">Знамёна</span>
         <span class="kr"><svg class="sh" viewBox="0 0 12 15"><path d="M1 1h10v8.2C11 12 6 14 6 14S1 12 1 9.2Z" fill="#d9b14b" stroke="#c2993c"/></svg>Люди</span>
@@ -2819,9 +2816,12 @@ const RMAP  ={food:"#a8c96a",wood:"#c68d4e",stone:"#b3bcc9",gold:"#f0c757"};
 const GILT="#c2993c", GILT_HI="#e6c273", VELLUM="#ece2ca", GARNET="#96323b";
 
 const FONT=getComputedStyle(document.body).fontFamily;   // читаем один раз, не каждый кадр
-const cv=$("#map"), g=cv.getContext("2d");
 const mini=$("#mini"), mg=mini.getContext("2d");
-let view={x:0,y:0,z:8}, drag=null, sel=null, hover=null;
+// sel — какая клетка сейчас выбрана — раньше выставлял только клик по
+// большой 2D-карте (#map, удалена вместе с draw()/pointer-обработчиками),
+// теперь его так же пишет 3D-вкладка (см. renderCartoucheFor, вызывается
+// из obyom-3d-infinite.html при тапе по замку/лагерю/точке).
+let sel=null;
 let tab="city", tempo=1, lastReal=Date.now(), lastFolio="", lastMenuBody="", academyTab="mil", invTab="res", genTab="overview";
 
 /* ---- Рельеф в буфер ---------------------------------------------------- */
@@ -2874,237 +2874,18 @@ function buildTerrain(){
 
 /* ---- Геометрия экрана ---- */
 function resize(){
-  const r=cv.parentElement.getBoundingClientRect(), dpr=Math.min(2,window.devicePixelRatio||1);
-  cv.width=Math.round(r.width*dpr); cv.height=Math.round(r.height*dpr);
-  g.setTransform(dpr,0,0,dpr,0,0); cv._w=r.width; cv._h=r.height;
+  const dpr=Math.min(2,window.devicePixelRatio||1);
   const m=mini.getBoundingClientRect();
   mini.width=Math.round(m.width*dpr); mini.height=Math.round(m.height*dpr);
   mg.setTransform(dpr,0,0,dpr,0,0); mini._w=m.width; mini._h=m.height;
 }
-const SX=x=>(x-view.x)*view.z, SY=y=>(y-view.y)*view.z;
-function centerOn(x,y){ view.x=x-cv._w/2/view.z; view.y=y-cv._h/2/view.z; clampView() }
-function clampView(){
-  const pad=1.5;
-  view.x=Math.max(-pad,Math.min(CFG.MAP+pad-cv._w/view.z,view.x));
-  view.y=Math.max(-pad,Math.min(CFG.MAP+pad-cv._h/view.z,view.y));
-}
-
-/* ---- Гербовый щит ---- */
-function shield(c,cx,cy,w,h,fill,edge,lw){
-  c.beginPath();
-  const l=cx-w/2, r=cx+w/2, t=cy-h/2, b=cy+h/2, sh=t+h*0.58;
-  c.moveTo(l,t); c.lineTo(r,t); c.lineTo(r,sh);
-  c.quadraticCurveTo(r,b-h*0.06, cx,b); c.quadraticCurveTo(l,b-h*0.06, l,sh);
-  c.closePath();
-  c.fillStyle=fill; c.fill();
-  if(edge){ c.strokeStyle=edge; c.lineWidth=lw||1.2; c.stroke() }
-}
-/* ---- Значки ресурсных точек ---- */
-function glyph(c,kind,cx,cy,s,col){
-  c.save();
-  c.shadowColor="rgba(0,0,0,.75)"; c.shadowBlur=Math.max(2,s*.5); c.shadowOffsetY=1;
-  c.strokeStyle=col; c.fillStyle=col; c.lineWidth=Math.max(1.2,s*0.17); c.lineCap="round";
-  if(kind==="food"){                               // сноп
-    c.beginPath();
-    for(const a of [-0.42,0,0.42]){ c.moveTo(cx-Math.sin(a)*s*.5,cy+s*.55);
-      c.lineTo(cx+Math.sin(a)*s*.55,cy-s*.6) }
-    c.stroke();
-    c.beginPath(); c.moveTo(cx-s*.42,cy+s*.12); c.lineTo(cx+s*.42,cy+s*.12); c.stroke();
-  } else if(kind==="wood"){                        // дерево
-    c.beginPath(); c.moveTo(cx,cy-s*.65); c.lineTo(cx+s*.5,cy+s*.2);
-    c.lineTo(cx-s*.5,cy+s*.2); c.closePath(); c.fill();
-    c.beginPath(); c.moveTo(cx,cy+s*.2); c.lineTo(cx,cy+s*.62); c.stroke();
-  } else if(kind==="stone"){                       // глыба
-    c.beginPath(); c.moveTo(cx-s*.55,cy+s*.45); c.lineTo(cx-s*.3,cy-s*.4);
-    c.lineTo(cx+s*.25,cy-s*.55); c.lineTo(cx+s*.58,cy+s*.1);
-    c.lineTo(cx+s*.3,cy+s*.5); c.closePath(); c.fill();
-  } else {                                         // монета
-    c.beginPath(); c.arc(cx,cy,s*.52,0,7); c.fill();
-    c.shadowColor="transparent";
-    c.strokeStyle="rgba(0,0,0,.5)"; c.lineWidth=Math.max(1,s*.13);
-    c.beginPath(); c.arc(cx,cy,s*.27,0,7); c.stroke();
-  }
-  c.restore();
-}
-function camp(c,cx,cy,s,fort){
-  c.save();
-  c.shadowColor="rgba(0,0,0,.7)"; c.shadowBlur=Math.max(2,s*.45); c.shadowOffsetY=1;
-  if(fort){                                        // форт с зубцами
-    c.fillStyle="#7a6134"; c.strokeStyle="#4a3a1d"; c.lineWidth=1;
-    const w=s*1.05,h=s*.85;
-    c.beginPath(); c.rect(cx-w/2,cy-h/2+h*.22,w,h*.78); c.fill(); c.stroke();
-    for(let i=0;i<3;i++){ const bw=w/5;
-      c.beginPath(); c.rect(cx-w/2+i*bw*2,cy-h/2,bw,h*.3); c.fill(); c.stroke() }
-  } else {                                         // палатка
-    c.fillStyle="#6a5530"; c.strokeStyle="#42341a"; c.lineWidth=1;
-    c.beginPath(); c.moveTo(cx,cy-s*.6); c.lineTo(cx+s*.62,cy+s*.5);
-    c.lineTo(cx-s*.62,cy+s*.5); c.closePath(); c.fill(); c.stroke();
-  }
-  c.restore();
-}
-// подпись с тёмной подложкой — иначе цифры теряются на рельефе
-function tagText(c,txt,cx,cy,size,col){
-  c.font=size+"px ui-monospace,monospace"; c.textAlign="center";
-  const w=c.measureText(txt).width;
-  c.fillStyle="rgba(10,7,3,.62)";
-  c.fillRect(cx-w/2-3,cy-size*.82,w+6,size+3);
-  c.fillStyle=col; c.fillText(txt,cx,cy);
-}
-
-/* ---- Главная отрисовка ---- */
-function draw(){
-  const w=cv._w,h=cv._h,z=view.z;
-  g.clearRect(0,0,w,h);
-  g.fillStyle="#100c08"; g.fillRect(0,0,w,h);
-
-  // рельеф: растянутый буфер даёт мягкую акварельную заливку
-  g.imageSmoothingEnabled=true; g.imageSmoothingQuality="high";
-  g.drawImage(terrain, SX(0),SY(0), CFG.MAP*z, CFG.MAP*z);
-
-  const x0=Math.max(0,Math.floor(view.x)-1), x1=Math.min(CFG.MAP,Math.ceil(view.x+w/z)+1);
-  const y0=Math.max(0,Math.floor(view.y)-1), y1=Math.min(CFG.MAP,Math.ceil(view.y+h/z)+1);
-
-  // кольца областей — чем ближе к сердцу, тем богаче земли
-  g.save(); g.strokeStyle="rgba(226,196,133,.13)"; g.lineWidth=1; g.setLineDash([7,9]);
-  for(let k=1;k<=4;k++){
-    g.beginPath();
-    g.arc(SX(CFG.MAP/2),SY(CFG.MAP/2),(CFG.MAP/2)*(k/5)*z,0,7); g.stroke();
-  }
-  g.restore();
-
-  // сетка проступает только вблизи
-  if(z>=13){
-    g.strokeStyle="rgba(0,0,0,.16)"; g.lineWidth=1; g.beginPath();
-    for(let x=x0;x<=x1;x++){ g.moveTo(Math.round(SX(x))+.5,SY(y0)); g.lineTo(Math.round(SX(x))+.5,SY(y1)) }
-    for(let y=y0;y<=y1;y++){ g.moveTo(SX(x0),Math.round(SY(y))+.5); g.lineTo(SX(x1),Math.round(SY(y))+.5) }
-    g.stroke();
-  }
-  // граница обжитого мира
-  g.strokeStyle="rgba(226,196,133,.22)"; g.lineWidth=1.5;
-  g.strokeRect(SX(0),SY(0),CFG.MAP*z,CFG.MAP*z);
-
-  // объекты
-  const cities=[];
-  for(const k in W.map){
-    const o=W.map[k];
-    if(o.x<x0-2||o.x>x1+2||o.y<y0-2||o.y>y1+2) continue;
-    const cx=SX(o.x)+z/2, cy=SY(o.y)+z/2;
-    if(o.t==="node"){
-      if(z<7){ g.fillStyle=RMAP[o.res]; const s=Math.max(2,z*.34);
-        g.fillRect(cx-s/2,cy-s/2,s,s) }
-      else glyph(g,o.res,cx,cy,z*(0.30+o.lv*0.055),RMAP[o.res]);
-      if(z>=17) tagText(g,o.lv,cx,cy+z*.68,9,"rgba(236,226,202,.72)");
-    } else if(o.t==="camp"||o.t==="fort"){
-      if(z<6){ g.fillStyle=o.t==="fort"?"#8a6a3a":"#5f4d2c";
-        g.fillRect(cx-z*.2,cy-z*.2,z*.4,z*.4) }
-      else camp(g,cx,cy,z*(o.t==="fort"?.72:.55),o.t==="fort");
-      if(z>=13) tagText(g,o.lv,cx,cy+z*.82,z>=20?11:9,
-        o.t==="fort"?"#e8bd7a":"rgba(236,226,202,.8)");
-    } else if(o.t==="city") cities.push(o);
-  }
-
-  // марши: линия туши, по ней ползёт восковая печать
-  W.marches.forEach(m=>{
-    const p=W.players.find(q=>q.id===m.pid); if(!p) return;
-    const mine=!p.isBot;
-    const from = m.state==="back" ? {x:m.tx,y:m.ty} : {x:m.x0,y:m.y0};
-    const to   = m.state==="back" ? {x:p.x,y:p.y}   : {x:m.tx,y:m.ty};
-    const a=marchPos(m);
-    g.save();
-    g.strokeStyle = mine?"rgba(238,206,130,.62)":"rgba(196,74,84,.55)";
-    g.lineWidth=mine?1.9:1.5; g.setLineDash([5,6]); g.lineDashOffset=-(W.t*0.6)%11;
-    g.beginPath(); g.moveTo(SX(from.x)+z/2,SY(from.y)+z/2);
-    g.lineTo(SX(to.x)+z/2,SY(to.y)+z/2); g.stroke();
-    g.restore();
-    const px=SX(a.x)+z/2, py=SY(a.y)+z/2, rr=Math.max(3,z*.24);
-    g.fillStyle=mine?"#c2993c":"#8f2f38";
-    g.beginPath(); g.arc(px,py,rr,0,7); g.fill();
-    g.strokeStyle="rgba(0,0,0,.5)"; g.lineWidth=1; g.stroke();
-    g.strokeStyle=mine?"rgba(255,236,190,.75)":"rgba(255,190,190,.6)";
-    g.lineWidth=Math.max(1,rr*.28);
-    g.beginPath(); g.moveTo(px-rr*.4,py); g.lineTo(px+rr*.4,py);
-    g.moveTo(px,py-rr*.4); g.lineTo(px,py+rr*.4); g.stroke();
-  });
-
-  // города рисуем поверх всего
-  cities.forEach(o=>{
-    const p=W.players.find(q=>q.id===o.pid); if(!p) return;
-    const cx=SX(o.x)+z/2, cy=SY(o.y)+z/2;
-    const scale=z*(0.62+citySize(p.b.hall)*0.14);
-    const own=!p.isBot;
-    g.save();
-    g.shadowColor="rgba(0,0,0,.65)"; g.shadowBlur=z*.35; g.shadowOffsetY=z*.08;
-    shield(g,cx,cy,scale*.8,scale,TINCT[p.race],own?GILT_HI:"rgba(0,0,0,.55)",own?1.8:1.1);
-    g.restore();
-    if(own){                                  // своё знамя на древке
-      g.strokeStyle=GILT_HI; g.lineWidth=1.4;
-      g.beginPath(); g.moveTo(cx,cy-scale*.5); g.lineTo(cx,cy-scale*1.15); g.stroke();
-      g.fillStyle=GILT_HI;
-      g.beginPath(); g.moveTo(cx,cy-scale*1.15); g.lineTo(cx+scale*.5,cy-scale*1.0);
-      g.lineTo(cx,cy-scale*.85); g.closePath(); g.fill();
-    }
-    if(W.t<p.shieldUntil){                    // щит мира — стеклянный купол
-      g.strokeStyle="rgba(122,178,224,.85)"; g.lineWidth=1.4;
-      g.beginPath(); g.arc(cx,cy,scale*.95,Math.PI,0); g.stroke();
-      g.strokeStyle="rgba(122,178,224,.3)";
-      g.beginPath(); g.arc(cx,cy,scale*.95,0,Math.PI); g.stroke();
-    }
-    if(z>=10){
-      g.font="500 "+Math.min(13,Math.max(10,z*.42))+"px "+FONT;
-      g.textAlign="center";
-      const label=p.name;
-      const tw=g.measureText(label).width;
-      g.fillStyle="rgba(12,8,4,.6)";
-      g.fillRect(cx-tw/2-4,cy+scale*.62,tw+8,15);
-      g.fillStyle=own?GILT_HI:"rgba(236,226,202,.82)";
-      g.fillText(label,cx,cy+scale*.62+11);
-    }
-  });
-
-  // прицел под курсором и выбранная клетка
-  if(hover&&!drag){
-    g.strokeStyle="rgba(226,194,115,.4)"; g.lineWidth=1;
-    g.strokeRect(Math.round(SX(hover.x))+.5,Math.round(SY(hover.y))+.5,z,z);
-  }
-  if(sel){
-    const sx=SX(sel.x), sy=SY(sel.y), c=z*.34;
-    g.strokeStyle=GILT_HI; g.lineWidth=1.8;
-    g.beginPath();
-    g.moveTo(sx,sy+c); g.lineTo(sx,sy); g.lineTo(sx+c,sy);
-    g.moveTo(sx+z-c,sy); g.lineTo(sx+z,sy); g.lineTo(sx+z,sy+c);
-    g.moveTo(sx+z,sy+z-c); g.lineTo(sx+z,sy+z); g.lineTo(sx+z-c,sy+z);
-    g.moveTo(sx+c,sy+z); g.lineTo(sx,sy+z); g.lineTo(sx,sy+z-c);
-    g.stroke();
-  }
-  compass(w,h); scaleBar(w,h);
-}
-
-/* ---- Роза ветров и масштабная линейка ---- */
-function compass(w,h){
-  const cx=w/2, cy=34, R=17;
-  g.save(); g.translate(cx,cy);
-  g.strokeStyle="rgba(226,196,133,.42)"; g.lineWidth=1.2;
-  g.beginPath(); g.arc(0,0,R,0,7); g.stroke();
-  g.beginPath(); g.arc(0,0,R*.62,0,7); g.stroke();
-  for(let i=0;i<4;i++){
-    g.rotate(Math.PI/2);
-    g.fillStyle=i===3?"rgba(240,212,140,.95)":"rgba(226,196,133,.5)";
-    g.beginPath(); g.moveTo(0,-R); g.lineTo(R*.19,0); g.lineTo(0,R*.2); g.lineTo(-R*.19,0);
-    g.closePath(); g.fill();
-  }
-  g.restore();
-  g.fillStyle="rgba(226,194,115,.7)"; g.textAlign="center";
-  g.font="10px "+FONT;
-  g.fillText("С",cx,cy-R-5);
-}
-function scaleBar(w,h){
-  const target=110, cells=Math.max(1,Math.round(target/view.z)), px=cells*view.z;
-  const x=w/2-px/2, y=h-24;
-  g.strokeStyle="rgba(226,196,133,.4)"; g.lineWidth=1;
-  g.beginPath(); g.moveTo(x,y-4); g.lineTo(x,y); g.lineTo(x+px,y); g.lineTo(x+px,y-4); g.stroke();
-  g.fillStyle="rgba(226,196,133,.55)"; g.textAlign="center";
-  g.font="10px ui-monospace,monospace";
-  g.fillText(cells+" клеток",x+px/2,y-8);
+// "Взгляд" теперь всегда 3D-камера — центрируем её на (x,y), а не двигаем
+// координаты давно удалённой 2D-канвы. Вызывающим (телепорт столицы, клик
+// по миникарте, кнопка "к своему городу" и т.п.) не пришлось меняться —
+// они как звали centerOn(x,y), так и зовут, изменилась только реализация.
+function centerOn(x,y){
+  const w=world3dWin();
+  if(w){ w.cam.tx=x; w.cam.tz=y; w.cam.ty=w.H(x,y)+15; }
 }
 
 /* ---- Миникарта ---- */
@@ -3125,15 +2906,9 @@ function drawMini(){
     mg.fillStyle=TINCT[p.race]; mg.fill();
     if(own){ mg.strokeStyle=GILT_HI; mg.lineWidth=1.4; mg.stroke() }
   });
-  // Рамка "что сейчас видно" была честной для плоской 2D-камеры (view.x/y/z),
-  // но для перспективной 3D-камеры видимая на земле область — не
-  // прямоугольник, подделывать не будем: когда 3D-вкладка активна, эта
-  // рамка была бы просто неверной (жила бы своей жизнью, не совпадая с тем,
-  // что реально на экране), поэтому там её не рисуем.
-  if(!world3dWin()){
-    mg.strokeStyle="rgba(226,194,115,.85)"; mg.lineWidth=1;
-    mg.strokeRect(view.x*s,view.y*s,(cv._w/view.z)*s,(cv._h/view.z)*s);
-  }
+  // Рамку "что сейчас видно" тут больше не рисуем: она была честной для
+  // плоской 2D-камеры (по view.x/y/z), а для перспективной 3D-камеры
+  // видимая на земле область — не прямоугольник, подделывать не будем.
 }
 
 /* =========================================================================
@@ -4406,8 +4181,8 @@ function toggleView(){
   img.src = showingCity ? "images/ui/icon-city.png" : "images/ui/icon-world.png";
   img.alt = showingCity ? "Город" : "Мир";
   if(showingCity){
-    // #chart (и его канвасы) были display:none — их пиксельный размер ещё не мерился
-    requestAnimationFrame(()=>{ resize(); clampView(); draw(); drawMini(); });
+    // #chart (и миникарта внутри) была display:none — её пиксельный размер ещё не мерился
+    requestAnimationFrame(()=>{ resize(); drawMini(); });
     // 3D-мир грузим лениво, при первом заходе во вкладку — ни к чему тянуть
     // WebGL2, воркеры и модели замков, пока игрок вообще не открыл "Мир".
     const w3d=$("#world3d");
@@ -4724,51 +4499,18 @@ $("#menu-modal").addEventListener("click",handleAct);
 $("#view-toggle").addEventListener("click",toggleView);
 $("#crest").addEventListener("click",()=>openMenuModal("profile"));
 
-/* ---- Чертёж: мышь, палец, колесо ---- */
-const ptr=e=>{ const r=cv.getBoundingClientRect(); return {x:e.clientX-r.left,y:e.clientY-r.top} };
-function cellAt(px,py){
-  const x=Math.floor(view.x+px/view.z), y=Math.floor(view.y+py/view.z);
-  return (x<0||y<0||x>=CFG.MAP||y>=CFG.MAP)?null:{x,y};
-}
-cv.addEventListener("pointerdown",e=>{
-  cv.setPointerCapture(e.pointerId);
-  const q=ptr(e); drag={x:q.x,y:q.y,vx:view.x,vy:view.y,moved:false};
-  cv.classList.add("grabbing");
-});
-cv.addEventListener("pointermove",e=>{
-  const q=ptr(e);
-  if(drag){
-    if(Math.abs(q.x-drag.x)+Math.abs(q.y-drag.y)>4) drag.moved=true;
-    view.x=drag.vx-(q.x-drag.x)/view.z; view.y=drag.vy-(q.y-drag.y)/view.z;
-    clampView();
-  } else hover=cellAt(q.x,q.y);
-});
-cv.addEventListener("pointerleave",()=>{ hover=null });
-cv.addEventListener("pointerup",e=>{
-  cv.classList.remove("grabbing");
-  if(drag&&!drag.moved){
-    const c=cellAt(ptr(e).x,ptr(e).y);
-    if(c){ sel=c; renderCartouche() }
-  }
-  drag=null;
-});
-cv.addEventListener("pointercancel",()=>{ drag=null; cv.classList.remove("grabbing") });
-cv.addEventListener("dblclick",e=>{
-  const c=cellAt(ptr(e).x,ptr(e).y);
-  if(c){ sel=c; renderCartouche();
-    const o=W.map[key(c.x,c.y)];
-    if(o&&!(o.t==="city"&&o.pid===me().id)) openLevy(c.x,c.y) }
-});
-cv.addEventListener("wheel",e=>{
-  e.preventDefault();
-  const q=ptr(e), wx=view.x+q.x/view.z, wy=view.y+q.y/view.z;
-  view.z=clamp(view.z*(e.deltaY<0?1.16:.862),3,40);
-  view.x=wx-q.x/view.z; view.y=wy-q.y/view.z; clampView();
-},{passive:false});
-
+// Двойной тап по чужой клетке в 3D сразу открывал лист похода (openLevy) —
+// удобный ярлык поверх обычного тапа+кнопки в cartouche, но не необходимый:
+// то же действие всегда доступно кнопкой "Выступить"/"Идти войной" в самой
+// панели. Раз этого жеста в 3D нет, ярлык не восстанавливаем — усложнять
+// жестовый слой ради необязательного сокращения пути не стоит.
+// f — тот же множитель, что и раньше (1.35 — "ближе", 1/1.35 — "дальше"),
+// только теперь он делит cam.dist, а не умножает view.z: у 3D-камеры меньше
+// расстояние — значит ближе, обратная логика по сравнению со старым
+// "клеток на пиксель" у 2D.
 function zoomAt(f){
-  const cx=view.x+cv._w/2/view.z, cy=view.y+cv._h/2/view.z;
-  view.z=clamp(view.z*f,3,40); centerOn(cx,cy);
+  const w=world3dWin();
+  if(w) w.cam.dist=Math.max(9,Math.min(240,w.cam.dist/f));
 }
 // Когда открыта вкладка "Мир", те же три кнопки должны крутить 3D-камеру, а
 // не невидимую 2D-канву позади неё. iframe#world3d — тот же origin, поэтому
@@ -4782,25 +4524,14 @@ function world3dWin(){
   try{ return (f && f.contentWindow && f.contentWindow.cam) ? f.contentWindow : null; }
   catch(_){ return null; }
 }
-$("#t-in").onclick=()=>{
-  const w=world3dWin();
-  if(w){ w.cam.dist=Math.max(9,Math.min(240,w.cam.dist*0.87)); return; }
-  zoomAt(1.35);
-};
-$("#t-out").onclick=()=>{
-  const w=world3dWin();
-  if(w){ w.cam.dist=Math.max(9,Math.min(240,w.cam.dist*1.15)); return; }
-  zoomAt(1/1.35);
-};
+$("#t-in").onclick=()=>zoomAt(1.35);
+$("#t-out").onclick=()=>zoomAt(1/1.35);
 $("#t-home").onclick=()=>{
+  const p=me();
+  centerOn(p.x,p.y);
   const w=world3dWin();
-  if(w){
-    const p=me();
-    w.cam.tx=p.x; w.cam.tz=p.y; w.cam.ty=w.H(p.x,p.y)+15; w.cam.dist=40; w.cam.pitch=0.5;
-    renderCartoucheFor(p.x,p.y);
-    return;
-  }
-  centerOn(me().x,me().y); sel={x:me().x,y:me().y}; renderCartouche();
+  if(w){ w.cam.dist=40; w.cam.pitch=0.5; }   // облёт пошире, не тот же, что у обычного тапа
+  renderCartoucheFor(p.x,p.y);
 };
 $("#tempo").onchange=e=>{ tempo=+e.target.value };
 
@@ -4823,7 +4554,7 @@ window.addEventListener("keydown",e=>{
   }
 });
 $("#veil").onclick=e=>{ if(e.target.id==="veil") closeScroll() };
-window.addEventListener("resize",()=>{ resize(); clampView() });
+window.addEventListener("resize",resize);
 
 /* =========================================================================
    ГЛАВНЫЙ ЦИКЛ
@@ -4833,7 +4564,7 @@ function frame(){
   const now=Date.now();
   let dt=(now-lastReal)/1000; lastReal=now;
   if(dt>0){ advanceTo(W.t+dt*tempo); sinceSave+=Math.min(dt,3600); sinceUi+=dt }
-  draw(); drawMini();
+  drawMini();
   if(sinceUi>1.0){ sinceUi=0; renderTop(); renderFolio(); renderCartouche(); refreshOpenModal() }
   if(sinceSave>20){ sinceSave=0; save() }
   requestAnimationFrame(frame);
@@ -4858,7 +4589,7 @@ window.addEventListener("beforeunload",()=>{
   if(!ok) genWorld(Date.now()&0xffffff);
   buildTerrain();
   const p=me();
-  view.z=16; centerOn(p.x,p.y); sel={x:p.x,y:p.y};
+  centerOn(p.x,p.y); sel={x:p.x,y:p.y};
   syncRibbons(); renderTop(); renderFolio(); renderCartouche();
   lastReal=Date.now();
   requestAnimationFrame(frame);
