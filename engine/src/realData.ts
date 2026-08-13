@@ -10,6 +10,7 @@
    ========================================================================= */
 
 export interface RealEntity {
+  key: string; // ключ клетки карты ("x,y" — тот же, что и W.map) — стабильный id для живой синхронизации в main.ts
   x: number;
   y: number;
   kind: 0 | 1 | 2; // 0=город 1=лагерь/форт 2=точка ресурсов
@@ -56,14 +57,14 @@ export function loadRealEntities(): RealEntity[] | null {
       const epoch = pl ? Math.max(1, Math.min(5, epochOf(pl.b.hall))) : 1;
       const own = W.players[0] && pl && pl.id === W.players[0].id;
       const label = (pl ? pl.nick ?? "?" : "?") + (pl ? " · Ратуша " + pl.b.hall : "");
-      out.push({ x: o.x + 0.5, y: o.y + 0.5, kind: 0, model: `/models/castles/${race}-${epoch}.glb`, scale: 10, own, label });
+      out.push({ key, x: o.x + 0.5, y: o.y + 0.5, kind: 0, model: `/models/castles/${race}-${epoch}.glb`, scale: 10, own, label });
     } else if (o.t === "camp" || o.t === "fort") {
       const label = (o.t === "fort" ? "Форт" : "Лагерь") + " варваров · ур. " + (o.lv ?? "?");
-      out.push({ x: o.x + 0.5, y: o.y + 0.5, kind: 1, model: "/models/camps/barbarians.glb", scale: o.t === "fort" ? 6.5 : 5, label });
+      out.push({ key, x: o.x + 0.5, y: o.y + 0.5, kind: 1, model: "/models/camps/barbarians.glb", scale: o.t === "fort" ? 6.5 : 5, label });
     } else if (o.t === "node") {
       const type = REAL_RES_MAP[o.res] || "farm";
       const label = (RES_SITE_NAME[o.res] || "Точка") + " · ур. " + (o.lv ?? "?");
-      out.push({ x: o.x + 0.5, y: o.y + 0.5, kind: 2, model: `/models/resources/${type}.glb`, scale: 5, label });
+      out.push({ key, x: o.x + 0.5, y: o.y + 0.5, kind: 2, model: `/models/resources/${type}.glb`, scale: 5, label });
     }
   }
   return out;
