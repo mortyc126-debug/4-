@@ -3265,6 +3265,12 @@ function renderCartouche(){
             :"<button class='seal wide blood' style='margin-top:9px' data-act='march' data-x='"+o.x+"' data-y='"+o.y+"'>Идти войной</button>")));
   }
 }
+// Обёртка для 3D-вкладки: тап по замку/лагерю/точке там вызывает её через
+// window.parent (см. tryTap в obyom-3d-infinite.html) — сам штабной стол
+// (#cartouche) целиком принадлежит ЭТОЙ странице, 3D просто говорит "выбрана
+// вот эта клетка", а рисует и обрабатывает клики по кнопкам уже здесь, как и
+// для 2D-карты.
+function renderCartoucheFor(x,y){ sel={x,y}; renderCartouche(); }
 
 /* ---- Город ---- */
 function cityCellLevel(p,c){

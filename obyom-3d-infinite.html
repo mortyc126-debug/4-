@@ -1720,7 +1720,17 @@ function tryTap(clientX,clientY){
       }
     }
   }
-  if(best) goToCity(best);
+  if(!best) return;
+  goToCity(best);
+  // Реальные данные — значит есть настоящий "штабной стол" в родительском
+  // окне (см. renderCartoucheFor в index.html): отдаём ему клетку, панель и
+  // кнопки марша/атаки рисует и обрабатывает уже родитель, тут дублировать
+  // нечего. Координаты объекта — центр клетки (см. buildRealCandidate,
+  // x=o.x+0.5), Math.floor возвращает исходную целую клетку W.map.
+  if(realIndex){
+    try{ window.parent.renderCartoucheFor(Math.floor(best.x), Math.floor(best.z)); }
+    catch(_){ /* родителя нет/не дотянуться — тап всё равно отработал полётом камеры */ }
+  }
 }
 function goHome(){ cam.tx=SPAWN.x; cam.tz=SPAWN.y; cam.ty=H(SPAWN.x,SPAWN.y)+2;
   cam.dist=95; cam.pitch=0.45 }
