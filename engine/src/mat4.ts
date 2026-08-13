@@ -40,6 +40,20 @@ export function persp(fovy: number, aspect: number, near: number, far: number): 
   ]);
 }
 
+// Модельная матрица: масштаб -> поворот по Y (yaw) -> перенос. Урезанный
+// вариант M4.modelTilt из obyom-3d-infinite.html без наклона по XZ — тот
+// нужен был только для процедурной посадки на негладкий рельеф, здесь
+// пока не требуется.
+export function modelMatrix(tx: number, ty: number, tz: number, yaw: number, scale: number): Mat4 {
+  const cy = Math.cos(yaw), sy = Math.sin(yaw);
+  return new Float32Array([
+    cy * scale, 0, -sy * scale, 0,
+    0, scale, 0, 0,
+    sy * scale, 0, cy * scale, 0,
+    tx, ty, tz, 1,
+  ]);
+}
+
 export function look(eye: Vec3, center: Vec3, up: Vec3): Mat4 {
   const z = norm(sub(eye, center));
   const x = norm(cross(up, z));

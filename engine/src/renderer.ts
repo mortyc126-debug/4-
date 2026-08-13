@@ -54,7 +54,11 @@ export interface Renderer {
   setTerrain(mesh: MeshData): void;
   setMarkers(entities: MarkerEntity[]): void;
   setVP(vp: Float32Array): void;
-  frame(clearColor: GPUColorDict): void;
+  // drawExtra — вызывается ВНУТРИ того же render pass, что рельеф и маркеры
+  // (общий depth-буфер, единая VP-камера), после них: сюда вешаются
+  // настоящие .glb-модели (см. main.ts/modelRenderer.ts) без отдельного
+  // прохода ради экономии на очистке/depth-тексте.
+  frame(clearColor: GPUColorDict, drawExtra?: (pass: GPURenderPassEncoder) => void): void;
 }
 
 // Простая "метка-пирамидка" остриём вверх — 4 боковые грани, без дна
@@ -197,7 +201,7 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
     device.queue.writeBuffer(uniformBuf, 0, vp);
   }
 
-  function frame(clearColor: GPUColorDict) {
+  function frame(clearColor: GPUColorDict, drawExtra?: (pass: GPURenderPassEncoder) => void) {
     ensureDepth();
     const encoder = device.createCommandEncoder();
     const view = ctx.getCurrentTexture().createView();
@@ -226,6 +230,8 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
       pass.setVertexBuffer(1, instBuf);
       pass.draw(PIN_VERTS, instanceCount);
     }
+
+    drawExtra?.(pass);
 
     pass.end();
     device.queue.submit([encoder.finish()]);

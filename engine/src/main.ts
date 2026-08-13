@@ -10,8 +10,10 @@ import { createWorld, addEntity, addComponent, query } from "bitecs";
 import { createRenderer, type MarkerEntity } from "./renderer";
 import { buildTerrainPatch } from "./terrainMesh";
 import { heightAt, HMAX } from "./terrain";
-import { mul, persp, look, type Vec3 } from "./mat4";
+import { mul, persp, look, modelMatrix, type Vec3 } from "./mat4";
 import { attachOrbitControls, type OrbitCamera } from "./camera";
+import { loadGLB } from "./glb";
+import { uploadGLB, createModelPipeline, type GpuModel } from "./modelRenderer";
 
 const statusEl = document.getElementById("status") as HTMLDivElement;
 function setStatus(lines: string[]) {
@@ -84,12 +86,46 @@ async function main() {
   const renderer = createRenderer(device, ctx, format);
   renderer.setTerrain(mesh);
 
-  const markers: MarkerEntity[] = found.map((eid) => {
-    const wx = Position.x[eid], wz = Position.y[eid];
-    const groundY = heightAt(wx, wz) * HMAX;
-    return { x: wx, y: groundY, z: wz, color: KIND_COLOR[Kind.value[eid]] };
-  });
+  // Город (kind=0) получит настоящую 3D-модель замка вместо метки-
+  // пирамидки, как только она догрузится — метками остаются только
+  // лагерь/точка, у них до модели дело дойдёт отдельным шагом.
+  const markers: MarkerEntity[] = found
+    .filter((eid) => Kind.value[eid] !== 0)
+    .map((eid) => {
+      const wx = Position.x[eid], wz = Position.y[eid];
+      const groundY = heightAt(wx, wz) * HMAX;
+      return { x: wx, y: groundY, z: wz, color: KIND_COLOR[Kind.value[eid]] };
+    });
   renderer.setMarkers(markers);
+
+  // ---- настоящая модель замка (тот же .glb, что и в живой игре) ----
+  // Путь абсолютный от корня сайта: этот прототип живёт в /engine/dist/,
+  // а модели — в /models/ у корня репозитория, который Render отдаёт
+  // целиком как одну статику. Грузим и закачиваем в GPU ДО первого кадра
+  // цикла отрисовки, не параллельно с ним: в тестах загрузка текстуры
+  // ПОСЛЕ нескольких секунд непрерывного рендера стабильно валила
+  // WebGPU-соединение именно в этой песочнице ("A valid external Instance
+  // reference no longer exists") — тот же вызов, с тем же файлом, отрабатывал
+  // без единой ошибки, если делался до старта цикла. Не тратить GPU на
+  // рендер кадров, пока критичный ассет ещё не готов, — разумно само по
+  // себе, а не только обход именно этой особенности песочницы.
+  const cityEid = found.find((eid) => Kind.value[eid] === 0);
+  let cityModel: GpuModel | null = null;
+  let cityModelMat: Float32Array | null = null;
+  const modelPipeline = createModelPipeline(device, format);
+  if (cityEid !== undefined) {
+    const wx = Position.x[cityEid], wz = Position.y[cityEid];
+    const groundY = heightAt(wx, wz) * HMAX;
+    cityModelMat = modelMatrix(wx, groundY, wz, 0, 10);
+    try {
+      const parsed = await loadGLB("/models/castles/human-1.glb");
+      cityModel = await uploadGLB(device, parsed);
+      lines.push("модель замка: human-1.glb загружена");
+    } catch (err) {
+      lines.push("модель замка: ошибка — " + (err instanceof Error ? err.message : String(err)));
+    }
+    setStatus(lines);
+  }
 
   // ---- камера: орбита вокруг центра патча, теперь управляемая —
   // перетаскивание вращает, колесо/щипок масштабирует (см. camera.ts).
@@ -110,7 +146,9 @@ async function main() {
     const aspect = canvas.width / Math.max(1, canvas.height);
     const vp = mul(persp(0.72, aspect, 0.5, 300), look(eye, cam.target, [0, 1, 0]));
     renderer.setVP(vp);
-    renderer.frame({ r: 0.043, g: 0.039, b: 0.035, a: 1 });
+    renderer.frame({ r: 0.043, g: 0.039, b: 0.035, a: 1 }, (pass) => {
+      if (cityModel && cityModelMat) modelPipeline.draw(pass, cityModel, vp, cityModelMat);
+    });
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
