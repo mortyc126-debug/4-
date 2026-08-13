@@ -11,6 +11,7 @@ import { createRenderer, type MarkerEntity } from "./renderer";
 import { buildTerrainPatch } from "./terrainMesh";
 import { heightAt, HMAX } from "./terrain";
 import { mul, persp, look, type Vec3 } from "./mat4";
+import { attachOrbitControls, type OrbitCamera } from "./camera";
 
 const statusEl = document.getElementById("status") as HTMLDivElement;
 function setStatus(lines: string[]) {
@@ -90,19 +91,24 @@ async function main() {
   });
   renderer.setMarkers(markers);
 
-  // ---- камера: медленная орбита вокруг центра патча — то же ощущение
-  // "облёта города", что и в живой игре, без ввода пользователя (это ещё
-  // не интерактивный шаг, только показать честную перспективу). ----
+  // ---- камера: орбита вокруг центра патча, теперь управляемая —
+  // перетаскивание вращает, колесо/щипок масштабирует (см. camera.ts).
+  // Пока не тронули экран — тихо продолжает медленный автооблёт из
+  // прошлого шага, чтобы страница не выглядела застывшей картинкой.
   const cx = (PATCH.x0 + PATCH.x1) / 2, cz = (PATCH.y0 + PATCH.y1) / 2;
   const cy = heightAt(cx, cz) * HMAX;
-  const dist = 42, pitchY = 26;
+  const cam: OrbitCamera = { yaw: 0, pitch: 0.55, dist: 42, target: [cx, cy + 2, cz] };
+  const controls = attachOrbitControls(canvas, cam);
 
   function draw(tMs: number) {
-    const yaw = tMs * 0.00015;
-    const eye: Vec3 = [cx + Math.sin(yaw) * dist, cy + pitchY, cz + Math.cos(yaw) * dist];
-    const target: Vec3 = [cx, cy + 2, cz];
+    if (controls.isAutoOrbiting()) cam.yaw = tMs * 0.00015;
+    const eye: Vec3 = [
+      cam.target[0] + Math.sin(cam.yaw) * Math.cos(cam.pitch) * cam.dist,
+      cam.target[1] + Math.sin(cam.pitch) * cam.dist,
+      cam.target[2] + Math.cos(cam.yaw) * Math.cos(cam.pitch) * cam.dist,
+    ];
     const aspect = canvas.width / Math.max(1, canvas.height);
-    const vp = mul(persp(0.72, aspect, 0.5, 300), look(eye, target, [0, 1, 0]));
+    const vp = mul(persp(0.72, aspect, 0.5, 300), look(eye, cam.target, [0, 1, 0]));
     renderer.setVP(vp);
     renderer.frame({ r: 0.043, g: 0.039, b: 0.035, a: 1 });
     requestAnimationFrame(draw);
