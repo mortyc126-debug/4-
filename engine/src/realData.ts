@@ -16,9 +16,12 @@ export interface RealEntity {
   model: string;
   scale: number;
   own?: boolean; // столица игрока (W.players[0]) — та же договорённость, что и в остальной игре
+  label: string; // подпись для клика/тапа (см. main.ts) — ник+ратуша, уровень лагеря/точки
 }
 
 const REAL_RES_MAP: Record<string, string> = { food: "farm", wood: "sawmill", stone: "quarry", gold: "gold-mine" };
+// Те же подписи типов точек, что и RES_SITE_NAME в index.html (cartouche).
+const RES_SITE_NAME: Record<string, string> = { food: "Пашня", wood: "Лесопилка", stone: "Каменоломня", gold: "Рудник" };
 // Дословно epochOf из index.html — своей копии эпох тут нет, но эта чистая
 // функция от одного числа (уровня ратуши) достаточно стабильна, чтобы не
 // тянуть её через window.parent лишним мостом.
@@ -52,12 +55,15 @@ export function loadRealEntities(): RealEntity[] | null {
       const race = pl ? pl.race : "human";
       const epoch = pl ? Math.max(1, Math.min(5, epochOf(pl.b.hall))) : 1;
       const own = W.players[0] && pl && pl.id === W.players[0].id;
-      out.push({ x: o.x + 0.5, y: o.y + 0.5, kind: 0, model: `/models/castles/${race}-${epoch}.glb`, scale: 10, own });
+      const label = (pl ? pl.nick ?? "?" : "?") + (pl ? " · Ратуша " + pl.b.hall : "");
+      out.push({ x: o.x + 0.5, y: o.y + 0.5, kind: 0, model: `/models/castles/${race}-${epoch}.glb`, scale: 10, own, label });
     } else if (o.t === "camp" || o.t === "fort") {
-      out.push({ x: o.x + 0.5, y: o.y + 0.5, kind: 1, model: "/models/camps/barbarians.glb", scale: o.t === "fort" ? 6.5 : 5 });
+      const label = (o.t === "fort" ? "Форт" : "Лагерь") + " варваров · ур. " + (o.lv ?? "?");
+      out.push({ x: o.x + 0.5, y: o.y + 0.5, kind: 1, model: "/models/camps/barbarians.glb", scale: o.t === "fort" ? 6.5 : 5, label });
     } else if (o.t === "node") {
       const type = REAL_RES_MAP[o.res] || "farm";
-      out.push({ x: o.x + 0.5, y: o.y + 0.5, kind: 2, model: `/models/resources/${type}.glb`, scale: 5 });
+      const label = (RES_SITE_NAME[o.res] || "Точка") + " · ур. " + (o.lv ?? "?");
+      out.push({ x: o.x + 0.5, y: o.y + 0.5, kind: 2, model: `/models/resources/${type}.glb`, scale: 5, label });
     }
   }
   return out;
