@@ -16,14 +16,34 @@
   #hud i{font-style:normal;color:#a2967b;display:block;margin-top:8px;font-size:11.5px}
   #hud.min{max-width:none;padding:7px 11px}
   #hud.min p,#hud.min i{display:none}
+  #ui{position:fixed;inset:0;pointer-events:none;z-index:20}
+  #coordBar{position:fixed;left:50%;top:12px;transform:translateX(-50%);
+    display:flex;align-items:center;gap:6px;pointer-events:auto;
+    background:rgba(22,17,11,.84);border:1px solid #3d3121;border-radius:8px;
+    padding:7px 10px;box-shadow:0 8px 30px rgba(0,0,0,.65);backdrop-filter:blur(3px)}
+  #coordBar label{font-size:12px;color:#a2967b;display:flex;align-items:center;gap:4px}
+  #coordBar input{width:64px;background:#1c160e;border:1px solid #4a3b26;border-radius:4px;
+    color:#ece2ca;font:inherit;font-size:13px;padding:3px 5px}
+  #coordBar button{background:#3d3121;border:1px solid #4a3b26;border-radius:4px;
+    color:#e6c273;font:inherit;font-size:12.5px;padding:4px 10px;cursor:pointer}
+  #coordBar button:active{background:#4a3b26}
   @media (max-width:760px){
     #hud{max-width:none;right:12px;font-size:12px;padding:9px 11px}
     #hud i{font-size:10.5px}
+    #coordBar{padding:6px 8px;gap:4px}
+    #coordBar input{width:52px;font-size:12px}
   }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+<div id="ui">
+  <div id="coordBar">
+    <label>X: <input id="coordX" type="number" step="any" inputmode="decimal"></label>
+    <label>Y: <input id="coordY" type="number" step="any" inputmode="decimal"></label>
+    <button id="coordGo">Перейти</button>
+  </div>
+</div>
 <div id="hud"><b>Четыре Знамени</b>
 <p>Один палец — поворот и наклон, два пальца — щипок и перенос взгляда. Коснитесь замка, чтобы подойти к нему.</p>
 <i id="hudStats">Мир прогружается вокруг вас по мере полёта, как чанки в песочнице: впереди появляется, позади пропадает. Коснитесь, чтобы свернуть.</i></div>
@@ -612,11 +632,11 @@ function genChunk(cx,cy){
     /* --- подлесок --- */
     const open=1-Math.min(1,Math.max(0,(dens-0.40)/0.6));
     if(e<0.80){
-      // Плотность травы и кустов вдвое-втрое ниже, чем в исходной демке: там
-      // вся карта считалась один раз при загрузке, а здесь то же самое
-      // повторяется на лету при каждом новом чанке — по профилю именно трава
-      // (сотни tri() на клетку) была основной статьёй времени генерации.
-      const bn=hash2(x,y,120)<0.13*open+0.04 ? 1+Math.floor(hash2(x,y,121)*2) : 0;
+      // Плотность травы и кустов возвращена к уровню исходной демки — раньше
+      // была урезана вдвое-втрое ради синхронной генерации на главном потоке,
+      // но теперь чанк строится в воркере (см. ниже по файлу), и лишние
+      // tri()-вызовы там больше не стоят кадра.
+      const bn=hash2(x,y,120)<0.22*open+0.06 ? 1+Math.floor(hash2(x,y,121)*2) : 0;
       for(let i=0;i<bn;i++){
         const bx=x+hash2(x,y,122+i)*0.9, bz=y+hash2(x,y,132+i)*0.9;
         if(heightRaw(bx,bz)<SEA+0.035||cityOverlapLocal(bx,bz)>1) continue;
@@ -624,7 +644,7 @@ function genChunk(cx,cy){
              BUSHC[Math.floor(hash2(x,y,152+i)*BUSHC.length)], (x*3+y*5+i)|0);
         bushes++;
       }
-      const gn=Math.floor((0.5+open*2.2)*(0.45+hash2(x,y,160)*1.3));
+      const gn=Math.floor((1.4+open*6.0)*(0.45+hash2(x,y,160)*1.3));
       for(let i=0;i<gn;i++){
         const gx=x+hash2(x,y,170+i*3)*0.96, gz=y+hash2(x,y,185+i*5)*0.96;
         if(heightRaw(gx,gz)<SEA+0.035||cityOverlapLocal(gx,gz)>1) continue;
@@ -1204,13 +1224,39 @@ function resize(){const d=Math.min(2,devicePixelRatio||1);
   cv.width=cv.clientWidth*d; cv.height=cv.clientHeight*d}
 addEventListener("resize",resize); resize();
 
+/* ---- Координатная строка: в мире без края и без списка городов это
+   единственный способ и найти себя ("какие у меня координаты, чтобы
+   позвать друга"), и попасть в произвольную точку по чужим координатам. ---- */
+const coordX=document.getElementById("coordX"), coordY=document.getElementById("coordY");
+// Пока значение в полях "живое" (показывает текущую позицию), его каждый
+// кадр перезаписывает камера. Стоило набрать X и перейти табом в Y — поле X
+// теряло фокус и на следующем же кадре откатывалось обратно на текущую
+// позицию, ещё ДО того, как игрок успевал нажать "Перейти". coordDirty
+// останавливает перезапись сразу, как только в поля начали печатать, и
+// снимается только после успешного перехода — тогда поля снова живые.
+let coordDirty=false;
+[coordX,coordY].forEach(inp=>inp.addEventListener("input",()=>{coordDirty=true;}));
+function goToCoords(){
+  const x=parseFloat(coordX.value), y=parseFloat(coordY.value);
+  if(!isFinite(x)||!isFinite(y)) return;
+  cam.tx=x; cam.tz=y; cam.ty=H(x,y)+2;
+  coordDirty=false;
+}
+document.getElementById("coordGo").addEventListener("click",goToCoords);
+[coordX,coordY].forEach(inp=>inp.addEventListener("keydown",e=>{
+  if(e.key==="Enter"){ e.preventDefault(); goToCoords(); inp.blur(); }
+}));
+
 const hudStats=document.getElementById("hudStats");
 let lastHud=0;
 
 const t0=performance.now();
 function frame(){
   const t=(performance.now()-t0)/1000;
-  if(!drag) cam.yaw+=0.0007;
+  // В отличие от ограниченной демки, где медленное вращение камеры без
+  // пальца читалось как показ карты, в бесконечном мире оно ощущалось как
+  // дрейф без цели — отпустил палец, и камера должна просто остаться на
+  // месте, а не продолжать крутиться.
   const ex=cam.tx+Math.sin(cam.yaw)*Math.cos(cam.pitch)*cam.dist;
   const ez=cam.tz+Math.cos(cam.yaw)*Math.cos(cam.pitch)*cam.dist;
   let ey=Math.sin(cam.pitch)*cam.dist+cam.ty+0.5;
@@ -1302,6 +1348,14 @@ function frame(){
     lastHud=t;
     hudStats.textContent="Чанков в памяти: "+chunks.size+" · строится: "+inFlight.size+"/"+genQueue.length+
       " · городов рядом: "+citiesLoaded+" · треугольников: "+Math.round(totalTris/1000)+"к";
+  }
+  // Поля координат показывают, где игрок находится СЕЙЧАС — чтобы было что
+  // продиктовать другу. Останавливаем обновление, как только начали
+  // печатать (coordDirty), а не только пока поле в фокусе — иначе таб с X
+  // на Y стирал бы только что введённый X ещё до нажатия "Перейти".
+  if(!coordDirty){
+    coordX.value=cam.tx.toFixed(1);
+    coordY.value=cam.tz.toFixed(1);
   }
 
   requestAnimationFrame(frame);
