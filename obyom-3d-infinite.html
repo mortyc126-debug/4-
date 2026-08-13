@@ -46,7 +46,7 @@
   </div>
 </div>
 <div id="hud"><b>Четыре Знамени</b>
-<p>Один палец — поворот и наклон, два пальца — щипок и перенос взгляда. Коснитесь замка, чтобы подойти к нему.</p>
+<p>Один палец — перемещение по карте, два пальца — масштаб, поворот и наклон. Коснитесь замка, чтобы подойти к нему.</p>
 <i id="hudStats">Мир прогружается вокруг вас по мере полёта, как чанки в песочнице: впереди появляется, позади пропадает. Коснитесь, чтобы свернуть.</i></div>
 <script>
 "use strict";
@@ -1447,27 +1447,32 @@ function findSpawn(){
 }
 const SPAWN=findSpawn();
 
-/* ---- Камера: орбита вокруг подвижной цели. Как и раньше — один палец
-   крутит и наклоняет, два — щипок/перенос. Отличие от прежней демки: цель
-   больше не зажата границами карты — мир бесконечен, лететь можно куда
-   угодно. ---- */
+/* ---- Камера: орбита вокруг подвижной цели. Один палец двигает саму цель
+   по земле — как обычная карта, к этому все привыкли; поворот, наклон и
+   масштаб отданы двум пальцам разом (щипок — масштаб, разворот пальцев друг
+   вокруг друга — поворот, совместное движение вверх/вниз — наклон), чтобы
+   случайное лёгкое дрожание одного пальца при обычном перемещении не
+   дёргало угол обзора. Цель по-прежнему не зажата границами карты — мир
+   бесконечен, лететь можно куда угодно. ---- */
 let cam={yaw:0.72,pitch:0.55,dist:74,tx:SPAWN.x,tz:SPAWN.y,ty:H(SPAWN.x,SPAWN.y)+3}, drag=null;
 const pts=new Map();
 let pinch=null;
 const mid=()=>{const a=[...pts.values()];
   return {x:(a[0].x+a[1].x)/2, y:(a[0].y+a[1].y)/2,
           d:Math.hypot(a[0].x-a[1].x, a[0].y-a[1].y)}};
+const twistAngle=()=>{const a=[...pts.values()]; return Math.atan2(a[1].y-a[0].y, a[1].x-a[0].x)};
 let tapCand=null;
 const TAP_MOVE=10, TAP_TIME=380;
 cv.addEventListener("pointerdown",e=>{
   e.preventDefault();
   pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
   try{ cv.setPointerCapture(e.pointerId) }catch(_){}
-  if(pts.size===1){ drag={x:e.clientX,y:e.clientY,yaw:cam.yaw,pitch:cam.pitch};
+  if(pts.size===1){ drag={x:e.clientX,y:e.clientY,tx:cam.tx,tz:cam.tz};
     tapCand={x:e.clientX,y:e.clientY,t:performance.now()};
     cv.classList.add("drag") }
   else if(pts.size===2){ drag=null; tapCand=null;
-    const m=mid(); pinch={d:m.d, x:m.x, y:m.y, dist:cam.dist, tx:cam.tx, tz:cam.tz} }
+    const m=mid();
+    pinch={d:m.d, y:m.y, dist:cam.dist, yaw:cam.yaw, pitch:cam.pitch, angle:twistAngle()} }
 });
 cv.addEventListener("pointermove",e=>{
   if(!pts.has(e.pointerId)) return;
@@ -1477,15 +1482,15 @@ cv.addEventListener("pointermove",e=>{
   if(pts.size>=2 && pinch){
     const m=mid();
     cam.dist=Math.max(9,Math.min(240, pinch.dist*(pinch.d/Math.max(12,m.d))));
-    const k=cam.dist*0.0022;
-    const dx=(m.x-pinch.x)*k, dy=(m.y-pinch.y)*k;
-    const c=Math.cos(cam.yaw), s2=Math.sin(cam.yaw);
-    cam.tx=pinch.tx - (dx*c - dy*s2);
-    cam.tz=pinch.tz + (dx*s2 + dy*c);
-    cam.ty=H(cam.tx,cam.tz)+1;
+    cam.yaw=pinch.yaw+(twistAngle()-pinch.angle);
+    cam.pitch=Math.max(0.08,Math.min(1.42,pinch.pitch+(m.y-pinch.y)*0.005));
   } else if(drag){
-    cam.yaw=drag.yaw+(e.clientX-drag.x)*0.006;
-    cam.pitch=Math.max(0.08,Math.min(1.42,drag.pitch+(e.clientY-drag.y)*0.005));
+    const k=cam.dist*0.0022;
+    const dx=(e.clientX-drag.x)*k, dy=(e.clientY-drag.y)*k;
+    const c=Math.cos(cam.yaw), s2=Math.sin(cam.yaw);
+    cam.tx=drag.tx - (dx*c - dy*s2);
+    cam.tz=drag.tz + (dx*s2 + dy*c);
+    cam.ty=H(cam.tx,cam.tz)+1;
   }
 });
 function lift(e){
@@ -1495,7 +1500,7 @@ function lift(e){
   if(pts.size<2) pinch=null;
   if(pts.size===0){ drag=null; cv.classList.remove("drag") }
   else if(pts.size===1){ const a=[...pts.values()][0];
-    drag={x:a.x,y:a.y,yaw:cam.yaw,pitch:cam.pitch} }
+    drag={x:a.x,y:a.y,tx:cam.tx,tz:cam.tz} }
 }
 cv.addEventListener("pointerup",lift);
 cv.addEventListener("pointercancel",()=>{ tapCand=null; lift(...arguments) });
