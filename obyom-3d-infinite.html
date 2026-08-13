@@ -249,13 +249,17 @@ const SEAC_S=[0.14,0.24,0.28], SEAC_D=[0.05,0.11,0.19];
 // геометрия чанка считается заново при каждой перегенерации (а не хранится
 // как отдельный слой правок), для этого достаточно, чтобы кандидат знал:
 // "я снесён settlement-время-назад" — и сам сузил себе расчистку и перестал
-// рисовать модель. removals — снимок с главного потока, {"вид:cx:cy": доля
+// рисовать модель. removals — снимок с главного потока, {"вид:x:y": доля
 // восстановления 0..1}, посчитанный на момент запроса; счётчика времени
 // внутри чанка/воркера нет — это ГЛАВНЫЙ поток отвечает за часы (см.
 // removalsSnapshot ниже, в разделе стриминга).
-function applyRegrowth(kind,cx,cy,obj,removals){
+// Ключ — МИРОВЫЕ координаты объекта (x,y), а не координаты чанка: с
+// реальными данными партии на чанк может прийтись сразу много точек/лагерей
+// одного вида (плотность настоящей карты — не одна на чанк, как у
+// процедурной лотереи), координаты чанка их больше не различают.
+function applyRegrowth(kind,x,y,obj,removals){
   if(!obj||!removals) return obj;
-  const frac=removals[kind+":"+cx+":"+cy];
+  const frac=removals[kind+":"+x+":"+y];
   if(frac===undefined) return obj;
   if(frac>=1) return null;                 // заросло совсем — как будто тут никогда ничего не стояло
   return Object.assign({},obj,{r:obj.r*(1-frac), removed:true, regrowth:frac});
@@ -311,7 +315,7 @@ function chunkCityCandidate(cx,cy,removals){
   const {tiltX,tiltZ}=groundTiltAt(x,y);
   const obj={ race,epoch,x,y:yy,z:y,r,yaw,scale,
     mat:M4.modelTilt(x,yy,y,yaw,tiltX,tiltZ,scale) };
-  return applyRegrowth("city",cx,cy,obj,removals);
+  return applyRegrowth("city",x,y,obj,removals);
 }
 
 // Лагеря разбойников и ресурсные точки — та же лотерея, что и у городов:
@@ -337,7 +341,7 @@ function chunkCampCandidate(cx,cy,city,removals){
   const yy=H(x,y), yaw=hash2(cx,cy,SEED+901)*Math.PI*2;
   const {tiltX,tiltZ}=groundTiltAt(x,y);
   const obj={ x,y:yy,z:y,r:MINOR_R,yaw, mat:M4.modelTilt(x,yy,y,yaw,tiltX,tiltZ,MINOR_MODEL_SCALE) };
-  return applyRegrowth("camp",cx,cy,obj,removals);
+  return applyRegrowth("camp",x,y,obj,removals);
 }
 
 const RESOURCE_TYPES=["farm","gold-mine","quarry","sawmill"];
@@ -357,7 +361,87 @@ function chunkResourceCandidate(cx,cy,city,camp,removals){
   const yy=H(x,y), yaw=hash2(cx,cy,SEED+902)*Math.PI*2;
   const {tiltX,tiltZ}=groundTiltAt(x,y);
   const obj={ type,x,y:yy,z:y,r:MINOR_R,yaw, mat:M4.modelTilt(x,yy,y,yaw,tiltX,tiltZ,MINOR_MODEL_SCALE) };
-  return applyRegrowth("resource",cx,cy,obj,removals);
+  return applyRegrowth("resource",x,y,obj,removals);
+}
+
+/* -----------------------------------------------------------------------
+   Реальные данные партии вместо лотереи. Когда 3D открыт внутри игры,
+   главный поток передаёт сюда настоящие записи W.map (см. realEntities в
+   постановке задачи воркеру, main-поток ниже) — тогда город/лагерь/точка
+   решаются не хэшем чанка, а напрямую из того, что реально стоит на карте.
+   Раса/эпоха для city ГЛАВНЫЙ поток прикладывает к записи заранее: сама
+   запись W.map хранит только pid, а искать W.players внутри воркера негде —
+   у воркера нет окна родителя, только то, что явно легло в postMessage.
+   ----------------------------------------------------------------------- */
+const REAL_RES_MAP={food:"farm",wood:"sawmill",stone:"quarry",gold:"gold-mine"};
+function safeGroundFrac(x,y){
+  // Небольшая выборка вокруг точки — не проверка площадки (siteBuildable
+  // умеет только ОТКАЗАТЬ, а тут отступать некуда: реальный объект стоит на
+  // карте независимо от того, что насчитал рельеф), а "какая тут в среднем
+  // суша", чтобы посадить объект на разумную высоту, а не в провал/океан.
+  let sum=0,n=0;
+  for(let j=-2;j<=2;j+=2)for(let i=-2;i<=2;i+=2){ sum+=heightAt(x+i,y+j); n++; }
+  return Math.max(SEA+0.05, sum/n);
+}
+function buildRealCandidate(o,nearby,removals){
+  const x=o.x+0.5, y=o.y+0.5;           // центр клетки, не угол
+  const safeE=safeGroundFrac(x,y), yy=safeE*HMAX;
+  const yaw=hash2(Math.round(o.x),Math.round(o.y),SEED+900)*Math.PI*2;
+  let baseR,scale,extra,kind;
+  if(o.t==="city"){
+    const race=o.race||"human", epoch=Math.max(1,Math.min(5,o.epoch||1));
+    const SPR={human:1.00,dwarf:0.92,elf:1.10,undead:1.00}[race];
+    scale=MODEL_SCALE_BY_EPOCH[epoch];
+    baseR=(scale*0.9+1.2)*SPR;
+    extra={race,epoch}; kind="city";
+  } else if(o.t==="camp"||o.t==="fort"){
+    // Модель разбойников одна на оба — форт крупнее лагеря тем же приёмом,
+    // что и в 2D (там тоже только масштаб иконки различает форт от лагеря).
+    scale=o.t==="fort"?MINOR_MODEL_SCALE*1.3:MINOR_MODEL_SCALE;
+    baseR=scale*0.9+1.2;
+    extra={fort:o.t==="fort",lv:o.lv}; kind="camp";
+  } else {
+    scale=MINOR_MODEL_SCALE; baseR=MINOR_R;
+    extra={type:REAL_RES_MAP[o.res]||"farm",lv:o.lv,amount:o.amount,max:o.max};
+    kind="resource";
+  }
+  // Смягчение наложений: 2D гарантирует не больше одной записи на клетку, но
+  // не гарантирует зазор МЕЖДУ соседними клетками — у физического радиуса
+  // модели в 3D сосед впритык мог бы налезть визуально. Настоящую позицию
+  // двигать нельзя (исказит реальное состояние партии), поэтому при тесноте
+  // уменьшаем СВОЙ радиус (и вслед за ним масштаб модели), а не позицию.
+  let minD=Infinity;
+  for(const n of nearby){
+    if(n===o) continue;
+    const d=Math.hypot(n.x-o.x,n.y-o.y);
+    if(d<minD) minD=d;
+  }
+  const r=isFinite(minD) ? Math.max(baseR*0.4, Math.min(baseR,minD*0.5-0.25)) : baseR;
+  const modelScale=scale*(r/baseR);
+  const obj=Object.assign({x,y:yy,z:y,r,yaw,scale:modelScale,
+    mat:M4.modelTilt(x,yy,y,yaw,0,0,modelScale), flattenE:safeE}, extra);
+  return applyRegrowth(kind,x,y,obj,removals);
+}
+// Строим кандидатов для ВСЕХ записей из realNearby (чанк + соседи) —
+// настоящие координаты не отступают от границы чанка, как это гарантирует
+// процедурная лотерея (margin в chunkCityCandidate и т.п.), так что чужой
+// сосед у самой границы обязан участвовать и в расчистке травы/леса, и в
+// сглаживании рельефа (см. corner() в genChunk) — отсюда общий список all
+// вдобавок к cities/camps/resources, которые содержат только "своё" для
+// этого конкретного чанка.
+function realStructuresFor(cx,cy,realNearby,removals){
+  const cities=[],camps=[],resources=[],all=[];
+  if(!realNearby) return {cities,camps,resources,all};
+  for(const o of realNearby){
+    const built=buildRealCandidate(o,realNearby,removals);
+    if(!built) continue;
+    all.push(built);
+    if(Math.floor(o.x/CHUNK)!==cx || Math.floor(o.y/CHUNK)!==cy) continue;
+    if(o.t==="city") cities.push(built);
+    else if(o.t==="camp"||o.t==="fort") camps.push(built);
+    else resources.push(built);
+  }
+  return {cities,camps,resources,all};
 }
 
 // chunkCampCandidate/chunkResourceCandidate только страхуют от перехлёста
@@ -380,18 +464,26 @@ function chunkCandidatesRaw(cx,cy,removals){
   const resource=chunkResourceCandidate(cx,cy,city,camp,removals);
   return {city,camp,resource};
 }
-function resolveChunkPlacements(cx,cy,removals){
-  const all=[];
+// realNearby — реальные записи W.map для (cx,cy) и восьми соседей (см.
+// realEntitiesFor на главном потоке); null/undefined, если 3D открыт сам по
+// себе (без игры позади) — тогда всё, как раньше, решает хэш-лотерея.
+// Возвращает ВСЕГДА массивы (cities/camps/resources), даже у процедурной
+// лотереи (там массив просто содержит 0 или 1 запись) — единая форма для
+// остального конвейера (воркер → главный поток → рендер), плотность
+// настоящей карты не укладывается в "одно на чанк".
+function resolveChunkPlacements(cx,cy,removals,realNearby){
+  if(realNearby) return realStructuresFor(cx,cy,realNearby,removals);
+  const pool=[];
   for(const [di,dj] of NEIGHBOR_OFFSETS){
     const ncx=cx+di, ncy=cy+dj;
     const c=chunkCandidatesRaw(ncx,ncy,removals);
-    if(c.city) all.push({kind:0,cx:ncx,cy:ncy,obj:c.city});
-    if(c.camp) all.push({kind:1,cx:ncx,cy:ncy,obj:c.camp});
-    if(c.resource) all.push({kind:2,cx:ncx,cy:ncy,obj:c.resource});
+    if(c.city) pool.push({kind:0,cx:ncx,cy:ncy,obj:c.city});
+    if(c.camp) pool.push({kind:1,cx:ncx,cy:ncy,obj:c.camp});
+    if(c.resource) pool.push({kind:2,cx:ncx,cy:ncy,obj:c.resource});
   }
-  all.sort((a,b)=>a.kind-b.kind || a.cx-b.cx || a.cy-b.cy);
+  pool.sort((a,b)=>a.kind-b.kind || a.cx-b.cx || a.cy-b.cy);
   const accepted=[];
-  for(const cand of all){
+  for(const cand of pool){
     let ok=true;
     for(const acc of accepted){
       if(Math.hypot(cand.obj.x-acc.obj.x,cand.obj.z-acc.obj.z)<cand.obj.r+acc.obj.r){ ok=false; break; }
@@ -403,7 +495,8 @@ function resolveChunkPlacements(cx,cy,removals){
     if(a.cx!==cx||a.cy!==cy) continue;
     if(a.kind===0) city=a.obj; else if(a.kind===1) camp=a.obj; else resource=a.obj;
   }
-  return {city,camp,resource};
+  const all=[city,camp,resource].filter(Boolean);
+  return {cities:city?[city]:[], camps:camp?[camp]:[], resources:resource?[resource]:[], all};
 }
 
 /* =======================================================================
@@ -634,21 +727,36 @@ const CHUNK=16;          // клеток на сторону чанка — ме
 const LOAD_RADIUS=4;     // чанков вокруг камеры держим прогруженными (по кругу)
 const UNLOAD_RADIUS=5.5; // с запасом, чтобы не дёргать чанк на границе туда-сюда
 
-function genChunk(cx,cy,removals){
+function genChunk(cx,cy,removals,realEntities){
   const __prof=self.__profileChunks, __t=__prof?[performance.now()]:null;
   CUR={pos:[],col:[],knd:[],nrm:[]};
   const x0=cx*CHUNK, x1=x0+CHUNK, y0=cy*CHUNK, y1=y0+CHUNK;
 
   // Город, лагерь и ресурсную точку решаем первыми — через resolveChunkPlacements,
   // которая заодно сверяется с соседними чанками (см. комментарий там),
-  // остальной посадке (лес/камни/трава) нужно знать, куда не лезть.
-  const {city,camp,resource}=resolveChunkPlacements(cx,cy,removals);
+  // остальной посадке (лес/камни/трава) нужно знать, куда не лезть. all
+  // включает и соседей (см. комментарий у realStructuresFor) — расчистке и
+  // сглаживанию рельефа у границы чанка это тоже нужно знать.
+  const {cities,camps,resources,all}=resolveChunkPlacements(cx,cy,removals,realEntities);
   function structOverlapLocal(px,pz){
     let m=0;
-    if(city) m=Math.max(m, city.r/Math.max(0.001,Math.hypot(city.x-px,city.z-pz)));
-    if(camp) m=Math.max(m, camp.r/Math.max(0.001,Math.hypot(camp.x-px,camp.z-pz)));
-    if(resource) m=Math.max(m, resource.r/Math.max(0.001,Math.hypot(resource.x-px,resource.z-pz)));
+    for(const o of all) m=Math.max(m, o.r/Math.max(0.001,Math.hypot(o.x-px,o.z-pz)));
     return m;
+  }
+  // Только у реальных данных объекты несут flattenE (см. buildRealCandidate)
+  // — процедурная лотерея уже гарантирует сушу проверкой siteBuildable, ей
+  // подравнивать нечего, и цикл ниже для неё почти бесплатен (пропускает
+  // все записи без flattenE на первой же проверке).
+  function flattenNear(px,pz,e){
+    let best=0,target=e;
+    for(const o of all){
+      if(o.flattenE===undefined) continue;
+      const R=o.r*1.35, d=Math.hypot(o.x-px,o.z-pz);
+      if(d>=R) continue;
+      const t=1-d/R;
+      if(t>best){ best=t; target=o.flattenE; }
+    }
+    return best<=0 ? e : e*(1-best)+Math.max(e,target)*best;
   }
 
   // Земля и вода строятся одним проходом по общей сетке SUB×SUB. Каждый угол
@@ -663,7 +771,7 @@ function genChunk(cx,cy,removals){
     let v=cornerCache.get(key);
     if(v) return v;
     const jx=JXs(xi*ST,yi*ST), jz=JZs(xi*ST,yi*ST);
-    const e=heightAt(jx,jz);
+    const e=flattenNear(jx,jz,heightAt(jx,jz));
     v={jx,jz,h:e*HMAX,e};
     cornerCache.set(key,v);
     return v;
@@ -840,7 +948,7 @@ function genChunk(cx,cy,removals){
     console.log("chunk("+cx+","+cy+") ground+water:"+(__t[1]-__t[0]).toFixed(1)+
       "ms trees/rocks:"+(__t[2]-__t[1]).toFixed(1)+"ms total:"+(__t[2]-__t[0]).toFixed(1)+
       "ms trees="+trees+" rocks="+rocks+" grass="+grass+" bushes="+bushes); }
-  return {pos:CUR.pos,col:CUR.col,knd:CUR.knd,nrm:CUR.nrm, city, camp, resource,
+  return {pos:CUR.pos,col:CUR.col,knd:CUR.knd,nrm:CUR.nrm, cities, camps, resources,
     stats:{trees,rocks,grass,bushes}};
 }
 
@@ -1213,12 +1321,12 @@ function resourceModel(type){ return loadModelCached("models/resources/"+type+".
 const NWORKERS=Math.max(1,Math.min(4,(navigator.hardwareConcurrency||4)-1));
 const CHUNK_WORKER_TAIL=`
 self.onmessage=function(e){
-  const {cx,cy,reqId,backdrop,removals,force}=e.data;
-  const data=backdrop ? genBackdrop(cx,cy) : genChunk(cx,cy,removals);
+  const {cx,cy,reqId,backdrop,removals,force,realEntities}=e.data;
+  const data=backdrop ? genBackdrop(cx,cy) : genChunk(cx,cy,removals,realEntities);
   const pos=new Float32Array(data.pos), col=new Float32Array(data.col),
         knd=new Float32Array(data.knd), nrm=new Float32Array(data.nrm);
   postMessage({reqId,cx,cy,backdrop,force,pos,col,knd,nrm,
-    city:data.city,camp:data.camp,resource:data.resource,stats:data.stats},
+    cities:data.cities,camps:data.camps,resources:data.resources,stats:data.stats},
     [pos.buffer,col.buffer,knd.buffer,nrm.buffer]);
 };`;
 const chunkWorkerUrl=URL.createObjectURL(
@@ -1247,7 +1355,7 @@ function createChunkGL(cx,cy,data){
     gl.enableVertexAttribArray(l); gl.vertexAttribPointer(l,3,gl.FLOAT,false,0,0); }
   chunks.set(chunkKey(cx,cy),{
     cx,cy,vao,depthVao,bufs:[posBuf,colBuf,kndBuf,nrmBuf],vertCount,
-    city:data.city, camp:data.camp, resource:data.resource, stats:data.stats,
+    cities:data.cities, camps:data.camps, resources:data.resources, stats:data.stats,
   });
 }
 function disposeChunk(c){
@@ -1285,7 +1393,7 @@ function maybeRequestBackdrop(camX,camY){
   nextWorker=(nextWorker+1)%chunkWorkers.length;
 }
 chunkWorkers.forEach(w=>w.onmessage=(e)=>{
-  const {reqId,cx,cy,backdrop,force,pos,col,knd,nrm,city,camp,resource,stats}=e.data;
+  const {reqId,cx,cy,backdrop,force,pos,col,knd,nrm,cities,camps,resources,stats}=e.data;
   if(backdrop){
     if(reqId!==backdropPendingReqId) return;   // устаревший ответ — новый уже запрошен позже
     backdropPendingReqId=null;
@@ -1309,7 +1417,7 @@ chunkWorkers.forEach(w=>w.onmessage=(e)=>{
     const dx=cx-lastCamChunkX, dy=cy-lastCamChunkY;
     if(dx*dx+dy*dy>UNLOAD_RADIUS*UNLOAD_RADIUS) return;
   }
-  createChunkGL(cx,cy,{pos,col,knd,nrm,city,camp,resource,stats});
+  createChunkGL(cx,cy,{pos,col,knd,nrm,cities,camps,resources,stats});
 });
 function updateStreaming(camChunkX,camChunkY){
   lastCamChunkX=camChunkX; lastCamChunkY=camChunkY;
@@ -1343,6 +1451,63 @@ function updateStreaming(camChunkX,camChunkY){
     if(dx*dx+dy*dy>UNLOAD_RADIUS*UNLOAD_RADIUS){ disposeChunk(c); chunks.delete(k); }
   }
 }
+/* ---- Реальные данные партии вместо процедурной лотереи. Открыт ли 3D сам
+   по себе (тест/скриншот) или внутри игры — решаем по window.parent: то же
+   происхождение (same-origin), поэтому проще читать W напрямую, чем городить
+   postMessage-протокол между двумя и так жёстко связанными файлами. Воркер
+   до window.parent не дотянется (у него вообще нет окна) — поэтому индекс
+   строит и рассылает именно главный поток, а воркеру достаётся уже готовый,
+   отфильтрованный по чанку+соседям срез (см. realEntitiesFor). ---- */
+function realDataSource(){
+  try{ if(window.parent && window.parent!==window && window.parent.W) return window.parent.W; }
+  catch(_){ /* кросс-origin — считаем, что реальных данных нет */ }
+  return null;
+}
+let realIndex=null, realKeyMap=new Map();
+function rebuildRealIndex(){
+  const W=realDataSource();
+  if(!W){ realIndex=null; return; }
+  const idx=new Map(), keyMap=new Map();
+  for(const k in W.map){
+    const o=W.map[k];
+    let entry=o;
+    if(o.t==="city"){
+      const pl=W.players && W.players.find(p=>p.id===o.pid);
+      // Раса/эпоха запись W.map сама не хранит (только pid) — прикладываем
+      // здесь один раз на весь индекс, а не при каждой генерации чанка.
+      // epochOf живёт в родительском окне (это его функция), не здесь.
+      entry=Object.assign({},o,{race:pl?pl.race:"human", epoch:pl?window.parent.epochOf(pl.b.hall):1});
+    }
+    const cx=Math.floor(o.x/CHUNK), cy=Math.floor(o.y/CHUNK);
+    const ck=chunkKey(cx,cy);
+    let arr=idx.get(ck); if(!arr){ arr=[]; idx.set(ck,arr); }
+    arr.push(entry);
+    const kind=o.t==="city"?"city":(o.t==="camp"||o.t==="fort")?"camp":"resource";
+    keyMap.set(kind+":"+(o.x+0.5)+":"+(o.y+0.5), entry);
+  }
+  // Диффим с прошлым срезом: то, что пропало из W.map (истощилось, разгромлено,
+  // перенесено), регистрируем сносом тем же путём, что и тестовая кнопка —
+  // расчистка вокруг него зарастёт травой/лесом, а не пропадёт мгновенно.
+  let anyNew=false;
+  for(const key of realKeyMap.keys()){
+    if(keyMap.has(key)) continue;
+    if(!removalRegistry.has(key)){ removalRegistry.set(key,performance.now()); anyNew=true; }
+  }
+  realIndex=idx; realKeyMap=keyMap;
+  if(anyNew) regrowthTick();
+}
+// Записи для чанка (cx,cy) И восьми соседей — тот же приём, что и у
+// resolveChunkPlacements/removalsSnapshot: воркер ничего не знает про
+// глобальное состояние, только про то, что явно легло в его заявку.
+function realEntitiesFor(cx,cy){
+  if(!realIndex) return null;
+  const out=[];
+  for(const [di,dj] of MAIN_NEIGHBOR_OFFSETS){
+    const arr=realIndex.get(chunkKey(cx+di,cy+dj));
+    if(arr) for(const o of arr) out.push(o);
+  }
+  return out.length?out:null;
+}
 function dispatchToWorkers(){
   // Рассылка заявок ничего не считает сама — только раздаёт чанки по
   // воркерам, поэтому её не нужно ограничивать по времени, как раньше
@@ -1354,7 +1519,7 @@ function dispatchToWorkers(){
     const [cx,cy]=genQueue.shift();
     const reqId=reqSeq++;
     inFlight.set(reqId,{cx,cy});
-    chunkWorkers[nextWorker].postMessage({cx,cy,reqId,removals});
+    chunkWorkers[nextWorker].postMessage({cx,cy,reqId,removals,realEntities:realEntitiesFor(cx,cy)});
     nextWorker=(nextWorker+1)%chunkWorkers.length;
   }
 }
@@ -1372,7 +1537,7 @@ function dispatchToWorkers(){
 // потоке и того текста не видит; проще продублировать те же 9 смещений, чем
 // тащить константу через сериализацию.
 const MAIN_NEIGHBOR_OFFSETS=[[-1,-1],[-1,0],[-1,1],[0,-1],[0,0],[0,1],[1,-1],[1,0],[1,1]];
-const removalRegistry=new Map();   // "вид:cx:cy" -> performance.now() в момент сноса; запись НИКОГДА не удаляется
+const removalRegistry=new Map();   // "вид:x:y" (мировые координаты объекта) -> performance.now() в момент сноса; запись НИКОГДА не удаляется
 const REGROWTH_MS=20000;           // время полного зарастания, мс (тест-масштаб; для прод-баланса можно увеличить)
 function removalsSnapshot(){
   if(removalRegistry.size===0) return null;
@@ -1385,7 +1550,8 @@ function forceRegenChunk(cx,cy){
   if(!chunks.has(k)) return;   // не загружен — обычный стриминг сам подхватит актуальное состояние
   const reqId=reqSeq++;
   inFlight.set(reqId,{cx,cy});
-  chunkWorkers[nextWorker].postMessage({cx,cy,reqId,removals:removalsSnapshot(),force:true});
+  chunkWorkers[nextWorker].postMessage({cx,cy,reqId,removals:removalsSnapshot(),
+    realEntities:realEntitiesFor(cx,cy),force:true});
   nextWorker=(nextWorker+1)%chunkWorkers.length;
 }
 // Раз в несколько секунд перегенерируем окрестность каждого снесённого
@@ -1402,8 +1568,12 @@ function regrowthTick(){
   if(pending.length===0) return;
   const now=performance.now(), seen=new Set();
   for(const key of pending){
-    const [,cxs,cys]=key.split(":");
-    const cx=+cxs, cy=+cys;
+    // Ключ — "вид:x:y" в мировых координатах объекта (см. applyRegrowth в
+    // WORLD_SRC); чанк для force-регена получаем делением на CHUNK, а не
+    // читаем напрямую — координаты объекта, а не чанка, теперь в ключе.
+    const parts=key.split(":");
+    const x=+parts[1], y=+parts[2];
+    const cx=Math.floor(x/CHUNK), cy=Math.floor(y/CHUNK);
     for(const [di,dj] of MAIN_NEIGHBOR_OFFSETS){
       const k2=chunkKey(cx+di,cy+dj);
       if(seen.has(k2)) continue;
@@ -1414,22 +1584,30 @@ function regrowthTick(){
   }
 }
 setInterval(regrowthTick,4000);
+// Индекс реальных данных партии — та же периодичность, что и у зарастания:
+// не нужно чаще, W не меняется настолько быстро, а на ~1400 записей это и
+// так дёшево. Первый вызов — сразу, а не только через 2.5с: иначе первые
+// секунды после открытия вкладки чанки успели бы прогрузиться процедурно.
+rebuildRealIndex();
+setInterval(rebuildRealIndex,2500);
 // Ближайший к точке (x,z) ещё не снесённый город/лагерь/точку среди
 // ЗАГРУЖЕННЫХ чанков — сносить то, чего не видно на экране, тестово незачем.
 function demolishNearest(x,z){
-  let best=null,bestD=Infinity,bestKind=null,bestCx=null,bestCy=null;
+  let best=null,bestD=Infinity,bestKind=null;
   for(const c of chunks.values()){
-    for(const [kind,obj] of [["city",c.city],["camp",c.camp],["resource",c.resource]]){
-      if(!obj||obj.removed) continue;
-      const d=Math.hypot(obj.x-x,obj.z-z);
-      if(d<bestD){ bestD=d; best=obj; bestKind=kind; bestCx=c.cx; bestCy=c.cy; }
+    for(const [kind,arr] of [["city",c.cities],["camp",c.camps],["resource",c.resources]]){
+      for(const obj of arr){
+        if(obj.removed) continue;
+        const d=Math.hypot(obj.x-x,obj.z-z);
+        if(d<bestD){ bestD=d; best=obj; bestKind=kind; }
+      }
     }
   }
   if(!best) return null;
-  const key=bestKind+":"+bestCx+":"+bestCy;
+  const key=bestKind+":"+best.x+":"+best.z;
   removalRegistry.set(key,performance.now());
   regrowthTick();
-  return {kind:bestKind,cx:bestCx,cy:bestCy,dist:bestD};
+  return {kind:bestKind,x:best.x,z:best.z,dist:bestD};
 }
 
 /* ---- Точка старта: ищем поблизости от мирового начала координат сушу,
@@ -1520,7 +1698,11 @@ function projectToScreen(x,y,z){
   return {x:(cx/w*0.5+0.5)*r.width, y:(1-(cy/w*0.5+0.5))*r.height};
 }
 function goToCity(inst){
-  cam.tx=inst.x; cam.tz=inst.z; cam.ty=H(inst.x,inst.z)+1.2;
+  // inst.y — уже точная высота посадки самого объекта (для настоящих данных
+  // партии это сглаженная/приподнятая над рельефом высота, см. buildRealCandidate
+  // в WORLD_SRC) — пересчитывать через H(inst.x,inst.z) заново не нужно и
+  // местами даже неверно (там нет сглаживания, которое видно на модели).
+  cam.tx=inst.x; cam.tz=inst.z; cam.ty=inst.y+1.2;
   cam.dist=inst.epoch?20:12; cam.pitch=0.34;   // замки теперь всегда 5×5, точки/лагеря — 3×3
 }
 function tryTap(clientX,clientY){
@@ -1529,11 +1711,13 @@ function tryTap(clientX,clientY){
   const lx=clientX-r.left, ly=clientY-r.top;
   let best=null, bestD=46;
   for(const c of chunks.values()){
-    for(const inst of [c.city,c.camp,c.resource]){
-      if(!inst) continue;
-      const p=projectToScreen(inst.x, inst.y+1, inst.z); if(!p) continue;
-      const d=Math.hypot(p.x-lx, p.y-ly);
-      if(d<bestD){ bestD=d; best=inst }
+    for(const arr of [c.cities,c.camps,c.resources]){
+      for(const inst of arr){
+        if(inst.removed) continue;
+        const p=projectToScreen(inst.x, inst.y+1, inst.z); if(!p) continue;
+        const d=Math.hypot(p.x-lx, p.y-ly);
+        if(d<bestD){ bestD=d; best=inst }
+      }
     }
   }
   if(best) goToCity(best);
@@ -1702,10 +1886,12 @@ function frame(){
   for(const c of chunks.values()){
     // removed:true — снесено, но ещё не заросло полностью (r у объекта
     // сжимается со временем и продолжает теснить траву/лес, см. applyRegrowth
-    // в WORLD_SRC); саму модель при этом рисовать уже не нужно.
-    if(c.city){ citiesLoaded++; if(!c.city.removed) drawModel(castleModel(c.city.race,c.city.epoch),c.city.mat); }
-    if(c.camp && !c.camp.removed) drawModel(campModel(),c.camp.mat);
-    if(c.resource && !c.resource.removed) drawModel(resourceModel(c.resource.type),c.resource.mat);
+    // в WORLD_SRC); саму модель при этом рисовать уже не нужно. Массивы, а не
+    // одно значение на чанк — у настоящих данных партии плотность настоящей
+    // карты (объектов на чанк может быть много), не одна лотерейная запись.
+    for(const city of c.cities){ citiesLoaded++; if(!city.removed) drawModel(castleModel(city.race,city.epoch),city.mat); }
+    for(const camp of c.camps) if(!camp.removed) drawModel(campModel(),camp.mat);
+    for(const res of c.resources) if(!res.removed) drawModel(resourceModel(res.type),res.mat);
   }
 
   if(t-lastHud>0.5 && !document.getElementById("hud").classList.contains("min")){
@@ -1729,18 +1915,20 @@ window.__errs=()=>{const e=[];let g;while((g=gl.getError())!==gl.NO_ERROR)e.push
 window.__chunkStats=()=>({loaded:chunks.size, queued:genQueue.length, inFlight:inFlight.size,
   workers:chunkWorkers.length,
   tris:[...chunks.values()].reduce((s,c)=>s+c.vertCount,0)/3,
-  cities:[...chunks.values()].filter(c=>c.city).length,
-  camps:[...chunks.values()].filter(c=>c.camp).length,
-  resources:[...chunks.values()].filter(c=>c.resource).length,
+  cities:[...chunks.values()].reduce((s,c)=>s+c.cities.length,0),
+  camps:[...chunks.values()].reduce((s,c)=>s+c.camps.length,0),
+  resources:[...chunks.values()].reduce((s,c)=>s+c.resources.length,0),
+  realData: !!realIndex,
   backdrop: backdropMesh?{tris:backdropMesh.vertCount/3, center:backdropCenter}:null});
 // Отладочные хуки для скриптовой проверки сноса/зарастания (Playwright и т.п.)
 window.__demolish=demolishNearest;
 window.__regrowthTick=regrowthTick;
 window.__removalRegistry=removalRegistry;
 window.__REGROWTH_MS=REGROWTH_MS;
+window.__rebuildRealIndex=rebuildRealIndex;
 window.__getChunk=(cx,cy)=>{
   const c=chunks.get(chunkKey(cx,cy));
-  return c ? {city:c.city,camp:c.camp,resource:c.resource} : null;
+  return c ? {cities:c.cities,camps:c.camps,resources:c.resources} : null;
 };
 </script>
 </body>

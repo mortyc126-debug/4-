@@ -1380,6 +1380,10 @@ const healUnitTime = (type,tier) => trainTime(type,tier)/2;
 const GEN_XP_NEED=[210,210,276,483,846,1482,2594,4541,7950,7950,7950,7950,8449,10471,12978,16084,19935,24707,30621,30621,33942,40093,47360,55943,66083,78060,92207,108919,128659,128659,142186,163193,187303,214974,246734,283186,323079,370524,424937,424937,478776,540017,609091,687001,774876,873992,985786,1111879,1254102,1660595,1909956,2196763,2526638,2906048,3921926,4612964,5425762,6381774,7506234];
 const genXpNeed = lv => GEN_XP_NEED[lv-1]||GEN_XP_NEED[GEN_XP_NEED.length-1];
 const epochOf   = hall => hall>=25?5 : hall>=19?4 : hall>=13?3 : hall>=7?2 : 1;   // 5 эпох × 6 уровней
+// const, не function — сама по себе НЕ становится свойством window (в отличие
+// от var/объявлений function), а 3D-вкладка читает её как window.parent.epochOf
+// (см. rebuildRealIndex в obyom-3d-infinite.html). Экспортируем явно.
+window.epochOf = epochOf;
 const citySize  = hall => Math.min(5, epochOf(hall));         // город растёт 1×1 → 5×5
 const marchSlots= hall => hall>=28?5 : hall>=22?4 : hall>=16?3 : hall>=10?2 : 1;
 // Степенной рост: 300 на 1 ур. плавно до 160 000 на максимуме (30 ур., заданный игроком бюджет).
@@ -1407,7 +1411,12 @@ function syncWall(p){
 // тиры войск больше не привязаны к уровню академии напрямую — см. tierUnlockedFor() и ACADEMY_TREE.mil
 
 /* ---- Состояние мира ---- */
-let W = null;
+// var, а не let: 3D-вкладка "Мир" открыта в iframe и читает состояние партии
+// напрямую через window.parent.W (см. realDataSource в obyom-3d-infinite.html)
+// — а window.parent.X видит только настоящие свойства window, не let/const-
+// привязки лексической области видимости скрипта. var W создаёт именно
+// свойство window, и остаётся им при каждом переприсваивании W = ... ниже.
+var W = null;
 const key=(x,y)=>x+","+y;
 const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 const centerDist=p=>Math.hypot(p.x-CFG.MAP/2,p.y-CFG.MAP/2)/(CFG.MAP/2); // 0 центр → 1 край
