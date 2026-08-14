@@ -39,7 +39,7 @@ const SUN_DIR: Vec3 = (() => {
 // в каждую сторону). EXTENT чуть шире этого радиуса, с запасом на то, что
 // сам объект-кастер может стоять чуть за кромкой видимой области, а тень
 // от него — падать в кадр.
-const SHADOW_MAP_SIZE = 2048;
+export const SHADOW_MAP_SIZE = 2048;
 const SHADOW_EXTENT = 60;
 const SHADOW_DIST = 100; // расстояние от цели до "глаза" теневой камеры вдоль SUN_DIR
 const SHADOW_NEAR = 1;
@@ -422,11 +422,24 @@ export interface Renderer {
   // остальное вне SHADOW_EXTENT от неё тени всё равно бы не бросило в
   // кадр. Достаточно дёшево, чтобы звать каждый кадр, как setVP/setFog.
   setSunTarget(x: number, z: number): void;
+  // Даёт настоящим .glb-моделям (main.ts/modelRenderer.ts) доступ к той же
+  // теневой карте, что уже используют рельеф/декор — модели тени не
+  // бросают (отдельный, более тяжёлый кусок работы, осознанно не сделан в
+  // этом проходе), но ПРИНИМАТЬ их обязаны: иначе город/лагерь, стоящий
+  // прямо в тени склона или дерева, выглядел бы приклеенным поверх сцены —
+  // единственный объект без тени в кадре, где тени уже повсюду на земле.
+  getShadowResources(): ShadowResources;
   // drawExtra — вызывается ВНУТРИ того же render pass, что рельеф и маркеры
   // (общий depth-буфер, единая VP-камера), после них: сюда вешаются
   // настоящие .glb-модели (см. main.ts/modelRenderer.ts) без отдельного
   // прохода ради экономии на очистке/depth-тексте.
   frame(clearColor: GPUColorDict, drawExtra?: (pass: GPURenderPassEncoder) => void): void;
+}
+
+export interface ShadowResources {
+  lightBuf: GPUBuffer;
+  shadowView: GPUTextureView;
+  shadowSampler: GPUSampler;
 }
 
 // Простая "метка-пирамидка" остриём вверх — 4 боковые грани, без дна
@@ -974,5 +987,9 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     device.queue.submit([encoder.finish()]);
   }
 
-  return { setTerrainChunk, removeTerrainChunk, setMarkers, setDecor, setVP, setFog, setSunTarget, frame };
+  function getShadowResources(): ShadowResources {
+    return { lightBuf, shadowView, shadowSampler };
+  }
+
+  return { setTerrainChunk, removeTerrainChunk, setMarkers, setDecor, setVP, setFog, setSunTarget, getShadowResources, frame };
 }

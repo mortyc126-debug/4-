@@ -545,7 +545,7 @@ async function main() {
   // делался до старта цикла. Не тратить GPU на рендер кадров, пока сцена
   // ещё не готова, — разумно само по себе, не только обход этой
   // особенности песочницы.
-  const modelPipeline = createModelPipeline(device, format);
+  const modelPipeline = createModelPipeline(device, format, renderer.getShadowResources());
   const modelCache = new Map<string, Promise<GpuModel>>();
   function getModel(path: string): Promise<GpuModel> {
     let p = modelCache.get(path);
