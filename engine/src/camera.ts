@@ -90,6 +90,14 @@ export function attachOrbitControls(canvas: HTMLCanvasElement, cam: OrbitCamera)
   }
 
   canvas.addEventListener("pointerdown", (e) => {
+    // Без этого браузер на телефоне забирает бо́льшую часть жеста себе
+    // (нативный скролл/панорама страницы) ещё до того, как движение дойдёт
+    // до pointermove — на практике это выглядело как "моё движение пальцем
+    // превращается в миллиметр сдвига камеры". touch-action:none у канвы
+    // (см. index.html) решает то же самое на уровне CSS — вместе надёжнее
+    // одного способа, тот же приём, что и в прошлом прототипе (там оба
+    // обработчика тоже звали preventDefault()).
+    e.preventDefault();
     stopAuto();
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
     try {
@@ -114,6 +122,7 @@ export function attachOrbitControls(canvas: HTMLCanvasElement, cam: OrbitCamera)
 
   canvas.addEventListener("pointermove", (e) => {
     if (!pts.has(e.pointerId)) return;
+    e.preventDefault();
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (tapCand && Math.hypot(e.clientX - tapCand.x, e.clientY - tapCand.y) > TAP_MOVE) tapCand = null;
     if (pts.size >= 2 && pinch) {
