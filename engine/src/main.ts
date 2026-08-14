@@ -763,6 +763,8 @@ async function main() {
   // что уже работало для мелких/дальних точек) — новый расчёт только
   // расширяет площадь попадания, никогда не сужает.
   const TAP_MIN_RADIUS_PX = 46;
+  // dx/dz офсеты для оценки экранного радиуса — см. комментарий ниже.
+  const RADIUS_PROBE_DIRS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
   function findEntityAtScreen(px: number, py: number): number | null {
     let best = -1;
     let bestMargin = 0; // выбираем не ближайшую по сырой дистанции, а ту, где тап глубже всего внутри радиуса — иначе крупная дальняя модель отбирала бы тап у мелкой, но реально более близкой
@@ -774,12 +776,21 @@ async function main() {
       if (clip.w <= 0.001) continue; // за спиной камеры
       const sx = (clip.x / clip.w * 0.5 + 0.5) * canvas.width;
       const sy = (1 - (clip.y / clip.w * 0.5 + 0.5)) * canvas.height;
+      // Раньше пробовалась только ОДНА мировая точка (wx+scale) — на
+      // некоторых углах камеры (yaw) направление +X проецировалось почти
+      // "в глубину экрана" вместо "поперёк", экранный радиус схлопывался
+      // почти до нуля, и тап по видимой (широкой на экране!) модели не
+      // засчитывался, или засчитывался соседней сущности ("иногда отмечая
+      // кого-то другого" — репорт пользователя). Пробуем ОБА мировых
+      // направления (±X, ±Z) и берём максимум — экранный радиус модели
+      // корректен при любом yaw камеры, а не только "удачном".
       let radius = TAP_MIN_RADIUS_PX;
-      const edgeClip = transformPoint(currentVP, [wx + scale, wy, wz]);
-      if (edgeClip.w > 0.001) {
+      for (const [dx, dz] of RADIUS_PROBE_DIRS) {
+        const edgeClip = transformPoint(currentVP, [wx + dx * scale, wy, wz + dz * scale]);
+        if (edgeClip.w <= 0.001) continue;
         const ex = (edgeClip.x / edgeClip.w * 0.5 + 0.5) * canvas.width;
         const ey = (1 - (edgeClip.y / edgeClip.w * 0.5 + 0.5)) * canvas.height;
-        radius = Math.max(TAP_MIN_RADIUS_PX, Math.hypot(ex - sx, ey - sy) * 1.25);
+        radius = Math.max(radius, Math.hypot(ex - sx, ey - sy) * 1.25);
       }
       const d = Math.hypot(sx - px, sy - py);
       const margin = radius - d;
