@@ -17,7 +17,7 @@ import { attachOrbitControls, type OrbitCamera } from "./camera";
 import { loadGLB } from "./glb";
 import { uploadGLB, createModelPipeline, type GpuModel, type ModelInstance } from "./modelRenderer";
 import { loadRealEntities, getOwnCityPos, type RealEntity } from "./realData";
-import { loadLiveMarches } from "./marchData";
+import { loadLiveMarches, type LiveMarchPos } from "./marchData";
 
 const statusEl = document.getElementById("status") as HTMLDivElement;
 function setStatus(lines: string[]) {
@@ -733,7 +733,15 @@ async function main() {
   // друга — сеттер заменяет весь список целиком, а не добавляет).
   let highlightMarker: MarkerEntity | null = null;
   let selectedEid: number | null = null;
+  // Выбранный поход (id из W.marches, не bitECS eid — марши не заведены
+  // как настоящие сущности, см. marchMarkers ниже) — отдельное состояние
+  // от selectedEid, оба взаимно исключают друг друга (тап по одному сбрасывает
+  // другое, см. controls.onTap). highlightMarker для похода пересчитывается
+  // каждый кадр в draw() (см. lastMarches ниже), а не один раз при тапе —
+  // поход движется, статичная подсветка тут же отстала бы от маркера.
+  let selectedMarchId: number | null = null;
   function showSelection(eid: number) {
+    selectedMarchId = null;
     selectedEid = eid;
     const label = (nmOf.get(eid) ?? "?") + " · " + (lvOf.get(eid) ?? "?");
     const wx = Position.x[eid], wz = Position.y[eid];
@@ -818,6 +826,40 @@ async function main() {
       /* кросс-origin или не встроено — тихо игнорируем, локальная подпись уже показана */
     }
   }
+  // Тот же мост, что и notifyParentCartouche, но для похода — марши не
+  // клетка карты (id, не x/y), у index.html своя отдельная точка входа
+  // renderMarchCartoucheFor(marchId) (см. index.html).
+  function notifyParentMarchCartouche(marchId: number) {
+    try {
+      const w = window.parent;
+      if (w && w !== window && typeof (w as any).renderMarchCartoucheFor === "function") {
+        (w as any).renderMarchCartoucheFor(marchId);
+      }
+    } catch (_) {
+      /* кросс-origin или не встроено */
+    }
+  }
+  // Раньше маркеры походов были чисто декоративными — не входили в found
+  // (bitECS-запрос, который читает findEntityAtScreen), тапнуть по ним
+  // было нечем ("армии где-то застряли, никак не отметить" — репорт
+  // пользователя). MARCH_TAP_RADIUS_PX меньше TAP_MIN_RADIUS_PX городов —
+  // маркер похода (маленький октаэдр-пин) сам по себе мельче любой
+  // настоящей модели, раздувать его хитбокс до того же размера не нужно.
+  const MARCH_TAP_RADIUS_PX = 40;
+  function findMarchAtScreen(px: number, py: number): LiveMarchPos | null {
+    let best: LiveMarchPos | null = null;
+    let bestD = MARCH_TAP_RADIUS_PX;
+    for (const m of lastMarches) {
+      const wy = heightAt(m.x, m.y) * HMAX + 2.2;
+      const clip = transformPoint(currentVP, [m.x, wy, m.y]);
+      if (clip.w <= 0.001) continue;
+      const sx = (clip.x / clip.w * 0.5 + 0.5) * canvas.width;
+      const sy = (1 - (clip.y / clip.w * 0.5 + 0.5)) * canvas.height;
+      const d = Math.hypot(sx - px, sy - py);
+      if (d < bestD) { bestD = d; best = m; }
+    }
+    return best;
+  }
   // Тап определяет camera.ts (короткое почти-неподвижное касание, тот же
   // приём, что и tryTap()/lift() в прошлом прототипе) — не родной "click":
   // теперь, когда один палец панорамирует камеру (см. camera.ts), родной
@@ -832,9 +874,18 @@ async function main() {
       showSelection(eid);
       const g = gridOf.get(eid);
       if (g) notifyParentCartouche(g.x, g.y);
-    } else {
-      clearSelection();
+      return;
     }
+    const march = findMarchAtScreen(px, py);
+    if (march !== null) {
+      clearSelection();
+      selectedMarchId = march.id;
+      (window as any).__selectedMarchId = march.id;
+      notifyParentMarchCartouche(march.id);
+      return;
+    }
+    clearSelection();
+    selectedMarchId = null;
   });
 
   // ---- живая синхронизация: партия внутри игры не стоит на месте —
@@ -953,10 +1004,16 @@ async function main() {
   // Своей .glb-модели у похода нет — тот же пин-маркер-пирамидка, что и у
   // подсветки выбора, просто сразу несколько штук за раз в одном
   // instanced-вызове.
+  // lastMarches — тот же список, что и последний возврат marchMarkers(),
+  // но НЕ сведённый до голых MarkerEntity: findMarchAtScreen (тап) и
+  // draw() (подсветка выбранного похода, см. selectedMarchId) нужны id/
+  // владелец/состояние, которых у MarkerEntity нет.
+  let lastMarches: LiveMarchPos[] = [];
   function marchMarkers(): MarkerEntity[] {
-    if (!usingReal) return [];
+    if (!usingReal) { lastMarches = []; return []; }
     const marches = loadLiveMarches();
-    if (!marches) return [];
+    if (!marches) { lastMarches = []; return []; }
+    lastMarches = marches;
     (window as any).__marchPositions = marches;
     return marches.map((m) => ({
       x: m.x,
@@ -1052,6 +1109,20 @@ async function main() {
     renderer.setSunTarget(cam.target[0], cam.target[2]);
     modelPipeline.setFog(eye, FOG_COLOR, FOG_K);
     const markers = marchMarkers();
+    // Выбранный поход движется — в отличие от showSelection() для
+    // статичных сущностей (город/лагерь/точка), тут нельзя один раз
+    // посчитать highlightMarker при тапе, он бы тут же отстал от
+    // маркера. Пересчитываем из lastMarches (уже обновлён вызовом
+    // marchMarkers() строкой выше) каждый кадр.
+    if (selectedMarchId !== null) {
+      const sel = lastMarches.find((m) => m.id === selectedMarchId);
+      if (sel) {
+        highlightMarker = { x: sel.x, y: heightAt(sel.x, sel.y) * HMAX + 3.2, z: sel.y, color: HILITE_COLOR };
+      } else {
+        selectedMarchId = null; // поход прибыл/был отозван — подсветке больше нечего показывать
+        highlightMarker = null;
+      }
+    }
     if (highlightMarker) markers.push(highlightMarker);
     renderer.setMarkers(markers);
     (window as any).__marchCount = markers.length - (highlightMarker ? 1 : 0);

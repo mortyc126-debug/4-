@@ -1785,7 +1785,7 @@ function genWorld(seed){
 
   // Свежий мир уже построен через ensureChunkContent (зазор + вода +
   // "монетка" на чанк) — всем миграциям ниже тут нечего делать.
-  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.densityMigrated5=true; W.densityMigrated6=true; W.infiniteWorldMigrated=true; W.levelMigrated=true;
+  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.densityMigrated5=true; W.densityMigrated6=true; W.infiniteWorldMigrated=true; W.levelMigrated=true; W.marchRescueMigrated=true;
   logg("Мир создан. Зерно "+seed+". Городов: "+W.players.length+".", "good");
   return W;
 }
@@ -3409,6 +3409,32 @@ async function load(){
       if(m.state==="back"&&p) setMarchPath(m,waterPath(m.tx,m.ty,p.x,p.y));
       else setMarchPath(m,waterPath(m.x0,m.y0,m.tx,m.ty));
     });
+    // Пользователь заметил армии, "застрявшие" на пустой клетке без всякой
+    // цели под ней — та же проблема, что чинит блок выше, но для походов,
+    // у которых m.path технически ЕСТЬ (проверка выше его пропускает), но
+    // испорчен (пустой массив/одна точка/NaN-длина) — pathPointAt() тогда
+    // молча проваливается в аварийный фолбэк {x:0,y:0}, буквально исток
+    // координат, и поход навсегда рисуется там. Восстанавливать исходный
+    // маршрут не пытаемся — цель могла уже не существовать (лагерь
+    // разбит, точка истощилась и уже респаунилась в другом месте) —
+    // войска просто принудительно возвращаются в казарму, тем же кодом,
+    // что и обычное штатное прибытие домой (см. QUEUE.home выше).
+    if(!W.marchRescueMigrated){
+      const lost=W.marches.filter(m=>!(m.path && m.path.length>=2 && isFinite(m.pathLen) && m.pathLen>=0));
+      lost.forEach(m=>{
+        const p=W.players.find(q=>q.id===m.pid);
+        if(p){
+          TKEYS.forEach(t=>{for(let i=1;i<=5;i++) p.troops[t][i]+=(m.units[t]&&m.units[t][i])||0});
+          if(m.carry) gain(p,m.carry);
+        }
+        unschedule(e=>e.data&&e.data.mid===m.id);
+      });
+      if(lost.length){
+        W.marches=W.marches.filter(m=>!lost.includes(m));
+        logg("Потерянные в пути отряды ("+lost.length+") принудительно возвращены домой.","good");
+      }
+      W.marchRescueMigrated=true;
+    }
     // догоняем реальное время, прошедшее с последнего захода
     const away=Math.max(0,(Date.now()-W.savedAt)/1000);
     if(away>60){
@@ -3615,15 +3641,42 @@ function renderTop(){
    атаковать, разведать), а не просто повторить то, что уже подписано в
    мире. Пустошь и своя столица не открывают панель вовсе. ---- */
 let lastCart="";
+// Выбранный поход (march.id, см. renderMarchCartoucheFor ниже — зовётся
+// из 3D при тапе по маркеру похода, engine/src/main.ts notifyParentMarchCartouche)
+// — отдельное состояние от sel (клетка карты): поход не привязан к
+// клетке, он движется. Взаимно исключают друг друга — выбор одного
+// сбрасывает другое (см. renderMarchCartoucheFor и обработчик
+// closecartouche в handleAct).
+let selMarch=null;
+function renderMarchCartoucheFor(marchId){ selMarch=marchId; sel=null; renderCartouche(); }
+const MARCH_STATE_RU={go:"в пути",gather:"собирает",back:"возвращается",siege:"осаждает"};
 function renderCartouche(){
   const el=$("#cartouche");
-  // Крестик добавляется тут ОДИН раз, а не в каждой из трёх веток ниже
-  // (node/camp-fort/city) — put() оборачивает готовое тело панели, ветки
-  // ничего не знают про кнопку закрытия.
+  // Крестик добавляется тут ОДИН раз, а не в каждой из веток ниже
+  // (node/camp-fort/city/march) — put() оборачивает готовое тело панели,
+  // ветки ничего не знают про кнопку закрытия.
   const put=h=>{
     const full=h?"<button class='cart-close' data-act='closecartouche' title='Закрыть' aria-label='Закрыть'>&times;</button>"+h:h;
     if(full!==lastCart){ lastCart=full; el.innerHTML=full } el.style.display=full?"":"none";
   };
+  if(selMarch!=null){
+    const m=W.marches.find(x=>x.id===selMarch);
+    if(!m){ selMarch=null; } // прибыл или был отозван, пока панель была открыта
+    else {
+      const owner=W.players.find(q=>q.id===m.pid);
+      const mine=owner&&owner.id===me().id;
+      const mcoord="<span class='n' style='font-family:var(--data);font-size:10px;color:var(--vellum-faint)'>"+
+        m.tx+" · "+m.ty+"</span>";
+      put("<div class='hd'>"+(owner?shieldSvg(owner.race,14):"")+(owner?owner.nick:"?")+" — отряд "+mcoord+"</div>"+
+        "<div class='co'><span>Состояние</span><b>"+(MARCH_STATE_RU[m.state]||m.state)+"</b></div>"+
+        "<div class='co'><span>Воинов</span><b>"+RU(countUnits(m.units))+"</b></div>"+
+        "<div class='co'><span>Цель</span><b>"+m.tx+" · "+m.ty+"</b></div>"+
+        (m.state!=="gather"&&m.state!=="siege"?"<div class='co'><span>Прибытие через</span><b>"+fmtDur(Math.max(0,m.t1-W.t))+"</b></div>":"")+
+        (mine?"<button class='seal wide' style='margin-top:9px' data-act='recall' data-m='"+m.id+"'>Отозвать</button>":
+          "<div class='hint'>Атака отряда в пути не поддерживается — только цели на карте (город/лагерь/точка).</div>"));
+      return;
+    }
+  }
   if(!sel){ put(""); return }
   const o=W.map[key(sel.x,sel.y)], p=me();
   const coord="<span class='n' style='font-family:var(--data);font-size:10px;color:var(--vellum-faint)'>"+
@@ -4636,7 +4689,7 @@ function handleAct(e){
   const closeBm=e.target.closest("[data-act='closebuilding']");
   if(closeBm){ closeBuildingModal(); return; }
   const closeCart=e.target.closest("[data-act='closecartouche']");
-  if(closeCart){ sel=null; renderCartouche(); return; }
+  if(closeCart){ sel=null; selMarch=null; renderCartouche(); return; }
   const cell=e.target.closest("[data-cell]");
   if(cell && !e.target.closest("[data-act]")){
     openBuildingModal(+cell.dataset.cell);
