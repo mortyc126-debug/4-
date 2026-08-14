@@ -18,7 +18,7 @@
    устройства.
    ========================================================================= */
 import type { MeshData } from "./terrainMesh";
-import { buildConiferMesh, buildBroadleafMesh, buildRockMesh, type DecorMesh } from "./decorMesh";
+import { buildConiferMesh, buildBroadleafMesh, buildBirchMesh, buildDeadTreeMesh, buildGrassMesh, buildRockMesh, type DecorMesh } from "./decorMesh";
 
 const TERRAIN_SHADER = /* wgsl */ `
 struct Uniforms { vp: mat4x4f };
@@ -85,32 +85,37 @@ fn fs(in: VOut) -> @location(0) vec4f {
 // Поворот только вокруг Y (yaw) — простая 2D-матрица поворота на CPU не
 // нужна, тут же в шейдере, применяется и к позиции, и к нормали одинаково.
 //
-// materialId вместо запечённого в меш цвета (см. decorMesh.ts): ствол
-// (materialId=0) всегда одного и того же бурого тона — TRUNK_COLOR ниже —
-// а крона/камень (materialId=1) красится цветом ИНСТАНСА, выбранным на CPU
-// из палитры PINE/LEAF/ROCK_TONES (main.ts) — разнообразие оттенков без
-// разной геометрии на каждый оттенок.
+// materialId вместо запечённого в меш цвета (см. decorMesh.ts) — роль, не
+// сам цвет: 0=обычный ствол (TRUNK_COLOR), 1=крона/камень/трава (цвет
+// ИНСТАНСА — палитра выбирается на CPU, см. main.ts), 2=бледный ствол
+// берёзы (BIRCH_TRUNK). Масштаб — vec3, не скаляр: неравномерное растяжение
+// по осям даёт заметно разные силуэты у инстансов ОДНОЙ и той же геометрии
+// (шире/уже/выше) почти бесплатно, без новых мешей под каждый вариант формы.
 const DECOR_SHADER = /* wgsl */ `
 struct Uniforms { vp: mat4x4f };
 struct Fog { eye: vec4f, color: vec4f };
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var<uniform> fog: Fog;
 const TRUNK_COLOR = vec3f(0.35, 0.26, 0.17);
+const BIRCH_TRUNK = vec3f(0.76, 0.73, 0.65);
 
 struct VOut { @builtin(position) pos: vec4f, @location(0) color: vec3f, @location(1) worldPos: vec3f, @location(2) normal: vec3f };
 
 @vertex
 fn vs(
   @location(0) localPos: vec3f, @location(1) localNormal: vec3f, @location(2) materialId: f32,
-  @location(3) worldPos: vec3f, @location(4) scale: f32, @location(5) yaw: f32, @location(6) tintColor: vec3f
+  @location(3) worldPos: vec3f, @location(4) scale: vec3f, @location(5) yaw: f32, @location(6) tintColor: vec3f
 ) -> VOut {
   var out: VOut;
   let c = cos(yaw); let s = sin(yaw);
-  let rp = vec3f(localPos.x * c - localPos.z * s, localPos.y, localPos.x * s + localPos.z * c);
+  let rp = vec3f(localPos.x * c - localPos.z * s, localPos.y, localPos.x * s + localPos.z * c) * scale;
   let rn = vec3f(localNormal.x * c - localNormal.z * s, localNormal.y, localNormal.x * s + localNormal.z * c);
-  let wp = worldPos + rp * scale;
+  let wp = worldPos + rp;
   out.pos = u.vp * vec4f(wp, 1.0);
-  out.color = select(TRUNK_COLOR, tintColor, materialId > 0.5);
+  var base = TRUNK_COLOR;
+  if (materialId > 1.5) { base = BIRCH_TRUNK; }
+  else if (materialId > 0.5) { base = tintColor; }
+  out.color = base;
   out.worldPos = wp;
   out.normal = rn;
   return out;
@@ -134,18 +139,21 @@ export interface MarkerEntity {
   color: [number, number, number];
 }
 
-// Декор (деревья/камни) — тот же инстансинг, что и маркеры. Ствол всегда
-// одного бурого тона (см. TRUNK_COLOR в DECOR_SHADER), а крона/камень
-// красятся цветом ИНСТАНСА (color) — выбор конкретного оттенка из палитры
-// PINE/LEAF/ROCK_TONES решает main.ts при генерации, не renderer.
+// Декор (деревья/камни/трава) — тот же инстансинг, что и маркеры. Ствол
+// красится в один из двух фиксированных тонов (см. TRUNK_COLOR/BIRCH_TRUNK
+// в DECOR_SHADER), а крона/камень/трава — цветом ИНСТАНСА (color), выбор
+// конкретного оттенка из палитры PINE/LEAF/GRASS_TONES/ROCK_TONES решает
+// main.ts при генерации, не renderer. scale — вектор (не скаляр): позволяет
+// растягивать одну и ту же геометрию неравномерно по осям для разнообразия
+// силуэта без новых мешей (см. комментарий у DECOR_SHADER).
 export interface DecorEntity {
   x: number;
   y: number;
   z: number;
-  scale: number;
+  scale: [number, number, number];
   yaw: number;
   color: [number, number, number];
-  kind: "conifer" | "broadleaf" | "rock";
+  kind: "conifer" | "broadleaf" | "birch" | "dead" | "rock" | "grass";
 }
 
 export interface Renderer {
@@ -272,12 +280,13 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
   let instCapacity = 0;
   let instanceCount = 0;
 
-  // ---- декор (деревья/камни, инстансинг) ----
-  // x,y,z, scale, yaw, color.rgb — цвет кроны/камня теперь атрибут
-  // ИНСТАНСА (см. DECOR_SHADER), не запечён в меш: одна геометрия хвойного/
-  // лиственного дерева переиспользуется под любой оттенок из палитры
-  // PINE/LEAF/ROCK_TONES (main.ts решает, какой).
-  const DECOR_INST_STRIDE_FLOATS = 8;
+  // ---- декор (деревья/камни/трава, инстансинг) ----
+  // x,y,z, scale.xyz, yaw, color.rgb — цвет кроны/камня/травы теперь атрибут
+  // ИНСТАНСА (см. DECOR_SHADER), не запечён в меш: одна геометрия каждого
+  // вида дерева переиспользуется под любой оттенок из палитры
+  // PINE/LEAF/GRASS_TONES/ROCK_TONES (main.ts решает, какой), а scale —
+  // вектор, не скаляр (неравномерное растяжение по осям).
+  const DECOR_INST_STRIDE_FLOATS = 10;
   const decorModule = device.createShaderModule({ code: DECOR_SHADER });
   function uploadDecorMesh(mesh: DecorMesh) {
     const buf = device.createBuffer({
@@ -301,7 +310,10 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
   const decorKinds = new Map<DecorEntity["kind"], DecorKindState>([
     ["conifer", { mesh: buildConiferMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
     ["broadleaf", { mesh: buildBroadleafMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
+    ["birch", { mesh: buildBirchMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
+    ["dead", { mesh: buildDeadTreeMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
     ["rock", { mesh: buildRockMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
+    ["grass", { mesh: buildGrassMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
   ]);
   for (const state of decorKinds.values()) state.localBuf = uploadDecorMesh(state.mesh);
   const decorPipeline = device.createRenderPipeline({
@@ -324,9 +336,9 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
           stepMode: "instance",
           attributes: [
             { shaderLocation: 3, offset: 0, format: "float32x3" },
-            { shaderLocation: 4, offset: 3 * 4, format: "float32" },
-            { shaderLocation: 5, offset: 4 * 4, format: "float32" },
-            { shaderLocation: 6, offset: 5 * 4, format: "float32x3" },
+            { shaderLocation: 4, offset: 3 * 4, format: "float32x3" },
+            { shaderLocation: 5, offset: 6 * 4, format: "float32" },
+            { shaderLocation: 6, offset: 7 * 4, format: "float32x3" },
           ],
         },
       ],
@@ -420,8 +432,9 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
     entities.forEach((e, i) => {
       const o = i * DECOR_INST_STRIDE_FLOATS;
       data[o] = e.x; data[o + 1] = e.y; data[o + 2] = e.z;
-      data[o + 3] = e.scale; data[o + 4] = e.yaw;
-      data[o + 5] = e.color[0]; data[o + 6] = e.color[1]; data[o + 7] = e.color[2];
+      data[o + 3] = e.scale[0]; data[o + 4] = e.scale[1]; data[o + 5] = e.scale[2];
+      data[o + 6] = e.yaw;
+      data[o + 7] = e.color[0]; data[o + 8] = e.color[1]; data[o + 9] = e.color[2];
     });
     state.instanceCount = count;
     if (count > state.instCapacity) {

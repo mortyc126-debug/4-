@@ -11,7 +11,7 @@ import { createWorld, addEntity, addComponent, removeEntity, query } from "bitec
 import { createRenderer, type MarkerEntity, type DecorEntity } from "./renderer";
 import { buildTerrainPatch } from "./terrainMesh";
 import { heightAt, HMAX, hash2, isWater, SEED } from "./terrain";
-import { PINE, LEAF, ROCK_TONES } from "./decorMesh";
+import { PINE, LEAF, GRASS_TONES, ROCK_TONES } from "./decorMesh";
 import { mul, persp, look, modelMatrix, transformPoint, type Vec3, type Mat4 } from "./mat4";
 import { attachOrbitControls, type OrbitCamera } from "./camera";
 import { loadGLB } from "./glb";
@@ -184,15 +184,19 @@ async function main() {
       /* кросс-origin или не встроено — тихо игнорируем */
     }
   }
-  // ---- декор (деревья/камни) — процедурный, чанк-локальный, привязан к
-  // тому же CHUNK_SIZE, что и рельеф: генерится/убирается вместе с ближним
+  // ---- декор (деревья/камни/трава) — процедурный, чанк-локальный, привязан
+  // к тому же CHUNK_SIZE, что и рельеф: генерится/убирается вместе с ближним
   // детальным чанком земли под ним, не отдельным радиусом (декор не нужен
-  // там, где уже не рисуется детальная земля). Плотность — редкая ("sparse"),
-  // не лес на весь остров: по подсетке 4×4 внутри каждого чанка 16×16 с
-  // низким шансом на подсетку, а не "деталь на каждую клетку".
-  const DECOR_CELL = 4; // сторона подсетки, кратно CHUNK_SIZE (÷4)
-  const DECOR_CHANCE = 0.22; // ~3.5 инстанса на чанк в среднем (16 подсеток × 0.22)
-  const TREE_FRACTION = 0.78; // доля деревьев среди сгенерированных — остальное камни
+  // там, где уже не рисуется детальная земля).
+  //
+  // Пользователь явно попросил детализацию ценой FPS ("готов вытерпеть
+  // 25 кадров, ради красоты") — плотность и число видов заметно выросли
+  // против первой версии (была одна subgrid 4×4 и два вида дерева).
+  const DECOR_CELL = 4; // сторона подсетки деревьев/камней, кратно CHUNK_SIZE (÷4)
+  const DECOR_CHANCE = 0.45;
+  const TREE_FRACTION = 0.8; // доля деревьев среди сгенерированных — остальное камни
+  const GRASS_CELL = 2; // трава — своя, более мелкая подсетка (гуще)
+  const GRASS_CHANCE = 0.5;
   // Хвойный/лиственный порог по высоте — тот же приём, что и в старом
   // прототипе (obyom-3d-infinite.html: `const conif = e>0.50`) — хвоя на
   // возвышенностях, лиственный лес в низинах, а не вперемешку где попало.
@@ -200,6 +204,30 @@ async function main() {
   const decorByChunk = new Map<string, DecorEntity[]>();
   function jitterColor(base: readonly [number, number, number], k: number): [number, number, number] {
     return [base[0] * k, base[1] * k, base[2] * k];
+  }
+  // Не ставим декор поверх/впритык к настоящим зданиям — минимальный отступ
+  // от радиуса модели (тот же приём смягчения наложений, что уже
+  // применялся для реальных сущностей друг относительно друга, см. план
+  // "Смягчение наложений" — только тут двигаем не позицию структуры, а
+  // просто пропускаем декор-кандидата). pad — доля радиуса модели: у травы
+  // меньше (мелкая, не режет глаз у стен), у деревьев/камней больше.
+  function blockedByStructure(wx: number, wz: number, pad: number, extra: number): boolean {
+    for (const eid of found) {
+      const dx = Position.x[eid] - wx, dz = Position.y[eid] - wz;
+      const minDist = (modelScaleOf.get(eid) ?? 5) * pad + extra;
+      if (dx * dx + dz * dz < minDist * minDist) return true;
+    }
+    return false;
+  }
+  // Выбор вида дерева по высоте — та же цепочка вероятностей, что и в
+  // прототипе (treeSpruce/treePine слиты в один общий "conifer"-меш здесь,
+  // но соотношение живое/сухое и хвоя/лиственная/берёза — оттуда же).
+  function pickTreeKind(e: number, r: number): DecorEntity["kind"] {
+    if (e > CONIFER_ELEVATION) return r < 0.85 ? "conifer" : "dead";
+    if (r < 0.55) return "broadleaf";
+    if (r < 0.78) return "birch";
+    if (r < 0.92) return "conifer"; // редкая хвоя вперемешку в низине
+    return "dead";
   }
   function genDecorForChunk(cx: number, cz: number): DecorEntity[] {
     const out: DecorEntity[] = [];
@@ -212,35 +240,56 @@ async function main() {
         const wx = cx * CHUNK_SIZE + i * DECOR_CELL + jx * DECOR_CELL;
         const wz = cz * CHUNK_SIZE + j * DECOR_CELL + jz * DECOR_CELL;
         if (isWater(wx, wz)) continue;
-        // Не ставим декор поверх/впритык к настоящим зданиям — минимальный
-        // отступ от радиуса модели (тот же приём смягчения наложений, что
-        // уже применялся для реальных сущностей друг относительно друга,
-        // см. план "Смягчение наложений" — только тут двигаем не позицию
-        // структуры, а просто пропускаем декор-кандидата).
-        let blocked = false;
-        for (const eid of found) {
-          const dx = Position.x[eid] - wx, dz = Position.y[eid] - wz;
-          const minDist = (modelScaleOf.get(eid) ?? 5) * 1.6 + 2;
-          if (dx * dx + dz * dz < minDist * minDist) { blocked = true; break; }
-        }
-        if (blocked) continue;
+        if (blockedByStructure(wx, wz, 1.6, 2)) continue;
         const isTree = hash2(gx, gz, SEED + 780) < TREE_FRACTION;
         const yaw = hash2(gx, gz, SEED + 781) * Math.PI * 2;
         const jitter = 0.85 + hash2(gx, gz, SEED + 782) * 0.3; // 0.85..1.15 — та же роль, что и tone/warm в старом прототипе
         const e = heightAt(wx, wz);
         const wy = e * HMAX;
+        // Неравномерный масштаб (высота отдельно от ширины) — разные
+        // силуэты одной геометрии почти бесплатно, см. DECOR_SHADER.
+        const scaleY = 1.0 + hash2(gx, gz, SEED + 785) * 1.3;
+        const scaleXZ = 0.8 + hash2(gx, gz, SEED + 786) * 0.5;
         if (isTree) {
-          const conifer = e > CONIFER_ELEVATION;
-          const palette = conifer ? PINE : LEAF;
+          const kind = pickTreeKind(e, hash2(gx, gz, SEED + 780));
+          // "dead" — голый ствол без кроны, свой цвет инстанса нигде не
+          // используется (весь меш materialId=0, см. decorMesh.ts), но
+          // структура DecorEntity общая — просто берём любую палитру.
+          const palette = kind === "conifer" ? PINE : LEAF;
           const base = palette[Math.floor(hash2(gx, gz, SEED + 784) * palette.length)];
           out.push({
-            x: wx, y: wy, z: wz, scale: 1.0 + hash2(gx, gz, SEED + 783) * 1.2, yaw,
-            color: jitterColor(base, jitter), kind: conifer ? "conifer" : "broadleaf",
+            x: wx, y: wy, z: wz, scale: [scaleXZ, scaleY, scaleXZ], yaw,
+            color: jitterColor(base, jitter), kind,
           });
         } else {
           const base = ROCK_TONES[Math.floor(hash2(gx, gz, SEED + 784) * ROCK_TONES.length)];
-          out.push({ x: wx, y: wy, z: wz, scale: 0.6 + hash2(gx, gz, SEED + 783) * 0.8, yaw, color: jitterColor(base, jitter), kind: "rock" });
+          const rockScaleY = 0.6 + hash2(gx, gz, SEED + 785) * 0.9;
+          const rockScaleXZ = 0.6 + hash2(gx, gz, SEED + 786) * 0.9;
+          out.push({ x: wx, y: wy, z: wz, scale: [rockScaleXZ, rockScaleY, rockScaleXZ], yaw, color: jitterColor(base, jitter), kind: "rock" });
         }
+      }
+    }
+    const grassCellsPerSide = CHUNK_SIZE / GRASS_CELL;
+    for (let j = 0; j < grassCellsPerSide; j++) {
+      for (let i = 0; i < grassCellsPerSide; i++) {
+        const gx = cx * grassCellsPerSide + i, gz = cz * grassCellsPerSide + j;
+        if (hash2(gx, gz, SEED + 887) >= GRASS_CHANCE) continue;
+        const jx = hash2(gx, gz, SEED + 888), jz = hash2(gx, gz, SEED + 889);
+        const wx = cx * CHUNK_SIZE + i * GRASS_CELL + jx * GRASS_CELL;
+        const wz = cz * CHUNK_SIZE + j * GRASS_CELL + jz * GRASS_CELL;
+        if (isWater(wx, wz)) continue;
+        if (blockedByStructure(wx, wz, 1.05, 0.5)) continue;
+        const e = heightAt(wx, wz);
+        // Трава заметна только на невысокой/пологой траве-местности —
+        // на голых скалистых верхах (SCREE, см. terrain.ts) её и в живой
+        // игре не бывает.
+        if (e > 0.75) continue;
+        const wy = e * HMAX;
+        const yaw = hash2(gx, gz, SEED + 890) * Math.PI * 2;
+        const jitter = 0.8 + hash2(gx, gz, SEED + 891) * 0.4;
+        const base = GRASS_TONES[Math.floor(hash2(gx, gz, SEED + 892) * GRASS_TONES.length)];
+        const s = 0.8 + hash2(gx, gz, SEED + 893) * 0.6;
+        out.push({ x: wx, y: wy, z: wz, scale: [s, s, s], yaw, color: jitterColor(base, jitter), kind: "grass" });
       }
     }
     return out;
