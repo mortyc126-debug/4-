@@ -8,7 +8,7 @@
    не нужен.
    ========================================================================= */
 import { createWorld, addEntity, addComponent, removeEntity, query } from "bitecs";
-import { createRenderer } from "./renderer";
+import { createRenderer, type MarkerEntity } from "./renderer";
 import { buildTerrainPatch } from "./terrainMesh";
 import { heightAt, HMAX } from "./terrain";
 import { mul, persp, look, modelMatrix, transformPoint, type Vec3, type Mat4 } from "./mat4";
@@ -16,6 +16,7 @@ import { attachOrbitControls, type OrbitCamera } from "./camera";
 import { loadGLB } from "./glb";
 import { uploadGLB, createModelPipeline, type GpuModel, type ModelInstance } from "./modelRenderer";
 import { loadRealEntities, type RealEntity } from "./realData";
+import { loadLiveMarches } from "./marchData";
 
 const statusEl = document.getElementById("status") as HTMLDivElement;
 function setStatus(lines: string[]) {
@@ -208,13 +209,23 @@ async function main() {
   let currentVP: Mat4 = new Float32Array(16);
   const selectedEl = document.getElementById("selected") as HTMLDivElement;
   const HILITE_COLOR: [number, number, number] = [0.95, 0.78, 0.35];
+  // Свой/чужой поход — тот же смысл, что и TINCT-золото/гранат в 2D-карте
+  // index.html: не спутать наступающих с обороняющимися с одного взгляда.
+  const OWN_MARCH_COLOR: [number, number, number] = [0.42, 0.78, 0.46];
+  const ENEMY_MARCH_COLOR: [number, number, number] = [0.82, 0.24, 0.26];
+  // Маркер подсветки выбора и маркеры походов (ниже) рисуются одним общим
+  // instanced-вызовом renderer.setMarkers — держим его состав в одной
+  // переменной, пересобираем и отдаём рендереру раз за кадр в draw(), а не
+  // раздельными вызовами setMarkers из разных мест (переписывали бы друг
+  // друга — сеттер заменяет весь список целиком, а не добавляет).
+  let highlightMarker: MarkerEntity | null = null;
   let selectedEid: number | null = null;
   function showSelection(eid: number) {
     selectedEid = eid;
     const label = labelOf.get(eid) ?? "?";
     const wx = Position.x[eid], wz = Position.y[eid];
     const wy = heightAt(wx, wz) * HMAX + (modelScaleOf.get(eid) ?? 5) * 0.9 + 2;
-    renderer.setMarkers([{ x: wx, y: wy, z: wz, color: HILITE_COLOR }]);
+    highlightMarker = { x: wx, y: wy, z: wz, color: HILITE_COLOR };
     (window as any).__markerActive = true;
     (window as any).__selectedLabel = label;
     selectedEl.textContent = label;
@@ -222,7 +233,7 @@ async function main() {
   }
   function clearSelection() {
     selectedEid = null;
-    renderer.setMarkers([]);
+    highlightMarker = null;
     (window as any).__markerActive = false;
     (window as any).__selectedLabel = null;
     selectedEl.style.display = "none";
@@ -345,6 +356,27 @@ async function main() {
     }, SYNC_INTERVAL_MS);
   }
 
+  // ---- походы (W.marches): в отличие от городов/лагерей/точек, положение
+  // похода не событие, а непрерывное движение по пути — читаем и
+  // пересчитываем КАЖДЫЙ КАДР напрямую из window.parent.W (не через
+  // 3-секундный syncLiveEntities, тот для дискретных появлений/исчезновений
+  // сущностей), см. marchData.ts — дословный порт pathPointAt/marchPos.
+  // Своей .glb-модели у похода нет — тот же пин-маркер-пирамидка, что и у
+  // подсветки выбора, просто сразу несколько штук за раз в одном
+  // instanced-вызове.
+  function marchMarkers(): MarkerEntity[] {
+    if (!usingReal) return [];
+    const marches = loadLiveMarches();
+    if (!marches) return [];
+    (window as any).__marchPositions = marches;
+    return marches.map((m) => ({
+      x: m.x,
+      y: heightAt(m.x, m.y) * HMAX + 2.2,
+      z: m.y,
+      color: m.own ? OWN_MARCH_COLOR : ENEMY_MARCH_COLOR,
+    }));
+  }
+
   function draw(tMs: number) {
     if (controls.isAutoOrbiting()) cam.yaw = tMs * 0.00015;
     const eye: Vec3 = [
@@ -356,6 +388,10 @@ async function main() {
     const vp = mul(persp(0.72, aspect, 0.5, 300), look(eye, cam.target, [0, 1, 0]));
     currentVP = vp;
     renderer.setVP(vp);
+    const markers = marchMarkers();
+    if (highlightMarker) markers.push(highlightMarker);
+    renderer.setMarkers(markers);
+    (window as any).__marchCount = markers.length - (highlightMarker ? 1 : 0);
     renderer.frame({ r: 0.043, g: 0.039, b: 0.035, a: 1 }, (pass) => {
       for (const eid of found) {
         const inst = instances.get(eid);
