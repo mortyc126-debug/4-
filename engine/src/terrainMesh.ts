@@ -24,18 +24,33 @@
    виден (далеко, да ещё скрыт туманом). Поэтому она включается только для
    ближних чанков (step===1); грубые чанки возвращаются к дешёвой
    face-нормали треугольника — тот приём, что был до этого перехода.
+
+   Цвет земли больше не запекается на CPU (groundColor(e) — суша красится
+   настоящими текстурами в фрагментном шейдере, см. renderer.ts, по uv +
+   elevation, которые кладём тут как атрибуты). "colors" остался только для
+   ВОДЫ — она плоская, без текстуры, дешевле держать баked-цвет, как и
+   раньше; waterFlag говорит шейдеру, что в этой точке брать colors как
+   есть, а не сэмплить текстуры земли.
    ========================================================================= */
-import { heightAt, groundColor, waterColor, SEA, HMAX, isWater } from "./terrain";
+import { heightAt, waterColor, SEA, HMAX, isWater } from "./terrain";
 import { norm, cross, sub, type Vec3 } from "./mat4";
 
 export interface MeshData {
   positions: Float32Array;
-  colors: Float32Array;
+  colors: Float32Array; // только вода, см. комментарий выше
   normals: Float32Array;
+  uvs: Float32Array;
+  elevations: Float32Array;
+  waterFlags: Float32Array;
   vertexCount: number;
 }
 
 const UP: Vec3 = [0, 1, 0];
+// Сколько мировых клеток укладывается в один повтор текстуры земли —
+// подобрано на глаз под масштаб декора (дерево ~1-2 клетки в диаметре):
+// текстура не должна быть ни огромным единственным пятном на весь чанк, ни
+// мелкой рябью.
+const GROUND_TILE = 6;
 
 // Центральные разности heightAt — тот же приём, что и в heightmap-нормалях
 // любого рельефа: наклон вдоль X/Z даёт наклон нормали. e=0.5 — примерно
@@ -49,7 +64,7 @@ function normalAt(x: number, y: number): Vec3 {
   return norm([-(hR - hL) / (2 * e), 1, -(hU - hD) / (2 * e)]);
 }
 
-interface Vert { p: Vec3; c: [number, number, number]; n: Vec3 }
+interface Vert { p: Vec3; c: [number, number, number]; n: Vec3; uv: [number, number]; e: number; water: number }
 
 export function buildTerrainPatch(x0: number, y0: number, x1: number, y1: number, step = 1): MeshData {
   const cols = Math.round((x1 - x0) / step);
@@ -58,17 +73,20 @@ export function buildTerrainPatch(x0: number, y0: number, x1: number, y1: number
   const positions: number[] = [];
   const colors: number[] = [];
   const normals: number[] = [];
+  const uvs: number[] = [];
+  const elevations: number[] = [];
+  const waterFlags: number[] = [];
 
   function vertexAt(x: number, y: number): Vert {
     const e = heightAt(x, y);
     const water = e < SEA;
     const p: Vec3 = water ? [x, SEA * HMAX, y] : [x, e * HMAX, y];
-    const c = water ? waterColor((SEA - e) * 3) : groundColor(e);
+    const c: [number, number, number] = water ? waterColor((SEA - e) * 3) : [0, 0, 0];
     // вода — плоская подложка (см. выше), нормаль честно "вверх"; на грубых
     // чанках (!smooth) аналитическую нормаль не считаем — face-нормаль
     // подставит pushTri ниже, дешевле и не заметно на таком расстоянии.
     const n = water ? UP : (smooth ? normalAt(x, y) : UP);
-    return { p, c, n };
+    return { p, c, n, uv: [x / GROUND_TILE, y / GROUND_TILE], e, water: water ? 1 : 0 };
   }
 
   // Сетка углов ячеек считается один раз на угол, а не заново в КАЖДОЙ из
@@ -93,6 +111,9 @@ export function buildTerrainPatch(x0: number, y0: number, x1: number, y1: number
       colors.push(v.c[0], v.c[1], v.c[2]);
       const n = faceN ?? v.n;
       normals.push(n[0], n[1], n[2]);
+      uvs.push(v.uv[0], v.uv[1]);
+      elevations.push(v.e);
+      waterFlags.push(v.water);
     }
   }
 
@@ -114,6 +135,9 @@ export function buildTerrainPatch(x0: number, y0: number, x1: number, y1: number
     positions: new Float32Array(positions),
     colors: new Float32Array(colors),
     normals: new Float32Array(normals),
+    uvs: new Float32Array(uvs),
+    elevations: new Float32Array(elevations),
+    waterFlags: new Float32Array(waterFlags),
     vertexCount: positions.length / 3,
   };
 }
