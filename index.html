@@ -4882,7 +4882,7 @@ $("#building-modal").addEventListener("input",e=>{
 
 /* ---- Витрина юнитов: все тиры листаются вправо-влево, обучение — прямо с той же карточки ---- */
 let carouselCtx=null, trainCtx=null;
-let healCtx=null, healCarouselOpen=false;
+let healCtx=null, healCarouselOpen=false, lastHealFingerprint="";
 function openUnitCarousel(type){
   const p=me(), maxT=tierUnlockedFor(p,type);
   carouselCtx={type}; researchCtx=null; healCarouselOpen=false; healCtx=null;
@@ -5034,6 +5034,7 @@ function openHealCarousel(){
   trainCtx=null; carouselCtx=null; researchCtx=null; forgeTab=null; forgeRarity=null;
   buildingModalSel=-1; healCarouselOpen=true; healCtx=null;
   $("#bm-body").innerHTML = healCarouselHtml();
+  lastHealFingerprint = woundedList(me()).map(x=>x.type+x.tier).join(",");
   $("#building-modal").classList.add("open");
   updateHealSheet();
 }
@@ -5140,10 +5141,26 @@ function refreshOpenModal(){
       $("#bm-body").innerHTML=researchCarouselHtml();
       const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
     } else if(healCarouselOpen){
-      const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
-      $("#bm-body").innerHTML=healCarouselHtml();
+      // Раньше тут карусель раненых пересобиралась целиком (innerHTML)
+      // КАЖДУЮ секунду безусловно, даже когда список раненых не менялся —
+      // #uc-track (со scroll-snap, см. CSS) уничтожался и пересоздавался
+      // прямо посреди свайпа/тапа "Вперёд", жест срывался на середине
+      // (баг с реального устройства: "не могу листать странички с
+      // ранеными"). Тот же приём, что уже работает у trainCtx ниже —
+      // пересобираем DOM, только когда список раненых или доступность
+      // лечения реально изменились, а не на каждый тик таймера.
+      const p=me();
+      const fp=woundedList(p).map(x=>x.type+x.tier).join(",");
+      const newMax=healCtx?healMaxN(p,healCtx.type,healCtx.tier):0;
+      const newLocked=healCtx?(!!p.heal||newMax<1):true;
+      if(fp!==lastHealFingerprint || (healCtx && newLocked!==healCtx.lastLocked)){
+        if(healCtx){ healCtx.max=newMax; healCtx.n=Math.min(healCtx.n,newMax); healCtx.lastLocked=newLocked; }
+        lastHealFingerprint=fp;
+        const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
+        $("#bm-body").innerHTML=healCarouselHtml();
+        const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
+      }
       updateHealSheet();
-      const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
     } else if(buildingModalSel>=0){
       $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);    }
   }
