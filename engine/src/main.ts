@@ -37,6 +37,23 @@ async function main() {
   const ENTITY_RADIUS = (UNLOAD_RADIUS + 1) * CHUNK_SIZE;
   const DEMO_CENTER = { x: 42, y: 22 }; // примерный центр демо-сущностей (см. seedEntities ниже)
 
+  // ---- туман по расстоянию (см. renderer.ts/modelRenderer.ts) — тёплая
+  // дымка вместо резкого обрыва рельефа/зданий вдали. Цвет — тот же, что и
+  // очистка канвы (renderer.frame ниже): за пределами прорисованной земли
+  // (дальше дальнего кольца рельефа, см. FAR_* ниже) должен быть визуально
+  // тот же тон, что и дымка над самой землёй — иначе всё равно виден край.
+  // Тёплый пасмурный оттенок, а не яркое голубое небо — ближе по духу к
+  // общей золотисто-пергаментной палитре игры (см. GILT/тема index.html),
+  // чем к реалистичному дневному небу. FOG_K — квадратично-экспоненциальный
+  // коэффициент (f=1-exp(-(d·k)²)): у камеры почти не виден (f≈0.04 на
+  // 50 клетках), к краю дальнего кольца рельефа (~250-300 клеток, см.
+  // FAR_UNLOAD_RADIUS) уже заметно затянут (f≈0.7-0.8) — подобрано по
+  // формуле, не проверено визуально (WebGPU-канва не читается в этой
+  // песочнице никаким способом) — нужна обратная связь с реального
+  // устройства для точной подгонки.
+  const FOG_COLOR: [number, number, number] = [0.42, 0.4, 0.37];
+  const FOG_K = 0.0042;
+
   // ---- bitECS: настоящие данные партии, если движок открыт внутри игры
   // (см. realData.ts — читает window.parent.W), иначе те же четыре
   // придуманные сущности демо, что и раньше. Масштаб моделей — как в
@@ -679,11 +696,13 @@ async function main() {
     const vp = mul(persp(0.72, aspect, 0.5, 300), look(eye, cam.target, [0, 1, 0]));
     currentVP = vp;
     renderer.setVP(vp);
+    renderer.setFog(eye, FOG_COLOR, FOG_K);
+    modelPipeline.setFog(eye, FOG_COLOR, FOG_K);
     const markers = marchMarkers();
     if (highlightMarker) markers.push(highlightMarker);
     renderer.setMarkers(markers);
     (window as any).__marchCount = markers.length - (highlightMarker ? 1 : 0);
-    renderer.frame({ r: 0.043, g: 0.039, b: 0.035, a: 1 }, (pass) => {
+    renderer.frame({ r: FOG_COLOR[0], g: FOG_COLOR[1], b: FOG_COLOR[2], a: 1 }, (pass) => {
       for (const eid of found) {
         const inst = instances.get(eid);
         if (inst) modelPipeline.draw(pass, inst, vp);
