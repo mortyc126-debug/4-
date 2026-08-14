@@ -76,14 +76,22 @@ fn fs(in: VOut) -> @location(0) vec4f {
   } else {
     let t = clamp((in.elevation - 0.235) / (1.0 - 0.235), 0.0, 1.0);
     var a: vec3f; var b: vec3f; var blend: f32;
+    // textureSample (неявный LOD через производные) запрещён WGSL внутри
+    // неоднородного (per-fragment, зависящего от varying) control flow —
+    // отсюда и была настоящая причина чёрного экрана: шейдер вообще не
+    // компилировался (см. коммент у DECOR_SHADER — та же проблема была и
+    // там), пайплайн/bind group становились невалидными, terrain и decor
+    // молча переставали рисоваться целиком. textureSampleLevel с явным LOD
+    // не требует производных и разрешён в любом control flow — мипмапов у
+    // текстур всё равно нет, LOD 0 корректен сам по себе, не костыль.
     if (t < 0.06) {
-      a = textureSample(texSand, samp, in.uv).rgb; b = textureSample(texGrass, samp, in.uv).rgb; blend = t / 0.06;
+      a = textureSampleLevel(texSand, samp, in.uv, 0.0).rgb; b = textureSampleLevel(texGrass, samp, in.uv, 0.0).rgb; blend = t / 0.06;
     } else if (t < 0.52) {
-      a = textureSample(texGrass, samp, in.uv).rgb; b = textureSample(texDry, samp, in.uv).rgb; blend = (t - 0.06) / 0.46;
+      a = textureSampleLevel(texGrass, samp, in.uv, 0.0).rgb; b = textureSampleLevel(texDry, samp, in.uv, 0.0).rgb; blend = (t - 0.06) / 0.46;
     } else if (t < 0.72) {
-      a = textureSample(texDry, samp, in.uv).rgb; b = textureSample(texScree, samp, in.uv).rgb; blend = (t - 0.52) / 0.2;
+      a = textureSampleLevel(texDry, samp, in.uv, 0.0).rgb; b = textureSampleLevel(texScree, samp, in.uv, 0.0).rgb; blend = (t - 0.52) / 0.2;
     } else {
-      a = textureSample(texScree, samp, in.uv).rgb; b = textureSample(texRock, samp, in.uv).rgb; blend = min(1.0, (t - 0.72) / 0.28);
+      a = textureSampleLevel(texScree, samp, in.uv, 0.0).rgb; b = textureSampleLevel(texRock, samp, in.uv, 0.0).rgb; blend = min(1.0, (t - 0.72) / 0.28);
     }
     albedo = mix(a, b, blend);
   }
@@ -176,13 +184,16 @@ fn vs(
 }
 @fragment
 fn fs(in: VOut) -> @location(0) vec4f {
+  // textureSampleLevel (не textureSample), см. коммент в TERRAIN_SHADER —
+  // тут ветвление по materialId ещё явнее, обычный textureSample тут
+  // вообще не компилируется.
   var base: vec4f;
   if (in.materialId > 0.5) {
-    base = textureSample(canopyTex, samp, in.uv);
+    base = textureSampleLevel(canopyTex, samp, in.uv, 0.0);
     if (base.a < 0.5) { discard; }
     base = vec4f(base.rgb * in.tintColor, 1.0);
   } else {
-    base = textureSample(trunkTex, samp, in.uv);
+    base = textureSampleLevel(trunkTex, samp, in.uv, 0.0);
   }
   let sun = normalize(vec3f(0.62, 0.38, 0.30));
   let n = normalize(in.normal);
