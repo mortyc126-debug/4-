@@ -258,9 +258,14 @@ async function main() {
         const scaleY = 1.0 + hash2(gx, gz, SEED + 785) * 1.3;
         const scaleXZ = 0.8 + hash2(gx, gz, SEED + 786) * 0.5;
         if (isTree) {
-          const kind = pickTreeKind(e, hash2(gx, gz, SEED + 780));
+          let kind = pickTreeKind(e, hash2(gx, gz, SEED + 780));
+          // "дуб" делится на две отдельные текстуры кроны (обычная зелёная
+          // и осенняя золотисто-оранжевая, см. decorKindSpec в renderer.ts)
+          // — независимый бросок, не встроенный в саму цепочку видов выше,
+          // чтобы не путать вероятности хвои/лиственного/сухостоя.
+          if (kind === "broadleaf" && hash2(gx, gz, SEED + 787) < 0.35) kind = "autumn";
           // "dead" — голый ствол без кроны, свой цвет инстанса нигде не
-          // используется (весь меш materialId=4, см. decorMesh.ts), но
+          // используется (весь меш materialId=0, см. decorMesh.ts), но
           // структура DecorEntity общая — просто берём любую палитру.
           const palette = kind === "spruce" || kind === "pine" ? PINE : LEAF;
           const base = palette[Math.floor(hash2(gx, gz, SEED + 784) * palette.length)];

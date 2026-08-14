@@ -127,32 +127,38 @@ fn fs(in: VOut) -> @location(0) vec4f {
 // Поворот только вокруг Y (yaw) — простая 2D-матрица поворота на CPU не
 // нужна, тут же в шейдере, применяется и к позиции, и к нормали одинаково.
 //
-// materialId вместо запечённого в меш цвета (см. decorMesh.ts) — роль, не
-// сам цвет: 0=обычный ствол (TRUNK_COLOR), 1=крона/камень/куст/трава (цвет
-// ИНСТАНСА — палитра выбирается на CPU, см. main.ts), 2=бледный ствол
-// берёзы (BIRCH_TRUNK), 3=тёмная полоса коры берёзы (BIRCH_MARK), 4=сухой
-// ствол (DEAD_COLOR). Масштаб — vec3, не скаляр: неравномерное растяжение
-// по осям даёт заметно разные силуэты у инстансов ОДНОЙ и той же геометрии
-// (шире/уже/выше) почти бесплатно, без новых мешей под каждый вариант формы.
-// shade — запечённый в вершину множитель яркости (0.7..1.3, см.
-// decorMesh.ts): у "крона"-вершин разных блобов одного дерева получается
-// естественная рябь светотени, а не одна плоская заливка на весь силуэт.
+// materialId (см. decorMesh.ts) — какую из ДВУХ текстур ЭТОГО вида
+// сэмплить: 0=ствол (trunkTex), 1=крона/куст/трава/камень (canopyTex,
+// альфа-вырез — пиксели с низкой альфой не рисуются вовсе, discard, а не
+// смешивание, иначе пришлось бы сортировать плоскости по глубине). Обе
+// текстуры приходят в bind group КОНКРЕТНОГО вида (см. decorKinds ниже) —
+// геометрия одна и та же (buildSpruceMesh и т.п.), но у ели/сосны/дуба/
+// берёзы разные bind group с разными картинками в этих двух слотах,
+// поэтому сама геометрия не должна знать, какая у неё кора/крона.
+// tintColor — цвет ИНСТАНСА (палитра на CPU, main.ts) — лёгкий множитель
+// поверх настоящей текстуры, не замена ей (небольшой разброс тона между
+// соседними инстансами одной и той же карточки). Масштаб — vec3, не
+// скаляр: неравномерное растяжение по осям даёт заметно разные силуэты у
+// инстансов ОДНОЙ и той же геометрии почти бесплатно. shade — запечённый в
+// вершину множитель яркости, см. decorMesh.ts.
 const DECOR_SHADER = /* wgsl */ `
 struct Uniforms { vp: mat4x4f };
 struct Fog { eye: vec4f, color: vec4f };
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var<uniform> fog: Fog;
-const TRUNK_COLOR = vec3f(0.35, 0.26, 0.17);
-const BIRCH_TRUNK = vec3f(0.76, 0.73, 0.65);
-const BIRCH_MARK = vec3f(0.16, 0.14, 0.12);
-const DEAD_COLOR = vec3f(0.34, 0.31, 0.27);
+@group(0) @binding(2) var samp: sampler;
+@group(0) @binding(3) var trunkTex: texture_2d<f32>;
+@group(0) @binding(4) var canopyTex: texture_2d<f32>;
 
-struct VOut { @builtin(position) pos: vec4f, @location(0) color: vec3f, @location(1) worldPos: vec3f, @location(2) normal: vec3f };
+struct VOut {
+  @builtin(position) pos: vec4f, @location(0) worldPos: vec3f, @location(1) normal: vec3f,
+  @location(2) uv: vec2f, @location(3) materialId: f32, @location(4) shade: f32, @location(5) tintColor: vec3f,
+};
 
 @vertex
 fn vs(
-  @location(0) localPos: vec3f, @location(1) localNormal: vec3f, @location(2) materialId: f32, @location(3) shade: f32,
-  @location(4) worldPos: vec3f, @location(5) scale: vec3f, @location(6) yaw: f32, @location(7) tintColor: vec3f
+  @location(0) localPos: vec3f, @location(1) localNormal: vec3f, @location(2) materialId: f32, @location(3) shade: f32, @location(4) uv: vec2f,
+  @location(5) worldPos: vec3f, @location(6) scale: vec3f, @location(7) yaw: f32, @location(8) tintColor: vec3f
 ) -> VOut {
   var out: VOut;
   let c = cos(yaw); let s = sin(yaw);
@@ -160,22 +166,28 @@ fn vs(
   let rn = vec3f(localNormal.x * c - localNormal.z * s, localNormal.y, localNormal.x * s + localNormal.z * c);
   let wp = worldPos + rp;
   out.pos = u.vp * vec4f(wp, 1.0);
-  var base = TRUNK_COLOR;
-  if (materialId > 3.5) { base = DEAD_COLOR; }
-  else if (materialId > 2.5) { base = BIRCH_MARK; }
-  else if (materialId > 1.5) { base = BIRCH_TRUNK; }
-  else if (materialId > 0.5) { base = tintColor; }
-  out.color = base * shade;
   out.worldPos = wp;
   out.normal = rn;
+  out.uv = uv;
+  out.materialId = materialId;
+  out.shade = shade;
+  out.tintColor = tintColor;
   return out;
 }
 @fragment
 fn fs(in: VOut) -> @location(0) vec4f {
+  var base: vec4f;
+  if (in.materialId > 0.5) {
+    base = textureSample(canopyTex, samp, in.uv);
+    if (base.a < 0.5) { discard; }
+    base = vec4f(base.rgb * in.tintColor, 1.0);
+  } else {
+    base = textureSample(trunkTex, samp, in.uv);
+  }
   let sun = normalize(vec3f(0.62, 0.38, 0.30));
   let n = normalize(in.normal);
   let diffuse = max(0.35, dot(n, sun));
-  let lit = in.color * diffuse;
+  let lit = base.rgb * diffuse * in.shade;
   let d = distance(in.worldPos, fog.eye.xyz);
   let k = d * fog.color.w; let f = clamp(1.0 - exp(-k * k), 0.0, 1.0);
   return vec4f(mix(lit, fog.color.rgb, f), 1.0);
@@ -189,13 +201,12 @@ export interface MarkerEntity {
   color: [number, number, number];
 }
 
-// Декор (деревья/камни/трава) — тот же инстансинг, что и маркеры. Ствол
-// красится в один из двух фиксированных тонов (см. TRUNK_COLOR/BIRCH_TRUNK
-// в DECOR_SHADER), а крона/камень/трава — цветом ИНСТАНСА (color), выбор
-// конкретного оттенка из палитры PINE/LEAF/GRASS_TONES/ROCK_TONES решает
-// main.ts при генерации, не renderer. scale — вектор (не скаляр): позволяет
-// растягивать одну и ту же геометрию неравномерно по осям для разнообразия
-// силуэта без новых мешей (см. комментарий у DECOR_SHADER).
+// Декор (деревья/камни/трава) — тот же инстансинг, что и маркеры, но ствол
+// и крона/куст/трава/камень — настоящие текстуры (см. DECOR_SHADER,
+// textures/decor/*): color тут — не полный цвет, а лёгкий тон-множитель
+// ПОВЕРХ текстуры (палитра выбирается на CPU, main.ts). scale — вектор (не
+// скаляр): позволяет растягивать одну и ту же геометрию неравномерно по
+// осям для разнообразия силуэта без новых мешей.
 export interface DecorEntity {
   x: number;
   y: number;
@@ -203,7 +214,7 @@ export interface DecorEntity {
   scale: [number, number, number];
   yaw: number;
   color: [number, number, number];
-  kind: "spruce" | "pine" | "broadleaf" | "birch" | "dead" | "bush" | "rock" | "grass";
+  kind: "spruce" | "pine" | "broadleaf" | "autumn" | "birch" | "dead" | "bush" | "rock" | "grass";
 }
 
 export interface Renderer {
@@ -355,45 +366,78 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   let instanceCount = 0;
 
   // ---- декор (деревья/камни/трава, инстансинг) ----
-  // x,y,z, scale.xyz, yaw, color.rgb — цвет кроны/камня/травы теперь атрибут
-  // ИНСТАНСА (см. DECOR_SHADER), не запечён в меш: одна геометрия каждого
-  // вида дерева переиспользуется под любой оттенок из палитры
-  // PINE/LEAF/GRASS_TONES/ROCK_TONES (main.ts решает, какой), а scale —
-  // вектор, не скаляр (неравномерное растяжение по осям).
+  // x,y,z, scale.xyz, yaw, color.rgb — тон-множитель ИНСТАНСА поверх
+  // настоящей текстуры (см. DECOR_SHADER), а scale — вектор, не скаляр
+  // (неравномерное растяжение по осям).
   const DECOR_INST_STRIDE_FLOATS = 10;
   const decorModule = device.createShaderModule({ code: DECOR_SHADER });
   function uploadDecorMesh(mesh: DecorMesh) {
     const buf = device.createBuffer({
-      size: Math.max(mesh.vertexCount * 8 * 4, 4),
+      size: Math.max(mesh.vertexCount * 10 * 4, 4),
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
-    // Один буфер на локальный меш: pos(3)+normal(3)+materialId(1)+shade(1)
-    // переплетены подряд на вершину — геометрия строится один раз при
+    // Один буфер на локальный меш: pos(3)+normal(3)+materialId(1)+shade(1)+
+    // uv(2) переплетены подряд на вершину — геометрия строится один раз при
     // старте, не каждый кадр, поэтому собрать один interleaved
     // Float32Array тут же на CPU проще, чем городить раздельные vertex-
     // буферы ради статичного меша.
-    const interleaved = new Float32Array(mesh.vertexCount * 8);
+    const interleaved = new Float32Array(mesh.vertexCount * 10);
     for (let i = 0; i < mesh.vertexCount; i++) {
-      interleaved.set(mesh.positions.subarray(i * 3, i * 3 + 3), i * 8);
-      interleaved.set(mesh.normals.subarray(i * 3, i * 3 + 3), i * 8 + 3);
-      interleaved[i * 8 + 6] = mesh.materialIds[i];
-      interleaved[i * 8 + 7] = mesh.shades[i];
+      interleaved.set(mesh.positions.subarray(i * 3, i * 3 + 3), i * 10);
+      interleaved.set(mesh.normals.subarray(i * 3, i * 3 + 3), i * 10 + 3);
+      interleaved[i * 10 + 6] = mesh.materialIds[i];
+      interleaved[i * 10 + 7] = mesh.shades[i];
+      interleaved.set(mesh.uvs.subarray(i * 2, i * 2 + 2), i * 10 + 8);
     }
     device.queue.writeBuffer(buf, 0, interleaved);
     return buf;
   }
-  interface DecorKindState { mesh: DecorMesh; localBuf: GPUBuffer; instBuf: GPUBuffer | null; instCapacity: number; instanceCount: number }
-  const decorKinds = new Map<DecorEntity["kind"], DecorKindState>([
-    ["spruce", { mesh: buildSpruceMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
-    ["pine", { mesh: buildPineMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
-    ["broadleaf", { mesh: buildBroadleafMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
-    ["birch", { mesh: buildBirchMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
-    ["dead", { mesh: buildDeadTreeMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
-    ["bush", { mesh: buildBushMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
-    ["rock", { mesh: buildRockMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
-    ["grass", { mesh: buildGrassMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
-  ]);
-  for (const state of decorKinds.values()) state.localBuf = uploadDecorMesh(state.mesh);
+  interface DecorKindState {
+    mesh: DecorMesh; localBuf: GPUBuffer; instBuf: GPUBuffer | null; instCapacity: number; instanceCount: number; bindGroup: GPUBindGroup;
+  }
+  // Текстуры декора (см. textures/decor/*, сгенерированы нейросетью по
+  // промптам этой сессии) — уникальных файлов меньше, чем видов (bark.png
+  // делят ель/сосна/дуб/сухостой/куст/трава/камень, у берёзы своя), грузим
+  // каждый файл ОДИН раз и переиспользуем GPUTexture между bind group'ами
+  // разных видов, а не заново фетчим один и тот же PNG по нескольку раз.
+  const decorTexPaths = {
+    bark: "/textures/decor/bark.png",
+    birchBark: "/textures/decor/birch_bark.png",
+    conifer: "/textures/decor/conifer_a.png",
+    conifer2: "/textures/decor/conifer_b.png",
+    broadleaf: "/textures/decor/broadleaf.png",
+    autumn: "/textures/decor/autumn.png",
+    birchLeaf: "/textures/decor/birch_leaf.png",
+    bush: "/textures/decor/bush.png",
+    grassTuft: "/textures/decor/grass_tuft.png",
+    rock: "/textures/ground/rock.png", // та же гранитная текстура, что и у рельефа — камень декора и камень рельефа одна порода
+  };
+  type DecorTexKey = keyof typeof decorTexPaths;
+  const decorTexEntries = await Promise.all(
+    (Object.entries(decorTexPaths) as [DecorTexKey, string][]).map(async ([key, path]) => [key, await loadTexture(device, path)] as const)
+  );
+  const decorTextures = Object.fromEntries(decorTexEntries) as Record<DecorTexKey, GPUTexture>;
+  const decorSampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
+  // canopy у "dead"/"bush"/"grass"/"rock" — либо не используется вообще
+  // (у сухостоя нет materialId=1 вершин), либо это и есть весь смысл вида;
+  // trunk у "bush"/"grass"/"rock" точно так же не используется (нет
+  // materialId=0 вершин) — какой текстурой заполнить неиспользуемый слот,
+  // не важно, лишь бы валидный bind group.
+  const decorKindSpec: Record<DecorEntity["kind"], { trunk: DecorTexKey; canopy: DecorTexKey }> = {
+    spruce: { trunk: "bark", canopy: "conifer" },
+    pine: { trunk: "bark", canopy: "conifer2" },
+    broadleaf: { trunk: "bark", canopy: "broadleaf" },
+    autumn: { trunk: "bark", canopy: "autumn" },
+    birch: { trunk: "birchBark", canopy: "birchLeaf" },
+    dead: { trunk: "bark", canopy: "bark" },
+    bush: { trunk: "bark", canopy: "bush" },
+    grass: { trunk: "bark", canopy: "grassTuft" },
+    rock: { trunk: "bark", canopy: "rock" },
+  };
+  const decorMeshBuilders: Record<DecorEntity["kind"], () => DecorMesh> = {
+    spruce: buildSpruceMesh, pine: buildPineMesh, broadleaf: buildBroadleafMesh, autumn: buildBroadleafMesh,
+    birch: buildBirchMesh, dead: buildDeadTreeMesh, bush: buildBushMesh, grass: buildGrassMesh, rock: buildRockMesh,
+  };
   const decorPipeline = device.createRenderPipeline({
     layout: "auto",
     vertex: {
@@ -401,23 +445,24 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
       entryPoint: "vs",
       buffers: [
         {
-          arrayStride: 8 * 4,
+          arrayStride: 10 * 4,
           stepMode: "vertex",
           attributes: [
             { shaderLocation: 0, offset: 0, format: "float32x3" },
             { shaderLocation: 1, offset: 3 * 4, format: "float32x3" },
             { shaderLocation: 2, offset: 6 * 4, format: "float32" },
             { shaderLocation: 3, offset: 7 * 4, format: "float32" },
+            { shaderLocation: 4, offset: 8 * 4, format: "float32x2" },
           ],
         },
         {
           arrayStride: DECOR_INST_STRIDE_FLOATS * 4,
           stepMode: "instance",
           attributes: [
-            { shaderLocation: 4, offset: 0, format: "float32x3" },
-            { shaderLocation: 5, offset: 3 * 4, format: "float32x3" },
-            { shaderLocation: 6, offset: 6 * 4, format: "float32" },
-            { shaderLocation: 7, offset: 7 * 4, format: "float32x3" },
+            { shaderLocation: 5, offset: 0, format: "float32x3" },
+            { shaderLocation: 6, offset: 3 * 4, format: "float32x3" },
+            { shaderLocation: 7, offset: 6 * 4, format: "float32" },
+            { shaderLocation: 8, offset: 7 * 4, format: "float32x3" },
           ],
         },
       ],
@@ -426,13 +471,22 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     primitive: { topology: "triangle-list" },
     depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "less" },
   });
-  const decorBindGroup = device.createBindGroup({
-    layout: decorPipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: { buffer: uniformBuf } },
-      { binding: 1, resource: { buffer: fogBuf } },
-    ],
-  });
+  const decorKinds = new Map<DecorEntity["kind"], DecorKindState>();
+  for (const kind of Object.keys(decorKindSpec) as DecorEntity["kind"][]) {
+    const mesh = decorMeshBuilders[kind]();
+    const spec = decorKindSpec[kind];
+    const bindGroup = device.createBindGroup({
+      layout: decorPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: uniformBuf } },
+        { binding: 1, resource: { buffer: fogBuf } },
+        { binding: 2, resource: decorSampler },
+        { binding: 3, resource: decorTextures[spec.trunk].createView() },
+        { binding: 4, resource: decorTextures[spec.canopy].createView() },
+      ],
+    });
+    decorKinds.set(kind, { mesh, localBuf: uploadDecorMesh(mesh), instBuf: null, instCapacity: 0, instanceCount: 0, bindGroup });
+  }
 
   // ---- глубина ----
   let depthTex: GPUTexture | null = null;
@@ -604,9 +658,12 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     for (const state of decorKinds.values()) if (state.instanceCount > 0) { anyDecor = true; break; }
     if (anyDecor) {
       pass.setPipeline(decorPipeline);
-      pass.setBindGroup(0, decorBindGroup);
+      // Bind group теперь СВОЙ на каждый вид (разные текстуры коры/кроны,
+      // см. decorKindSpec выше) — переключается перед draw() этого вида, не
+      // один общий на все сразу, как раньше.
       for (const state of decorKinds.values()) {
         if (state.instanceCount === 0 || !state.instBuf) continue;
+        pass.setBindGroup(0, state.bindGroup);
         pass.setVertexBuffer(0, state.localBuf);
         pass.setVertexBuffer(1, state.instBuf);
         pass.draw(state.mesh.vertexCount, state.instanceCount);
