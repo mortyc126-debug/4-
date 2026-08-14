@@ -6,20 +6,33 @@
    ========================================================================= */
 import type { ParsedGLB } from "./glb";
 import type { Mat4 } from "./mat4";
+import { SHADOW_MAP_SIZE, type ShadowResources } from "./renderer";
 
+// Модели (города/лагеря/точки) тени не бросают (отдельный, более тяжёлый
+// кусок работы — см. ShadowResources в renderer.ts), но ПРИНИМАТЬ обязаны:
+// иначе постройка, стоящая в тени склона или дерева, оставалась бы ярко
+// освещённой посреди уже затенённой земли вокруг неё — единственный объект
+// в кадре без тени. light/shadowSamp/shadowTex — та же карта и та же
+// shadowFactor (3×3 PCF), что и у TERRAIN_SHADER/DECOR_SHADER в renderer.ts
+// (дословная копия — общего WGSL-модуля на оба файла тут не заводили).
 const MODEL_SHADER = /* wgsl */ `
 struct Uniforms { vp: mat4x4f, model: mat4x4f };
 struct Fog { eye: vec4f, color: vec4f };
+struct Light { vp: mat4x4f };
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var samp: sampler;
 @group(0) @binding(2) var tex: texture_2d<f32>;
 @group(0) @binding(3) var<uniform> fog: Fog;
+@group(0) @binding(4) var<uniform> light: Light;
+@group(0) @binding(5) var shadowSamp: sampler_comparison;
+@group(0) @binding(6) var shadowTex: texture_depth_2d;
 
 struct VOut {
   @builtin(position) pos: vec4f,
   @location(0) uv: vec2f,
   @location(1) worldNormal: vec3f,
   @location(2) worldPos: vec3f,
+  @location(3) lightClip: vec4f,
 };
 
 @vertex
@@ -31,13 +44,33 @@ fn vs(@location(0) pos: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2
   // модельная матрица тут без неравномерного масштаба — обычной 3x3 части достаточно для нормали
   out.worldNormal = normalize((u.model * vec4f(normal, 0.0)).xyz);
   out.worldPos = world.xyz;
+  out.lightClip = light.vp * world;
   return out;
+}
+
+fn shadowFactor(clip: vec4f) -> f32 {
+  let ndc = clip.xyz / clip.w;
+  if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) {
+    return 1.0;
+  }
+  let uv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+  let bias = 0.0025;
+  let texel = 1.0 / ${SHADOW_MAP_SIZE.toFixed(1)};
+  var sum = 0.0;
+  for (var dy = -1; dy <= 1; dy = dy + 1) {
+    for (var dx = -1; dx <= 1; dx = dx + 1) {
+      sum = sum + textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f(f32(dx), f32(dy)) * texel, ndc.z - bias);
+    }
+  }
+  return sum / 9.0;
 }
 
 @fragment
 fn fs(in: VOut) -> @location(0) vec4f {
   let sun = normalize(vec3f(0.62, 0.38, 0.30));
-  let diffuse = max(0.35, dot(in.worldNormal, sun));
+  let ndotl = max(0.0, dot(in.worldNormal, sun));
+  let shadow = shadowFactor(in.lightClip);
+  let diffuse = max(0.35, ndotl * shadow);
   let base = textureSample(tex, samp, in.uv);
   let lit = base.rgb * diffuse;
   // Туман — тот же расчёт, что и у рельефа/маркеров (см. renderer.ts):
@@ -128,7 +161,7 @@ export async function uploadGLB(device: GPUDevice, parsed: ParsedGLB): Promise<G
   };
 }
 
-export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat) {
+export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat, shadow: ShadowResources) {
   const module = device.createShaderModule({ code: MODEL_SHADER });
   const pipeline = device.createRenderPipeline({
     layout: "auto",
@@ -172,6 +205,9 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat)
         { binding: 1, resource: sampler },
         { binding: 2, resource: model.texture.createView() },
         { binding: 3, resource: { buffer: fogBuf } },
+        { binding: 4, resource: { buffer: shadow.lightBuf } },
+        { binding: 5, resource: shadow.shadowSampler },
+        { binding: 6, resource: shadow.shadowView },
       ],
     });
     return { model, uniformBuf, bindGroup };

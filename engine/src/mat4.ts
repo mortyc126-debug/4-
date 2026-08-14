@@ -40,6 +40,19 @@ export function persp(fovy: number, aspect: number, near: number, far: number): 
   ]);
 }
 
+// Ортографическая проекция (для теневой карты, см. renderer.ts — солнце
+// "смотрит" параллельным пучком, не перспективным конусом, как обычная
+// камера) — тот же столбцовый порядок и диапазон z∈[0,1] (WebGPU/D3D-стиль
+// глубины), что и persp() выше, только без перспективного деления.
+export function ortho(left: number, right: number, bottom: number, top: number, near: number, far: number): Mat4 {
+  return new Float32Array([
+    2 / (right - left), 0, 0, 0,
+    0, 2 / (top - bottom), 0, 0,
+    0, 0, 1 / (near - far), 0,
+    -(right + left) / (right - left), -(top + bottom) / (top - bottom), near / (near - far), 1,
+  ]);
+}
+
 // Модельная матрица: масштаб -> поворот по Y (yaw) -> перенос. Урезанный
 // вариант M4.modelTilt из obyom-3d-infinite.html без наклона по XZ — тот
 // нужен был только для процедурной посадки на негладкий рельеф, здесь

@@ -266,6 +266,21 @@ async function main() {
   // "Смягчение наложений" — только тут двигаем не позицию структуры, а
   // просто пропускаем декор-кандидата). pad — доля радиуса модели: у травы
   // меньше (мелкая, не режет глаз у стен), у деревьев/камней больше.
+  // isWater(wx,wz) проверяет только САМУ точку-якорь декора — визуальный
+  // силуэт (крона дерева, куст, пучок травы) шире одной точки и мог
+  // нависать над берегом, если якорь лёг буквально на кромке воды
+  // (пользователь заметил именно это). Проверяем несколько точек по
+  // окружности радиуса margin вокруг якоря — дёшево (8 доп. heightAt) и
+  // не требует знать реальный радиус модели тут же, в месте вызова.
+  const WATER_MARGIN_RING = 8;
+  function nearWater(wx: number, wz: number, margin: number): boolean {
+    if (isWater(wx, wz)) return true;
+    for (let k = 0; k < WATER_MARGIN_RING; k++) {
+      const a = (k / WATER_MARGIN_RING) * Math.PI * 2;
+      if (isWater(wx + Math.cos(a) * margin, wz + Math.sin(a) * margin)) return true;
+    }
+    return false;
+  }
   function blockedByStructure(wx: number, wz: number, pad: number, extra: number): boolean {
     for (const eid of found) {
       const dx = Position.x[eid] - wx, dz = Position.y[eid] - wz;
@@ -305,7 +320,7 @@ async function main() {
         const jx = 0.175 + hash2(gx, gz, SEED + 778) * 0.65, jz = 0.175 + hash2(gx, gz, SEED + 779) * 0.65;
         const wx = cx * CHUNK_SIZE + i * DECOR_CELL + jx * DECOR_CELL;
         const wz = cz * CHUNK_SIZE + j * DECOR_CELL + jz * DECOR_CELL;
-        if (isWater(wx, wz)) continue;
+        if (nearWater(wx, wz, 1.5)) continue; // деревья/камни — самый широкий силуэт
         if (blockedByStructure(wx, wz, 1.6, 2)) continue;
         const isTree = hash2(gx, gz, SEED + 780) < TREE_FRACTION;
         const yaw = hash2(gx, gz, SEED + 781) * Math.PI * 2;
@@ -348,7 +363,7 @@ async function main() {
         const jx = hash2(gx, gz, SEED + 888), jz = hash2(gx, gz, SEED + 889);
         const wx = cx * CHUNK_SIZE + i * GRASS_CELL + jx * GRASS_CELL;
         const wz = cz * CHUNK_SIZE + j * GRASS_CELL + jz * GRASS_CELL;
-        if (isWater(wx, wz)) continue;
+        if (nearWater(wx, wz, 0.4)) continue; // трава мелкая — небольшой отступ
         if (blockedByStructure(wx, wz, 1.05, 0.5)) continue;
         const e = heightAt(wx, wz);
         // Трава заметна только на невысокой/пологой траве-местности —
@@ -371,7 +386,7 @@ async function main() {
         const jx = hash2(gx, gz, SEED + 998), jz = hash2(gx, gz, SEED + 999);
         const wx = cx * CHUNK_SIZE + i * BUSH_CELL + jx * BUSH_CELL;
         const wz = cz * CHUNK_SIZE + j * BUSH_CELL + jz * BUSH_CELL;
-        if (isWater(wx, wz)) continue;
+        if (nearWater(wx, wz, 0.9)) continue;
         if (blockedByStructure(wx, wz, 1.3, 1)) continue;
         const e = heightAt(wx, wz);
         if (e > 0.75) continue;
@@ -530,7 +545,7 @@ async function main() {
   // делался до старта цикла. Не тратить GPU на рендер кадров, пока сцена
   // ещё не готова, — разумно само по себе, не только обход этой
   // особенности песочницы.
-  const modelPipeline = createModelPipeline(device, format);
+  const modelPipeline = createModelPipeline(device, format, renderer.getShadowResources());
   const modelCache = new Map<string, Promise<GpuModel>>();
   function getModel(path: string): Promise<GpuModel> {
     let p = modelCache.get(path);
@@ -640,6 +655,34 @@ async function main() {
   (window as any).H = (x: number, y: number) => heightAt(x, y) * HMAX;
   (window as any).__camState = () => ({ yaw: cam.yaw, pitch: cam.pitch, dist: cam.dist, target: [...cam.target] });
   (window as any).__isAutoOrbiting = () => controls.isAutoOrbiting();
+
+  // ---- координатная строка: в мире без края и без списка городов это
+  // единственный способ и найти себя ("какие у меня координаты, чтобы
+  // позвать друга"), и попасть в произвольную точку по чужим координатам.
+  // Порт того же механизма из старого прототипа (obyom-3d-infinite.html,
+  // см. коммит f04872e), включая обход одного и того же бага: пока поле
+  // "живое" (каждый кадр показывает текущую позицию), таб с X на Y стирал
+  // бы только что введённый X ещё до нажатия "Перейти" — coordDirty
+  // останавливает перезапись сразу, как только начали печатать, и снимается
+  // только после успешного перехода.
+  const coordX = document.getElementById("coordX") as HTMLInputElement;
+  const coordY = document.getElementById("coordY") as HTMLInputElement;
+  const coordGo = document.getElementById("coordGo") as HTMLButtonElement;
+  let coordDirty = false;
+  for (const inp of [coordX, coordY]) inp.addEventListener("input", () => { coordDirty = true; });
+  function goToCoords() {
+    const x = parseFloat(coordX.value), y = parseFloat(coordY.value);
+    if (!isFinite(x) || !isFinite(y)) return;
+    cam.target[0] = x;
+    cam.target[2] = y;
+    cam.target[1] = heightAt(x, y) * HMAX + 2;
+    controls.stopAuto();
+    coordDirty = false;
+  }
+  coordGo.addEventListener("click", goToCoords);
+  for (const inp of [coordX, coordY]) inp.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); goToCoords(); inp.blur(); }
+  });
 
   // ---- клик/тап по сущности: RoK-стиль (см. вживую уже реализованное
   // tryTap()+renderCartouche() в obyom-3d-infinite.html/index.html) — тут,
@@ -902,6 +945,10 @@ async function main() {
   function draw(tMs: number) {
     if (controls.isAutoOrbiting()) cam.yaw = tMs * 0.00015;
     controls.update(tMs); // WASD/стрелки — панорама, зажатая клавиша даёт непрерывный сдвиг между кадрами
+    if (!coordDirty) {
+      coordX.value = cam.target[0].toFixed(1);
+      coordY.value = cam.target[2].toFixed(1);
+    }
     updateTerrainChunks(cam.target[0], cam.target[2]); // no-op, пока камера внутри того же чанка — дёшево звать каждый кадр
     updateFarTerrain(cam.target[0], cam.target[2]); // то же самое, но для дальнего грубого кольца
     const eye: Vec3 = [
@@ -914,6 +961,7 @@ async function main() {
     currentVP = vp;
     renderer.setVP(vp);
     renderer.setFog(eye, FOG_COLOR, FOG_K, tMs / 1000);
+    renderer.setSunTarget(cam.target[0], cam.target[2]);
     modelPipeline.setFog(eye, FOG_COLOR, FOG_K);
     const markers = marchMarkers();
     if (highlightMarker) markers.push(highlightMarker);
