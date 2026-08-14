@@ -40,10 +40,10 @@ async function main() {
   const seedEntities: RealEntity[] =
     real ??
     [
-      { key: "demo-0", x: 43, y: 14, gx: 43, gy: 14, kind: 0 as const, model: "/models/castles/human-1.glb", scale: 10, label: "Замок (демо)" },
-      { key: "demo-1", x: 50, y: 20, gx: 50, gy: 20, kind: 1 as const, model: "/models/camps/barbarians.glb", scale: 5, label: "Лагерь (демо)" },
-      { key: "demo-2", x: 55, y: 12, gx: 55, gy: 12, kind: 2 as const, model: "/models/resources/farm.glb", scale: 5, label: "Пашня (демо)" },
-      { key: "demo-3", x: 30, y: 30, gx: 30, gy: 30, kind: 2 as const, model: "/models/resources/quarry.glb", scale: 5, label: "Каменоломня (демо)" },
+      { key: "demo-0", x: 43, y: 14, gx: 43, gy: 14, kind: 0 as const, model: "/models/castles/human-1.glb", scale: 10, nm: "Замок", lv: "демо" },
+      { key: "demo-1", x: 50, y: 20, gx: 50, gy: 20, kind: 1 as const, model: "/models/camps/barbarians.glb", scale: 5, nm: "Лагерь", lv: "демо" },
+      { key: "demo-2", x: 55, y: 12, gx: 55, gy: 12, kind: 2 as const, model: "/models/resources/farm.glb", scale: 5, nm: "Пашня", lv: "демо" },
+      { key: "demo-3", x: 30, y: 30, gx: 30, gy: 30, kind: 2 as const, model: "/models/resources/quarry.glb", scale: 5, nm: "Каменоломня", lv: "демо" },
     ];
   lines.push(usingReal ? `данные: настоящая партия, сущностей — ${seedEntities.length}` : "данные: демо (window.parent.W недоступен)");
 
@@ -52,7 +52,13 @@ async function main() {
   const Kind = { value: [] as number[] }; // 0=city 1=camp 2=node
   const modelPathOf = new Map<number, string>();
   const modelScaleOf = new Map<number, number>();
-  const labelOf = new Map<number, string>();
+  // nm/lv раздельно — используются и панелью выбора (клик, склеены через
+  // " · "), и постоянными ambient-подписями над моделями (см. draw() ниже,
+  // отдельными строками — тот же состав, что и labelContent() в
+  // obyom-3d-infinite.html).
+  const nmOf = new Map<number, string>();
+  const lvOf = new Map<number, string>();
+  const ownOf = new Map<number, boolean>();
   // Целая клетка карты (не мировая x+0.5/y+0.5 из Position) — нужна только
   // для window.parent.renderCartoucheFor(gx,gy) при клике (см. ниже): та же
   // клетка, которую ждёт cartouche в index.html.
@@ -71,7 +77,9 @@ async function main() {
     Kind.value[eid] = e.kind;
     modelPathOf.set(eid, e.model);
     modelScaleOf.set(eid, e.scale);
-    labelOf.set(eid, e.label);
+    nmOf.set(eid, e.nm);
+    lvOf.set(eid, e.lv);
+    ownOf.set(eid, !!e.own);
     gridOf.set(eid, { x: e.gx, y: e.gy });
     keyToEid.set(e.key, eid);
     return eid;
@@ -254,7 +262,7 @@ async function main() {
   let selectedEid: number | null = null;
   function showSelection(eid: number) {
     selectedEid = eid;
-    const label = labelOf.get(eid) ?? "?";
+    const label = (nmOf.get(eid) ?? "?") + " · " + (lvOf.get(eid) ?? "?");
     const wx = Position.x[eid], wz = Position.y[eid];
     const wy = heightAt(wx, wz) * HMAX + (modelScaleOf.get(eid) ?? 5) * 0.9 + 2;
     highlightMarker = { x: wx, y: wy, z: wz, color: HILITE_COLOR };
@@ -338,7 +346,9 @@ async function main() {
       seenKeys.add(e.key);
       const existingEid = keyToEid.get(e.key);
       if (existingEid !== undefined) {
-        labelOf.set(existingEid, e.label);
+        nmOf.set(existingEid, e.nm);
+        lvOf.set(existingEid, e.lv);
+        ownOf.set(existingEid, !!e.own);
         if (selectedEid === existingEid) showSelection(existingEid); // подпись/маркер могли устареть (level up)
         if (modelPathOf.get(existingEid) !== e.model) {
           // город вырос до новой эпохи и т.п. — модель меняется, позиция нет
@@ -371,7 +381,9 @@ async function main() {
       instances.delete(eid);
       modelPathOf.delete(eid);
       modelScaleOf.delete(eid);
-      labelOf.delete(eid);
+      nmOf.delete(eid);
+      lvOf.delete(eid);
+      ownOf.delete(eid);
       gridOf.delete(eid);
       keyToEid.delete(key);
       if (selectedEid === eid) clearSelection();
@@ -409,6 +421,70 @@ async function main() {
     }));
   }
 
+  // ---- ambient-подписи над замками/лагерями/точками (RoK-стиль) — тот же
+  // приём, что и updateLabels()/projectToScreen() в obyom-3d-infinite.html:
+  // обычные DOM-узлы поверх канвы, transform пересчитывается каждый кадр
+  // по проекции 3D-точки (currentVP уже считается для клика — переиспользуем
+  // ту же матрицу, не отдельную). WebGPU сюда текст без собственной системы
+  // растеризации шрифта не положит — держать подписи в DOM надёжнее и
+  // дешевле, чем текстуры с текстом. Пул divов переиспускается по id —
+  // не пересоздаём на каждый кадр, только двигаем/показываем/прячем то, что
+  // уже есть.
+  const labelsRoot = document.getElementById("labels") as HTMLDivElement;
+  interface LabelParts { root: HTMLDivElement; nm: HTMLElement; lv: HTMLElement }
+  const labelEl = new Map<number, LabelParts>();
+  // Отсев по расстоянию до цели камеры ДО проекции — сущностей может быть
+  // тысяча с лишним (см. стресс-тест на 1433), а разборчиво видна на экране
+  // всегда лишь горстка рядом с камерой. Первая попытка (радиус 90) была
+  // слишком щедрой — почти вся карта 100×100 укладывалась в неё разом, и
+  // цикл создания/обновления DOM-узлов на каждый кадр валил кадровую
+  // частоту с 60 до ~14 (см. стресс-тест). 32 клетки — уже сравнимо с самой
+  // дистанцией камеры (cam.dist по умолчанию ~40), т.е. реально видимая
+  // площадка, а не весь остров.
+  const LABEL_MAX_DIST2 = 32 * 32;
+  function updateAmbientLabels() {
+    const seen = new Set<number>();
+    const cw = canvas.clientWidth, ch = canvas.clientHeight;
+    for (const eid of found) {
+      const wx = Position.x[eid], wz = Position.y[eid];
+      const dx = wx - cam.target[0], dz = wz - cam.target[2];
+      if (dx * dx + dz * dz > LABEL_MAX_DIST2) continue;
+      const groundY = heightAt(wx, wz) * HMAX;
+      const scale = modelScaleOf.get(eid) ?? 5;
+      const topY = groundY + scale * 0.6 + 1.1;
+      const clip = transformPoint(currentVP, [wx, topY, wz]);
+      if (clip.w <= 0.001) continue; // за спиной камеры
+      const sx = (clip.x / clip.w * 0.5 + 0.5) * cw;
+      const sy = (1 - (clip.y / clip.w * 0.5 + 0.5)) * ch;
+      if (sx < -40 || sx > cw + 40 || sy < -40 || sy > ch + 40) continue;
+      seen.add(eid);
+      let parts = labelEl.get(eid);
+      if (!parts) {
+        const root = document.createElement("div");
+        root.className = "wlabel";
+        const nm = document.createElement("div");
+        nm.className = "nm";
+        const lv = document.createElement("div");
+        lv.className = "lv";
+        root.appendChild(nm);
+        root.appendChild(lv);
+        labelsRoot.appendChild(root);
+        parts = { root, nm, lv };
+        labelEl.set(eid, parts);
+      }
+      parts.nm.textContent = nmOf.get(eid) ?? "?";
+      parts.nm.classList.toggle("mine", !!ownOf.get(eid));
+      parts.lv.textContent = lvOf.get(eid) ?? "";
+      parts.root.style.transform = `translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) translate(-50%,-100%)`;
+    }
+    for (const [eid, parts] of labelEl) {
+      if (!seen.has(eid)) {
+        parts.root.remove();
+        labelEl.delete(eid);
+      }
+    }
+  }
+
   function draw(tMs: number) {
     if (controls.isAutoOrbiting()) cam.yaw = tMs * 0.00015;
     const eye: Vec3 = [
@@ -430,6 +506,7 @@ async function main() {
         if (inst) modelPipeline.draw(pass, inst, vp);
       }
     });
+    updateAmbientLabels();
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
