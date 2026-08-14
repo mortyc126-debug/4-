@@ -155,7 +155,7 @@ async function main() {
   ctx.configure({ device, format, alphaMode: "opaque" });
   lines.push(`WebGPU: устройство получено, формат — ${format}`);
 
-  const renderer = createRenderer(device, ctx, format);
+  const renderer = await createRenderer(device, ctx, format);
 
   // ---- рельеф: поток чанков 16×16 вокруг цели камеры вместо одного патча
   // фиксированного размера — мир не заканчивается на границе одного острова

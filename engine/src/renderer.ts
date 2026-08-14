@@ -19,22 +19,45 @@
    ========================================================================= */
 import type { MeshData } from "./terrainMesh";
 import { buildSpruceMesh, buildPineMesh, buildBroadleafMesh, buildBirchMesh, buildDeadTreeMesh, buildBushMesh, buildGrassMesh, buildRockMesh, type DecorMesh } from "./decorMesh";
+import { loadTexture } from "./textures";
 
+// Суша красится настоящими текстурами (см. textures.ts/textures/ground/*),
+// не запечённым на CPU градиентом цвета — 5 текстур смешиваются по высоте
+// (elevation, тот же порог, что раньше вёл groundColor(): 0.06/0.52/0.72),
+// в каждой точке участвуют максимум 2 соседние по высоте зоны, поэтому не
+// нужно смешивать все 5 сразу. Вода текстуры не сэмплит вообще — она
+// плоская и цвет ей уже посчитан на CPU (см. terrainMesh.ts), waterFlag
+// просто выбирает, какую ветку взять.
 const TERRAIN_SHADER = /* wgsl */ `
 struct Uniforms { vp: mat4x4f };
 struct Fog { eye: vec4f, color: vec4f };
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var<uniform> fog: Fog;
+@group(0) @binding(2) var samp: sampler;
+@group(0) @binding(3) var texSand: texture_2d<f32>;
+@group(0) @binding(4) var texGrass: texture_2d<f32>;
+@group(0) @binding(5) var texDry: texture_2d<f32>;
+@group(0) @binding(6) var texScree: texture_2d<f32>;
+@group(0) @binding(7) var texRock: texture_2d<f32>;
 
-struct VOut { @builtin(position) pos: vec4f, @location(0) color: vec3f, @location(1) worldPos: vec3f, @location(2) normal: vec3f };
+struct VOut {
+  @builtin(position) pos: vec4f, @location(0) waterColor: vec3f, @location(1) worldPos: vec3f,
+  @location(2) normal: vec3f, @location(3) uv: vec2f, @location(4) elevation: f32, @location(5) waterFlag: f32,
+};
 
 @vertex
-fn vs(@location(0) pos: vec3f, @location(1) color: vec3f, @location(2) normal: vec3f) -> VOut {
+fn vs(
+  @location(0) pos: vec3f, @location(1) waterColor: vec3f, @location(2) normal: vec3f,
+  @location(3) uv: vec2f, @location(4) elevation: f32, @location(5) waterFlag: f32
+) -> VOut {
   var out: VOut;
   out.pos = u.vp * vec4f(pos, 1.0);
-  out.color = color;
+  out.waterColor = waterColor;
   out.worldPos = pos;
   out.normal = normal;
+  out.uv = uv;
+  out.elevation = elevation;
+  out.waterFlag = waterFlag;
   return out;
 }
 @fragment
@@ -46,7 +69,26 @@ fn fs(in: VOut) -> @location(0) vec4f {
   let sun = normalize(vec3f(0.62, 0.38, 0.30));
   let n = normalize(in.normal);
   let diffuse = max(0.35, dot(n, sun));
-  let lit = in.color * diffuse;
+
+  var albedo: vec3f;
+  if (in.waterFlag > 0.5) {
+    albedo = in.waterColor;
+  } else {
+    let t = clamp((in.elevation - 0.235) / (1.0 - 0.235), 0.0, 1.0);
+    var a: vec3f; var b: vec3f; var blend: f32;
+    if (t < 0.06) {
+      a = textureSample(texSand, samp, in.uv).rgb; b = textureSample(texGrass, samp, in.uv).rgb; blend = t / 0.06;
+    } else if (t < 0.52) {
+      a = textureSample(texGrass, samp, in.uv).rgb; b = textureSample(texDry, samp, in.uv).rgb; blend = (t - 0.06) / 0.46;
+    } else if (t < 0.72) {
+      a = textureSample(texDry, samp, in.uv).rgb; b = textureSample(texScree, samp, in.uv).rgb; blend = (t - 0.52) / 0.2;
+    } else {
+      a = textureSample(texScree, samp, in.uv).rgb; b = textureSample(texRock, samp, in.uv).rgb; blend = min(1.0, (t - 0.72) / 0.28);
+    }
+    albedo = mix(a, b, blend);
+  }
+
+  let lit = albedo * diffuse;
   let d = distance(in.worldPos, fog.eye.xyz);
   let k = d * fog.color.w; let f = clamp(1.0 - exp(-k * k), 0.0, 1.0);
   return vec4f(mix(lit, fog.color.rgb, f), 1.0);
@@ -203,7 +245,7 @@ const LOCAL_PIN = new Float32Array([
 const PIN_VERTS = LOCAL_PIN.length / 3;
 const INST_STRIDE_FLOATS = 7; // x,y,z, scale, r,g,b
 
-export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format: GPUTextureFormat): Renderer {
+export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format: GPUTextureFormat): Promise<Renderer> {
   const uniformBuf = device.createBuffer({
     size: 16 * 4,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -218,6 +260,19 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
   });
 
   // ---- рельеф ----
+  // Настоящие текстуры земли (см. textures/ground/*, сгенерированы нейросетью
+  // по промптам этой сессии) вместо запечённого на CPU градиента цвета —
+  // грузим ДО создания пайплайна/bind group (см. createRenderer теперь
+  // async), тот же порядок, что и у моделей в main.ts: сцена не должна
+  // начинать рисоваться, пока не готовы её текстуры.
+  const [texSand, texGrass, texDry, texScree, texRock] = await Promise.all([
+    loadTexture(device, "/textures/ground/sand.png"),
+    loadTexture(device, "/textures/ground/grass.png"),
+    loadTexture(device, "/textures/ground/dry_meadow.png"),
+    loadTexture(device, "/textures/ground/scree.png"),
+    loadTexture(device, "/textures/ground/rock.png"),
+  ]);
+  const groundSampler = device.createSampler({ addressModeU: "repeat", addressModeV: "repeat", magFilter: "linear", minFilter: "linear" });
   const terrainModule = device.createShaderModule({ code: TERRAIN_SHADER });
   const terrainPipeline = device.createRenderPipeline({
     layout: "auto",
@@ -228,6 +283,9 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
         { arrayStride: 3 * 4, attributes: [{ shaderLocation: 0, offset: 0, format: "float32x3" }] },
         { arrayStride: 3 * 4, attributes: [{ shaderLocation: 1, offset: 0, format: "float32x3" }] },
         { arrayStride: 3 * 4, attributes: [{ shaderLocation: 2, offset: 0, format: "float32x3" }] },
+        { arrayStride: 2 * 4, attributes: [{ shaderLocation: 3, offset: 0, format: "float32x2" }] },
+        { arrayStride: 4, attributes: [{ shaderLocation: 4, offset: 0, format: "float32" }] },
+        { arrayStride: 4, attributes: [{ shaderLocation: 5, offset: 0, format: "float32" }] },
       ],
     },
     fragment: { module: terrainModule, entryPoint: "fs", targets: [{ format }] },
@@ -239,13 +297,21 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
     entries: [
       { binding: 0, resource: { buffer: uniformBuf } },
       { binding: 1, resource: { buffer: fogBuf } },
+      { binding: 2, resource: groundSampler },
+      { binding: 3, resource: texSand.createView() },
+      { binding: 4, resource: texGrass.createView() },
+      { binding: 5, resource: texDry.createView() },
+      { binding: 6, resource: texScree.createView() },
+      { binding: 7, resource: texRock.createView() },
     ],
   });
   // Map кусков рельефа по ключу чанка вместо одной пары буферов на всю
   // сцену — потоковая подгрузка/выгрузка вокруг камеры (см. main.ts): при
   // бесконечном мире держать вершины всей когда-либо увиденной территории
   // в одном буфере не получится.
-  interface TerrainChunk { posBuf: GPUBuffer; colBuf: GPUBuffer; nrmBuf: GPUBuffer; vertexCount: number }
+  interface TerrainChunk {
+    posBuf: GPUBuffer; colBuf: GPUBuffer; nrmBuf: GPUBuffer; uvBuf: GPUBuffer; elevBuf: GPUBuffer; waterBuf: GPUBuffer; vertexCount: number;
+  }
   const terrainChunks = new Map<string, TerrainChunk>();
 
   // ---- маркеры (инстансинг) ----
@@ -388,6 +454,9 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
     prev?.posBuf.destroy();
     prev?.colBuf.destroy();
     prev?.nrmBuf.destroy();
+    prev?.uvBuf.destroy();
+    prev?.elevBuf.destroy();
+    prev?.waterBuf.destroy();
     const posBuf = device.createBuffer({
       size: Math.max(mesh.positions.byteLength, 4),
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
@@ -400,10 +469,25 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
       size: Math.max(mesh.normals.byteLength, 4),
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
+    const uvBuf = device.createBuffer({
+      size: Math.max(mesh.uvs.byteLength, 4),
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    const elevBuf = device.createBuffer({
+      size: Math.max(mesh.elevations.byteLength, 4),
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    const waterBuf = device.createBuffer({
+      size: Math.max(mesh.waterFlags.byteLength, 4),
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
     device.queue.writeBuffer(posBuf, 0, mesh.positions);
     device.queue.writeBuffer(colBuf, 0, mesh.colors);
     device.queue.writeBuffer(nrmBuf, 0, mesh.normals);
-    terrainChunks.set(key, { posBuf, colBuf, nrmBuf, vertexCount: mesh.vertexCount });
+    device.queue.writeBuffer(uvBuf, 0, mesh.uvs);
+    device.queue.writeBuffer(elevBuf, 0, mesh.elevations);
+    device.queue.writeBuffer(waterBuf, 0, mesh.waterFlags);
+    terrainChunks.set(key, { posBuf, colBuf, nrmBuf, uvBuf, elevBuf, waterBuf, vertexCount: mesh.vertexCount });
   }
 
   function removeTerrainChunk(key: string) {
@@ -412,6 +496,9 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
     chunk.posBuf.destroy();
     chunk.colBuf.destroy();
     chunk.nrmBuf.destroy();
+    chunk.uvBuf.destroy();
+    chunk.elevBuf.destroy();
+    chunk.waterBuf.destroy();
     terrainChunks.delete(key);
   }
 
@@ -498,6 +585,9 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
         pass.setVertexBuffer(0, chunk.posBuf);
         pass.setVertexBuffer(1, chunk.colBuf);
         pass.setVertexBuffer(2, chunk.nrmBuf);
+        pass.setVertexBuffer(3, chunk.uvBuf);
+        pass.setVertexBuffer(4, chunk.elevBuf);
+        pass.setVertexBuffer(5, chunk.waterBuf);
         pass.draw(chunk.vertexCount);
       }
     }
