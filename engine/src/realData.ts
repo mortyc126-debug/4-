@@ -118,15 +118,17 @@ export function loadRealEntities(centerX?: number, centerZ?: number, radius?: nu
       out.push({ key, x: o.x + 0.5, y: o.y + 0.5, gx: o.x, gy: o.y, kind: 0, model: `/models/castles/${race}-${epoch}.glb`, scale: 10, own, nm, lv });
     } else if (o.t === "camp" || o.t === "fort") {
       const nm = (o.t === "fort" ? "Форт" : "Лагерь") + " варваров";
-      // Уровень лагеря/точки больше не подписывается в 3D (см. cartouche —
-      // тот же запрос пользователя: "убери уровни у лагерей, точек
-      // ресурсов, это не нужно") — пустая строка, как у city выше без
-      // владельца, тот же уже отработанный случай "второй строки нет".
-      out.push({ key, x: o.x + 0.5, y: o.y + 0.5, gx: o.x, gy: o.y, kind: 1, model: "/models/camps/barbarians.glb", scale: o.t === "fort" ? 6.5 : 5, nm, lv: "" });
+      // Уровень убран из cartouche (детальной панели по тапу), но НЕ
+      // отсюда — плавающая подпись прямо на карте остаётся с уровнем: без
+      // него издалека не видно, какой лагерь/точка сильнее, приходится
+      // тапать каждый по очереди (пользователь явно попросил вернуть).
+      const lv = "ур. " + (o.lv ?? "?");
+      out.push({ key, x: o.x + 0.5, y: o.y + 0.5, gx: o.x, gy: o.y, kind: 1, model: "/models/camps/barbarians.glb", scale: o.t === "fort" ? 6.5 : 5, nm, lv });
     } else if (o.t === "node") {
       const type = REAL_RES_MAP[o.res] || "farm";
       const nm = RES_SITE_NAME[o.res] || "Точка";
-      out.push({ key, x: o.x + 0.5, y: o.y + 0.5, gx: o.x, gy: o.y, kind: 2, model: `/models/resources/${type}.glb`, scale: 5, nm, lv: "" });
+      const lv = "ур. " + (o.lv ?? "?");
+      out.push({ key, x: o.x + 0.5, y: o.y + 0.5, gx: o.x, gy: o.y, kind: 2, model: `/models/resources/${type}.glb`, scale: 5, nm, lv });
     }
   }
   return out;
