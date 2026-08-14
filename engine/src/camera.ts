@@ -78,5 +78,6 @@ export function attachOrbitControls(canvas: HTMLCanvasElement, cam: OrbitCamera)
 
   return {
     isAutoOrbiting: () => autoOrbit,
+    stopAuto,
   };
 }
