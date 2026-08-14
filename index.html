@@ -1662,7 +1662,10 @@ function hashPick(arr,x,y,salt){ return arr[Math.floor(hash2(x,y,salt)*arr.lengt
 // применяется одинаково что к стартовому кластеру, что к любому чанку при
 // дальнейшем исследовании — та же смысловая плотность везде, не только у
 // истока.
-const NODE_CHUNK_CHANCE=22/49, CAMP_CHUNK_CHANCE=13/49;
+// Пользователь снова счёл карту слишком плотной — сократил ещё на 66%
+// (×0.34) поверх прежних 22/49 и 13/49 (см. thinMapDensity6 ниже для
+// ретроактивного применения к уже сгенерированным чанкам).
+const NODE_CHUNK_CHANCE=22/49*0.34, CAMP_CHUNK_CHANCE=13/49*0.34;
 function ensureChunkContent(cx,cy){
   const ck=cx+","+cy;
   if(W.genChunks[ck]) return;
@@ -1778,7 +1781,7 @@ function genWorld(seed){
 
   // Свежий мир уже построен через ensureChunkContent (зазор + вода +
   // "монетка" на чанк) — всем миграциям ниже тут нечего делать.
-  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.densityMigrated5=true; W.infiniteWorldMigrated=true; W.levelMigrated=true;
+  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.densityMigrated5=true; W.densityMigrated6=true; W.infiniteWorldMigrated=true; W.levelMigrated=true;
   logg("Мир создан. Зерно "+seed+". Городов: "+W.players.length+".", "good");
   return W;
 }
@@ -1898,6 +1901,30 @@ function thinMapDensity5(){
   for(const o of drop) delete W.map[key(o.x,o.y)];
   W.densityMigrated5=true;
   if(drop.length) logg("Убраны лагеря/точки, застрявшие в городах: "+drop.length+".","good");
+}
+// thinMapDensity6 — ещё одна волна разрежения: пользователь счёл карту
+// всё ещё слишком плотной, NODE_CHUNK_CHANCE/CAMP_CHUNK_CHANCE урезаны
+// ещё на 66% (см. выше). Тот же приём, что и thinMapDensity4 (та же соль
+// STRUCT_SALT_NODE/CAMP — раз объект физически стоит в W.map, повторная
+// проверка того же детерминированного хэша против НОВОГО, более низкого
+// порога отбирает именно ту долю, что осталась бы, генерируйся мир заново
+// с текущими константами) — отдельная функция и свой флаг миграции, а не
+// повторный вызов thinMapDensity4(), чтобы не переписывать её уже
+// сработавшую (для старых сохранений) историю миграции.
+function thinMapDensity6(){
+  if(W.densityMigrated6) return;
+  const drop=[];
+  for(const k in W.map){
+    const o=W.map[k];
+    if(o.t==="city") continue;
+    const isNode=o.t==="node";
+    const salt=isNode?STRUCT_SALT_NODE:STRUCT_SALT_CAMP;
+    const chance=isNode?NODE_CHUNK_CHANCE:CAMP_CHUNK_CHANCE;
+    if(!structChunkOk(o.x,o.y,salt,chance)) drop.push(o);
+  }
+  for(const o of drop) delete W.map[key(o.x,o.y)];
+  W.densityMigrated6=true;
+  if(drop.length) logg("Плотность точек/лагерей сокращена ещё раз: убрано "+drop.length+".","good");
 }
 // Шестая волна: старые сохранения несут в себе уровни, посчитанные ещё по
 // originDist от фиксированной точки {50,50} — за пределами исходного
@@ -3365,6 +3392,7 @@ async function load(){
     thinMapDensity3();
     thinMapDensity4();
     thinMapDensity5();
+    thinMapDensity6();
     migrateInfiniteWorld();
     migrateStructLevels();
     // Старые походы в старом сохранении не несут m.path (маршрут в обход
