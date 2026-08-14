@@ -1431,6 +1431,39 @@ const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 // естественно продолжает расти и упирается в потолок/пол однажды заданного
 // диапазона, то есть плато, а не обрыв.
 const originDist=p=>Math.hypot(p.x-CFG.MAP/2,p.y-CFG.MAP/2)/(CFG.MAP/2);
+// Сила/уровень лагерей и точек ресурсов больше НЕ считаются от originDist
+// (фиксированная точка {50,50}) — за пределами старого радиуса кластера
+// (originDist>~1.2) формула на его основе гарантированно даёт floor(1) для
+// ЛЮБОЙ точки бесконечного мира сколь угодно далеко, что и есть баг
+// "лагеря/точки только первого уровня встречаются постоянно": весь мир за
+// пределами исходного квадрата 100×100 читает как выжженную нулевую зону.
+// Новая мера — расстояние до БЛИЖАЙШЕГО города (своего или чужого, не
+// только исходного центра): рядом с любым городом (в пределах SAFE_RADIUS)
+// всё так же безопасно — слабые цели, level~1. За пределами этого личного
+// радиуса густота городов больше не имеет значения — используется
+// РЕГИОНАЛЬНЫЙ шум от координат (не от дистанции), дающий полный разброс
+// уровней/фортов независимо от того, насколько далеко зашла разведка:
+// исследование вглубь бесконечного мира продолжает встречать все уровни,
+// а не только 1. taper плавно смешивает "рядом с городом — тихо" и
+// "далеко от всех городов — как повезёт" вместо жёсткого обрыва.
+function nearestCityDist(x,y){
+  let best=Infinity;
+  for(const p of W.players){ const d=Math.hypot(p.x-x,p.y-y); if(d<best) best=d; }
+  return best;
+}
+const NODE_SAFE_RADIUS=12, CAMP_SAFE_RADIUS=15;
+function nodeLevelAt(x,y){
+  const taper=clamp(nearestCityDist(x,y)/NODE_SAFE_RADIUS,0,1);
+  const regional=hash2(x,y,W.seed+STRUCT_SALT_NODE+21); // 0..1, от координат — не убывает с дистанцией
+  const jitter=hash2(x,y,W.seed+STRUCT_SALT_NODE+22)*1.2-0.6;
+  return clamp(Math.round(1+(regional*4+jitter)*taper),1,5);
+}
+function campRawAt(x,y){
+  const taper=clamp(nearestCityDist(x,y)/CAMP_SAFE_RADIUS,0,1);
+  const regional=hash2(x,y,W.seed+STRUCT_SALT_CAMP+21);
+  const jitter=hash2(x,y,W.seed+STRUCT_SALT_CAMP+22)*8-4;
+  return clamp(Math.round(1+(regional*29+jitter)*taper),1,30);
+}
 
 function newPlayer(id,race,x,y,isBot){
   const aggr=.4+RNG()*.5;
@@ -1574,9 +1607,7 @@ function ensureChunkContent(cx,cy){
   if(structChunkOk(bx,by,STRUCT_SALT_NODE,NODE_CHUNK_CHANCE)){
     const spot=findFreeCellInChunk(cx,cy,STRUCT_SALT_NODE);
     if(spot){
-      const d=originDist(spot);
-      const jitter=hash2(spot.x,spot.y,W.seed+STRUCT_SALT_NODE+11)*1.6-0.8;
-      const lv=clamp(Math.round(5-d*4+jitter),1,5);
+      const lv=nodeLevelAt(spot.x,spot.y);
       const type=hashPick(RES,spot.x,spot.y,W.seed+STRUCT_SALT_NODE+12);
       mapSet(spot.x,spot.y,{t:"node",x:spot.x,y:spot.y,res:type,lv,
         amount:Math.round(6000*Math.pow(2.6,lv-1)), max:Math.round(6000*Math.pow(2.6,lv-1)), busy:null});
@@ -1585,9 +1616,7 @@ function ensureChunkContent(cx,cy){
   if(structChunkOk(bx,by,STRUCT_SALT_CAMP,CAMP_CHUNK_CHANCE)){
     const spot=findFreeCellInChunk(cx,cy,STRUCT_SALT_CAMP);
     if(spot){
-      const d=originDist(spot);
-      const jitter=hash2(spot.x,spot.y,W.seed+STRUCT_SALT_CAMP+11)*8-4;
-      const raw=clamp(Math.round(30-d*26+jitter),1,30);
+      const raw=campRawAt(spot.x,spot.y);
       const isFort=raw>15;
       mapSet(spot.x,spot.y,{t:isFort?"fort":"camp",x:spot.x,y:spot.y,lv:raw,hp:1,power:banditPower(raw),busy:null});
     }
@@ -1685,7 +1714,7 @@ function genWorld(seed){
 
   // Свежий мир уже построен через ensureChunkContent (зазор + вода +
   // "монетка" на чанк) — всем миграциям ниже тут нечего делать.
-  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.infiniteWorldMigrated=true;
+  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.infiniteWorldMigrated=true; W.levelMigrated=true;
   logg("Мир создан. Зерно "+seed+". Городов: "+W.players.length+".", "good");
   return W;
 }
@@ -1783,6 +1812,40 @@ function thinMapDensity4(){
   for(const o of drop) delete W.map[key(o.x,o.y)];
   W.densityMigrated4=true;
   if(drop.length) logg("Плотность точек/лагерей приведена к текущей норме: убрано "+drop.length+".","good");
+}
+// Пятая волна: старые сохранения несут в себе уровни, посчитанные ещё по
+// originDist от фиксированной точки {50,50} — за пределами исходного
+// кластера (originDist>~1.2) это ВСЕГДА давало floor(1), сколько бы игрок
+// ни исследовал дальше (см. комментарий у nodeLevelAt/campRawAt выше — тот
+// самый баг "лагеря/точки только первого уровня встречаются постоянно").
+// Пересчитываем lv (и зависящие от него amount/max/power) для всего, что
+// уже лежит в W.map, тем же правилом, что теперь использует свежая
+// генерация — координаты и тип объекта не трогаем, лагерь остаётся
+// лагерем/фортом там же, где стоял, просто получает актуальную силу.
+function migrateStructLevels(){
+  if(W.levelMigrated) return;
+  let changed=0;
+  for(const k in W.map){
+    const o=W.map[k];
+    if(o.t==="node"){
+      const lv=nodeLevelAt(o.x,o.y);
+      if(lv!==o.lv){
+        const wasFull=o.amount>=o.max;
+        o.max=Math.round(6000*Math.pow(2.6,lv-1));
+        o.amount=wasFull?o.max:Math.min(o.amount,o.max);
+        o.lv=lv;
+        changed++;
+      }
+    } else if(o.t==="camp"||o.t==="fort"){
+      const raw=campRawAt(o.x,o.y);
+      if(raw!==o.lv){
+        o.lv=raw; o.t=raw>15?"fort":"camp"; o.power=banditPower(raw);
+        changed++;
+      }
+    }
+  }
+  W.levelMigrated=true;
+  if(changed) logg("Сила лагерей и точек ресурсов пересчитана для всей исследованной карты ("+changed+" объектов).","good");
 }
 // Мигрирует сохранения до появления W.mapChunks/W.genChunks (координаты
 // объектов не меняются вообще — они и так абсолютные, остаются корректными
@@ -2498,8 +2561,7 @@ const EV = {
     const cx=Math.floor(d.x/STRUCT_CHUNK), cy=Math.floor(d.y/STRUCT_CHUNK);
     const spot=findFreeCellInChunk(cx,cy,STRUCT_SALT_CAMP); if(!spot) return;
     const {x,y}=spot;
-    const dd=originDist({x,y});
-    const lv=clamp(Math.round(30-dd*26+(RNG()*8-4)),1,30);
+    const lv=campRawAt(x,y);
     mapSet(x,y,{t:lv>15?"fort":"camp",x,y,lv,power:banditPower(lv),busy:null});
   },
   nodeback(d){
@@ -2507,8 +2569,7 @@ const EV = {
     const cx=Math.floor(d.x/STRUCT_CHUNK), cy=Math.floor(d.y/STRUCT_CHUNK);
     const spot=findFreeCellInChunk(cx,cy,STRUCT_SALT_NODE); if(!spot) return;
     const {x,y}=spot;
-    const dd=originDist({x,y});
-    const lv=clamp(Math.round(5-dd*4+(RNG()*1.6-.8)),1,5);
+    const lv=nodeLevelAt(x,y);
     const amt=Math.round(6000*Math.pow(2.6,lv-1));
     mapSet(x,y,{t:"node",x,y,res:pick(RES),lv,amount:amt,max:amt,busy:null});
   },
@@ -3221,6 +3282,7 @@ async function load(){
     thinMapDensity3();
     thinMapDensity4();
     migrateInfiniteWorld();
+    migrateStructLevels();
     // Старые походы в старом сохранении не несут m.path (маршрут в обход
     // воды появился позже) — без него marchPos() не может интерполировать
     // позицию и упал бы на (0,0). Достраиваем маршрут задним числом по тем
