@@ -41,8 +41,8 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 
 #app{position:relative;z-index:1;display:flex;flex-direction:column;height:100%}
 
-#top{position:fixed;top:10px;left:10px;z-index:15;display:flex;flex-direction:row;
-  align-items:center;gap:8px;max-width:calc(100vw - 16px)}
+#top{position:fixed;top:10px;left:0;z-index:15;display:flex;flex-direction:row;
+  align-items:center;gap:8px;max-width:calc(100vw - 6px)}
 
 #crest{display:flex;align-items:center;cursor:pointer;flex:0 0 auto}
 #crest:hover .mark{color:var(--gilt-hi)}
@@ -560,7 +560,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
     box-shadow:0 -8px 26px rgba(0,0,0,.55)}
   #chart{flex:1 1 46%}
   #key{display:none}
-  #top{top:8px;left:8px}
+  #top{top:8px;left:0}
   .coin .rate{display:none}
   #chron{gap:9px;padding-left:8px}
   #chron .stat s{display:none}
