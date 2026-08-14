@@ -1482,9 +1482,9 @@ const BOT_NICKS = {
 // вместе, либо никогда), кроме зазора это даёт настоящие пустые области.
 const MIN_STRUCT_GAP=6, STRUCT_TRIES=150, STRUCT_CHUNK=16, STRUCT_CHUNK_CHANCE=0.5;
 const STRUCT_SALT_NODE=501, STRUCT_SALT_CAMP=502;
-function structChunkOk(x,y,salt){
+function structChunkOk(x,y,salt,chance){
   const cx=Math.floor(x/STRUCT_CHUNK), cy=Math.floor(y/STRUCT_CHUNK);
-  return hash2(cx,cy,W.seed+salt) < STRUCT_CHUNK_CHANCE;
+  return hash2(cx,cy,W.seed+salt) < (chance===undefined?STRUCT_CHUNK_CHANCE:chance);
 }
 // Индекс W.map по чанку 16×16 ("cx,cy" -> [ключи W.map]) — без него зазор
 // (structFarEnough, было) и наводка ботов (findNear, ниже) сканировали бы
@@ -1552,12 +1552,26 @@ function findFreeCellInChunk(cx,cy,salt){
 // накинуть контент дважды — ни при повторном вызове моста ensureWorldChunk
 // (см. ниже), ни при заходе камеры в тот же чанк снова.
 function hashPick(arr,x,y,salt){ return arr[Math.floor(hash2(x,y,salt)*arr.length)]; }
+// Плотность дикого контента на бесконечной карте: раньше (до чанковой
+// генерации по требованию) её напрямую задавал явный предел попыток в
+// genWorld — nodeCount=22, campCount=13 на ~49 стартовых чанков (после
+// нескольких раундов сокращения за сессию — было 900/520, потом 130/75,
+// 65/38, наконец 22/13). Голая монетка STRUCT_CHUNK_CHANCE=0.5 на КАЖДЫЙ
+// чанк (без отдельного предела попыток) даёт для точек ~24 из 49 — почти
+// совпадает с прежними 22 — а для лагерей ~24 вместо прежних 13, вдвое
+// больше нужного: лагерей на карте требовалось заметно меньше, чем точек
+// ресурсов, а общая монетка этого не различала. Отдельные вероятности —
+// прямой перевод старых целевых чисел (22/49, 13/49) в "шанс на чанк",
+// применяется одинаково что к стартовому кластеру, что к любому чанку при
+// дальнейшем исследовании — та же смысловая плотность везде, не только у
+// истока.
+const NODE_CHUNK_CHANCE=22/49, CAMP_CHUNK_CHANCE=13/49;
 function ensureChunkContent(cx,cy){
   const ck=cx+","+cy;
   if(W.genChunks[ck]) return;
   W.genChunks[ck]=true;
   const bx=cx*STRUCT_CHUNK, by=cy*STRUCT_CHUNK;
-  if(structChunkOk(bx,by,STRUCT_SALT_NODE)){
+  if(structChunkOk(bx,by,STRUCT_SALT_NODE,NODE_CHUNK_CHANCE)){
     const spot=findFreeCellInChunk(cx,cy,STRUCT_SALT_NODE);
     if(spot){
       const d=originDist(spot);
@@ -1568,7 +1582,7 @@ function ensureChunkContent(cx,cy){
         amount:Math.round(6000*Math.pow(2.6,lv-1)), max:Math.round(6000*Math.pow(2.6,lv-1)), busy:null});
     }
   }
-  if(structChunkOk(bx,by,STRUCT_SALT_CAMP)){
+  if(structChunkOk(bx,by,STRUCT_SALT_CAMP,CAMP_CHUNK_CHANCE)){
     const spot=findFreeCellInChunk(cx,cy,STRUCT_SALT_CAMP);
     if(spot){
       const d=originDist(spot);
