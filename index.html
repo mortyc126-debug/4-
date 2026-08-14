@@ -2541,6 +2541,22 @@ function tryWaterPath(x0,y0,x1,y1,margin){
     for(const [dx,dy] of WPATH_DIRS){
       const nx=cur.x+dx, ny=cur.y+dy;
       if(blocked(nx,ny)) continue;
+      // Диагональный шаг между двумя клеточно-сухими углами всё ещё может
+      // ПРОРЕЗАТЬ по диагонали ровно тот угол, где сходятся вода и суша
+      // (найдено живьём: путь через (183,-152)->(184,-153) — обе клетки
+      // сушa, но их общая диагональная граница приходится на воду).
+      // Классическое правило анти-срезания угла для 8-направленной сетки:
+      // диагональ разрешена только если ОБЕ "плечевые" ортогональные клетки
+      // тоже не блокированы.
+      if(dx&&dy&&(blocked(cur.x+dx,cur.y)||blocked(cur.x,cur.y+dy))) continue;
+      // blocked() судит по высоте ровно в ЦЕНТРЕ клетки — этого мало:
+      // рельеф непрерывен, между центрами двух соседних клеток суши иногда
+      // проскакивает узкая полоска воды тоньше клетки (живой пример: клетки
+      // (183,-153) и (184,-153) обе суша, а прямая между их центрами всё
+      // равно ныряет ниже уровня моря). segmentCrossesWater — та же самая
+      // проверка, что потом валидирует готовый путь, здесь применяем её
+      // сразу к каждому ребру A*, чтобы такое ребро не вошло в путь вовсе.
+      if(segmentCrossesWater(cur.x,cur.y,nx,ny)) continue;
       const ng=curG+(dx&&dy?Math.SQRT2:1);
       const nk=idx(nx,ny);
       if(gScore.has(nk)&&gScore.get(nk)<=ng) continue;
@@ -2556,11 +2572,53 @@ function tryWaterPath(x0,y0,x1,y1,margin){
   path[0]={x:x0,y:y0}; path[path.length-1]={x:x1,y:y1};
   return simplifyWaterPath(path);
 }
+// Раньше tryWaterPath строила локальную сетку A* на весь прямоугольник
+// x0..x1 — при коротких походах внутри стартового кластера это было дёшево,
+// но мир с тех пор сильно вырос (реальные цели теперь за сотни клеток), а
+// сетка растёт КАК КВАДРАТ дистанции: марш на 250 клеток при margin=30 уже
+// ~96 000 ячеек, упирался в iter<20000 A* и ТИХО откатывался на прямую —
+// прямую, которая всё ещё режет через воду ("маршруты должны строиться
+// правильно" — пользователь заметил именно такие кривые пути). Находим
+// САМ водный участок вдоль прямой (первая/последняя точка, где вода) и
+// строим локальную сетку только вокруг НЕГО — её размер зависит от ширины
+// конкретного озера/пролива, а не от расстояния похода целиком. Прямая
+// от старта до кромки воды и от кромки до финиша заведомо не пересекает
+// воду (это и есть определение кромки), детур A* нужен только между ними.
+function waterCrossingSpan(x0,y0,x1,y1){
+  const d=Math.hypot(x1-x0,y1-y0);
+  const steps=Math.max(1,Math.ceil(d*2));
+  let entryI=null, exitI=null;
+  for(let i=0;i<=steps;i++){
+    const t=i/steps;
+    if(isRealWater(x0+(x1-x0)*t, y0+(y1-y0)*t)){
+      if(entryI===null) entryI=i;
+      exitI=i;
+    }
+  }
+  if(entryI===null) return null;
+  // Отступаем от границы воды по семплам, пока ОКРУГЛЁННАЯ до целой клетки
+  // точка не перестанет быть водой — на семпл-разрешении (0.5 клетки) один
+  // шаг назад мог всё ещё округляться в соседнюю водную клетку, из-за чего
+  // tryWaterPath(entry,exit,...) отбраковывал саму отправную/финишную точку
+  // детура как воду и возвращал null на ЛЮБОМ margin (нашли живьём: марш на
+  // 150 клеток с озером всего в 7 клеток шириной всё равно резал по воде).
+  let ei=entryI-1;
+  while(ei>0 && isRealWater(Math.round(x0+(x1-x0)*(ei/steps)), Math.round(y0+(y1-y0)*(ei/steps)))) ei--;
+  let xi=exitI+1;
+  while(xi<steps && isRealWater(Math.round(x0+(x1-x0)*(xi/steps)), Math.round(y0+(y1-y0)*(xi/steps)))) xi++;
+  ei=Math.max(0,ei); xi=Math.min(steps,xi);
+  const tEntry=ei/steps, tExit=xi/steps;
+  return {
+    ex:x0+(x1-x0)*tEntry, ey:y0+(y1-y0)*tEntry,
+    xx:x0+(x1-x0)*tExit, xy:y0+(y1-y0)*tExit,
+  };
+}
 function waterPath(x0,y0,x1,y1){
-  if(!segmentCrossesWater(x0,y0,x1,y1)) return [{x:x0,y:y0},{x:x1,y:y1}];
-  for(const margin of [10,30]){
-    const path=tryWaterPath(x0,y0,x1,y1,margin);
-    if(path) return path;
+  const span=waterCrossingSpan(x0,y0,x1,y1);
+  if(!span) return [{x:x0,y:y0},{x:x1,y:y1}];
+  for(const margin of [10,30,60]){
+    const detour=tryWaterPath(span.ex,span.ey,span.xx,span.xy,margin);
+    if(detour) return simplifyWaterPath([{x:x0,y:y0},...detour,{x:x1,y:y1}]);
   }
   return [{x:x0,y:y0},{x:x1,y:y1}];   // не нашли обход даже с запасом — лучше прямая, чем не дать походу случиться
 }
