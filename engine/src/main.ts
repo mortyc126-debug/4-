@@ -266,6 +266,9 @@ async function main() {
   // "Смягчение наложений" — только тут двигаем не позицию структуры, а
   // просто пропускаем декор-кандидата). pad — доля радиуса модели: у травы
   // меньше (мелкая, не режет глаз у стен), у деревьев/камней больше.
+  // Исходные pad/extra (1.6/2, 1.05/0.5, 1.3/1) читались как неестественно
+  // широкое голое кольцо голой земли вокруг любой постройки на скриншоте —
+  // отступ сокращён на 66% (×0.34) для всех трёх видов декора.
   // isWater(wx,wz) проверяет только САМУ точку-якорь декора — визуальный
   // силуэт (крона дерева, куст, пучок травы) шире одной точки и мог
   // нависать над берегом, если якорь лёг буквально на кромке воды
@@ -321,7 +324,7 @@ async function main() {
         const wx = cx * CHUNK_SIZE + i * DECOR_CELL + jx * DECOR_CELL;
         const wz = cz * CHUNK_SIZE + j * DECOR_CELL + jz * DECOR_CELL;
         if (nearWater(wx, wz, 1.5)) continue; // деревья/камни — самый широкий силуэт
-        if (blockedByStructure(wx, wz, 1.6, 2)) continue;
+        if (blockedByStructure(wx, wz, 0.54, 0.68)) continue;
         const isTree = hash2(gx, gz, SEED + 780) < TREE_FRACTION;
         const yaw = hash2(gx, gz, SEED + 781) * Math.PI * 2;
         const jitter = 0.85 + hash2(gx, gz, SEED + 782) * 0.3; // 0.85..1.15 — та же роль, что и tone/warm в старом прототипе
@@ -364,7 +367,7 @@ async function main() {
         const wx = cx * CHUNK_SIZE + i * GRASS_CELL + jx * GRASS_CELL;
         const wz = cz * CHUNK_SIZE + j * GRASS_CELL + jz * GRASS_CELL;
         if (nearWater(wx, wz, 0.4)) continue; // трава мелкая — небольшой отступ
-        if (blockedByStructure(wx, wz, 1.05, 0.5)) continue;
+        if (blockedByStructure(wx, wz, 0.36, 0.17)) continue;
         const e = heightAt(wx, wz);
         // Трава заметна только на невысокой/пологой траве-местности —
         // на голых скалистых верхах (SCREE, см. terrain.ts) её и в живой
@@ -387,7 +390,7 @@ async function main() {
         const wx = cx * CHUNK_SIZE + i * BUSH_CELL + jx * BUSH_CELL;
         const wz = cz * CHUNK_SIZE + j * BUSH_CELL + jz * BUSH_CELL;
         if (nearWater(wx, wz, 0.9)) continue;
-        if (blockedByStructure(wx, wz, 1.3, 1)) continue;
+        if (blockedByStructure(wx, wz, 0.44, 0.34)) continue;
         const e = heightAt(wx, wz);
         if (e > 0.75) continue;
         const wy = e * HMAX;
@@ -799,6 +802,15 @@ async function main() {
     if (!fresh) return; // связь с window.parent.W пропала — оставляем сцену как есть
     const seenKeys = new Set<string>();
     const pendingLoads: Promise<void>[] = [];
+    // Чанки декора, которые нужно пересчитать после этого дифа: decorByChunk
+    // кэшируется один раз при загрузке чанка (см. genDecorForChunk) и сам по
+    // себе не знает, что реальная сущность рядом с этим декором появилась
+    // или исчезла. Разгромленный лагерь/истощившаяся точка/перенесённый
+    // город должны освобождать место под траву и деревья на своём месте —
+    // тот же приём, что и в старом прототипе (обратный процесс, порождение
+    // новой структуры, тоже нужен: иначе трава могла бы прорасти прямо под
+    // только что появившимся зданием, пока чанк не перезагрузится).
+    const decorDirtyChunks = new Set<string>();
     for (const e of fresh) {
       seenKeys.add(e.key);
       const existingEid = keyToEid.get(e.key);
@@ -831,9 +843,11 @@ async function main() {
           .then((gm) => void instances.set(eid, modelPipeline.createInstance(gm, mat)))
           .catch(() => {})
       );
+      decorDirtyChunks.add(chunkKey(Math.floor(e.x / CHUNK_SIZE), Math.floor(e.y / CHUNK_SIZE)));
     }
     for (const [key, eid] of Array.from(keyToEid)) {
       if (seenKeys.has(key)) continue;
+      decorDirtyChunks.add(chunkKey(Math.floor(Position.x[eid] / CHUNK_SIZE), Math.floor(Position.y[eid] / CHUNK_SIZE)));
       removeEntity(world, eid);
       instances.delete(eid);
       modelPathOf.delete(eid);
@@ -847,6 +861,19 @@ async function main() {
     }
     await Promise.allSettled(pendingLoads);
     found = Array.from(query(world, [Position, Kind]));
+    // found теперь отражает диф целиком (новые сущности вошли, исчезнувшие
+    // вышли) — только сейчас можно безопасно пересчитать декор задетых
+    // чанков: genDecorForChunk/blockedByStructure читают found по
+    // замыканию, пересчитай их раньше — decor всё ещё сверялся бы со
+    // старым составом сущностей.
+    let decorTouched = false;
+    for (const dk of decorDirtyChunks) {
+      if (!loadedChunks.has(dk)) continue; // чанк вне радиуса прогрузки — нечего пересчитывать
+      const [dcx, dcz] = dk.split(",").map(Number);
+      decorByChunk.set(dk, genDecorForChunk(dcx, dcz));
+      decorTouched = true;
+    }
+    if (decorTouched) refreshDecor();
     syncCount++;
     (window as any).__ecsFound = found.length;
     (window as any).__syncCount = syncCount;
