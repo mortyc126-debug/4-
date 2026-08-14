@@ -656,6 +656,34 @@ async function main() {
   (window as any).__camState = () => ({ yaw: cam.yaw, pitch: cam.pitch, dist: cam.dist, target: [...cam.target] });
   (window as any).__isAutoOrbiting = () => controls.isAutoOrbiting();
 
+  // ---- координатная строка: в мире без края и без списка городов это
+  // единственный способ и найти себя ("какие у меня координаты, чтобы
+  // позвать друга"), и попасть в произвольную точку по чужим координатам.
+  // Порт того же механизма из старого прототипа (obyom-3d-infinite.html,
+  // см. коммит f04872e), включая обход одного и того же бага: пока поле
+  // "живое" (каждый кадр показывает текущую позицию), таб с X на Y стирал
+  // бы только что введённый X ещё до нажатия "Перейти" — coordDirty
+  // останавливает перезапись сразу, как только начали печатать, и снимается
+  // только после успешного перехода.
+  const coordX = document.getElementById("coordX") as HTMLInputElement;
+  const coordY = document.getElementById("coordY") as HTMLInputElement;
+  const coordGo = document.getElementById("coordGo") as HTMLButtonElement;
+  let coordDirty = false;
+  for (const inp of [coordX, coordY]) inp.addEventListener("input", () => { coordDirty = true; });
+  function goToCoords() {
+    const x = parseFloat(coordX.value), y = parseFloat(coordY.value);
+    if (!isFinite(x) || !isFinite(y)) return;
+    cam.target[0] = x;
+    cam.target[2] = y;
+    cam.target[1] = heightAt(x, y) * HMAX + 2;
+    controls.stopAuto();
+    coordDirty = false;
+  }
+  coordGo.addEventListener("click", goToCoords);
+  for (const inp of [coordX, coordY]) inp.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); goToCoords(); inp.blur(); }
+  });
+
   // ---- клик/тап по сущности: RoK-стиль (см. вживую уже реализованное
   // tryTap()+renderCartouche() в obyom-3d-infinite.html/index.html) — тут,
   // за неимением полноценной панели в изолированном прототипе, просто
@@ -917,6 +945,10 @@ async function main() {
   function draw(tMs: number) {
     if (controls.isAutoOrbiting()) cam.yaw = tMs * 0.00015;
     controls.update(tMs); // WASD/стрелки — панорама, зажатая клавиша даёт непрерывный сдвиг между кадрами
+    if (!coordDirty) {
+      coordX.value = cam.target[0].toFixed(1);
+      coordY.value = cam.target[2].toFixed(1);
+    }
     updateTerrainChunks(cam.target[0], cam.target[2]); // no-op, пока камера внутри того же чанка — дёшево звать каждый кадр
     updateFarTerrain(cam.target[0], cam.target[2]); // то же самое, но для дальнего грубого кольца
     const eye: Vec3 = [
