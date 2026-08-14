@@ -3635,7 +3635,6 @@ function renderCartouche(){
     const gp=o.busy!=null?W.players.find(q=>q.id===o.busy):null;
     const mine=g&&g.pid===p.id;
     let body="<div class='hd'>"+RES_SITE_NAME[o.res]+" "+coord+"</div>"+
-      "<div class='co'><span>Уровень</span><b>"+o.lv+" из 5</b></div>"+
       "<div class='co'><span>Резервы</span><b>"+fmt(o.amount)+"</b></div>"+
       "<div class='co'><span>Сборщик</span><b>"+(gp?gp.nick:"Никто")+"</b></div>";
     if(mine){
@@ -3656,7 +3655,6 @@ function renderCartouche(){
              : my>fp*0.8?["Исход не ясен","var(--gilt)"]
              : ["Отряд поляжет","var(--garnet)"];
     put("<div class='hd'>"+(o.t==="fort"?"Форт":"Лагерь")+" разбойников "+coord+"</div>"+
-      "<div class='co'><span>Уровень</span><b>"+o.lv+"</b></div>"+
       "<div class='co'><span>Сила заставы</span><b>"+fmt(fp)+"</b></div>"+
       "<div class='co'><span>Ваше войско</span><b>"+fmt(my)+"</b></div>"+
       "<div class='co'><span>Прогноз</span><b style='color:"+ok[1]+"'>"+ok[0]+"</b></div>"+
@@ -3698,8 +3696,7 @@ function renderCartouche(){
     const shielded=W.t<q.shieldUntil;
     put("<div class='hd'>"+shieldSvg(q.race,14)+q.nick+" "+coord+"</div>"+
       "<div class='co'><span>Город</span><b>"+q.name+"</b></div>"+
-      "<div class='co'><span>Знамя</span><b>"+RACES[q.race].name+"</b></div>"+
-      "<div class='co'><span>Ратуша</span><b>"+q.b.hall+" · эпоха "+epochOf(q.b.hall)+"</b></div>"+
+      "<div class='co'><span>Ратуша</span><b>"+q.b.hall+"</b></div>"+
       "<div class='co'><span>Сила</span><b>"+fmt(power(q))+"</b></div>"+
       (shielded?"<div class='co'><span>Статус</span><b style='color:#7ab2e0'>Под щитом мира</b></div>":"")+
       scout+
