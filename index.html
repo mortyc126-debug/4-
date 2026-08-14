@@ -3681,7 +3681,17 @@ function renderCartouche(){
   const o=W.map[key(sel.x,sel.y)], p=me();
   const coord="<span class='n' style='font-family:var(--data);font-size:10px;color:var(--vellum-faint)'>"+
     sel.x+" · "+sel.y+"</span>";
-  if(!o){ put(""); return; }
+  if(!o){
+    // Свободный тап по пустой местности — пользователь просил видеть
+    // координаты клетки и иметь возможность послать туда отряд ("Пустошь").
+    // Цели там нет: снаряжённый марш просто дойдёт и сам развернётся домой
+    // (см. arriveMarch — !cell на месте прибытия сразу зовёт recallMarch).
+    const water=isRealWater(sel.x,sel.y);
+    put("<div class='hd'>Пустошь "+coord+"</div>"+
+      (water?"<div class='hint'>Здесь вода — отряд не высадить.</div>":
+        "<button class='seal wide' style='margin-top:9px' data-act='march' data-x='"+sel.x+"' data-y='"+sel.y+"'>Отправить отряд</button>"));
+    return;
+  }
 
   if(o.t==="node"){
     // "Сборщик" — кто сейчас черпает эту жилу (o.busy хранит id игрока,
@@ -4546,8 +4556,14 @@ function renderFolio(){
    ========================================================================= */
 function openLevy(cx,cy){
   const p=me(); syncRes(p);
-  const o=W.map[key(cx,cy)];
-  if(!o) return herald("На пустошь войско слать незачем.");
+  let o=W.map[key(cx,cy)];
+  if(!o){
+    // Пустая клетка ("Пустошь") — свободный тап по местности, отряд можно
+    // отправить и сюда (просто дойдёт и сам развернётся домой, см.
+    // arriveMarch), кроме воды — туда высадка бессмысленна.
+    if(isRealWater(cx,cy)) return herald("Здесь вода — отряд не высадить.");
+    o={t:"waste",x:cx,y:cy};
+  }
   if(o.t==="city"&&o.pid===p.id) return herald("Это ваша столица.");
   if(W.marches.filter(m=>m.pid===p.id).length>=marchSlots(p.b.hall))
     return herald("Свободных отрядов нет. Отзовите марш или поднимите ратушу.");
@@ -4555,7 +4571,7 @@ function openLevy(cx,cy){
     const q=W.players.find(z=>z.id===o.pid);
     if(q&&W.t<q.shieldUntil) return herald("Город под щитом мира — приступить нельзя.");
   }
-  const mode = o.t==="node"?"gather":"attack";
+  const mode = o.t==="node"?"gather":o.t==="waste"?"scout":"attack";
   const capL = marchCapacity(p);
   const st={};
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++) st[t+i]=0});
@@ -4571,9 +4587,10 @@ function openLevy(cx,cy){
     let load=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++)load+=st[t+i]*TROOP_TYPES[t].load*TIER_MULT[i-1]*troopMod(p.race,t,"load")});
     const mine=armyPower(u,bonuses(p),p.race);
 
-    let head = mode==="gather"?"Сбор припасов":"Военный поход";
+    let head = mode==="gather"?"Сбор припасов":mode==="scout"?"Отправка отряда":"Военный поход";
     let lede = o.t==="node" ? RES_NAME[o.res]+", жила "+o.lv+" уровня — "+fmt(o.amount)+" осталось"
              : o.t==="city" ? "Столица "+(W.players.find(z=>z.id===o.pid)||{name:"?"}).name
+             : o.t==="waste" ? "Пустошь — свободные земли"
              : (o.t==="fort"?"Форт":"Лагерь")+" разбойников "+o.lv+" уровня";
 
     let h="<h2>"+head+"</h2><div class='lede'>"+lede+" · клетка "+cx+" · "+cy+"</div>";
@@ -4616,7 +4633,7 @@ function openLevy(cx,cy){
     }
     h+="<div class='chips' style='margin-top:16px;margin-bottom:0'>"+
        "<button class='seal' data-a='go' "+(n<=0||over?"disabled":"")+">"+
-       (mode==="gather"?"Выслать обоз":"Выступить в поход")+"</button>"+
+       (mode==="gather"?"Выслать обоз":mode==="scout"?"Отправить отряд":"Выступить в поход")+"</button>"+
        "<button class='seal' data-a='no'>Отставить</button></div>";
     box.innerHTML=h;
   }
@@ -4642,7 +4659,7 @@ function openLevy(cx,cy){
       const r=sendMarch(p,cx,cy,u,mode);
       if(r.err) return herald(r.err);
       closeScroll(); tab="army"; syncRibbons(); lastFolio=""; renderFolio();
-      herald(mode==="gather"?"Обоз выступил.":"Войско выступило в поход.");
+      herald(mode==="gather"?"Обоз выступил.":mode==="scout"?"Отряд отправлен.":"Войско выступило в поход.");
     }
   };
 }

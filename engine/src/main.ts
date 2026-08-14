@@ -12,7 +12,7 @@ import { createRenderer, type MarkerEntity, type DecorEntity } from "./renderer"
 import { buildTerrainPatch } from "./terrainMesh";
 import { heightAt, HMAX, hash2, isWater, SEED, registerFlattenSite } from "./terrain";
 import { PINE, LEAF, GRASS_TONES, BUSH_TONES, ROCK_TONES } from "./decorMesh";
-import { mul, persp, look, modelMatrix, transformPoint, type Vec3, type Mat4 } from "./mat4";
+import { mul, persp, look, modelMatrix, transformPoint, sub, cross, norm, type Vec3, type Mat4 } from "./mat4";
 import { attachOrbitControls, type OrbitCamera } from "./camera";
 import { loadGLB } from "./glb";
 import { uploadGLB, createModelPipeline, type GpuModel, type ModelInstance } from "./modelRenderer";
@@ -720,6 +720,12 @@ async function main() {
   // моделей избыточно, а экранная дистанция до спроецированного центра
   // даёт тот же результат для выбора одной ближайшей метки.
   let currentVP: Mat4 = new Float32Array(16);
+  // Позиция камеры текущего кадра — нужна отдельно от currentVP для
+  // screenToGround (см. ниже): рейкаст в рельеф идёт от точки камеры вдоль
+  // направления через тапнутый пиксель, обратная матрица VP тут не заведена
+  // (нигде больше не нужна), проще держать eye и разложение на конус лучей
+  // напрямую через те же fovy/aspect, что и persp() в draw().
+  let currentEye: Vec3 = [0, 0, 0];
   const selectedEl = document.getElementById("selected") as HTMLDivElement;
   const HILITE_COLOR: [number, number, number] = [0.95, 0.78, 0.35];
   // Свой/чужой поход — тот же смысл, что и TINCT-золото/гранат в 2D-карте
@@ -860,6 +866,49 @@ async function main() {
     }
     return best;
   }
+  // Тап мимо любой сущности/похода — "свободный тап по местности"
+  // (пользователь просил: тап по пустой земле показывает координаты и даёт
+  // отправить туда отряд, см. index.html renderCartoucheFor + openLevy).
+  // Честного рейкаста по мешу тут нет (рельеф — процедурная heightfield-
+  // функция, не буфер треугольников под рукой в это время), поэтому — марш
+  // вдоль луча камеры мелким шагом до пересечения с heightAt(), затем
+  // бисекция на этом отрезке для точности, тот же общий приём, что и везде
+  // в этом проекте для heightfield-рейкастов.
+  const CAM_FOVY = 0.72;
+  const GROUND_RAY_STEP = 2, GROUND_RAY_MAX = 400, GROUND_RAY_BISECT_ITERS = 12;
+  function screenToGround(px: number, py: number): { x: number; z: number } | null {
+    const aspect = canvas.width / Math.max(1, canvas.height);
+    const tanHalf = Math.tan(CAM_FOVY / 2);
+    const ndcX = (px / canvas.width) * 2 - 1;
+    const ndcY = 1 - (py / canvas.height) * 2;
+    // Тот же базис камеры, что и в look() (mat4.ts): z — "назад" (от цели к
+    // глазу), x/y — право/верх. Луч через пиксель — комбинация x/y по НОК,
+    // минус z (вперёд, "в экран").
+    const zAxis = norm(sub(currentEye, cam.target));
+    const xAxis = norm(cross([0, 1, 0], zAxis));
+    const yAxis = cross(zAxis, xAxis);
+    const dir = norm([
+      ndcX * aspect * tanHalf * xAxis[0] + ndcY * tanHalf * yAxis[0] - zAxis[0],
+      ndcX * aspect * tanHalf * xAxis[1] + ndcY * tanHalf * yAxis[1] - zAxis[1],
+      ndcX * aspect * tanHalf * xAxis[2] + ndcY * tanHalf * yAxis[2] - zAxis[2],
+    ]);
+    let prevT = 0;
+    for (let t = GROUND_RAY_STEP; t <= GROUND_RAY_MAX; t += GROUND_RAY_STEP) {
+      const wx = currentEye[0] + dir[0] * t, wy = currentEye[1] + dir[1] * t, wz = currentEye[2] + dir[2] * t;
+      if (wy - heightAt(wx, wz) * HMAX <= 0) {
+        let lo = prevT, hi = t;
+        for (let i = 0; i < GROUND_RAY_BISECT_ITERS; i++) {
+          const mid = (lo + hi) / 2;
+          const mx = currentEye[0] + dir[0] * mid, mz = currentEye[2] + dir[2] * mid;
+          const my = currentEye[1] + dir[1] * mid;
+          if (my - heightAt(mx, mz) * HMAX > 0) lo = mid; else hi = mid;
+        }
+        return { x: currentEye[0] + dir[0] * hi, z: currentEye[2] + dir[2] * hi };
+      }
+      prevT = t;
+    }
+    return null;
+  }
   // Тап определяет camera.ts (короткое почти-неподвижное касание, тот же
   // приём, что и tryTap()/lift() в прошлом прототипе) — не родной "click":
   // теперь, когда один палец панорамирует камеру (см. camera.ts), родной
@@ -886,6 +935,12 @@ async function main() {
     }
     clearSelection();
     selectedMarchId = null;
+    // Ни сущность, ни поход — "свободный тап" по пустой местности:
+    // сообщаем родителю координаты клетки той же готовой панелью cartouche
+    // (renderCartoucheFor уже умеет показывать пустую клетку как "Пустошь",
+    // см. index.html — та же точка входа, что и для города/лагеря/точки).
+    const ground = screenToGround(px, py);
+    if (ground !== null) notifyParentCartouche(Math.floor(ground.x), Math.floor(ground.z));
   });
 
   // ---- живая синхронизация: партия внутри игры не стоит на месте —
@@ -1102,8 +1157,9 @@ async function main() {
       cam.target[2] + Math.cos(cam.yaw) * Math.cos(cam.pitch) * cam.dist,
     ];
     const aspect = canvas.width / Math.max(1, canvas.height);
-    const vp = mul(persp(0.72, aspect, 0.5, 300), look(eye, cam.target, [0, 1, 0]));
+    const vp = mul(persp(CAM_FOVY, aspect, 0.5, 300), look(eye, cam.target, [0, 1, 0]));
     currentVP = vp;
+    currentEye = eye;
     renderer.setVP(vp);
     renderer.setFog(eye, FOG_COLOR, FOG_K, tMs / 1000);
     renderer.setSunTarget(cam.target[0], cam.target[2]);
