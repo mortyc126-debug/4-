@@ -166,11 +166,6 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #cartouche .hint{margin-top:7px;padding-top:6px;border-top:1px solid var(--rule-soft);
   font-size:11.5px;color:var(--vellum-faint);font-style:italic}
 
-#minimap{right:14px;top:66px;width:146px;height:146px;padding:5px;cursor:pointer}
-#minimap canvas{display:block;width:100%;height:100%;image-rendering:auto;border-radius:1px}
-#mini-label{position:absolute;left:0;right:0;bottom:-17px;text-align:center;font-size:9px;
-  letter-spacing:.2em;text-transform:uppercase;color:var(--vellum-faint)}
-
 /* bottom:92px, не 14px — #menu-btn (70×70, z-index:20) сидит в том же углу
    (right:14px;bottom:14px) и перекрывал нижние две кнопки (t-out/t-home),
    те были некликабельны ещё до 3D — этого никто не замечал, пока сама
@@ -564,7 +559,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   #ledger{width:auto;flex:1 1 54%;border-left:none;border-top:1px solid var(--rule);
     box-shadow:0 -8px 26px rgba(0,0,0,.55)}
   #chart{flex:1 1 46%}
-  #key,#minimap{display:none}
+  #key{display:none}
   #top{top:8px;left:8px}
   .coin .rate{display:none}
   #chron{gap:9px;padding-left:8px}
@@ -609,7 +604,6 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
         <span class="kr"><svg class="sh" viewBox="0 0 12 15"><path d="M1 1h10v8.2C11 12 6 14 6 14S1 12 1 9.2Z" fill="#4c8d5e" stroke="#c2993c"/></svg>Эльфы</span>
         <span class="kr"><svg class="sh" viewBox="0 0 12 15"><path d="M1 1h10v8.2C11 12 6 14 6 14S1 12 1 9.2Z" fill="#7d56a4" stroke="#c2993c"/></svg>Нежить</span>
       </div>
-      <div id="minimap" class="plate"><canvas id="mini"></canvas><span id="mini-label">Держава</span></div>
       <div id="cartouche" class="plate"></div>
       <div id="tools" class="plate">
         <button id="t-in" title="Приблизить">+</button>
@@ -1488,31 +1482,115 @@ const BOT_NICKS = {
 // вместе, либо никогда), кроме зазора это даёт настоящие пустые области.
 const MIN_STRUCT_GAP=6, STRUCT_TRIES=150, STRUCT_CHUNK=16, STRUCT_CHUNK_CHANCE=0.5;
 const STRUCT_SALT_NODE=501, STRUCT_SALT_CAMP=502;
-function structFarEnough(x,y){
-  for(const k in W.map){ if(Math.hypot(W.map[k].x-x,W.map[k].y-y)<MIN_STRUCT_GAP) return false; }
-  return true;
-}
 function structChunkOk(x,y,salt){
   const cx=Math.floor(x/STRUCT_CHUNK), cy=Math.floor(y/STRUCT_CHUNK);
   return hash2(cx,cy,W.seed+salt) < STRUCT_CHUNK_CHANCE;
 }
-// Вода — жёсткое исключение (см. isRealWater ниже, портированное 1:1 из
-// 3D-рельефа): клетка либо проходит, либо нет, без компромиссов вроде
-// поднятия земли под объектом постфактум.
-function findFreeCell(salt){
+// Индекс W.map по чанку 16×16 ("cx,cy" -> [ключи W.map]) — без него зазор
+// (structFarEnough, было) и наводка ботов (findNear, ниже) сканировали бы
+// ВЕСЬ W.map целиком на каждую попытку/каждую мысль бота; в бесконечном
+// мире W.map растёт без верхней границы по мере исследования, полный
+// перебор рано или поздно станет заметно дорогим. mapSet/mapDelete —
+// единственные места, где W.map мутируется, — держат индекс в актуальном
+// состоянии всегда одной и той же парой функций, а не россыпью прямых
+// присваиваний W.map[key(...)]=... по всему файлу.
+function chunkKeyOf(x,y){ return Math.floor(x/STRUCT_CHUNK)+","+Math.floor(y/STRUCT_CHUNK); }
+function mapSet(x,y,obj){
+  const k=key(x,y);
+  W.map[k]=obj;
+  const ck=chunkKeyOf(x,y);
+  if(!W.mapChunks[ck]) W.mapChunks[ck]=[];
+  if(!W.mapChunks[ck].includes(k)) W.mapChunks[ck].push(k);
+}
+function mapDelete(x,y){
+  const k=key(x,y);
+  if(!W.map[k]) return;
+  delete W.map[k];
+  const arr=W.mapChunks[chunkKeyOf(x,y)];
+  if(arr){ const i=arr.indexOf(k); if(i>=0) arr.splice(i,1); }
+}
+// Замена findFreeCell — тот же смысл (свободная непроходная клетка с
+// зазором от соседей), но ищет ТОЛЬКО внутри одного чанка 16×16, а зазор
+// проверяет по соседям из W.mapChunks в чанке и его 3×3-окрестности, а не
+// по всему W.map: MIN_STRUCT_GAP=6 заведомо меньше половины стороны чанка
+// (16), так что ничего снаружи соседства 3×3 повлиять не может. Кандидаты
+// перебираются детерминированно через hash2(cx,cy,seed+salt+t*2[+1]), а не
+// ri()/RNG() — вызов должен быть идемпотентным и не зависеть от того, когда
+// именно и в каком порядке чанки открываются игроком (см. ensureChunkContent
+// ниже), а не только от результата случайного блуждания по общему потоку
+// RNG(), общему с ботами/маршами.
+function findFreeCellInChunk(cx,cy,salt){
+  const x0=cx*STRUCT_CHUNK, y0=cy*STRUCT_CHUNK;
+  const neighborKeys=[];
+  for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+    const arr=W.mapChunks[(cx+dx)+","+(cy+dy)];
+    if(arr) for(const k of arr) neighborKeys.push(k);
+  }
+  function farEnough(x,y){
+    for(const k of neighborKeys){
+      const o=W.map[k];
+      if(o && Math.hypot(o.x-x,o.y-y)<MIN_STRUCT_GAP) return false;
+    }
+    return true;
+  }
   for(let t=0;t<STRUCT_TRIES;t++){
-    const x=ri(0,CFG.MAP-1), y=ri(0,CFG.MAP-1);
+    const hx=hash2(cx,cy,W.seed+salt+t*2), hy=hash2(cx,cy,W.seed+salt+t*2+1);
+    const x=x0+Math.floor(hx*STRUCT_CHUNK), y=y0+Math.floor(hy*STRUCT_CHUNK);
     if(W.map[key(x,y)]) continue;
     if(isRealWater(x,y)) continue;
-    if(!structChunkOk(x,y,salt)) continue;
-    if(!structFarEnough(x,y)) continue;
+    if(!farEnough(x,y)) continue;
     return {x,y};
   }
   return null;
 }
+// Дикий контент по требованию: детерминированная и идемпотентная функция
+// от координат чанка и сида партии — намеренно НЕ использует ri()/RNG()/
+// pick() нигде внутри (те читают общий мутируемый поток RNG(), общий с
+// ботами/маршами/событиями — тот же вызов в разный момент партии дал бы
+// разный результат), а вместо этого соль+hash2 на каждое решение, как и
+// structChunkOk. W.genChunks помечает уже обработанные чанки, чтобы не
+// накинуть контент дважды — ни при повторном вызове моста ensureWorldChunk
+// (см. ниже), ни при заходе камеры в тот же чанк снова.
+function hashPick(arr,x,y,salt){ return arr[Math.floor(hash2(x,y,salt)*arr.length)]; }
+function ensureChunkContent(cx,cy){
+  const ck=cx+","+cy;
+  if(W.genChunks[ck]) return;
+  W.genChunks[ck]=true;
+  const bx=cx*STRUCT_CHUNK, by=cy*STRUCT_CHUNK;
+  if(structChunkOk(bx,by,STRUCT_SALT_NODE)){
+    const spot=findFreeCellInChunk(cx,cy,STRUCT_SALT_NODE);
+    if(spot){
+      const d=originDist(spot);
+      const jitter=hash2(spot.x,spot.y,W.seed+STRUCT_SALT_NODE+11)*1.6-0.8;
+      const lv=clamp(Math.round(5-d*4+jitter),1,5);
+      const type=hashPick(RES,spot.x,spot.y,W.seed+STRUCT_SALT_NODE+12);
+      mapSet(spot.x,spot.y,{t:"node",x:spot.x,y:spot.y,res:type,lv,
+        amount:Math.round(6000*Math.pow(2.6,lv-1)), max:Math.round(6000*Math.pow(2.6,lv-1)), busy:null});
+    }
+  }
+  if(structChunkOk(bx,by,STRUCT_SALT_CAMP)){
+    const spot=findFreeCellInChunk(cx,cy,STRUCT_SALT_CAMP);
+    if(spot){
+      const d=originDist(spot);
+      const jitter=hash2(spot.x,spot.y,W.seed+STRUCT_SALT_CAMP+11)*8-4;
+      const raw=clamp(Math.round(30-d*26+jitter),1,30);
+      const isFort=raw>15;
+      mapSet(spot.x,spot.y,{t:isFort?"fort":"camp",x:spot.x,y:spot.y,lv:raw,hp:1,power:banditPower(raw),busy:null});
+    }
+  }
+}
+// Мост от 3D-движка (engine/src/main.ts, менеджер чанков рельефа): при
+// входе нового чанка рельефа в радиус загрузки движок зовёт эту функцию с
+// его координатами — та же обёртка-приём, что и renderCartoucheFor (движок
+// не знает и не должен знать, как устроена генерация дикого контента,
+// только то, что такая функция может существовать у родителя).
+function ensureWorldChunk(cx,cy){
+  if(!W) return;
+  ensureChunkContent(cx,cy);
+}
 function genWorld(seed){
   RNG = mulberry(seed);
-  W = { seed, t:0, born:Date.now(), map:{}, players:[], marches:[], events:[],
+  W = { seed, t:0, born:Date.now(), map:{}, mapChunks:{}, genChunks:{}, players:[], marches:[], events:[],
         log:[], nextId:1, savedAt:Date.now() };
 
   // Города — первыми и с гарантией места (findSpot ниже всегда что-нибудь
@@ -1550,7 +1628,7 @@ function genWorld(seed){
   Object.assign(me.b,{hall:3,store:8,barracks:2,range:2,stable:1,academy:2,wall:2});
   me.b.farm[0]=3; me.b.lumber[0]=3; me.b.quarry[0]=2; me.b.mine[0]=2; me.b.hospital[0]=3;
   W.players.push(me);
-  clearArea(ps.x,ps.y,1); W.map[key(ps.x,ps.y)]={t:"city",x:ps.x,y:ps.y,pid:me.id};
+  clearArea(ps.x,ps.y,1); mapSet(ps.x,ps.y,{t:"city",x:ps.x,y:ps.y,pid:me.id});
 
   const used={};
   for(let i=0;i<CFG.BOTS;i++){
@@ -1576,63 +1654,24 @@ function genWorld(seed){
     autoTalents(b);
     b.res={food:100000,wood:100000,stone:100000,gold:100000};
     W.players.push(b);
-    clearArea(s.x,s.y,1); W.map[key(s.x,s.y)]={t:"city",x:s.x,y:s.y,pid:b.id};
+    clearArea(s.x,s.y,1); mapSet(s.x,s.y,{t:"city",x:s.x,y:s.y,pid:b.id});
     schedule(ri(0,CFG.BOT_THINK), "think", {pid:b.id});
   }
 
-  // Лагеря/точки — раньше сыпались совсем без разбора: единственная защита
-  // была "не на ту же клетку", а между соседними клетками — вообще никакой.
-  // На карте 100×100 c ~1400 такими объектами ближайший сосед города нередко
-  // оказывался всего в 2 клетках. В 2D это было незаметно — там это мелкие
-  // иконки-точки на плоской карте; когда те же координаты стали объёмными
-  // моделями в 3D-вкладке "Мир", это превратилось в кучу-малу и сажало
-  // кадр — генерация одного перегруженного чанка занимала секунды, а таких
-  // чанков рядом с любым городом было по десятку разом. MIN_STRUCT_GAP —
-  // настоящий минимальный зазор между ЛЮБЫМИ двумя объектами на карте (не
-  // только городами, как раньше): кандидат, что лёг бы теснее, просто
-  // пробует ещё раз. STRUCT_TRIES ограничивает число попыток на одну точку —
-  // при таком зазоре это мягкое, не жёсткое ограничение итогового числа:
-  // почти всё, что просилось, находит место, редкие неудачники просто не
-  // появляются в этот раз (не наматывают тысячи попыток и не блокируют
-  // остальных).
-  // findFreeCell (общая, top-level — см. выше genWorld) сама проверяет
-  // зазор, воду и "монетку" на чанк 16×16. Числа ниже — то, СКОЛЬКО раз
-  // вообще пробуем кинуть точку/лагерь, не то, сколько гарантированно
-  // появится: часть попыток естественно уходит в воду/занятые чанки и
-  // просто не находит места (см. findFreeCell) — так на карте остаются
-  // настоящие пустые участки, а не сплошной ковёр до предела зазора.
-  // Было 900/520 без зазора и без монетки на чанк — тот самый "ковёр".
-  // Было 130/75 (зазор уже есть, монетки на чанк ещё нет) — тоже жаловались,
-  // что заполнено "будто на 100% каждого чанка": сама выборка без монетки
-  // жадно раздвигает соседей до предела зазора В КАЖДОМ углу карты, не
-  // оставляя пропусков. Было 65/38 (зазор + монетка есть) — всё равно
-  // "мозолят глаза": срезано ещё втрое.
-  const nodeCount = 22;
-  for(let i=0;i<nodeCount;i++){
-    const spot=findFreeCell(STRUCT_SALT_NODE); if(!spot) continue;
-    const {x,y}=spot;
-    const d=originDist({x,y});
-    let lv = clamp(Math.round(5 - d*4 + (RNG()*1.6-0.8)),1,5);
-    const type = pick(RES);
-    W.map[key(x,y)] = {t:"node",x,y,res:type,lv,
-      amount: Math.round(6000*Math.pow(2.6,lv-1)), max: Math.round(6000*Math.pow(2.6,lv-1)),
-      busy:null};
-  }
-  const campCount = 13;
-  for(let i=0;i<campCount;i++){
-    const spot=findFreeCell(STRUCT_SALT_CAMP); if(!spot) continue;
-    const {x,y}=spot;
-    const d=originDist({x,y});
-    const raw = clamp(Math.round(30 - d*26 + (RNG()*8-4)),1,30);
-    const isFort = raw>15;
-    W.map[key(x,y)] = {t:isFort?"fort":"camp",x,y,lv:raw,
-      hp:1, power: banditPower(raw), busy:null};
-  }
+  // Дикий контент стартового кластера — тот же диспетчер (ensureChunkContent),
+  // что и при дальнейшем исследовании за пределами старой карты (см. мост
+  // ensureWorldChunk выше, зовётся движком по мере подгрузки чанков рельефа):
+  // чанки всего стартового квадрата 0..CFG.MAP кидаются сразу, одним и тем
+  // же кодом, что сработает и для любого чанка за её пределами, когда игрок
+  // туда доберётся — это и даёт бесшовность не только рельефу, но и контенту.
+  // CFG.MAP тут — больше не граница мира (её нет), а фиксированный размер
+  // стартовой зоны, в которой расставлены игрок и 12 ботов.
+  const startChunks = Math.ceil(CFG.MAP/STRUCT_CHUNK);
+  for(let cy=0;cy<startChunks;cy++)for(let cx=0;cx<startChunks;cx++) ensureChunkContent(cx,cy);
 
-  // Свежий мир уже построен через findFreeCell (зазор + вода + "монетка"
-  // на чанк, числа уже втрое меньше) — всем трём миграциям ниже тут нечего
-  // делать.
-  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true;
+  // Свежий мир уже построен через ensureChunkContent (зазор + вода +
+  // "монетка" на чанк) — всем миграциям ниже тут нечего делать.
+  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.infiniteWorldMigrated=true;
   logg("Мир создан. Зерно "+seed+". Городов: "+W.players.length+".", "good");
   return W;
 }
@@ -1704,7 +1743,29 @@ function thinMapDensity3(){
   W.densityMigrated3=true;
   if(drop.length) logg("Карта разрежена в третий раз: убрано ещё "+drop.length+" точек/лагерей.","good");
 }
-function clearArea(x,y,r){for(let i=-r;i<=r;i++)for(let j=-r;j<=r;j++)delete W.map[key(x+i,y+j)]}
+// Мигрирует сохранения до появления W.mapChunks/W.genChunks (координаты
+// объектов не меняются вообще — они и так абсолютные, остаются корректными
+// в бескрайней системе координат): строит индекс по чанкам заново из уже
+// существующего W.map (после того как thinMapDensity* выше уже прорядили
+// его до финального состояния — индексировать нечего было бы дважды), и
+// помечает чанки стартового кластера (0..CFG.MAP, тот же квадрат, что и
+// genWorld) уже обработанными, чтобы ensureChunkContent не досыпала ещё
+// точек/лагерей поверх того, что там когда-то расставил старый генератор.
+function migrateInfiniteWorld(){
+  if(W.infiniteWorldMigrated) return;
+  W.mapChunks={};
+  for(const k in W.map){
+    const o=W.map[k];
+    const ck=chunkKeyOf(o.x,o.y);
+    if(!W.mapChunks[ck]) W.mapChunks[ck]=[];
+    W.mapChunks[ck].push(k);
+  }
+  W.genChunks={};
+  const startChunks=Math.ceil(CFG.MAP/STRUCT_CHUNK);
+  for(let cy=0;cy<startChunks;cy++)for(let cx=0;cx<startChunks;cx++) W.genChunks[cx+","+cy]=true;
+  W.infiniteWorldMigrated=true;
+}
+function clearArea(x,y,r){for(let i=-r;i<=r;i++)for(let j=-r;j<=r;j++)mapDelete(x+i,y+j)}
 function banditPower(lv){
   // Та же мерка, что и armyPower: иначе сравнение "потяну ли я этот лагерь"
   // бессмысленно и для ботов, и для подсказок игроку.
@@ -2389,23 +2450,26 @@ const EV = {
   },
   respawn(d){
     if(W.map[key(d.x,d.y)]) return;
-    // новый лагерь появляется в другом месте — той же findFreeCell, что и
-    // при первой генерации мира: без неё респаун за час-другой игры тихо
-    // свёл бы на нет и зазор, и запрет на воду, и пропуски по чанкам.
-    const spot=findFreeCell(STRUCT_SALT_CAMP); if(!spot) return;
+    // новый лагерь появляется рядом с прежней позицией разгромленного (в
+    // её чанке/соседях) — той же findFreeCellInChunk, что и при генерации
+    // мира и разведке новых чанков: без неё респаун за час-другой игры
+    // тихо свёл бы на нет и зазор, и запрет на воду, и пропуски по чанкам.
+    const cx=Math.floor(d.x/STRUCT_CHUNK), cy=Math.floor(d.y/STRUCT_CHUNK);
+    const spot=findFreeCellInChunk(cx,cy,STRUCT_SALT_CAMP); if(!spot) return;
     const {x,y}=spot;
     const dd=originDist({x,y});
     const lv=clamp(Math.round(30-dd*26+(RNG()*8-4)),1,30);
-    W.map[key(x,y)]={t:lv>15?"fort":"camp",x,y,lv,power:banditPower(lv),busy:null};
+    mapSet(x,y,{t:lv>15?"fort":"camp",x,y,lv,power:banditPower(lv),busy:null});
   },
   nodeback(d){
     if(W.map[key(d.x,d.y)]) return;
-    const spot=findFreeCell(STRUCT_SALT_NODE); if(!spot) return;
+    const cx=Math.floor(d.x/STRUCT_CHUNK), cy=Math.floor(d.y/STRUCT_CHUNK);
+    const spot=findFreeCellInChunk(cx,cy,STRUCT_SALT_NODE); if(!spot) return;
     const {x,y}=spot;
     const dd=originDist({x,y});
     const lv=clamp(Math.round(5-dd*4+(RNG()*1.6-.8)),1,5);
     const amt=Math.round(6000*Math.pow(2.6,lv-1));
-    W.map[key(x,y)]={t:"node",x,y,res:pick(RES),lv,amount:amt,max:amt,busy:null};
+    mapSet(x,y,{t:"node",x,y,res:pick(RES),lv,amount:amt,max:amt,busy:null});
   },
   think(d){
     const p=W.players.find(q=>q.id===d.pid); if(!p||!p.isBot)return;
@@ -2435,7 +2499,7 @@ function arriveMarch(m){
     m.state="gather"; m.t0=W.t; m.t1=W.t+secs;
     cell.amount-=take; cell.busy=p.id;
     m.carry={}; m.carry[cell.res]=take;
-    if(cell.amount<=0){ delete W.map[key(m.tx,m.ty)]; schedule(CFG.NODE_RESPAWN,"nodeback",{x:m.tx,y:m.ty}) }
+    if(cell.amount<=0){ mapDelete(m.tx,m.ty); schedule(CFG.NODE_RESPAWN,"nodeback",{x:m.tx,y:m.ty}) }
     schedule(secs,"gathered",{mid:m.id});
     return;
   }
@@ -2458,7 +2522,7 @@ function arriveMarch(m){
       const loot={}; const lootBase=Math.round(1800*Math.pow(1.28,cell.lv-1));
       RES.forEach(rr=>loot[rr]=Math.round(lootBase*(rr==="gold"?.25:rr==="stone"?.6:1)));
       m.carry=loot;
-      delete W.map[key(m.tx,m.ty)];
+      mapDelete(m.tx,m.ty);
       schedule(CFG.RESPAWN_CAMP,"respawn",{x:m.tx,y:m.ty});
       if(!p.isBot) logg("Разбитый лагерь ур. "+cell.lv+". Опыт +"+xp+bookTxt+", убито "+sp.dead+
         ", ранено "+sp.hurt+".","war");
@@ -2575,10 +2639,17 @@ function logMsg(att,def,forAtt,forDef){
   if(!def.isBot) logg(forDef,"war");
 }
 function relocate(p,msg){
-  // после разгрома город переносится туда, где меньше всего соседей
+  // после разгрома город переносится туда, где меньше всего соседей — раньше
+  // искали по всей карте 0..100 (ri(4,CFG.MAP-5), тот же порядок радиуса, что
+  // и сама стартовая карта); мир теперь не имеет границ, так что ищем в
+  // такой же по размеру окрестности вокруг ТЕКУЩЕГО города, а не по всей
+  // бескрайней карте — тот же практический эффект ("прочь от людной точки"),
+  // но за конечное время.
+  const RELOCATE_RADIUS=45;
+  const ox=Math.round(p.x), oy=Math.round(p.y);
   let best=null,bestScore=-1;
   for(let i=0;i<400;i++){
-    const x=ri(4,CFG.MAP-5), y=ri(4,CFG.MAP-5);
+    const x=ox+ri(-RELOCATE_RADIUS,RELOCATE_RADIUS), y=oy+ri(-RELOCATE_RADIUS,RELOCATE_RADIUS);
     if(W.map[key(x,y)]) continue;
     if(isRealWater(x,y)) continue;   // город на воде — нельзя, даже при переносе
     let near=1e9;
@@ -2586,11 +2657,11 @@ function relocate(p,msg){
     if(near>bestScore){ bestScore=near; best={x,y} }
   }
   if(!best) return;
-  delete W.map[key(p.x,p.y)];
+  mapDelete(p.x,p.y);
   p.x=best.x; p.y=best.y;
   clearArea(p.x,p.y,1);
-  W.map[key(p.x,p.y)]={t:"city",x:p.x,y:p.y,pid:p.id};
-  if(!p.isBot) logg(msg||"Город разрушен и перенесён в безопасный край карты.","war");
+  mapSet(p.x,p.y,{t:"city",x:p.x,y:p.y,pid:p.id});
+  if(!p.isBot) logg(msg||"Город разрушен и перенесён в более спокойное место.","war");
 }
 
 /* =========================================================================
@@ -2779,14 +2850,24 @@ function botThink(p){
   acts[0].run();
   if(acts[1]&&acts[1].sc>acts[0].sc*0.85) acts[1].run();   // бот успевает делать два дела
 }
+// Наводка ботов на цель — раньше сканировала ВЕСЬ W.map на каждую мысль
+// каждого бота; в бесконечном мире W.map растёт без верхней границы по мере
+// исследования. radius у ботов и так всегда небольшой фиксированный (см.
+// вызовы ниже) — переберём только чанки, пересекающие круг радиуса radius
+// вокруг p, через W.mapChunks, а не всю карту целиком.
 function findNear(p,filter,radius,score){
   let best=null,bs=-1e9;
-  for(const k in W.map){
-    const c=W.map[k];
-    if(dist(p,c)>radius) continue;
-    if(!filter(c)) continue;
-    const s=score(c);
-    if(s>bs){bs=s;best=c}
+  const c0x=Math.floor((p.x-radius)/STRUCT_CHUNK), c1x=Math.floor((p.x+radius)/STRUCT_CHUNK);
+  const c0y=Math.floor((p.y-radius)/STRUCT_CHUNK), c1y=Math.floor((p.y+radius)/STRUCT_CHUNK);
+  for(let cy=c0y;cy<=c1y;cy++)for(let cx=c0x;cx<=c1x;cx++){
+    const arr=W.mapChunks[cx+","+cy]; if(!arr) continue;
+    for(const k of arr){
+      const c=W.map[k]; if(!c) continue;
+      if(dist(p,c)>radius) continue;
+      if(!filter(c)) continue;
+      const s=score(c);
+      if(s>bs){bs=s;best=c}
+    }
   }
   return best;
 }
@@ -3097,6 +3178,7 @@ async function load(){
     thinMapDensity();
     thinMapDensity2();
     thinMapDensity3();
+    migrateInfiniteWorld();
     // Старые походы в старом сохранении не несут m.path (маршрут в обход
     // воды появился позже) — без него marchPos() не может интерполировать
     // позицию и упал бы на (0,0). Достраиваем маршрут задним числом по тем
@@ -3149,7 +3231,6 @@ const RMAP  ={food:"#a8c96a",wood:"#c68d4e",stone:"#b3bcc9",gold:"#f0c757"};
 const GILT="#c2993c", GILT_HI="#e6c273", VELLUM="#ece2ca", GARNET="#96323b";
 
 const FONT=getComputedStyle(document.body).fontFamily;   // читаем один раз, не каждый кадр
-const mini=$("#mini"), mg=mini.getContext("2d");
 // sel — какая клетка сейчас выбрана — раньше выставлял только клик по
 // большой 2D-карте (#map, удалена вместе с draw()/pointer-обработчиками),
 // теперь его так же пишет 3D-вкладка (см. renderCartoucheFor, вызывается
@@ -3164,8 +3245,6 @@ let scoutOpenKey=null;
 const RES_SITE_NAME={food:"Пашня",wood:"Лесопилка",stone:"Каменоломня",gold:"Рудник"};
 let tab="city", tempo=1, lastReal=Date.now(), lastFolio="", lastMenuBody="", academyTab="mil", invTab="res", genTab="overview";
 
-/* ---- Рельеф в буфер ---------------------------------------------------- */
-let terrain=null;
 function hash2(x,y,s){ let h=x*374761393+y*668265263+s*1274126177;
   h=Math.imul(h^(h>>>13),1274126177); return ((h^(h>>>16))>>>0)/4294967296 }
 function noise(x,y,s){
@@ -3225,80 +3304,15 @@ function rwHeightAt(x,y){
 // (см. buildRealCandidate в obyom-3d-infinite.html).
 function isRealWater(x,y){ return rwHeightAt(x+0.5,y+0.5)<RW_SEA }
 
-function elevation(x,y,s){
-  let e = noise(x/23,y/23,s)*.42 + noise(x/11,y/11,s+9)*.24 + noise(x/5,y/5,s+21)*.10;
-  e += ridge(x/15,y/15,s+37)*.24;
-  return e<0?0:e>1?1:e;
-}
-const MIX=(a,b,t)=>[a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
-const DEEP=[28,40,52], SHOAL=[42,58,66], MARSH=[46,52,40], PLAIN=[60,63,42],
-      FIELD=[78,74,46], HILL=[92,82,52], CRAG=[112,100,74], PEAK=[146,136,112];
-
-function buildTerrain(){
-  const N=CFG.MAP, s=W.seed;
-  terrain=document.createElement("canvas"); terrain.width=N; terrain.height=N;
-  const t=terrain.getContext("2d"), img=t.createImageData(N,N);
-  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
-    const e=elevation(x,y,s);
-    const d=Math.hypot(x-N/2,y-N/2)/(N/2);
-    const heart=Math.pow(Math.max(0,1-d),1.4);      // сердце мира — земли богаче
-    let c;
-    if      (e<0.17) c=MIX(DEEP,SHOAL,e/0.17);
-    else if (e<0.22) c=MIX(SHOAL,MARSH,(e-0.17)/0.05);
-    else if (e<0.42) c=MIX(MARSH,PLAIN,(e-0.22)/0.20);
-    else if (e<0.58) c=MIX(PLAIN,FIELD,(e-0.42)/0.16);
-    else if (e<0.71) c=MIX(FIELD,HILL,(e-0.58)/0.13);
-    else if (e<0.83) c=MIX(HILL,CRAG,(e-0.71)/0.12);
-    else             c=MIX(CRAG,PEAK,(e-0.83)/0.17);
-    c=[c[0]*(1+heart*.30)+heart*16, c[1]*(1+heart*.20)+heart*7, c[2]*(1-heart*.10)];
-    const band=(e*14)%1;
-    if(e>0.24 && band<0.07) c=[c[0]*.84,c[1]*.84,c[2]*.86];    // горизонтали
-    if(e>0.165 && e<0.182)  c=[c[0]*.55,c[1]*.58,c[2]*.68];    // береговая линия
-    const lum=c[0]*.34+c[1]*.5+c[2]*.16;                       // выцветшая сепия,
-    c=[c[0]*.62+lum*.42, c[1]*.62+lum*.37, c[2]*.62+lum*.27];  // чтобы золото читалось
-    const i=(y*N+x)*4;
-    img.data[i]=c[0]; img.data[i+1]=c[1]; img.data[i+2]=c[2]; img.data[i+3]=255;
-  }
-  t.putImageData(img,0,0);
-}
-
-/* ---- Геометрия экрана ---- */
-function resize(){
-  const dpr=Math.min(2,window.devicePixelRatio||1);
-  const m=mini.getBoundingClientRect();
-  mini.width=Math.round(m.width*dpr); mini.height=Math.round(m.height*dpr);
-  mg.setTransform(dpr,0,0,dpr,0,0); mini._w=m.width; mini._h=m.height;
-}
 // "Взгляд" теперь всегда 3D-камера — центрируем её на (x,y), а не двигаем
-// координаты давно удалённой 2D-канвы. Вызывающим (телепорт столицы, клик
-// по миникарте, кнопка "к своему городу" и т.п.) не пришлось меняться —
-// они как звали centerOn(x,y), так и зовут, изменилась только реализация.
+// координаты давно удалённой 2D-канвы (и, позже, удалённой вслед за ней
+// миникарты — пользователь подтвердил, что она не нужна, а полный вид
+// "всей державы" не имеет смысла для мира без границ). Вызывающим (телепорт
+// столицы, кнопка "к своему городу" и т.п.) не пришлось меняться — они как
+// звали centerOn(x,y), так и зовут, изменилась только реализация.
 function centerOn(x,y){
   const w=world3dWin();
   if(w){ w.cam.tx=x; w.cam.tz=y; w.cam.ty=w.H(x,y)+15; }
-}
-
-/* ---- Миникарта ---- */
-function drawMini(){
-  const w=mini._w,h=mini._h,s=Math.min(w,h)/CFG.MAP;
-  mg.clearRect(0,0,w,h);
-  mg.imageSmoothingEnabled=true;
-  // рельеф в таком масштабе почти чёрный — вытягиваем яркость
-  mg.filter="brightness(1.75) contrast(1.1) saturate(1.15)";
-  mg.drawImage(terrain,0,0,w,h);
-  mg.filter="none";
-  mg.strokeStyle="rgba(226,196,133,.3)"; mg.lineWidth=1; mg.strokeRect(.5,.5,w-1,h-1);
-  W.players.forEach(p=>{
-    const x=p.x*s, y=p.y*s, own=!p.isBot;
-    mg.beginPath(); mg.arc(x,y,own?4:3,0,7);
-    mg.fillStyle="rgba(0,0,0,.55)"; mg.fill();
-    mg.beginPath(); mg.arc(x,y,own?2.8:2,0,7);
-    mg.fillStyle=TINCT[p.race]; mg.fill();
-    if(own){ mg.strokeStyle=GILT_HI; mg.lineWidth=1.4; mg.stroke() }
-  });
-  // Рамку "что сейчас видно" тут больше не рисуем: она была честной для
-  // плоской 2D-камеры (по view.x/y/z), а для перспективной 3D-камеры
-  // видимая на земле область — не прямоугольник, подделывать не будем.
 }
 
 /* =========================================================================
@@ -4571,7 +4585,7 @@ function handleAct(e){
   else if(a==="reset"){
     if(confirm("Заложить новый мир? Всё нажитое исчезнет.")){
       Store.del(SAVE_KEY).then(()=>{
-        genWorld(Date.now()&0xffffff); buildTerrain();
+        genWorld(Date.now()&0xffffff);
         sel=null; centerOn(me().x,me().y);
         lastFolio=""; renderFolio(); renderCartouche();
         herald("Новый мир заложен.");
@@ -4597,8 +4611,6 @@ function toggleView(){
   img.src = showingCity ? "images/ui/icon-city.png" : "images/ui/icon-world.png";
   img.alt = showingCity ? "Город" : "Мир";
   if(showingCity){
-    // #chart (и миникарта внутри) была display:none — её пиксельный размер ещё не мерился
-    requestAnimationFrame(()=>{ resize(); drawMini(); });
     // 3D-мир грузим лениво, при первом заходе во вкладку — ни к чему тянуть
     // WebGPU, загрузку моделей и рельефа, пока игрок вообще не открыл "Мир".
     // engine/dist/index.html — новый WebGPU-движок вместо старого WebGL2-
@@ -4954,12 +4966,6 @@ $("#t-home").onclick=()=>{
 };
 $("#tempo").onchange=e=>{ tempo=+e.target.value };
 
-/* Миникарта — щелчок переносит взгляд */
-mini.addEventListener("pointerdown",e=>{
-  const r=mini.getBoundingClientRect(), s=Math.min(r.width,r.height)/CFG.MAP;
-  centerOn((e.clientX-r.left)/s,(e.clientY-r.top)/s);
-});
-
 /* Клавиши */
 window.addEventListener("keydown",e=>{
   if(e.target.tagName==="INPUT") return;
@@ -4973,7 +4979,6 @@ window.addEventListener("keydown",e=>{
   }
 });
 $("#veil").onclick=e=>{ if(e.target.id==="veil") closeScroll() };
-window.addEventListener("resize",resize);
 
 /* =========================================================================
    ГЛАВНЫЙ ЦИКЛ
@@ -4983,7 +4988,6 @@ function frame(){
   const now=Date.now();
   let dt=(now-lastReal)/1000; lastReal=now;
   if(dt>0){ advanceTo(W.t+dt*tempo); sinceSave+=Math.min(dt,3600); sinceUi+=dt }
-  drawMini();
   if(sinceUi>1.0){ sinceUi=0; renderTop(); renderFolio(); renderCartouche(); refreshOpenModal() }
   if(sinceSave>20){ sinceSave=0; save() }
   requestAnimationFrame(frame);
@@ -5003,10 +5007,8 @@ window.addEventListener("beforeunload",()=>{
 
 /* ---- Запуск ---- */
 (async function start(){
-  resize();
   const ok=await load();
   if(!ok) genWorld(Date.now()&0xffffff);
-  buildTerrain();
   const p=me();
   centerOn(p.x,p.y); sel={x:p.x,y:p.y};
   syncRibbons(); renderTop(); renderFolio(); renderCartouche();
