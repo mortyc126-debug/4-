@@ -483,10 +483,15 @@ async function main() {
       /* кросс-origin или не встроено — тихо игнорируем, локальная подпись уже показана */
     }
   }
-  canvas.addEventListener("click", (ev) => {
+  // Тап определяет camera.ts (короткое почти-неподвижное касание, тот же
+  // приём, что и tryTap()/lift() в прошлом прототипе) — не родной "click":
+  // теперь, когда один палец панорамирует камеру (см. camera.ts), родной
+  // click не всегда надёжно отличает "тап по сущности" от "только что
+  // случившейся панорамы тем же пальцем".
+  controls.onTap((clientX, clientY) => {
     const rect = canvas.getBoundingClientRect();
-    const px = (ev.clientX - rect.left) * (canvas.width / rect.width);
-    const py = (ev.clientY - rect.top) * (canvas.height / rect.height);
+    const px = (clientX - rect.left) * (canvas.width / rect.width);
+    const py = (clientY - rect.top) * (canvas.height / rect.height);
     const eid = findEntityAtScreen(px, py);
     if (eid !== null) {
       showSelection(eid);
