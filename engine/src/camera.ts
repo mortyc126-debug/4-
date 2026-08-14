@@ -28,6 +28,13 @@ const PAN_KEYS: Record<string, [number, number]> = {
   d: [1, 0], arrowright: [1, 0],
 };
 const KEY_PAN_SPEED = 900; // «экранных пикселей» в секунду — тот же порядок, что и скорость жеста пальцем
+// Раньше было 160 — с реального устройства пришёл скриншот с гигантской
+// чёрной пустотой у горизонта: при typical pitch чем дальше камера (dist),
+// тем дальше от цели луч в верхний край экрана бьёт в землю (пропорционально
+// dist), а рельеф стримится (см. main.ts) лишь на ограниченный радиус вокруг
+// цели. 100 — верхняя практическая граница вместе с дальним грубым кольцом
+// рельефа (см. main.ts, FAR_*): без него даже дефолтный зум был на грани.
+const MAX_DIST = 100;
 
 export function attachOrbitControls(canvas: HTMLCanvasElement, cam: OrbitCamera) {
   let autoOrbit = true;
@@ -89,7 +96,7 @@ export function attachOrbitControls(canvas: HTMLCanvasElement, cam: OrbitCamera)
     if (pts.size >= 2) {
       const [a, b] = [...pts.values()];
       const d = Math.hypot(a.x - b.x, a.y - b.y);
-      cam.dist = Math.max(8, Math.min(160, pinchStartCamDist * (pinchStartDist / Math.max(12, d))));
+      cam.dist = Math.max(8, Math.min(MAX_DIST, pinchStartCamDist * (pinchStartDist / Math.max(12, d))));
       const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
       if (pinchMid) panByScreenDelta(mid.x - pinchMid.x, mid.y - pinchMid.y);
       pinchMid = mid;
@@ -116,7 +123,7 @@ export function attachOrbitControls(canvas: HTMLCanvasElement, cam: OrbitCamera)
     (e) => {
       e.preventDefault();
       stopAuto();
-      cam.dist = Math.max(8, Math.min(160, cam.dist * (e.deltaY < 0 ? 0.9 : 1.11)));
+      cam.dist = Math.max(8, Math.min(MAX_DIST, cam.dist * (e.deltaY < 0 ? 0.9 : 1.11)));
     },
     { passive: false }
   );
