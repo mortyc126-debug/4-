@@ -197,6 +197,33 @@ async function main() {
   const cam: OrbitCamera = { yaw: 0, pitch: 0.55, dist: 42, target: [cx, cy + 2, cz] };
   const controls = attachOrbitControls(canvas, cam);
 
+  // ---- контракт для index.html: инструменты "+"/"−"/"к своему городу" и
+  // клавиши +/-/h сейчас крутят СТАРЫЙ рендер через world3dWin() — читают
+  // f.contentWindow.cam (поля tx/ty/tz/dist/pitch, не target-массив) и зовут
+  // f.contentWindow.H(x,y) (мировая высота земли). Это тот самый контракт,
+  // под который написан centerOn()/zoomAt() в index.html — они не знают и
+  // не должны знать, какой рендер сейчас внутри iframe. Выставляем window.cam
+  // прокси-объектом поверх настоящего cam (единый источник истины для
+  // draw() ниже), а не отдельной копией — иначе рассинхронится. Любая правка
+  // отсюда (тот же жест, что и ручной тап/колесо) останавливает автооблёт.
+  Object.defineProperty(window, "cam", {
+    value: {
+      get tx() { return cam.target[0]; },
+      set tx(v: number) { cam.target[0] = v; controls.stopAuto(); },
+      get ty() { return cam.target[1]; },
+      set ty(v: number) { cam.target[1] = v; controls.stopAuto(); },
+      get tz() { return cam.target[2]; },
+      set tz(v: number) { cam.target[2] = v; controls.stopAuto(); },
+      get dist() { return cam.dist; },
+      set dist(v: number) { cam.dist = v; controls.stopAuto(); },
+      get pitch() { return cam.pitch; },
+      set pitch(v: number) { cam.pitch = v; controls.stopAuto(); },
+    },
+  });
+  (window as any).H = (x: number, y: number) => heightAt(x, y) * HMAX;
+  (window as any).__camState = () => ({ yaw: cam.yaw, pitch: cam.pitch, dist: cam.dist, target: [...cam.target] });
+  (window as any).__isAutoOrbiting = () => controls.isAutoOrbiting();
+
   // ---- клик/тап по сущности: RoK-стиль (см. вживую уже реализованное
   // tryTap()+renderCartouche() в obyom-3d-infinite.html/index.html) — тут,
   // за неимением полноценной панели в изолированном прототипе, просто
