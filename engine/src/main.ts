@@ -746,6 +746,25 @@ async function main() {
   // каждый кадр в draw() (см. lastMarches ниже), а не один раз при тапе —
   // поход движется, статичная подсветка тут же отстала бы от маркера.
   let selectedMarchId: number | null = null;
+  // Режим слежения камеры за походом — отдельно от selectedMarchId
+  // (выбор/подсветка марша тапом): index.html зовёт startFollowMarch() по
+  // клику на ячейку "Отряды в поле" (см. renderFieldArmyWorld), камера
+  // каждый кадр (см. draw()) подтягивает cam.target к текущей позиции
+  // похода, "пока не прервёшь" — controls.onInteract ниже сбрасывает
+  // followMarchId в момент первого же настоящего жеста пользователя
+  // (палец/колесо/клавиша), тот же сигнал, что останавливает автооблёт.
+  let followMarchId: number | null = null;
+  (window as any).startFollowMarch = (marchId: number) => {
+    // stopAuto() ПЕРВЫМ (глушит автооблёт) — он же зовёт onInteract ниже,
+    // который сбрасывает followMarchId, так что назначать followMarchId
+    // нужно СТРОГО ПОСЛЕ этого вызова, иначе слежение гасло бы в тот же
+    // тик, что и включалось.
+    controls.stopAuto();
+    followMarchId = marchId;
+  };
+  controls.onInteract(() => {
+    followMarchId = null;
+  });
   function showSelection(eid: number) {
     selectedMarchId = null;
     selectedEid = eid;
@@ -1152,6 +1171,22 @@ async function main() {
   function draw(tMs: number) {
     if (controls.isAutoOrbiting()) cam.yaw = tMs * 0.00015;
     controls.update(tMs); // WASD/стрелки — панорама, зажатая клавиша даёт непрерывный сдвиг между кадрами
+    // marchMarkers() тут же (не ниже, как раньше) — followMarchId должен
+    // подтянуть cam.target к СВЕЖЕЙ позиции похода ДО того, как из
+    // cam.target посчитается eye/vp этого же кадра, иначе слежение
+    // отставало бы на кадр. lastMarches, который marchMarkers() заполняет
+    // попутно, переиспользуется ниже вместо второго вызова.
+    const markers = marchMarkers();
+    if (followMarchId !== null) {
+      const followed = lastMarches.find((m) => m.id === followMarchId);
+      if (followed) {
+        cam.target[0] = followed.x;
+        cam.target[2] = followed.y;
+        cam.target[1] = heightAt(followed.x, followed.y) * HMAX + 1;
+      } else {
+        followMarchId = null; // поход прибыл/был отозван, пока за ним следили — слежению больше нечего показывать
+      }
+    }
     if (!coordDirty) {
       coordX.value = cam.target[0].toFixed(1);
       coordY.value = cam.target[2].toFixed(1);
@@ -1171,7 +1206,6 @@ async function main() {
     renderer.setFog(eye, FOG_COLOR, FOG_K, tMs / 1000);
     renderer.setSunTarget(cam.target[0], cam.target[2]);
     modelPipeline.setFog(eye, FOG_COLOR, FOG_K);
-    const markers = marchMarkers();
     // Выбранный поход движется — в отличие от showSelection() для
     // статичных сущностей (город/лагерь/точка), тут нельзя один раз
     // посчитать highlightMarker при тапе, он бы тут же отстал от

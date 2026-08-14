@@ -58,9 +58,16 @@ export function attachOrbitControls(canvas: HTMLCanvasElement, cam: OrbitCamera)
   let pinch: { d: number; y: number; dist: number; yaw: number; pitch: number; angle: number } | null = null;
   let tapCand: { x: number; y: number; t: number } | null = null;
   let onTap: ((clientX: number, clientY: number) => void) | null = null;
+  // Зовётся ТОЛЬКО из настоящих жестов ниже (pointerdown/wheel/keydown) —
+  // никогда программно — поэтому main.ts вешает сюда сброс режима слежения
+  // за походом (startFollowMarch): "пока не прервёшь" из запроса пользователя
+  // и есть "прервёшь" = тронул камеру руками, тот же сигнал, что уже
+  // останавливает автооблёт.
+  let onInteract: (() => void) | null = null;
 
   function stopAuto() {
     autoOrbit = false;
+    onInteract?.();
   }
 
   function mid(): { x: number; y: number; d: number } {
@@ -217,6 +224,9 @@ export function attachOrbitControls(canvas: HTMLCanvasElement, cam: OrbitCamera)
     // tryTap()/lift() в прошлом прототипе).
     onTap(fn: (clientX: number, clientY: number) => void) {
       onTap = fn;
+    },
+    onInteract(fn: () => void) {
+      onInteract = fn;
     },
   };
 }

@@ -206,6 +206,20 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #tools button:last-child{border-bottom:none}
 #tools button:hover{background:rgba(194,153,60,.14);color:var(--gilt-hi)}
 
+/* Отряды в поле поверх 3D-мира — раньше видны были только на вкладке
+   "Город" (renderFieldArmy внутри #folio), приходилось переключаться туда
+   и обратно, чтобы просто посмотреть на свой марш (репорт пользователя).
+   Те же .slotcell, что и в renderFieldArmy/renderBrigades, просто в
+   .plate-панели поверх iframe (см. .plate — z-index:4 выше #world3d).
+   top:66px..bottom:194px — тот же верх, что у #key, но снизу останавливается
+   ДО #tools (right:14px;bottom:92px, три кнопки по 34px ≈ 102px), overflow
+   на случай марш-слотов больше, чем влезает по высоте (marchSlots до 5). */
+#fieldarmy-world{right:14px;top:66px;bottom:194px;padding:8px;
+  display:flex;flex-direction:column;gap:6px;overflow-y:auto;scrollbar-width:none;
+  align-items:center}
+#fieldarmy-world::-webkit-scrollbar{display:none}
+#fieldarmy-world:empty{display:none}
+
 #key{left:14px;top:66px;padding:9px 12px;display:flex;flex-direction:column;gap:5px;
   pointer-events:none;font-size:11.5px}
 #key .kl{font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--vellum-faint);
@@ -651,6 +665,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
         <button id="t-out" title="Отдалить">&minus;</button>
         <button id="t-home" title="К своему городу">&#9884;</button>
       </div>
+      <div id="fieldarmy-world" class="plate"></div>
       <iframe id="world3d" title="Мир"></iframe>
     </div>
 
@@ -3936,19 +3951,57 @@ function renderBrigades(p){
   h+="</div>";
   return h;
 }
+// act — "marchinfo" (карточка города: клик просто показывает текстовый
+// герольд, см. handleAct) или "followmarch" (панель поверх 3D-мира: клик
+// переносит и привязывает камеру к походу, см. jumpToMarchFor) — общая
+// разметка ячейки, чтобы renderFieldArmy/renderFieldArmyWorld не расходились.
+function marchSlotCellHtml(m,act){
+  const f=(W.t-m.t0)/Math.max(1,m.t1-m.t0);
+  const st={go:"в пути",gather:"собирает",back:"возвращается"}[m.state]||m.state;
+  const hint=act==="followmarch"?" — нажмите, чтобы проследить камерой":"";
+  return "<div class='slotcell' data-act='"+act+"' data-m='"+m.id+"' "+
+     "title='"+RU(countUnits(m.units))+" воинов, "+st+" · цель "+m.tx+"·"+m.ty+hint+"'>"+
+     "<img src='images/ui/icon-march.png'><span class='timer'>"+fmtDur(m.t1-W.t)+"</span>"+
+     "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
+}
 function renderFieldArmy(p){
   const mine=W.marches.filter(m=>m.pid===p.id);
-  let h="<div id='fieldarmy'>";
-  mine.forEach(m=>{
-    const f=(W.t-m.t0)/Math.max(1,m.t1-m.t0);
-    const st={go:"в пути",gather:"собирает",back:"возвращается"}[m.state]||m.state;
-    h+="<div class='slotcell' data-act='marchinfo' data-m='"+m.id+"' "+
-       "title='"+RU(countUnits(m.units))+" воинов, "+st+" · цель "+m.tx+"·"+m.ty+"'>"+
-       "<img src='images/ui/icon-march.png'><span class='timer'>"+fmtDur(m.t1-W.t)+"</span>"+
-       "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
-  });
-  h+="</div>";
-  return h;
+  return "<div id='fieldarmy'>"+mine.map(m=>marchSlotCellHtml(m,"marchinfo")).join("")+"</div>";
+}
+// Та же панель, что и renderFieldArmy, но поверх 3D-мира (см. #fieldarmy-world
+// в разметке #chart) — пользователь просил видеть и отслеживать свои марши,
+// не переключаясь во вкладку "Город". Обновляется раз в секунду из frame()
+// (см. ниже), не при каждой перерисовке #folio — панель живёт вне #ledger,
+// который в режиме "Мир" целиком скрыт (см. #app.view-world #ledger).
+let lastFieldArmyWorld="";
+function renderFieldArmyWorld(){
+  const el=$("#fieldarmy-world"); if(!el) return;
+  const p=me();
+  const mine=W.marches.filter(m=>m.pid===p.id);
+  const h=mine.map(m=>marchSlotCellHtml(m,"followmarch")).join("");
+  if(h!==lastFieldArmyWorld){ lastFieldArmyWorld=h; el.innerHTML=h; }
+}
+// Клик по ячейке в мире: переключает на вкладку "Мир" (если ещё не там) и
+// зовёт startFollowMarch внутри iframe (та же origin-договорённость, что и
+// у остальных мостов index.html<->engine, см. renderCartoucheFor). Движок
+// может быть ещё не готов (первый заход в "Мир" в эту сессию) — недолгий
+// поллинг вместо жёсткой зависимости от таймингов инициализации WebGPU.
+function jumpToMarchFor(marchId){
+  const app=$("#app");
+  if(app.classList.contains("view-city")) toggleView();
+  const frame=$("#world3d");
+  if(frame && !frame.src) frame.src="engine/dist/index.html";
+  const tryStart=()=>{
+    try{
+      const cw=frame.contentWindow;
+      if(cw && typeof cw.startFollowMarch==="function"){ cw.startFollowMarch(marchId); return true; }
+    }catch(e){}
+    return false;
+  };
+  if(!tryStart()){
+    let tries=0;
+    const iv=setInterval(()=>{ tries++; if(tryStart()||tries>50) clearInterval(iv); },100);
+  }
 }
 function hallInfoHtml(p){
   const epoch=epochOf(p.b.hall), track=RACE_EPOCHS[p.race], minus=RACES[p.race].minus;
@@ -4884,6 +4937,10 @@ function handleAct(e){
     }
     return;
   }
+  else if(a==="followmarch"){
+    jumpToMarchFor(+b.dataset.m);
+    return;
+  }
   else if(a==="browseheal"){
     openHealCarousel();
     return;
@@ -5024,6 +5081,7 @@ function handleAct(e){
   }
 }
 $("#folio").addEventListener("click",handleAct);
+$("#fieldarmy-world").addEventListener("click",handleAct);
 $("#cartouche").addEventListener("click",handleAct);
 function toggleView(){
   const app=$("#app"), img=$("#view-toggle img");
@@ -5427,7 +5485,7 @@ function frame(){
   const now=Date.now();
   let dt=(now-lastReal)/1000; lastReal=now;
   if(dt>0){ advanceTo(W.t+dt*tempo); sinceSave+=Math.min(dt,3600); sinceUi+=dt }
-  if(sinceUi>1.0){ sinceUi=0; renderTop(); renderFolio(); renderCartouche(); refreshOpenModal() }
+  if(sinceUi>1.0){ sinceUi=0; renderTop(); renderFolio(); renderCartouche(); refreshOpenModal(); renderFieldArmyWorld() }
   if(sinceSave>20){ sinceSave=0; save() }
   requestAnimationFrame(frame);
 }
