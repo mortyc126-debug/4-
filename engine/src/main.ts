@@ -266,6 +266,21 @@ async function main() {
   // "Смягчение наложений" — только тут двигаем не позицию структуры, а
   // просто пропускаем декор-кандидата). pad — доля радиуса модели: у травы
   // меньше (мелкая, не режет глаз у стен), у деревьев/камней больше.
+  // isWater(wx,wz) проверяет только САМУ точку-якорь декора — визуальный
+  // силуэт (крона дерева, куст, пучок травы) шире одной точки и мог
+  // нависать над берегом, если якорь лёг буквально на кромке воды
+  // (пользователь заметил именно это). Проверяем несколько точек по
+  // окружности радиуса margin вокруг якоря — дёшево (8 доп. heightAt) и
+  // не требует знать реальный радиус модели тут же, в месте вызова.
+  const WATER_MARGIN_RING = 8;
+  function nearWater(wx: number, wz: number, margin: number): boolean {
+    if (isWater(wx, wz)) return true;
+    for (let k = 0; k < WATER_MARGIN_RING; k++) {
+      const a = (k / WATER_MARGIN_RING) * Math.PI * 2;
+      if (isWater(wx + Math.cos(a) * margin, wz + Math.sin(a) * margin)) return true;
+    }
+    return false;
+  }
   function blockedByStructure(wx: number, wz: number, pad: number, extra: number): boolean {
     for (const eid of found) {
       const dx = Position.x[eid] - wx, dz = Position.y[eid] - wz;
@@ -305,7 +320,7 @@ async function main() {
         const jx = 0.175 + hash2(gx, gz, SEED + 778) * 0.65, jz = 0.175 + hash2(gx, gz, SEED + 779) * 0.65;
         const wx = cx * CHUNK_SIZE + i * DECOR_CELL + jx * DECOR_CELL;
         const wz = cz * CHUNK_SIZE + j * DECOR_CELL + jz * DECOR_CELL;
-        if (isWater(wx, wz)) continue;
+        if (nearWater(wx, wz, 1.5)) continue; // деревья/камни — самый широкий силуэт
         if (blockedByStructure(wx, wz, 1.6, 2)) continue;
         const isTree = hash2(gx, gz, SEED + 780) < TREE_FRACTION;
         const yaw = hash2(gx, gz, SEED + 781) * Math.PI * 2;
@@ -348,7 +363,7 @@ async function main() {
         const jx = hash2(gx, gz, SEED + 888), jz = hash2(gx, gz, SEED + 889);
         const wx = cx * CHUNK_SIZE + i * GRASS_CELL + jx * GRASS_CELL;
         const wz = cz * CHUNK_SIZE + j * GRASS_CELL + jz * GRASS_CELL;
-        if (isWater(wx, wz)) continue;
+        if (nearWater(wx, wz, 0.4)) continue; // трава мелкая — небольшой отступ
         if (blockedByStructure(wx, wz, 1.05, 0.5)) continue;
         const e = heightAt(wx, wz);
         // Трава заметна только на невысокой/пологой траве-местности —
@@ -371,7 +386,7 @@ async function main() {
         const jx = hash2(gx, gz, SEED + 998), jz = hash2(gx, gz, SEED + 999);
         const wx = cx * CHUNK_SIZE + i * BUSH_CELL + jx * BUSH_CELL;
         const wz = cz * CHUNK_SIZE + j * BUSH_CELL + jz * BUSH_CELL;
-        if (isWater(wx, wz)) continue;
+        if (nearWater(wx, wz, 0.9)) continue;
         if (blockedByStructure(wx, wz, 1.3, 1)) continue;
         const e = heightAt(wx, wz);
         if (e > 0.75) continue;
