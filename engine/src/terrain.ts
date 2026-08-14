@@ -63,10 +63,67 @@ export function heightRaw(x: number, y: number): number {
   return Math.max(0.02, Math.min(1, e));
 }
 
-export function heightAt(x: number, y: number): number {
+function heightAtNatural(x: number, y: number): number {
   const c = heightRaw(x, y);
   const s = (heightRaw(x + 0.7, y) + heightRaw(x - 0.7, y) + heightRaw(x, y + 0.7) + heightRaw(x, y - 0.7)) * 0.25;
   return c * 0.55 + s * 0.45;
+}
+
+// ---- Площадки под реальные постройки ----------------------------------
+// Процедурный рельеф ничего не знает о городах/лагерях/точках, которые
+// на него ставятся (см. main.ts, modelMatrix(wx, heightAt(wx,wz)*HMAX, ...))
+// — якорь модели берёт высоту только В ОДНОЙ точке (центре), а сама
+// постройка занимает заметную площадь. На склоне угол наклона рельефа под
+// разными краями фундамента отличался от высоты в центре на целые
+// мировые единицы (HMAX=13 — даже небольшая разница e даёт метры) —
+// здание выглядело "утопленным" в один край холма или парящим над другим.
+// Решение то же, что и было в плане сессии (Фаза 1, "Гарантия проходимой
+// земли"), но не было реализовано в движке до сих пор: вокруг АНКЕРА
+// каждой настоящей сущности регистрируется плоская площадка на высоте
+// ЕСТЕСТЕСТВЕННОГО рельефа В ЭТОЙ ТОЧКЕ (heightAtNatural — БЕЗ учёта уже
+// зарегистрированных площадок, никакой рекурсии) — heightAt ниже
+// подмешивает эту высоту вместо настоящей в радиусе площадки, с плавным
+// растворением к естественному рельефу на границе, а не резким обрывом.
+// Бакетируется по грубой сетке (тот же приём, что и W.mapChunks в
+// index.html) — heightAt дёргается тысячи раз на чанк, полный перебор
+// списка при каждом вызове был бы заметно дороже, чем 9 соседних корзин.
+interface FlattenSite { x: number; z: number; targetH: number; radius: number }
+const FLATTEN_BUCKET = 32;
+const flattenBuckets = new Map<string, FlattenSite[]>();
+function flattenBucketKey(x: number, z: number): string {
+  return Math.floor(x / FLATTEN_BUCKET) + "," + Math.floor(z / FLATTEN_BUCKET);
+}
+export function registerFlattenSite(x: number, z: number, radius: number): void {
+  const site: FlattenSite = { x, z, targetH: heightAtNatural(x, z), radius };
+  const key = flattenBucketKey(x, z);
+  const bucket = flattenBuckets.get(key);
+  if (bucket) bucket.push(site);
+  else flattenBuckets.set(key, [site]);
+}
+
+export function heightAt(x: number, y: number): number {
+  const natural = heightAtNatural(x, y);
+  if (flattenBuckets.size === 0) return natural;
+  const bcx = Math.floor(x / FLATTEN_BUCKET), bcz = Math.floor(y / FLATTEN_BUCKET);
+  let best: FlattenSite | null = null;
+  let bestT = 0; // доля "внутри площадки" (1 = центр, 0 = граница радиуса) — берём сайт с максимальным перекрытием, а не первый попавшийся
+  for (let dz = -1; dz <= 1; dz++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const bucket = flattenBuckets.get(bcx + dx + "," + (bcz + dz));
+      if (!bucket) continue;
+      for (const site of bucket) {
+        const d = Math.hypot(x - site.x, y - site.z);
+        if (d >= site.radius) continue;
+        // Плоское ядро до 55% радиуса, дальше плавное (smoothstep) растворение
+        // в естественный рельеф к самой границе — без него на кромке площадки
+        // был бы заметный "порог".
+        const inner = site.radius * 0.55;
+        const t = d <= inner ? 1 : 1 - ((d - inner) / (site.radius - inner)) ** 2 * (3 - 2 * ((d - inner) / (site.radius - inner)));
+        if (t > bestT) { bestT = t; best = site; }
+      }
+    }
+  }
+  return best ? natural * (1 - bestT) + best.targetH * bestT : natural;
 }
 
 export function isWater(x: number, y: number): boolean {

@@ -10,7 +10,7 @@
 import { createWorld, addEntity, addComponent, removeEntity, query } from "bitecs";
 import { createRenderer, type MarkerEntity, type DecorEntity } from "./renderer";
 import { buildTerrainPatch } from "./terrainMesh";
-import { heightAt, HMAX, hash2, isWater, SEED } from "./terrain";
+import { heightAt, HMAX, hash2, isWater, SEED, registerFlattenSite } from "./terrain";
 import { PINE, LEAF, GRASS_TONES, BUSH_TONES, ROCK_TONES } from "./decorMesh";
 import { mul, persp, look, modelMatrix, transformPoint, type Vec3, type Mat4 } from "./mat4";
 import { attachOrbitControls, type OrbitCamera } from "./camera";
@@ -121,6 +121,15 @@ async function main() {
     ownOf.set(eid, !!e.own);
     gridOf.set(eid, { x: e.gx, y: e.gy });
     keyToEid.set(e.key, eid);
+    // Плоская площадка под фундамент (см. terrain.ts registerFlattenSite) —
+    // без неё на склоне модель на глаз "тонет" в один край рельефа и
+    // "парит" над другим (тот самый баг со скриншота: город/лагерь/точка
+    // выглядят вросшими в текстуру земли). Регистрируется ДО первой сборки
+    // меша чанка под этой сущностью (см. вызовы spawnEntity ниже —
+    // стартовые сущности идут раньше updateTerrainChunks/updateFarTerrain),
+    // так что первый же меш уже учитывает площадку, а не подгоняется
+    // задним числом.
+    registerFlattenSite(e.x, e.y, e.scale);
     return eid;
   }
   for (const e of seedEntities) spawnEntity(e);
@@ -450,6 +459,20 @@ async function main() {
     }
     (window as any).__terrainChunkCount = loadedChunks.size;
     if (decorChanged) refreshDecor();
+  }
+
+  // Пересборка меша УЖЕ загруженного ближнего чанка — нужна, когда новая
+  // настоящая сущность (см. syncLiveEntities ниже) появляется в чанке,
+  // рельеф которого был построен РАНЬШЕ, чем для неё зарегистрировали
+  // площадку (registerFlattenSite, terrain.ts): без пересборки первая
+  // сборка так и останется без учёта площадки до выгрузки/повторной
+  // загрузки чанка (а игрок может не покидать область достаточно долго,
+  // чтобы это случилось само).
+  function rebuildTerrainChunkIfLoaded(cx: number, cz: number) {
+    const key = chunkKey(cx, cz);
+    if (!loadedChunks.has(key)) return;
+    const x0 = cx * CHUNK_SIZE, z0 = cz * CHUNK_SIZE;
+    renderer.setTerrainChunk(key, buildTerrainPatch(x0, z0, x0 + CHUNK_SIZE, z0 + CHUNK_SIZE, 1));
   }
 
   // ---- дальнее грубое кольцо рельефа — "задник", вроде extended backdrop
@@ -865,6 +888,12 @@ async function main() {
           .catch(() => {})
       );
       decorDirtyChunks.add(chunkKey(Math.floor(e.x / CHUNK_SIZE), Math.floor(e.y / CHUNK_SIZE)));
+      // spawnEntity уже зарегистрировал площадку под эту сущность (см.
+      // выше), но если её чанк рельефа был собран РАНЬШЕ (площадки тогда
+      // ещё не было) — меш нужно пересобрать, иначе площадка появится
+      // только для декора/heightAt-запросов, а сам рельеф под моделью
+      // так и останется старым, неровным.
+      rebuildTerrainChunkIfLoaded(Math.floor(e.x / CHUNK_SIZE), Math.floor(e.y / CHUNK_SIZE));
     }
     for (const [key, eid] of Array.from(keyToEid)) {
       if (seenKeys.has(key)) continue;
