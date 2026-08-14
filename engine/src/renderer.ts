@@ -6,41 +6,75 @@
    который убирает узкое место "draw call на модель" в старом WebGL2-
    рендере). VP лежит в общем uniform-буфере, чтобы оба пайплайна двигались
    одной камерой без рассинхрона.
+
+   Туман по расстоянию — общий для рельефа и маркеров (и для .glb-моделей,
+   см. modelRenderer.ts) FogUniforms-буфер (позиция камеры + цвет/плотность
+   тумана): вдали цвет фрагмента подмешивается к цвету тумана, тот же цвет,
+   что и очистка канвы (см. main.ts) — плавный переход в "небо", а не резкий
+   обрыв рельефа. Заодно прячет стык между детальными ближними чанками и
+   грубым дальним кольцом рельефа (см. main.ts, FAR_*), а до этого прятал
+   бы и саму границу дальнего кольца (пустоту за её пределами) — до тумана
+   мир обрывался в черноту, что и было первой жалобой с реального
+   устройства.
    ========================================================================= */
 import type { MeshData } from "./terrainMesh";
 
 const TERRAIN_SHADER = /* wgsl */ `
 struct Uniforms { vp: mat4x4f };
+struct Fog { eye: vec4f, color: vec4f };
 @group(0) @binding(0) var<uniform> u: Uniforms;
+@group(0) @binding(1) var<uniform> fog: Fog;
 
-struct VOut { @builtin(position) pos: vec4f, @location(0) color: vec3f };
+struct VOut { @builtin(position) pos: vec4f, @location(0) color: vec3f, @location(1) worldPos: vec3f, @location(2) normal: vec3f };
 
 @vertex
-fn vs(@location(0) pos: vec3f, @location(1) color: vec3f) -> VOut {
+fn vs(@location(0) pos: vec3f, @location(1) color: vec3f, @location(2) normal: vec3f) -> VOut {
   var out: VOut;
   out.pos = u.vp * vec4f(pos, 1.0);
   out.color = color;
+  out.worldPos = pos;
+  out.normal = normal;
   return out;
 }
 @fragment
-fn fs(in: VOut) -> @location(0) vec4f { return vec4f(in.color, 1.0); }
+fn fs(in: VOut) -> @location(0) vec4f {
+  // Затенение — тут, не на CPU (см. terrainMesh.ts): нормаль пришла с CPU
+  // ужё сглаженной (аналитический градиент heightAt в точке), а тут ещё и
+  // интерполируется между вершинами треугольника — мягкий переход, а не
+  // одна плоская яркость на весь треугольник.
+  let sun = normalize(vec3f(0.62, 0.38, 0.30));
+  let n = normalize(in.normal);
+  let diffuse = max(0.35, dot(n, sun));
+  let lit = in.color * diffuse;
+  let d = distance(in.worldPos, fog.eye.xyz);
+  let k = d * fog.color.w; let f = clamp(1.0 - exp(-k * k), 0.0, 1.0);
+  return vec4f(mix(lit, fog.color.rgb, f), 1.0);
+}
 `;
 
 const MARKER_SHADER = /* wgsl */ `
 struct Uniforms { vp: mat4x4f };
+struct Fog { eye: vec4f, color: vec4f };
 @group(0) @binding(0) var<uniform> u: Uniforms;
+@group(0) @binding(1) var<uniform> fog: Fog;
 
-struct VOut { @builtin(position) pos: vec4f, @location(0) color: vec3f };
+struct VOut { @builtin(position) pos: vec4f, @location(0) color: vec3f, @location(1) worldPos: vec3f };
 
 @vertex
 fn vs(@location(0) localPos: vec3f, @location(1) worldPos: vec3f, @location(2) scale: f32, @location(3) color: vec3f) -> VOut {
   var out: VOut;
-  out.pos = u.vp * vec4f(worldPos + localPos * scale, 1.0);
+  let wp = worldPos + localPos * scale;
+  out.pos = u.vp * vec4f(wp, 1.0);
   out.color = color;
+  out.worldPos = wp;
   return out;
 }
 @fragment
-fn fs(in: VOut) -> @location(0) vec4f { return vec4f(in.color, 1.0); }
+fn fs(in: VOut) -> @location(0) vec4f {
+  let d = distance(in.worldPos, fog.eye.xyz);
+  let k = d * fog.color.w; let f = clamp(1.0 - exp(-k * k), 0.0, 1.0);
+  return vec4f(mix(in.color, fog.color.rgb, f), 1.0);
+}
 `;
 
 export interface MarkerEntity {
@@ -59,6 +93,10 @@ export interface Renderer {
   removeTerrainChunk(key: string): void;
   setMarkers(entities: MarkerEntity[]): void;
   setVP(vp: Float32Array): void;
+  // Позиция камеры + цвет/плотность тумана — общие для рельефа и маркеров.
+  // density — коэффициент экспоненциального затухания (см. TERRAIN_SHADER):
+  // чем больше, тем ближе начинается дымка.
+  setFog(eye: [number, number, number], color: [number, number, number], density: number): void;
   // drawExtra — вызывается ВНУТРИ того же render pass, что рельеф и маркеры
   // (общий depth-буфер, единая VP-камера), после них: сюда вешаются
   // настоящие .glb-модели (см. main.ts/modelRenderer.ts) без отдельного
@@ -85,6 +123,14 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
     size: 16 * 4,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
+  // eye (xyz, w не используется) + цвет тумана (rgb) с плотностью в w —
+  // общий для рельефа и маркеров буфер, отдельный от VP: меняется реже
+  // (только позиция камеры, не сама матрица), но проще держать оба в одном
+  // месте, чем плодить третий набор entries на пайплайн.
+  const fogBuf = device.createBuffer({
+    size: 8 * 4,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
 
   // ---- рельеф ----
   const terrainModule = device.createShaderModule({ code: TERRAIN_SHADER });
@@ -96,6 +142,7 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
       buffers: [
         { arrayStride: 3 * 4, attributes: [{ shaderLocation: 0, offset: 0, format: "float32x3" }] },
         { arrayStride: 3 * 4, attributes: [{ shaderLocation: 1, offset: 0, format: "float32x3" }] },
+        { arrayStride: 3 * 4, attributes: [{ shaderLocation: 2, offset: 0, format: "float32x3" }] },
       ],
     },
     fragment: { module: terrainModule, entryPoint: "fs", targets: [{ format }] },
@@ -104,13 +151,16 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
   });
   const terrainBindGroup = device.createBindGroup({
     layout: terrainPipeline.getBindGroupLayout(0),
-    entries: [{ binding: 0, resource: { buffer: uniformBuf } }],
+    entries: [
+      { binding: 0, resource: { buffer: uniformBuf } },
+      { binding: 1, resource: { buffer: fogBuf } },
+    ],
   });
   // Map кусков рельефа по ключу чанка вместо одной пары буферов на всю
   // сцену — потоковая подгрузка/выгрузка вокруг камеры (см. main.ts): при
   // бесконечном мире держать вершины всей когда-либо увиденной территории
   // в одном буфере не получится.
-  interface TerrainChunk { posBuf: GPUBuffer; colBuf: GPUBuffer; vertexCount: number }
+  interface TerrainChunk { posBuf: GPUBuffer; colBuf: GPUBuffer; nrmBuf: GPUBuffer; vertexCount: number }
   const terrainChunks = new Map<string, TerrainChunk>();
 
   // ---- маркеры (инстансинг) ----
@@ -144,7 +194,10 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
   });
   const markerBindGroup = device.createBindGroup({
     layout: markerPipeline.getBindGroupLayout(0),
-    entries: [{ binding: 0, resource: { buffer: uniformBuf } }],
+    entries: [
+      { binding: 0, resource: { buffer: uniformBuf } },
+      { binding: 1, resource: { buffer: fogBuf } },
+    ],
   });
   let instBuf: GPUBuffer | null = null;
   let instCapacity = 0;
@@ -169,6 +222,7 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
     const prev = terrainChunks.get(key);
     prev?.posBuf.destroy();
     prev?.colBuf.destroy();
+    prev?.nrmBuf.destroy();
     const posBuf = device.createBuffer({
       size: Math.max(mesh.positions.byteLength, 4),
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
@@ -177,9 +231,14 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
       size: Math.max(mesh.colors.byteLength, 4),
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
+    const nrmBuf = device.createBuffer({
+      size: Math.max(mesh.normals.byteLength, 4),
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
     device.queue.writeBuffer(posBuf, 0, mesh.positions);
     device.queue.writeBuffer(colBuf, 0, mesh.colors);
-    terrainChunks.set(key, { posBuf, colBuf, vertexCount: mesh.vertexCount });
+    device.queue.writeBuffer(nrmBuf, 0, mesh.normals);
+    terrainChunks.set(key, { posBuf, colBuf, nrmBuf, vertexCount: mesh.vertexCount });
   }
 
   function removeTerrainChunk(key: string) {
@@ -187,6 +246,7 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
     if (!chunk) return;
     chunk.posBuf.destroy();
     chunk.colBuf.destroy();
+    chunk.nrmBuf.destroy();
     terrainChunks.delete(key);
   }
 
@@ -218,6 +278,11 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
     device.queue.writeBuffer(uniformBuf, 0, vp);
   }
 
+  function setFog(eye: [number, number, number], color: [number, number, number], density: number) {
+    const data = new Float32Array([eye[0], eye[1], eye[2], 0, color[0], color[1], color[2], density]);
+    device.queue.writeBuffer(fogBuf, 0, data);
+  }
+
   function frame(clearColor: GPUColorDict, drawExtra?: (pass: GPURenderPassEncoder) => void) {
     ensureDepth();
     const encoder = device.createCommandEncoder();
@@ -239,6 +304,7 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
         if (chunk.vertexCount === 0) continue;
         pass.setVertexBuffer(0, chunk.posBuf);
         pass.setVertexBuffer(1, chunk.colBuf);
+        pass.setVertexBuffer(2, chunk.nrmBuf);
         pass.draw(chunk.vertexCount);
       }
     }
@@ -257,5 +323,5 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
     device.queue.submit([encoder.finish()]);
   }
 
-  return { setTerrainChunk, removeTerrainChunk, setMarkers, setVP, frame };
+  return { setTerrainChunk, removeTerrainChunk, setMarkers, setVP, setFog, frame };
 }

@@ -9,14 +9,17 @@ import type { Mat4 } from "./mat4";
 
 const MODEL_SHADER = /* wgsl */ `
 struct Uniforms { vp: mat4x4f, model: mat4x4f };
+struct Fog { eye: vec4f, color: vec4f };
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var samp: sampler;
 @group(0) @binding(2) var tex: texture_2d<f32>;
+@group(0) @binding(3) var<uniform> fog: Fog;
 
 struct VOut {
   @builtin(position) pos: vec4f,
   @location(0) uv: vec2f,
   @location(1) worldNormal: vec3f,
+  @location(2) worldPos: vec3f,
 };
 
 @vertex
@@ -27,6 +30,7 @@ fn vs(@location(0) pos: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2
   out.uv = uv;
   // модельная матрица тут без неравномерного масштаба — обычной 3x3 части достаточно для нормали
   out.worldNormal = normalize((u.model * vec4f(normal, 0.0)).xyz);
+  out.worldPos = world.xyz;
   return out;
 }
 
@@ -35,7 +39,13 @@ fn fs(in: VOut) -> @location(0) vec4f {
   let sun = normalize(vec3f(0.62, 0.38, 0.30));
   let diffuse = max(0.35, dot(in.worldNormal, sun));
   let base = textureSample(tex, samp, in.uv);
-  return vec4f(base.rgb * diffuse, base.a);
+  let lit = base.rgb * diffuse;
+  // Туман — тот же расчёт, что и у рельефа/маркеров (см. renderer.ts):
+  // здания/лагеря вдали тоже должны таять в дымке, а не обрываться резким
+  // контуром на фоне уже затуманенной земли под ними.
+  let d = distance(in.worldPos, fog.eye.xyz);
+  let k = d * fog.color.w; let f = clamp(1.0 - exp(-k * k), 0.0, 1.0);
+  return vec4f(mix(lit, fog.color.rgb, f), base.a);
 }
 `;
 
@@ -136,6 +146,15 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat)
     depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "less" },
   });
   const sampler = device.createSampler({ magFilter: "linear", minFilter: "linear", mipmapFilter: "linear" });
+  // Один общий буфер тумана на ВСЕ инстансы (не по одному на инстанс, как
+  // vp/model — цвет и плотность тумана, да и позиция камеры, одни и те же
+  // для всей сцены за кадр). Пишется раз в кадр через setFog(), а не
+  // дублируется в per-instance uniformBuf каждого замка/лагеря/точки.
+  const fogBuf = device.createBuffer({ size: 8 * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  function setFog(eye: [number, number, number], color: [number, number, number], density: number) {
+    const data = new Float32Array([eye[0], eye[1], eye[2], 0, color[0], color[1], color[2], density]);
+    device.queue.writeBuffer(fogBuf, 0, data);
+  }
 
   // Буфер/bind group на каждый ИНСТАНС модели заводятся ОДИН раз (см.
   // createInstance), а не на каждый draw() каждый кадр — тот самый "лишний
@@ -152,6 +171,7 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat)
         { binding: 0, resource: { buffer: uniformBuf } },
         { binding: 1, resource: sampler },
         { binding: 2, resource: model.texture.createView() },
+        { binding: 3, resource: { buffer: fogBuf } },
       ],
     });
     return { model, uniformBuf, bindGroup };
@@ -168,7 +188,7 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat)
     pass.drawIndexed(instance.model.vao.indexCount);
   }
 
-  return { createInstance, draw };
+  return { createInstance, draw, setFog };
 }
 
 export interface ModelInstance {

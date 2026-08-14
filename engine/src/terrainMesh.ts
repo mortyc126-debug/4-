@@ -3,72 +3,108 @@
    вторая техника рендера после маркеров, показывает, что пайплайн не
    завязан на один-единственный приём. Вода — отдельная плоская подложка
    на уровне SEA (не следует сырой высоте, как и в живой игре), суша —
-   вершины приподняты по heightAt(x,y)*HMAX. Простое плоское затенение
-   по нормали треугольника и направлению "солнца" — то же SUN, что и в
-   obyom-3d-infinite.html, чтобы рельеф не выглядел плоским мультяшным
-   пятном.
+   вершины приподняты по heightAt(x,y)*HMAX.
+
+   Затенение — АНАЛИТИЧЕСКАЯ нормаль по градиенту heightAt (центральные
+   разности), не face-нормаль конкретного треугольника: раньше нормаль (и
+   сама подсветка) считались один раз на треугольник на CPU и записывались
+   уже готовым цветом — соседние треугольники одной и той же поверхности
+   заметно отличались яркостью, рельеф выглядел гранёным "low-poly"
+   пятном. Теперь CPU кладёт нормаль В ТОЧКЕ отдельным атрибутом (одна и
+   та же для всех треугольников, ссылающихся на одну мировую координату —
+   меш не индексирован, но heightAt чистая функция координат, так что
+   значение всё равно совпадает), а подсветку считает фрагментный шейдер
+   (см. renderer.ts) по ИНТЕРПОЛИРОВАННОЙ нормали — гладкий переход между
+   треугольниками, тот же приём, что уже даёт настоящим .glb-моделям
+   мягкое затенение (см. modelRenderer.ts).
+
+   Аналитическая нормаль стоит 4 лишних heightAt на точку — заметно на
+   дальнем разреженном кольце (step>1, см. main.ts:updateFarTerrain), где
+   чанки строятся на лету во время полёта и результат всё равно почти не
+   виден (далеко, да ещё скрыт туманом). Поэтому она включается только для
+   ближних чанков (step===1); грубые чанки возвращаются к дешёвой
+   face-нормали треугольника — тот приём, что был до этого перехода.
    ========================================================================= */
-import { heightAt, isWater, groundColor, waterColor, SEA, HMAX } from "./terrain";
-import { cross, norm, sub, type Vec3 } from "./mat4";
+import { heightAt, groundColor, waterColor, SEA, HMAX, isWater } from "./terrain";
+import { norm, cross, sub, type Vec3 } from "./mat4";
 
 export interface MeshData {
   positions: Float32Array;
   colors: Float32Array;
+  normals: Float32Array;
   vertexCount: number;
 }
 
-const SUN: Vec3 = norm([0.62, 0.38, 0.3]);
+const UP: Vec3 = [0, 1, 0];
 
-function shade(color: [number, number, number], normal: Vec3): [number, number, number] {
-  const d = Math.max(0.35, normal[0] * SUN[0] + normal[1] * SUN[1] + normal[2] * SUN[2]);
-  return [color[0] * d, color[1] * d, color[2] * d];
+// Центральные разности heightAt — тот же приём, что и в heightmap-нормалях
+// любого рельефа: наклон вдоль X/Z даёт наклон нормали. e=0.5 — примерно
+// половина шага сетки ближних чанков (step=1), достаточно мелко для
+// плавного результата, не настолько мелко, чтобы шум heightAt на этом
+// масштабе давал зернистость.
+function normalAt(x: number, y: number): Vec3 {
+  const e = 0.5;
+  const hL = heightAt(x - e, y) * HMAX, hR = heightAt(x + e, y) * HMAX;
+  const hD = heightAt(x, y - e) * HMAX, hU = heightAt(x, y + e) * HMAX;
+  return norm([-(hR - hL) / (2 * e), 1, -(hU - hD) / (2 * e)]);
 }
+
+interface Vert { p: Vec3; c: [number, number, number]; n: Vec3 }
 
 export function buildTerrainPatch(x0: number, y0: number, x1: number, y1: number, step = 1): MeshData {
   const cols = Math.round((x1 - x0) / step);
   const rows = Math.round((y1 - y0) / step);
+  const smooth = step === 1; // см. комментарий в шапке файла
   const positions: number[] = [];
   const colors: number[] = [];
+  const normals: number[] = [];
 
-  function vertexAt(x: number, y: number): { p: Vec3; c: [number, number, number]; water: boolean } {
+  function vertexAt(x: number, y: number): Vert {
     const e = heightAt(x, y);
     const water = e < SEA;
     const p: Vec3 = water ? [x, SEA * HMAX, y] : [x, e * HMAX, y];
     const c = water ? waterColor((SEA - e) * 3) : groundColor(e);
-    return { p, c, water };
+    // вода — плоская подложка (см. выше), нормаль честно "вверх"; на грубых
+    // чанках (!smooth) аналитическую нормаль не считаем — face-нормаль
+    // подставит pushTri ниже, дешевле и не заметно на таком расстоянии.
+    const n = water ? UP : (smooth ? normalAt(x, y) : UP);
+    return { p, c, n };
   }
 
-  function pushTri(a: { p: Vec3; c: [number, number, number] }, b: { p: Vec3; c: [number, number, number] }, c: { p: Vec3; c: [number, number, number] }) {
-    const n = norm(cross(sub(b.p, a.p), sub(c.p, a.p)));
+  // Сетка углов ячеек считается один раз на угол, а не заново в КАЖДОЙ из
+  // до 4 ячеек, что его используют (было так раньше, для одной только
+  // позиции/цвета не страшно, а normalAt выше добавляет ещё 4 вызова
+  // heightAt на точку — ре-семплирование того же угла вчетверо стало бы
+  // ощутимо дороже).
+  const grid: Vert[][] = [];
+  for (let j = 0; j <= rows; j++) {
+    const row: Vert[] = [];
+    for (let i = 0; i <= cols; i++) row.push(vertexAt(x0 + i * step, y0 + j * step));
+    grid.push(row);
+  }
+
+  function pushTri(a: Vert, b: Vert, c: Vert) {
+    // Грубые (!smooth) чанки: одна face-нормаль на треугольник, как до
+    // перехода на аналитическую подсветку — дёшево, гранёность не видна
+    // на разреженном дальнем кольце.
+    const faceN = smooth ? null : norm(cross(sub(b.p, a.p), sub(c.p, a.p)));
     for (const v of [a, b, c]) {
-      const shaded = shade(v.c, n);
       positions.push(v.p[0], v.p[1], v.p[2]);
-      colors.push(shaded[0], shaded[1], shaded[2]);
+      colors.push(v.c[0], v.c[1], v.c[2]);
+      const n = faceN ?? v.n;
+      normals.push(n[0], n[1], n[2]);
     }
   }
 
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
-      const x = x0 + i * step, y = y0 + j * step;
-      const v00 = vertexAt(x, y);
-      const v10 = vertexAt(x + step, y);
-      const v01 = vertexAt(x, y + step);
-      const v11 = vertexAt(x + step, y + step);
-      // Порядок вершин важен вдвойне: он же задаёт нормаль для shade()
-      // (через cross(b-a,c-a)), он же — видимую грань для cullMode:"back"
-      // в renderer.ts. Ранее тут стоял (v00,v10,v11)/(v00,v11,v01) — счёт
-      // вручную показывает, что это давало нормаль (0,-1,0), т.е. рельеф
-      // был обращён "лицом" вниз: культился прочь при обычном взгляде
-      // сверху. Не проявлялось ни разу за всю сессию тестов — в этой
-      // песочнице пиксели WebGPU-канвы не читаются никаким скриншотом (см.
-      // прошлые попытки), только отсутствие ошибок/верные числа в статусе,
-      // а оба этих признака оставались "зелёными" при полностью невидимом
-      // рельефе. Всплыло только на настоящем телефоне: модели (у них
-      // порядок вершин верный из коробки, из .glb) стояли на месте, а
-      // земли под ними не было — чёрный экран. Поменяны местами последние
-      // два аргумента в обоих вызовах — переворачивает и нормаль, и
-      // видимую грань разом (pushTri берёт то и другое из одного и того
-      // же порядка).
+      const v00 = grid[j][i], v10 = grid[j][i + 1], v01 = grid[j + 1][i], v11 = grid[j + 1][i + 1];
+      // Порядок вершин важен вдвойне: раньше отсюда же бралась face-нормаль
+      // для затенения (её больше нет — см. normalAt выше), но он всё ещё
+      // задаёт видимую грань для cullMode:"back" в renderer.ts. Ранее тут
+      // стоял (v00,v10,v11)/(v00,v11,v01) — давало нормаль (0,-1,0), рельеф
+      // культился прочь при обычном взгляде сверху (см. историю бага —
+      // не проявлялось в этой песочнице, только на реальном устройстве).
       pushTri(v00, v11, v10);
       pushTri(v00, v01, v11);
     }
@@ -77,6 +113,7 @@ export function buildTerrainPatch(x0: number, y0: number, x1: number, y1: number
   return {
     positions: new Float32Array(positions),
     colors: new Float32Array(colors),
+    normals: new Float32Array(normals),
     vertexCount: positions.length / 3,
   };
 }
