@@ -128,8 +128,13 @@ async function main() {
     // меша чанка под этой сущностью (см. вызовы spawnEntity ниже —
     // стартовые сущности идут раньше updateTerrainChunks/updateFarTerrain),
     // так что первый же меш уже учитывает площадку, а не подгоняется
-    // задним числом.
-    registerFlattenSite(e.x, e.y, e.scale);
+    // задним числом. Радиус площадки — ×1.4 от номинального scale модели,
+    // не голый scale: реальная модель (стены, крыша, пристройки) обычно
+    // выступает за свой "номинальный" радиус, и с плотным запасом край
+    // фундамента иногда всё ещё попадал на необработанный склон — ровно тот
+    // просвет между зданием и землёй, который заметил пользователь на новом
+    // скриншоте (та же природа бага, что и раньше, только запаса было мало).
+    registerFlattenSite(e.x, e.y, e.scale * 1.4);
     return eid;
   }
   for (const e of seedEntities) spawnEntity(e);
@@ -746,6 +751,25 @@ async function main() {
   // каждый кадр в draw() (см. lastMarches ниже), а не один раз при тапе —
   // поход движется, статичная подсветка тут же отстала бы от маркера.
   let selectedMarchId: number | null = null;
+  // Режим слежения камеры за походом — отдельно от selectedMarchId
+  // (выбор/подсветка марша тапом): index.html зовёт startFollowMarch() по
+  // клику на ячейку "Отряды в поле" (см. renderFieldArmyWorld), камера
+  // каждый кадр (см. draw()) подтягивает cam.target к текущей позиции
+  // похода, "пока не прервёшь" — controls.onInteract ниже сбрасывает
+  // followMarchId в момент первого же настоящего жеста пользователя
+  // (палец/колесо/клавиша), тот же сигнал, что останавливает автооблёт.
+  let followMarchId: number | null = null;
+  (window as any).startFollowMarch = (marchId: number) => {
+    // stopAuto() ПЕРВЫМ (глушит автооблёт) — он же зовёт onInteract ниже,
+    // который сбрасывает followMarchId, так что назначать followMarchId
+    // нужно СТРОГО ПОСЛЕ этого вызова, иначе слежение гасло бы в тот же
+    // тик, что и включалось.
+    controls.stopAuto();
+    followMarchId = marchId;
+  };
+  controls.onInteract(() => {
+    followMarchId = null;
+  });
   function showSelection(eid: number) {
     selectedMarchId = null;
     selectedEid = eid;
@@ -779,41 +803,31 @@ async function main() {
   const TAP_MIN_RADIUS_PX = 46;
   // dx/dz офсеты для оценки экранного радиуса — см. комментарий ниже.
   const RADIUS_PROBE_DIRS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-  function findEntityAtScreen(px: number, py: number): number | null {
-    let best = -1;
-    let bestMargin = 0; // выбираем не ближайшую по сырой дистанции, а ту, где тап глубже всего внутри радиуса — иначе крупная дальняя модель отбирала бы тап у мелкой, но реально более близкой
-    for (const eid of found) {
-      const wx = Position.x[eid], wz = Position.y[eid];
-      const scale = modelScaleOf.get(eid) ?? 5;
-      const wy = heightAt(wx, wz) * HMAX + scale * 0.35;
-      const clip = transformPoint(currentVP, [wx, wy, wz]);
-      if (clip.w <= 0.001) continue; // за спиной камеры
-      const sx = (clip.x / clip.w * 0.5 + 0.5) * canvas.width;
-      const sy = (1 - (clip.y / clip.w * 0.5 + 0.5)) * canvas.height;
-      // Раньше пробовалась только ОДНА мировая точка (wx+scale) — на
-      // некоторых углах камеры (yaw) направление +X проецировалось почти
-      // "в глубину экрана" вместо "поперёк", экранный радиус схлопывался
-      // почти до нуля, и тап по видимой (широкой на экране!) модели не
-      // засчитывался, или засчитывался соседней сущности ("иногда отмечая
-      // кого-то другого" — репорт пользователя). Пробуем ОБА мировых
-      // направления (±X, ±Z) и берём максимум — экранный радиус модели
-      // корректен при любом yaw камеры, а не только "удачном".
-      let radius = TAP_MIN_RADIUS_PX;
-      for (const [dx, dz] of RADIUS_PROBE_DIRS) {
-        const edgeClip = transformPoint(currentVP, [wx + dx * scale, wy, wz + dz * scale]);
-        if (edgeClip.w <= 0.001) continue;
-        const ex = (edgeClip.x / edgeClip.w * 0.5 + 0.5) * canvas.width;
-        const ey = (1 - (edgeClip.y / edgeClip.w * 0.5 + 0.5)) * canvas.height;
-        radius = Math.max(radius, Math.hypot(ex - sx, ey - sy) * 1.25);
-      }
-      const d = Math.hypot(sx - px, sy - py);
-      const margin = radius - d;
-      if (margin > bestMargin) {
-        bestMargin = margin;
-        best = eid;
-      }
+  function entityScreenHit(eid: number, px: number, py: number): { d: number; radius: number } | null {
+    const wx = Position.x[eid], wz = Position.y[eid];
+    const scale = modelScaleOf.get(eid) ?? 5;
+    const wy = heightAt(wx, wz) * HMAX + scale * 0.35;
+    const clip = transformPoint(currentVP, [wx, wy, wz]);
+    if (clip.w <= 0.001) return null; // за спиной камеры
+    const sx = (clip.x / clip.w * 0.5 + 0.5) * canvas.width;
+    const sy = (1 - (clip.y / clip.w * 0.5 + 0.5)) * canvas.height;
+    // Раньше пробовалась только ОДНА мировая точка (wx+scale) — на
+    // некоторых углах камеры (yaw) направление +X проецировалось почти
+    // "в глубину экрана" вместо "поперёк", экранный радиус схлопывался
+    // почти до нуля, и тап по видимой (широкой на экране!) модели не
+    // засчитывался, или засчитывался соседней сущности ("иногда отмечая
+    // кого-то другого" — репорт пользователя). Пробуем ОБА мировых
+    // направления (±X, ±Z) и берём максимум — экранный радиус модели
+    // корректен при любом yaw камеры, а не только "удачном".
+    let radius = TAP_MIN_RADIUS_PX;
+    for (const [dx, dz] of RADIUS_PROBE_DIRS) {
+      const edgeClip = transformPoint(currentVP, [wx + dx * scale, wy, wz + dz * scale]);
+      if (edgeClip.w <= 0.001) continue;
+      const ex = (edgeClip.x / edgeClip.w * 0.5 + 0.5) * canvas.width;
+      const ey = (1 - (edgeClip.y / edgeClip.w * 0.5 + 0.5)) * canvas.height;
+      radius = Math.max(radius, Math.hypot(ex - sx, ey - sy) * 1.25);
     }
-    return best >= 0 ? best : null;
+    return { d: Math.hypot(sx - px, sy - py), radius };
   }
   // Если движок открыт внутри игры (тот же приём, что и readLiveWorld в
   // realData.ts), клик по сущности не просто подсвечивает её локально, но
@@ -852,17 +866,35 @@ async function main() {
   // маркер похода (маленький октаэдр-пин) сам по себе мельче любой
   // настоящей модели, раздувать его хитбокс до того же размера не нужно.
   const MARCH_TAP_RADIUS_PX = 40;
-  function findMarchAtScreen(px: number, py: number): LiveMarchPos | null {
-    let best: LiveMarchPos | null = null;
-    let bestD = MARCH_TAP_RADIUS_PX;
+  function marchScreenHit(m: LiveMarchPos, px: number, py: number): { d: number; radius: number } | null {
+    const wy = heightAt(m.x, m.y) * HMAX + 2.2;
+    const clip = transformPoint(currentVP, [m.x, wy, m.y]);
+    if (clip.w <= 0.001) return null;
+    const sx = (clip.x / clip.w * 0.5 + 0.5) * canvas.width;
+    const sy = (1 - (clip.y / clip.w * 0.5 + 0.5)) * canvas.height;
+    return { d: Math.hypot(sx - px, sy - py), radius: MARCH_TAP_RADIUS_PX };
+  }
+  // Раньше сущности и походы искались ДВУМЯ отдельными проходами
+  // (findEntityAtScreen побеждал по наибольшему "запасу" radius-d, а не по
+  // близости к тапу) — крупный/дальний объект с большим радиусом мог
+  // перетянуть тап у объекта, который был к пальцу пользователя ощутимо
+  // ближе (тап "в упор" по маленькой соседней точке ресурсов иногда всё
+  // равно засчитывался городу рядом). Единый проход по ВСЕМ кандидатам
+  // (сущности + маркеры походов) с выбором ближайшего к пальцу СРЕДИ ТЕХ, КТО
+  // ВООБЩЕ ПОПАЛ в свой радиус — стандартный, предсказуемый 2D-пикинг:
+  // тап всегда достаётся тому, что реально ближе всего к месту касания,
+  // а не тому, у кого раздутый хитбокс оказался щедрее.
+  type TapHit = { kind: "entity"; eid: number } | { kind: "march"; march: LiveMarchPos };
+  function findTapTarget(px: number, py: number): TapHit | null {
+    let best: TapHit | null = null;
+    let bestD = Infinity;
+    for (const eid of found) {
+      const hit = entityScreenHit(eid, px, py);
+      if (hit && hit.d <= hit.radius && hit.d < bestD) { bestD = hit.d; best = { kind: "entity", eid }; }
+    }
     for (const m of lastMarches) {
-      const wy = heightAt(m.x, m.y) * HMAX + 2.2;
-      const clip = transformPoint(currentVP, [m.x, wy, m.y]);
-      if (clip.w <= 0.001) continue;
-      const sx = (clip.x / clip.w * 0.5 + 0.5) * canvas.width;
-      const sy = (1 - (clip.y / clip.w * 0.5 + 0.5)) * canvas.height;
-      const d = Math.hypot(sx - px, sy - py);
-      if (d < bestD) { bestD = d; best = m; }
+      const hit = marchScreenHit(m, px, py);
+      if (hit && hit.d <= hit.radius && hit.d < bestD) { bestD = hit.d; best = { kind: "march", march: m }; }
     }
     return best;
   }
@@ -918,19 +950,18 @@ async function main() {
     const rect = canvas.getBoundingClientRect();
     const px = (clientX - rect.left) * (canvas.width / rect.width);
     const py = (clientY - rect.top) * (canvas.height / rect.height);
-    const eid = findEntityAtScreen(px, py);
-    if (eid !== null) {
-      showSelection(eid);
-      const g = gridOf.get(eid);
+    const hit = findTapTarget(px, py);
+    if (hit?.kind === "entity") {
+      showSelection(hit.eid);
+      const g = gridOf.get(hit.eid);
       if (g) notifyParentCartouche(g.x, g.y);
       return;
     }
-    const march = findMarchAtScreen(px, py);
-    if (march !== null) {
+    if (hit?.kind === "march") {
       clearSelection();
-      selectedMarchId = march.id;
-      (window as any).__selectedMarchId = march.id;
-      notifyParentMarchCartouche(march.id);
+      selectedMarchId = hit.march.id;
+      (window as any).__selectedMarchId = hit.march.id;
+      notifyParentMarchCartouche(hit.march.id);
       return;
     }
     clearSelection();
@@ -1145,6 +1176,22 @@ async function main() {
   function draw(tMs: number) {
     if (controls.isAutoOrbiting()) cam.yaw = tMs * 0.00015;
     controls.update(tMs); // WASD/стрелки — панорама, зажатая клавиша даёт непрерывный сдвиг между кадрами
+    // marchMarkers() тут же (не ниже, как раньше) — followMarchId должен
+    // подтянуть cam.target к СВЕЖЕЙ позиции похода ДО того, как из
+    // cam.target посчитается eye/vp этого же кадра, иначе слежение
+    // отставало бы на кадр. lastMarches, который marchMarkers() заполняет
+    // попутно, переиспользуется ниже вместо второго вызова.
+    const markers = marchMarkers();
+    if (followMarchId !== null) {
+      const followed = lastMarches.find((m) => m.id === followMarchId);
+      if (followed) {
+        cam.target[0] = followed.x;
+        cam.target[2] = followed.y;
+        cam.target[1] = heightAt(followed.x, followed.y) * HMAX + 1;
+      } else {
+        followMarchId = null; // поход прибыл/был отозван, пока за ним следили — слежению больше нечего показывать
+      }
+    }
     if (!coordDirty) {
       coordX.value = cam.target[0].toFixed(1);
       coordY.value = cam.target[2].toFixed(1);
@@ -1164,7 +1211,6 @@ async function main() {
     renderer.setFog(eye, FOG_COLOR, FOG_K, tMs / 1000);
     renderer.setSunTarget(cam.target[0], cam.target[2]);
     modelPipeline.setFog(eye, FOG_COLOR, FOG_K);
-    const markers = marchMarkers();
     // Выбранный поход движется — в отличие от showSelection() для
     // статичных сущностей (город/лагерь/точка), тут нельзя один раз
     // посчитать highlightMarker при тапе, он бы тут же отстал от

@@ -206,6 +206,20 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #tools button:last-child{border-bottom:none}
 #tools button:hover{background:rgba(194,153,60,.14);color:var(--gilt-hi)}
 
+/* Отряды в поле поверх 3D-мира — раньше видны были только на вкладке
+   "Город" (renderFieldArmy внутри #folio), приходилось переключаться туда
+   и обратно, чтобы просто посмотреть на свой марш (репорт пользователя).
+   Те же .slotcell, что и в renderFieldArmy/renderBrigades, просто в
+   .plate-панели поверх iframe (см. .plate — z-index:4 выше #world3d).
+   top:66px..bottom:194px — тот же верх, что у #key, но снизу останавливается
+   ДО #tools (right:14px;bottom:92px, три кнопки по 34px ≈ 102px), overflow
+   на случай марш-слотов больше, чем влезает по высоте (marchSlots до 5). */
+#fieldarmy-world{right:14px;top:66px;bottom:194px;padding:8px;
+  display:flex;flex-direction:column;gap:6px;overflow-y:auto;scrollbar-width:none;
+  align-items:center}
+#fieldarmy-world::-webkit-scrollbar{display:none}
+#fieldarmy-world:empty{display:none}
+
 #key{left:14px;top:66px;padding:9px 12px;display:flex;flex-direction:column;gap:5px;
   pointer-events:none;font-size:11.5px}
 #key .kl{font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--vellum-faint);
@@ -651,6 +665,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
         <button id="t-out" title="Отдалить">&minus;</button>
         <button id="t-home" title="К своему городу">&#9884;</button>
       </div>
+      <div id="fieldarmy-world" class="plate"></div>
       <iframe id="world3d" title="Мир"></iframe>
     </div>
 
@@ -2541,6 +2556,22 @@ function tryWaterPath(x0,y0,x1,y1,margin){
     for(const [dx,dy] of WPATH_DIRS){
       const nx=cur.x+dx, ny=cur.y+dy;
       if(blocked(nx,ny)) continue;
+      // Диагональный шаг между двумя клеточно-сухими углами всё ещё может
+      // ПРОРЕЗАТЬ по диагонали ровно тот угол, где сходятся вода и суша
+      // (найдено живьём: путь через (183,-152)->(184,-153) — обе клетки
+      // сушa, но их общая диагональная граница приходится на воду).
+      // Классическое правило анти-срезания угла для 8-направленной сетки:
+      // диагональ разрешена только если ОБЕ "плечевые" ортогональные клетки
+      // тоже не блокированы.
+      if(dx&&dy&&(blocked(cur.x+dx,cur.y)||blocked(cur.x,cur.y+dy))) continue;
+      // blocked() судит по высоте ровно в ЦЕНТРЕ клетки — этого мало:
+      // рельеф непрерывен, между центрами двух соседних клеток суши иногда
+      // проскакивает узкая полоска воды тоньше клетки (живой пример: клетки
+      // (183,-153) и (184,-153) обе суша, а прямая между их центрами всё
+      // равно ныряет ниже уровня моря). segmentCrossesWater — та же самая
+      // проверка, что потом валидирует готовый путь, здесь применяем её
+      // сразу к каждому ребру A*, чтобы такое ребро не вошло в путь вовсе.
+      if(segmentCrossesWater(cur.x,cur.y,nx,ny)) continue;
       const ng=curG+(dx&&dy?Math.SQRT2:1);
       const nk=idx(nx,ny);
       if(gScore.has(nk)&&gScore.get(nk)<=ng) continue;
@@ -2556,11 +2587,53 @@ function tryWaterPath(x0,y0,x1,y1,margin){
   path[0]={x:x0,y:y0}; path[path.length-1]={x:x1,y:y1};
   return simplifyWaterPath(path);
 }
+// Раньше tryWaterPath строила локальную сетку A* на весь прямоугольник
+// x0..x1 — при коротких походах внутри стартового кластера это было дёшево,
+// но мир с тех пор сильно вырос (реальные цели теперь за сотни клеток), а
+// сетка растёт КАК КВАДРАТ дистанции: марш на 250 клеток при margin=30 уже
+// ~96 000 ячеек, упирался в iter<20000 A* и ТИХО откатывался на прямую —
+// прямую, которая всё ещё режет через воду ("маршруты должны строиться
+// правильно" — пользователь заметил именно такие кривые пути). Находим
+// САМ водный участок вдоль прямой (первая/последняя точка, где вода) и
+// строим локальную сетку только вокруг НЕГО — её размер зависит от ширины
+// конкретного озера/пролива, а не от расстояния похода целиком. Прямая
+// от старта до кромки воды и от кромки до финиша заведомо не пересекает
+// воду (это и есть определение кромки), детур A* нужен только между ними.
+function waterCrossingSpan(x0,y0,x1,y1){
+  const d=Math.hypot(x1-x0,y1-y0);
+  const steps=Math.max(1,Math.ceil(d*2));
+  let entryI=null, exitI=null;
+  for(let i=0;i<=steps;i++){
+    const t=i/steps;
+    if(isRealWater(x0+(x1-x0)*t, y0+(y1-y0)*t)){
+      if(entryI===null) entryI=i;
+      exitI=i;
+    }
+  }
+  if(entryI===null) return null;
+  // Отступаем от границы воды по семплам, пока ОКРУГЛЁННАЯ до целой клетки
+  // точка не перестанет быть водой — на семпл-разрешении (0.5 клетки) один
+  // шаг назад мог всё ещё округляться в соседнюю водную клетку, из-за чего
+  // tryWaterPath(entry,exit,...) отбраковывал саму отправную/финишную точку
+  // детура как воду и возвращал null на ЛЮБОМ margin (нашли живьём: марш на
+  // 150 клеток с озером всего в 7 клеток шириной всё равно резал по воде).
+  let ei=entryI-1;
+  while(ei>0 && isRealWater(Math.round(x0+(x1-x0)*(ei/steps)), Math.round(y0+(y1-y0)*(ei/steps)))) ei--;
+  let xi=exitI+1;
+  while(xi<steps && isRealWater(Math.round(x0+(x1-x0)*(xi/steps)), Math.round(y0+(y1-y0)*(xi/steps)))) xi++;
+  ei=Math.max(0,ei); xi=Math.min(steps,xi);
+  const tEntry=ei/steps, tExit=xi/steps;
+  return {
+    ex:x0+(x1-x0)*tEntry, ey:y0+(y1-y0)*tEntry,
+    xx:x0+(x1-x0)*tExit, xy:y0+(y1-y0)*tExit,
+  };
+}
 function waterPath(x0,y0,x1,y1){
-  if(!segmentCrossesWater(x0,y0,x1,y1)) return [{x:x0,y:y0},{x:x1,y:y1}];
-  for(const margin of [10,30]){
-    const path=tryWaterPath(x0,y0,x1,y1,margin);
-    if(path) return path;
+  const span=waterCrossingSpan(x0,y0,x1,y1);
+  if(!span) return [{x:x0,y:y0},{x:x1,y:y1}];
+  for(const margin of [10,30,60]){
+    const detour=tryWaterPath(span.ex,span.ey,span.xx,span.xy,margin);
+    if(detour) return simplifyWaterPath([{x:x0,y:y0},...detour,{x:x1,y:y1}]);
   }
   return [{x:x0,y:y0},{x:x1,y:y1}];   // не нашли обход даже с запасом — лучше прямая, чем не дать походу случиться
 }
@@ -2590,18 +2663,16 @@ function pathPointAt(m,f){
   return path[path.length-1];
 }
 
-// TROOP_TYPES[t].speed — относительный множитель для отображения в карточке
-// юнита ("×1.00" рядом с другими × статами, см. unitCarouselHtml) и остаётся
-// нетронутым; настоящая путевая скорость (клеток в минуту) получается
-// домножением на MARCH_SPEED_SCALE тут же, при расчёте похода. Раньше
-// множитель ×1.00 ИСПОЛЬЗОВАЛСЯ НАПРЯМУЮ как клеток/мин — при типичных
-// теперь-то расстояниях после расширения мира (сотни клеток) поход занимал
-// часы вместо ожидаемых по механике RoK секунд-минут (репорт пользователя:
-// 3 часа на путь, которого "на глаз" быть не должно). 24 клетки/мин у
-// пехоты (было буквально 1) откалибровано так, чтобы ближняя цель (десяток
-// клеток) укладывалась в ~30-60 секунд, а действительно дальняя (сотни
-// клеток, как в репорте) — в единицы-десятки минут, а не в часы.
-const MARCH_SPEED_SCALE=24;
+// TROOP_TYPES[t].speed — относительный множитель, настоящая путевая скорость
+// (клеток в минуту) получается домножением на MARCH_SPEED_SCALE тут же, при
+// расчёте похода (см. unitCardStatsHtml — карточка юнита показывает уже
+// готовое "N кл/мин", а не голый множитель). Раньше множитель ×1.00
+// ИСПОЛЬЗОВАЛСЯ НАПРЯМУЮ как клеток/мин — при типичных теперь-то расстояниях
+// после расширения мира (сотни клеток) поход занимал часы вместо ожидаемых
+// по механике RoK секунд-минут (репорт пользователя: 3 часа на путь,
+// которого "на глаз" быть не должно) — тогда откалибровали на 24 клетки/мин
+// у пехоты. Пользователь попросил ещё +33% сверху (32 = round(24*1.33)).
+const MARCH_SPEED_SCALE=32;
 function marchSpeed(p,units){
   let s=99; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) if(units[t][i]>0) s=Math.min(s,TROOP_TYPES[t].speed*troopMod(p.race,t,"speed"))});
   if(s>90) s=1;
@@ -2756,7 +2827,9 @@ function arriveMarch(m){
 
   if(cell.t==="node" && m.mode==="gather"){
     const B=bonuses(p);
-    let rate=(60+p.b.hall*22)*(1+B.gather);
+    // ×3 — пользователь отметил, что сбор с точек ощущался слишком
+    // медленным относительно резервов точки (o.amount) и марш-таймингов.
+    let rate=(60+p.b.hall*22)*3*(1+B.gather);
     rate*= (cell.res==="food"||cell.res==="wood") ? 1+(B.gatherFW||0) : 1+(B.gatherSG||0);
     let load=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) load+=m.units[t][i]*TROOP_TYPES[t].load*TIER_MULT[i-1]*troopMod(p.race,t,"load")});
     load=Math.round(load*(1+B.load));
@@ -3878,19 +3951,57 @@ function renderBrigades(p){
   h+="</div>";
   return h;
 }
+// act — "marchinfo" (карточка города: клик просто показывает текстовый
+// герольд, см. handleAct) или "followmarch" (панель поверх 3D-мира: клик
+// переносит и привязывает камеру к походу, см. jumpToMarchFor) — общая
+// разметка ячейки, чтобы renderFieldArmy/renderFieldArmyWorld не расходились.
+function marchSlotCellHtml(m,act){
+  const f=(W.t-m.t0)/Math.max(1,m.t1-m.t0);
+  const st={go:"в пути",gather:"собирает",back:"возвращается"}[m.state]||m.state;
+  const hint=act==="followmarch"?" — нажмите, чтобы проследить камерой":"";
+  return "<div class='slotcell' data-act='"+act+"' data-m='"+m.id+"' "+
+     "title='"+RU(countUnits(m.units))+" воинов, "+st+" · цель "+m.tx+"·"+m.ty+hint+"'>"+
+     "<img src='images/ui/icon-march.png'><span class='timer'>"+fmtDur(m.t1-W.t)+"</span>"+
+     "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
+}
 function renderFieldArmy(p){
   const mine=W.marches.filter(m=>m.pid===p.id);
-  let h="<div id='fieldarmy'>";
-  mine.forEach(m=>{
-    const f=(W.t-m.t0)/Math.max(1,m.t1-m.t0);
-    const st={go:"в пути",gather:"собирает",back:"возвращается"}[m.state]||m.state;
-    h+="<div class='slotcell' data-act='marchinfo' data-m='"+m.id+"' "+
-       "title='"+RU(countUnits(m.units))+" воинов, "+st+" · цель "+m.tx+"·"+m.ty+"'>"+
-       "<img src='images/ui/icon-march.png'><span class='timer'>"+fmtDur(m.t1-W.t)+"</span>"+
-       "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
-  });
-  h+="</div>";
-  return h;
+  return "<div id='fieldarmy'>"+mine.map(m=>marchSlotCellHtml(m,"marchinfo")).join("")+"</div>";
+}
+// Та же панель, что и renderFieldArmy, но поверх 3D-мира (см. #fieldarmy-world
+// в разметке #chart) — пользователь просил видеть и отслеживать свои марши,
+// не переключаясь во вкладку "Город". Обновляется раз в секунду из frame()
+// (см. ниже), не при каждой перерисовке #folio — панель живёт вне #ledger,
+// который в режиме "Мир" целиком скрыт (см. #app.view-world #ledger).
+let lastFieldArmyWorld="";
+function renderFieldArmyWorld(){
+  const el=$("#fieldarmy-world"); if(!el) return;
+  const p=me();
+  const mine=W.marches.filter(m=>m.pid===p.id);
+  const h=mine.map(m=>marchSlotCellHtml(m,"followmarch")).join("");
+  if(h!==lastFieldArmyWorld){ lastFieldArmyWorld=h; el.innerHTML=h; }
+}
+// Клик по ячейке в мире: переключает на вкладку "Мир" (если ещё не там) и
+// зовёт startFollowMarch внутри iframe (та же origin-договорённость, что и
+// у остальных мостов index.html<->engine, см. renderCartoucheFor). Движок
+// может быть ещё не готов (первый заход в "Мир" в эту сессию) — недолгий
+// поллинг вместо жёсткой зависимости от таймингов инициализации WebGPU.
+function jumpToMarchFor(marchId){
+  const app=$("#app");
+  if(app.classList.contains("view-city")) toggleView();
+  const frame=$("#world3d");
+  if(frame && !frame.src) frame.src="engine/dist/index.html";
+  const tryStart=()=>{
+    try{
+      const cw=frame.contentWindow;
+      if(cw && typeof cw.startFollowMarch==="function"){ cw.startFollowMarch(marchId); return true; }
+    }catch(e){}
+    return false;
+  };
+  if(!tryStart()){
+    let tries=0;
+    const iv=setInterval(()=>{ tries++; if(tryStart()||tries>50) clearInterval(iv); },100);
+  }
 }
 function hallInfoHtml(p){
   const epoch=epochOf(p.b.hall), track=RACE_EPOCHS[p.race], minus=RACES[p.race].minus;
@@ -4826,6 +4937,10 @@ function handleAct(e){
     }
     return;
   }
+  else if(a==="followmarch"){
+    jumpToMarchFor(+b.dataset.m);
+    return;
+  }
   else if(a==="browseheal"){
     openHealCarousel();
     return;
@@ -4966,6 +5081,7 @@ function handleAct(e){
   }
 }
 $("#folio").addEventListener("click",handleAct);
+$("#fieldarmy-world").addEventListener("click",handleAct);
 $("#cartouche").addEventListener("click",handleAct);
 function toggleView(){
   const app=$("#app"), img=$("#view-toggle img");
@@ -5030,7 +5146,7 @@ function unitCardStatsHtml(p,type,tier){
     "<tr><td>"+statIcon("hp")+"Здоровье</td><td>"+troopStat(type,tier,"hp")+"</td></tr>"+
     "<tr><td>"+statIcon("matk")+"Магическая атака</td><td>"+troopStat(type,tier,"magicAtk")+"</td></tr>"+
     "<tr><td>"+statIcon("mdef")+"Магическая защита</td><td>"+troopStat(type,tier,"magicDef")+"</td></tr>"+
-    "<tr><td>"+statIcon("speed")+"Скорость</td><td>&times;"+TROOP_TYPES[type].speed.toFixed(2)+"</td></tr>"+
+    "<tr><td>"+statIcon("speed")+"Скорость</td><td>"+Math.round(TROOP_TYPES[type].speed*troopMod(p.race,type,"speed")*MARCH_SPEED_SCALE)+" кл/мин</td></tr>"+
     "<tr><td>"+statIcon("load")+"Грузоподъёмность</td><td>"+TROOP_TYPES[type].load+"</td></tr>"+
     "<tr><td><img class='stat-ico' src='images/ui/icon-power.png' alt=''>Мощь</td><td>"+unitPower(tier)+"</td></tr>"+
   "</table>";
@@ -5369,7 +5485,7 @@ function frame(){
   const now=Date.now();
   let dt=(now-lastReal)/1000; lastReal=now;
   if(dt>0){ advanceTo(W.t+dt*tempo); sinceSave+=Math.min(dt,3600); sinceUi+=dt }
-  if(sinceUi>1.0){ sinceUi=0; renderTop(); renderFolio(); renderCartouche(); refreshOpenModal() }
+  if(sinceUi>1.0){ sinceUi=0; renderTop(); renderFolio(); renderCartouche(); refreshOpenModal(); renderFieldArmyWorld() }
   if(sinceSave>20){ sinceSave=0; save() }
   requestAnimationFrame(frame);
 }
