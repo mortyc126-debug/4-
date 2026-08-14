@@ -201,6 +201,81 @@ async function main() {
     (window as any).__terrainChunkCount = loadedChunks.size;
   }
 
+  // ---- дальнее грубое кольцо рельефа — "задник", вроде extended backdrop
+  // старого рендера (obyom-3d-infinite.html, "кольцо фона+тумана"): при
+  // типичном наклоне камеры (pitch) луч в верхний край экрана бьёт в землю
+  // на расстоянии, которое растёт вместе с dist (см. camera.ts) — уже при
+  // дефолтном зуме это ~78 клеток от цели, вплотную к UNLOAD_RADIUS выше
+  // (80), а при отдалении легко уходит за 150-200. Пришёл реальный
+  // скриншот с телефона с гигантской чёрной пустотой у горизонта именно
+  // из-за этого. Детальные чанки настолько далеко тянуть дорого (кубический
+  // рост числа вершин), поэтому под ними — та же непрерывная heightAt(x,y),
+  // просто гораздо реже посчитанная: издали разница в форме/цвете рельефа
+  // не видна, а по вершинам дальний чанк размером FAR_CHUNK_SIZE с шагом
+  // FAR_STEP стоит примерно как один обычный (FAR_CHUNK_SIZE/FAR_STEP —
+  // столько же клеток на сторону, сколько и у ближнего чанка).
+  const FAR_CHUNK_SIZE = 64; // кратно CHUNK_SIZE (×4) — границы дальних и ближних чанков совпадают
+  const FAR_STEP = 4;
+  const FAR_LOAD_RADIUS = 4; // 4×64=256 клеток от камеры
+  const FAR_UNLOAD_RADIUS = 6; // 384 клетки — с запасом покрывает даже MAX_DIST=100 (см. camera.ts)
+  // Грубая сетка и детальные ближние чанки читают ОДНУ И ТУ ЖЕ heightAt(x,y),
+  // но в разных точках: между её редкими узлами грубая сетка линейно
+  // интерполирует высоту, а не следует истинному рельефу, как частая сетка
+  // ближних чанков — в зоне, где оба слоя лежат друг под другом, их высоты
+  // почти, но не совсем совпадают, что даёт мерцание (z-fighting) на стыке.
+  // Не грузим (и выгружаем, если уже успели) грубые чанки, чьи центры лежат
+  // внутри зоны, ГАРАНТИРОВАННО покрытой детальным рельефом прямо сейчас —
+  // именно LOAD_RADIUS (не более щедрый UNLOAD_RADIUS: тот лишь "может ещё
+  // не успел выгрузиться", а не "точно загружен"). LOAD_RADIUS*CHUNK_SIZE —
+  // гарантия только по КАРДИНАЛЬНЫМ направлениям (это радиус по Chebyshev,
+  // квадрат, не круг) — здесь берём круговой радиус НЕ БОЛЬШЕ этого, чтобы
+  // не оставить кольцевой зазор без рельефа вовсе (именно из-за такого
+  // зазора и была чёрная пустота на скриншоте — не наступать на те же
+  // грабли повторно с новым слоем). Небольшой нахлёст с ближними чанками в
+  // буферной UNLOAD-зоне (48..80/113) — приемлемая цена, там ближний слой
+  // почти всегда уже загружен и рисуется первым (см. порядок вставки в Map
+  // в renderer.ts), так что визуально обычно не проваливается наружу.
+  const NEAR_CLEAR_RADIUS = LOAD_RADIUS * CHUNK_SIZE;
+  const loadedFarChunks = new Set<string>();
+  let lastFarChunkX: number | null = null;
+  let lastFarChunkZ: number | null = null;
+  function updateFarTerrain(centerX: number, centerZ: number, force = false) {
+    const ccx = Math.floor(centerX / FAR_CHUNK_SIZE);
+    const ccz = Math.floor(centerZ / FAR_CHUNK_SIZE);
+    if (!force && ccx === lastFarChunkX && ccz === lastFarChunkZ) return;
+    lastFarChunkX = ccx;
+    lastFarChunkZ = ccz;
+    for (let dz = -FAR_LOAD_RADIUS; dz <= FAR_LOAD_RADIUS; dz++) {
+      for (let dx = -FAR_LOAD_RADIUS; dx <= FAR_LOAD_RADIUS; dx++) {
+        const cx = ccx + dx, cz = ccz + dz;
+        const rkey = "far:" + cx + "," + cz;
+        if (loadedFarChunks.has(rkey)) continue;
+        const fcx = cx * FAR_CHUNK_SIZE + FAR_CHUNK_SIZE / 2, fcz = cz * FAR_CHUNK_SIZE + FAR_CHUNK_SIZE / 2;
+        if (Math.hypot(fcx - centerX, fcz - centerZ) < NEAR_CLEAR_RADIUS) continue;
+        const x0 = cx * FAR_CHUNK_SIZE, z0 = cz * FAR_CHUNK_SIZE;
+        const mesh = buildTerrainPatch(x0, z0, x0 + FAR_CHUNK_SIZE, z0 + FAR_CHUNK_SIZE, FAR_STEP);
+        renderer.setTerrainChunk(rkey, mesh);
+        loadedFarChunks.add(rkey);
+        // Дальнее кольцо — только видимость, не задел под дикий контент:
+        // не зовём notifyParentChunk отсюда (в отличие от ближних чанков
+        // выше) — иначе радиус в 256+ клеток мгновенно засыпал бы игрока
+        // сгенерированным контентом во всех направлениях разом вместо
+        // постепенного появления по мере реального исследования камерой.
+      }
+    }
+    for (const rkey of Array.from(loadedFarChunks)) {
+      const [kx, kz] = rkey.slice(4).split(",").map(Number);
+      const fcx = kx * FAR_CHUNK_SIZE + FAR_CHUNK_SIZE / 2, fcz = kz * FAR_CHUNK_SIZE + FAR_CHUNK_SIZE / 2;
+      const tooFar = Math.max(Math.abs(kx - ccx), Math.abs(kz - ccz)) > FAR_UNLOAD_RADIUS;
+      const tooClose = Math.hypot(fcx - centerX, fcz - centerZ) < NEAR_CLEAR_RADIUS;
+      if (tooFar || tooClose) {
+        renderer.removeTerrainChunk(rkey);
+        loadedFarChunks.delete(rkey);
+      }
+    }
+    (window as any).__farChunkCount = loadedFarChunks.size;
+  }
+
   // ---- настоящие 3D-модели (те же .glb, что и в живой игре) для ВСЕХ
   // сущностей. Путь абсолютный от корня сайта: этот прототип живёт в
   // /engine/dist/, а модели — в /models/ у корня репозитория, который
@@ -284,8 +359,26 @@ async function main() {
   // первого кадра цикла отрисовки (force=true, т.к. lastCamChunk* ещё не
   // установлены), тот же порядок, что и раньше со статичным патчем.
   updateTerrainChunks(cam.target[0], cam.target[2], true);
-  lines.push(`рельеф: чанков ${loadedChunks.size} (${CHUNK_SIZE}×${CHUNK_SIZE} клеток каждый)`);
+  updateFarTerrain(cam.target[0], cam.target[2], true);
+  lines.push(`рельеф: чанков ${loadedChunks.size} (${CHUNK_SIZE}×${CHUNK_SIZE}) + дальних ${loadedFarChunks.size} (${FAR_CHUNK_SIZE}×${FAR_CHUNK_SIZE}, шаг ${FAR_STEP})`);
   setStatus(lines);
+  // Отладочная проверка покрытия земли (тест на отсутствие "дыр" между
+  // ближним и дальним слоем рельефа — тот самый баг со скриншота): любую
+  // мировую точку можно проверить, лежит ли она внутри загруженного
+  // ближнего ИЛИ дальнего чанка.
+  (window as any).__coverageCheck = (x: number, z: number) => {
+    for (const k of loadedChunks) {
+      const [kx, kz] = k.split(",").map(Number);
+      const x0 = kx * CHUNK_SIZE, z0 = kz * CHUNK_SIZE;
+      if (x >= x0 && x < x0 + CHUNK_SIZE && z >= z0 && z < z0 + CHUNK_SIZE) return "near";
+    }
+    for (const k of loadedFarChunks) {
+      const [kx, kz] = k.slice(4).split(",").map(Number);
+      const x0 = kx * FAR_CHUNK_SIZE, z0 = kz * FAR_CHUNK_SIZE;
+      if (x >= x0 && x < x0 + FAR_CHUNK_SIZE && z >= z0 && z < z0 + FAR_CHUNK_SIZE) return "far";
+    }
+    return null;
+  };
 
   // ---- контракт для index.html: инструменты "+"/"−"/"к своему городу" и
   // клавиши +/-/h сейчас крутят СТАРЫЙ рендер через world3dWin() — читают
@@ -571,6 +664,7 @@ async function main() {
     if (controls.isAutoOrbiting()) cam.yaw = tMs * 0.00015;
     controls.update(tMs); // WASD/стрелки — панорама, зажатая клавиша даёт непрерывный сдвиг между кадрами
     updateTerrainChunks(cam.target[0], cam.target[2]); // no-op, пока камера внутри того же чанка — дёшево звать каждый кадр
+    updateFarTerrain(cam.target[0], cam.target[2]); // то же самое, но для дальнего грубого кольца
     const eye: Vec3 = [
       cam.target[0] + Math.sin(cam.yaw) * Math.cos(cam.pitch) * cam.dist,
       cam.target[1] + Math.sin(cam.pitch) * cam.dist,
