@@ -609,10 +609,10 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
     <div id="chart">
       <div id="key" class="plate">
         <span class="kl">Знамёна</span>
-        <span class="kr"><svg class="sh" viewBox="0 0 12 15"><path d="M1 1h10v8.2C11 12 6 14 6 14S1 12 1 9.2Z" fill="#d9b14b" stroke="#c2993c"/></svg>Люди</span>
-        <span class="kr"><svg class="sh" viewBox="0 0 12 15"><path d="M1 1h10v8.2C11 12 6 14 6 14S1 12 1 9.2Z" fill="#bb5730" stroke="#c2993c"/></svg>Гномы</span>
-        <span class="kr"><svg class="sh" viewBox="0 0 12 15"><path d="M1 1h10v8.2C11 12 6 14 6 14S1 12 1 9.2Z" fill="#4c8d5e" stroke="#c2993c"/></svg>Эльфы</span>
-        <span class="kr"><svg class="sh" viewBox="0 0 12 15"><path d="M1 1h10v8.2C11 12 6 14 6 14S1 12 1 9.2Z" fill="#7d56a4" stroke="#c2993c"/></svg>Нежить</span>
+        <span class="kr"><img class="sh" src="images/ui/Human.png" alt="" style="width:11px;height:17px;object-fit:contain">Люди</span>
+        <span class="kr"><img class="sh" src="images/ui/Dwarf.png" alt="" style="width:11px;height:17px;object-fit:contain">Гномы</span>
+        <span class="kr"><img class="sh" src="images/ui/Elf.png" alt="" style="width:11px;height:17px;object-fit:contain">Эльфы</span>
+        <span class="kr"><img class="sh" src="images/ui/Undead.png" alt="" style="width:11px;height:17px;object-fit:contain">Нежить</span>
       </div>
       <div id="cartouche" class="plate"></div>
       <div id="tools" class="plate">
@@ -3472,10 +3472,17 @@ function centerOn(x,y){
    ПАНЕЛИ. Правая колонна — канцелярская книга похода: рубрики, записи,
    цены эмалевыми точками, цифры моноширинно.
    ========================================================================= */
+// Настоящие гербы рас (загружены пользователем в images/ui/) вместо
+// цветных SVG-щитков — картинки портретные (выше, чем шире, у каждой
+// расы свои пропорции), object-fit:contain в фиксированном боксе не
+// искажает исходник ни на одной из четырёх. Имя функции не поменяли —
+// звать её продолжают из тех же мест теми же аргументами (race, ширина в
+// px), поменялась только реализация внутри.
+const RACE_CREST={human:"Human",dwarf:"Dwarf",elf:"Elf",undead:"Undead"};
 function shieldSvg(race,w){
-  return "<svg class='shield' viewBox='0 0 12 15' style='width:"+(w||13)+"px'>"+
-    "<path d='M1 1h10v8.2C11 12 6 14 6 14S1 12 1 9.2Z' fill='"+TINCT[race]+
-    "' stroke='#c2993c' stroke-width='.8'/></svg>";
+  const width=w||13, height=Math.round(width*1.5);
+  return "<img class='shield' src='images/ui/"+RACE_CREST[race]+".png' alt='"+RACES[race].name+"' "+
+    "style='width:"+width+"px;height:"+height+"px;object-fit:contain'>";
 }
 function ring(lv,max){
   const f=Math.min(1,lv/(max||25)), C=2*Math.PI*14;
