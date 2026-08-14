@@ -8,9 +8,9 @@
    не нужен.
    ========================================================================= */
 import { createWorld, addEntity, addComponent, removeEntity, query } from "bitecs";
-import { createRenderer, type MarkerEntity } from "./renderer";
+import { createRenderer, type MarkerEntity, type DecorEntity } from "./renderer";
 import { buildTerrainPatch } from "./terrainMesh";
-import { heightAt, HMAX } from "./terrain";
+import { heightAt, HMAX, hash2, isWater, SEED } from "./terrain";
 import { mul, persp, look, modelMatrix, transformPoint, type Vec3, type Mat4 } from "./mat4";
 import { attachOrbitControls, type OrbitCamera } from "./camera";
 import { loadGLB } from "./glb";
@@ -183,6 +183,60 @@ async function main() {
       /* кросс-origin или не встроено — тихо игнорируем */
     }
   }
+  // ---- декор (деревья/камни) — процедурный, чанк-локальный, привязан к
+  // тому же CHUNK_SIZE, что и рельеф: генерится/убирается вместе с ближним
+  // детальным чанком земли под ним, не отдельным радиусом (декор не нужен
+  // там, где уже не рисуется детальная земля). Плотность — редкая ("sparse"),
+  // не лес на весь остров: по подсетке 4×4 внутри каждого чанка 16×16 с
+  // низким шансом на подсетку, а не "деталь на каждую клетку".
+  const DECOR_CELL = 4; // сторона подсетки, кратно CHUNK_SIZE (÷4)
+  const DECOR_CHANCE = 0.14; // ~2 инстанса на чанк в среднем (16 подсеток × 0.14)
+  const TREE_FRACTION = 0.72; // доля деревьев среди сгенерированных — остальное камни
+  const decorByChunk = new Map<string, DecorEntity[]>();
+  function genDecorForChunk(cx: number, cz: number): DecorEntity[] {
+    const out: DecorEntity[] = [];
+    const cellsPerSide = CHUNK_SIZE / DECOR_CELL;
+    for (let j = 0; j < cellsPerSide; j++) {
+      for (let i = 0; i < cellsPerSide; i++) {
+        const gx = cx * cellsPerSide + i, gz = cz * cellsPerSide + j;
+        if (hash2(gx, gz, SEED + 777) >= DECOR_CHANCE) continue;
+        const jx = hash2(gx, gz, SEED + 778), jz = hash2(gx, gz, SEED + 779);
+        const wx = cx * CHUNK_SIZE + i * DECOR_CELL + jx * DECOR_CELL;
+        const wz = cz * CHUNK_SIZE + j * DECOR_CELL + jz * DECOR_CELL;
+        if (isWater(wx, wz)) continue;
+        // Не ставим декор поверх/впритык к настоящим зданиям — минимальный
+        // отступ от радиуса модели (тот же приём смягчения наложений, что
+        // уже применялся для реальных сущностей друг относительно друга,
+        // см. план "Смягчение наложений" — только тут двигаем не позицию
+        // структуры, а просто пропускаем декор-кандидата).
+        let blocked = false;
+        for (const eid of found) {
+          const dx = Position.x[eid] - wx, dz = Position.y[eid] - wz;
+          const minDist = (modelScaleOf.get(eid) ?? 5) * 1.6 + 2;
+          if (dx * dx + dz * dz < minDist * minDist) { blocked = true; break; }
+        }
+        if (blocked) continue;
+        const isTree = hash2(gx, gz, SEED + 780) < TREE_FRACTION;
+        const yaw = hash2(gx, gz, SEED + 781) * Math.PI * 2;
+        const tint = hash2(gx, gz, SEED + 782);
+        const wy = heightAt(wx, wz) * HMAX;
+        if (isTree) {
+          out.push({ x: wx, y: wy, z: wz, scale: 1.0 + hash2(gx, gz, SEED + 783) * 1.2, yaw, tint, kind: "tree" });
+        } else {
+          out.push({ x: wx, y: wy, z: wz, scale: 0.6 + hash2(gx, gz, SEED + 783) * 0.8, yaw, tint, kind: "rock" });
+        }
+      }
+    }
+    return out;
+  }
+  function refreshDecor() {
+    const merged: DecorEntity[] = [];
+    for (const list of decorByChunk.values()) merged.push(...list);
+    renderer.setDecor(merged);
+    (window as any).__decorCount = merged.length;
+    (window as any).__decorList = merged; // отладка (см. test_decor_overlap.mjs)
+  }
+
   const loadedChunks = new Set<string>();
   let lastCamChunkX: number | null = null;
   let lastCamChunkZ: number | null = null;
@@ -196,6 +250,7 @@ async function main() {
     if (!force && ccx === lastCamChunkX && ccz === lastCamChunkZ) return;
     lastCamChunkX = ccx;
     lastCamChunkZ = ccz;
+    let decorChanged = false;
     for (let dz = -LOAD_RADIUS; dz <= LOAD_RADIUS; dz++) {
       for (let dx = -LOAD_RADIUS; dx <= LOAD_RADIUS; dx++) {
         const cx = ccx + dx, cz = ccz + dz;
@@ -206,6 +261,8 @@ async function main() {
         renderer.setTerrainChunk(key, chunkMesh);
         loadedChunks.add(key);
         notifyParentChunk(cx, cz);
+        decorByChunk.set(key, genDecorForChunk(cx, cz));
+        decorChanged = true;
       }
     }
     for (const key of Array.from(loadedChunks)) {
@@ -213,9 +270,12 @@ async function main() {
       if (Math.max(Math.abs(kx - ccx), Math.abs(kz - ccz)) > UNLOAD_RADIUS) {
         renderer.removeTerrainChunk(key);
         loadedChunks.delete(key);
+        decorByChunk.delete(key);
+        decorChanged = true;
       }
     }
     (window as any).__terrainChunkCount = loadedChunks.size;
+    if (decorChanged) refreshDecor();
   }
 
   // ---- дальнее грубое кольцо рельефа — "задник", вроде extended backdrop
@@ -360,6 +420,7 @@ async function main() {
   lines.push(`модели: загружено ${loadedCount}/${found.length}${failedCount ? ", ошибок: " + failedCount : ""}`);
   setStatus(lines);
   (window as any).__ecsFound = found.length;
+  (window as any).__foundPositions = () => found.map((eid) => ({ x: Position.x[eid], z: Position.y[eid], scale: modelScaleOf.get(eid) ?? 5 }));
 
   // ---- камера: с настоящими данными старт — у своего города (та же
   // логика, что уже прижилась в живой 3D-вкладке после жалобы "почему

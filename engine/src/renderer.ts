@@ -18,6 +18,7 @@
    устройства.
    ========================================================================= */
 import type { MeshData } from "./terrainMesh";
+import { buildTreeMesh, buildRockMesh, type DecorMesh } from "./decorMesh";
 
 const TERRAIN_SHADER = /* wgsl */ `
 struct Uniforms { vp: mat4x4f };
@@ -77,11 +78,68 @@ fn fs(in: VOut) -> @location(0) vec4f {
 }
 `;
 
+// Деревья/камни — тот же инстансинг-приём, что и маркеры (localPos +
+// per-instance transform), но с настоящим освещением по нормали (как
+// рельеф, см. TERRAIN_SHADER) вместо плоского цвета — иначе на солнечной
+// стороне острова силуэты деревьев выглядели бы плоскими наклейками.
+// Поворот только вокруг Y (yaw) — простая 2D-матрица поворота на CPU не
+// нужна, тут же в шейдере, применяется и к позиции, и к нормали одинаково.
+const DECOR_SHADER = /* wgsl */ `
+struct Uniforms { vp: mat4x4f };
+struct Fog { eye: vec4f, color: vec4f };
+@group(0) @binding(0) var<uniform> u: Uniforms;
+@group(0) @binding(1) var<uniform> fog: Fog;
+
+struct VOut { @builtin(position) pos: vec4f, @location(0) color: vec3f, @location(1) worldPos: vec3f, @location(2) normal: vec3f };
+
+@vertex
+fn vs(
+  @location(0) localPos: vec3f, @location(1) localNormal: vec3f, @location(2) meshColor: vec3f,
+  @location(3) worldPos: vec3f, @location(4) scale: f32, @location(5) yaw: f32, @location(6) tint: f32
+) -> VOut {
+  var out: VOut;
+  let c = cos(yaw); let s = sin(yaw);
+  let rp = vec3f(localPos.x * c - localPos.z * s, localPos.y, localPos.x * s + localPos.z * c);
+  let rn = vec3f(localNormal.x * c - localNormal.z * s, localNormal.y, localNormal.x * s + localNormal.z * c);
+  let wp = worldPos + rp * scale;
+  out.pos = u.vp * vec4f(wp, 1.0);
+  out.color = meshColor * (0.85 + 0.3 * tint);
+  out.worldPos = wp;
+  out.normal = rn;
+  return out;
+}
+@fragment
+fn fs(in: VOut) -> @location(0) vec4f {
+  let sun = normalize(vec3f(0.62, 0.38, 0.30));
+  let n = normalize(in.normal);
+  let diffuse = max(0.35, dot(n, sun));
+  let lit = in.color * diffuse;
+  let d = distance(in.worldPos, fog.eye.xyz);
+  let k = d * fog.color.w; let f = clamp(1.0 - exp(-k * k), 0.0, 1.0);
+  return vec4f(mix(lit, fog.color.rgb, f), 1.0);
+}
+`;
+
 export interface MarkerEntity {
   x: number;
   y: number; // высота (мир, метры) — уже посчитанная (рельеф под меткой + запас)
   z: number; // мировой Z (игровой Y)
   color: [number, number, number];
+}
+
+// Декор (деревья/камни) — тот же инстансинг, что и маркеры, но цвет
+// запечён в самом меше (крона≠ствол, см. decorMesh.ts), поэтому в инстансе
+// цвета нет — только позиция/масштаб/поворот вокруг Y (для разнообразия
+// силуэта у повторяющихся копий одного и того же меша) и tint — маленькая
+// добавка к яркости (тоже разнообразия ради, дешевле новых мешей).
+export interface DecorEntity {
+  x: number;
+  y: number;
+  z: number;
+  scale: number;
+  yaw: number;
+  tint: number; // 0..1
+  kind: "tree" | "rock";
 }
 
 export interface Renderer {
@@ -92,6 +150,11 @@ export interface Renderer {
   setTerrainChunk(key: string, mesh: MeshData): void;
   removeTerrainChunk(key: string): void;
   setMarkers(entities: MarkerEntity[]): void;
+  // Деревья/камни — сплошной список обоих видов разом, делится на два
+  // инстанс-буфера внутри (см. DECOR_SHADER — общий пайплайн, общий
+  // локальный меш свой у дерева и у камня). Вызывающая сторона (main.ts)
+  // не обязана знать про это разделение.
+  setDecor(entities: DecorEntity[]): void;
   setVP(vp: Float32Array): void;
   // Позиция камеры + цвет/плотность тумана — общие для рельефа и маркеров.
   // density — коэффициент экспоненциального затухания (см. TERRAIN_SHADER):
@@ -203,6 +266,72 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
   let instCapacity = 0;
   let instanceCount = 0;
 
+  // ---- декор (деревья/камни, инстансинг) ----
+  const DECOR_INST_STRIDE_FLOATS = 6; // x,y,z, scale, yaw, tint
+  const decorModule = device.createShaderModule({ code: DECOR_SHADER });
+  function uploadDecorMesh(mesh: DecorMesh) {
+    const buf = device.createBuffer({
+      size: Math.max(mesh.vertexCount * 9 * 4, 4),
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    // Один буфер на локальный меш: pos(3)+normal(3)+color(3) переплетены
+    // подряд на вершину — проще собрать один interleaved Float32Array тут же
+    // на CPU (геометрия строится один раз при старте, не каждый кадр), чем
+    // городить три раздельных vertex-буфера ради статичного меша.
+    const interleaved = new Float32Array(mesh.vertexCount * 9);
+    for (let i = 0; i < mesh.vertexCount; i++) {
+      interleaved.set(mesh.positions.subarray(i * 3, i * 3 + 3), i * 9);
+      interleaved.set(mesh.normals.subarray(i * 3, i * 3 + 3), i * 9 + 3);
+      interleaved.set(mesh.colors.subarray(i * 3, i * 3 + 3), i * 9 + 6);
+    }
+    device.queue.writeBuffer(buf, 0, interleaved);
+    return buf;
+  }
+  const treeMesh = buildTreeMesh();
+  const rockMesh = buildRockMesh();
+  const treeLocalBuf = uploadDecorMesh(treeMesh);
+  const rockLocalBuf = uploadDecorMesh(rockMesh);
+  const decorPipeline = device.createRenderPipeline({
+    layout: "auto",
+    vertex: {
+      module: decorModule,
+      entryPoint: "vs",
+      buffers: [
+        {
+          arrayStride: 9 * 4,
+          stepMode: "vertex",
+          attributes: [
+            { shaderLocation: 0, offset: 0, format: "float32x3" },
+            { shaderLocation: 1, offset: 3 * 4, format: "float32x3" },
+            { shaderLocation: 2, offset: 6 * 4, format: "float32x3" },
+          ],
+        },
+        {
+          arrayStride: DECOR_INST_STRIDE_FLOATS * 4,
+          stepMode: "instance",
+          attributes: [
+            { shaderLocation: 3, offset: 0, format: "float32x3" },
+            { shaderLocation: 4, offset: 3 * 4, format: "float32" },
+            { shaderLocation: 5, offset: 4 * 4, format: "float32" },
+            { shaderLocation: 6, offset: 5 * 4, format: "float32" },
+          ],
+        },
+      ],
+    },
+    fragment: { module: decorModule, entryPoint: "fs", targets: [{ format }] },
+    primitive: { topology: "triangle-list" },
+    depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "less" },
+  });
+  const decorBindGroup = device.createBindGroup({
+    layout: decorPipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: uniformBuf } },
+      { binding: 1, resource: { buffer: fogBuf } },
+    ],
+  });
+  let treeInstBuf: GPUBuffer | null = null, treeInstCapacity = 0, treeInstanceCount = 0;
+  let rockInstBuf: GPUBuffer | null = null, rockInstCapacity = 0, rockInstanceCount = 0;
+
   // ---- глубина ----
   let depthTex: GPUTexture | null = null;
   let depthView: GPUTextureView | null = null;
@@ -274,6 +403,35 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
     if (instBuf && data.byteLength > 0) device.queue.writeBuffer(instBuf, 0, data);
   }
 
+  function writeDecorInstances(entities: DecorEntity[], buf: GPUBuffer | null, capacity: number): [GPUBuffer | null, number] {
+    const count = entities.length;
+    const data = new Float32Array(count * DECOR_INST_STRIDE_FLOATS);
+    entities.forEach((e, i) => {
+      const o = i * DECOR_INST_STRIDE_FLOATS;
+      data[o] = e.x; data[o + 1] = e.y; data[o + 2] = e.z;
+      data[o + 3] = e.scale; data[o + 4] = e.yaw; data[o + 5] = e.tint;
+    });
+    if (count > capacity) {
+      buf?.destroy();
+      capacity = Math.max(count, 8);
+      buf = device.createBuffer({
+        size: capacity * DECOR_INST_STRIDE_FLOATS * 4,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      });
+    }
+    if (buf && data.byteLength > 0) device.queue.writeBuffer(buf, 0, data);
+    return [buf, capacity];
+  }
+
+  function setDecor(entities: DecorEntity[]) {
+    const trees = entities.filter((e) => e.kind === "tree");
+    const rocks = entities.filter((e) => e.kind === "rock");
+    treeInstanceCount = trees.length;
+    rockInstanceCount = rocks.length;
+    [treeInstBuf, treeInstCapacity] = writeDecorInstances(trees, treeInstBuf, treeInstCapacity);
+    [rockInstBuf, rockInstCapacity] = writeDecorInstances(rocks, rockInstBuf, rockInstCapacity);
+  }
+
   function setVP(vp: Float32Array) {
     device.queue.writeBuffer(uniformBuf, 0, vp);
   }
@@ -317,11 +475,26 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
       pass.draw(PIN_VERTS, instanceCount);
     }
 
+    if (treeInstanceCount > 0 || rockInstanceCount > 0) {
+      pass.setPipeline(decorPipeline);
+      pass.setBindGroup(0, decorBindGroup);
+      if (treeInstanceCount > 0 && treeInstBuf) {
+        pass.setVertexBuffer(0, treeLocalBuf);
+        pass.setVertexBuffer(1, treeInstBuf);
+        pass.draw(treeMesh.vertexCount, treeInstanceCount);
+      }
+      if (rockInstanceCount > 0 && rockInstBuf) {
+        pass.setVertexBuffer(0, rockLocalBuf);
+        pass.setVertexBuffer(1, rockInstBuf);
+        pass.draw(rockMesh.vertexCount, rockInstanceCount);
+      }
+    }
+
     drawExtra?.(pass);
 
     pass.end();
     device.queue.submit([encoder.finish()]);
   }
 
-  return { setTerrainChunk, removeTerrainChunk, setMarkers, setVP, setFog, frame };
+  return { setTerrainChunk, removeTerrainChunk, setMarkers, setDecor, setVP, setFog, frame };
 }
