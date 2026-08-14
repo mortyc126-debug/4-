@@ -32,6 +32,11 @@ async function main() {
   // живой игре (город 10×, лагерь/точка 5×, форт покрупнее — 6.5×).
   const real = loadRealEntities();
   const usingReal = real !== null;
+  // Отладочная сводка (#status) полезна в отдельном/демо-режиме, но
+  // не игроку живой партии поверх настоящей сцены — не тот же экран, что
+  // тестировался пиксель в пиксель, реальный контент виден и без неё,
+  // а на живом скриншоте она перекрывала верхний левый угол.
+  if (window.parent !== window) statusEl.style.display = "none";
   const seedEntities: RealEntity[] =
     real ??
     [

@@ -4568,9 +4568,12 @@ function toggleView(){
     // #chart (и миникарта внутри) была display:none — её пиксельный размер ещё не мерился
     requestAnimationFrame(()=>{ resize(); drawMini(); });
     // 3D-мир грузим лениво, при первом заходе во вкладку — ни к чему тянуть
-    // WebGL2, воркеры и модели замков, пока игрок вообще не открыл "Мир".
+    // WebGPU, загрузку моделей и рельефа, пока игрок вообще не открыл "Мир".
+    // engine/dist/index.html — новый WebGPU-движок вместо старого WebGL2-
+    // рендера (obyom-3d-infinite.html, файл оставлен в репозитории —
+    // откат на одну прежнюю строку, если найдётся серьёзная регрессия).
     const w3d=$("#world3d");
-    if(w3d && !w3d.src) w3d.src="obyom-3d-infinite.html";
+    if(w3d && !w3d.src) w3d.src="engine/dist/index.html";
   }
 }
 function toggleMenu(){ $("#side-menu").classList.toggle("open"); }
