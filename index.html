@@ -157,14 +157,24 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   border:1px solid var(--rule);border-radius:2px;
   box-shadow:0 4px 18px rgba(0,0,0,.6),inset 0 1px 0 rgba(226,196,133,.09)}
 
-#cartouche{left:14px;bottom:14px;max-width:270px;padding:11px 13px;font-size:13.5px}
+/* Раньше висела в левом нижнем углу поверх инструментов/миникарты —
+   неудобно дотягиваться и легко перекрывалась. Центр экрана (относительно
+   #chart — общего position:relative-предка всех .plate, см. коммент выше) —
+   там же, где по тому же тапу появляется цель, так что взгляд не должен
+   прыгать через весь экран, чтобы прочитать панель. */
+#cartouche{left:50%;top:50%;transform:translate(-50%,-50%);max-width:270px;
+  padding:11px 13px;font-size:13.5px}
 #cartouche .hd{font-variant:small-caps;letter-spacing:.13em;font-size:14px;color:var(--gilt-hi);
-  display:flex;align-items:center;gap:7px;margin-bottom:5px}
+  display:flex;align-items:center;gap:7px;margin-bottom:5px;padding-right:16px}
 #cartouche .co{display:flex;justify-content:space-between;gap:16px;font-size:12.5px;
   color:var(--vellum-dim);padding:1.5px 0}
 #cartouche .co b{font-family:var(--data);color:var(--vellum);font-weight:400}
 #cartouche .hint{margin-top:7px;padding-top:6px;border-top:1px solid var(--rule-soft);
   font-size:11.5px;color:var(--vellum-faint);font-style:italic}
+#cartouche .cart-close{position:absolute;top:7px;right:8px;width:20px;height:20px;
+  line-height:18px;text-align:center;font-size:16px;color:var(--vellum-faint);
+  border-radius:50%;transition:color .15s,background .15s}
+#cartouche .cart-close:hover{color:var(--vellum);background:rgba(255,255,255,.08)}
 
 /* bottom:92px, не 14px — #menu-btn (70×70, z-index:20) сидит в том же углу
    (right:14px;bottom:14px) и перекрывал нижние две кнопки (t-out/t-home),
@@ -3533,7 +3543,13 @@ function renderTop(){
 let lastCart="";
 function renderCartouche(){
   const el=$("#cartouche");
-  const put=h=>{ if(h!==lastCart){ lastCart=h; el.innerHTML=h } el.style.display=h?"":"none"; };
+  // Крестик добавляется тут ОДИН раз, а не в каждой из трёх веток ниже
+  // (node/camp-fort/city) — put() оборачивает готовое тело панели, ветки
+  // ничего не знают про кнопку закрытия.
+  const put=h=>{
+    const full=h?"<button class='cart-close' data-act='closecartouche' title='Закрыть' aria-label='Закрыть'>&times;</button>"+h:h;
+    if(full!==lastCart){ lastCart=full; el.innerHTML=full } el.style.display=full?"":"none";
+  };
   if(!sel){ put(""); return }
   const o=W.map[key(sel.x,sel.y)], p=me();
   const coord="<span class='n' style='font-family:var(--data);font-size:10px;color:var(--vellum-faint)'>"+
@@ -4541,6 +4557,8 @@ function handleAct(e){
   if(closeBtn){ closeMenuModal(); return; }
   const closeBm=e.target.closest("[data-act='closebuilding']");
   if(closeBm){ closeBuildingModal(); return; }
+  const closeCart=e.target.closest("[data-act='closecartouche']");
+  if(closeCart){ sel=null; renderCartouche(); return; }
   const cell=e.target.closest("[data-cell]");
   if(cell && !e.target.closest("[data-act]")){
     openBuildingModal(+cell.dataset.cell);
