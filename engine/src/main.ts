@@ -10,7 +10,7 @@
 import { createWorld, addEntity, addComponent, removeEntity, query } from "bitecs";
 import { createRenderer, type MarkerEntity, type DecorEntity } from "./renderer";
 import { buildTerrainPatch } from "./terrainMesh";
-import { heightAt, HMAX, hash2, isWater, SEED } from "./terrain";
+import { heightAt, HMAX, hash2, isWater, SEED, registerFlattenSite } from "./terrain";
 import { PINE, LEAF, GRASS_TONES, BUSH_TONES, ROCK_TONES } from "./decorMesh";
 import { mul, persp, look, modelMatrix, transformPoint, type Vec3, type Mat4 } from "./mat4";
 import { attachOrbitControls, type OrbitCamera } from "./camera";
@@ -121,6 +121,15 @@ async function main() {
     ownOf.set(eid, !!e.own);
     gridOf.set(eid, { x: e.gx, y: e.gy });
     keyToEid.set(e.key, eid);
+    // Плоская площадка под фундамент (см. terrain.ts registerFlattenSite) —
+    // без неё на склоне модель на глаз "тонет" в один край рельефа и
+    // "парит" над другим (тот самый баг со скриншота: город/лагерь/точка
+    // выглядят вросшими в текстуру земли). Регистрируется ДО первой сборки
+    // меша чанка под этой сущностью (см. вызовы spawnEntity ниже —
+    // стартовые сущности идут раньше updateTerrainChunks/updateFarTerrain),
+    // так что первый же меш уже учитывает площадку, а не подгоняется
+    // задним числом.
+    registerFlattenSite(e.x, e.y, e.scale);
     return eid;
   }
   for (const e of seedEntities) spawnEntity(e);
@@ -452,6 +461,20 @@ async function main() {
     if (decorChanged) refreshDecor();
   }
 
+  // Пересборка меша УЖЕ загруженного ближнего чанка — нужна, когда новая
+  // настоящая сущность (см. syncLiveEntities ниже) появляется в чанке,
+  // рельеф которого был построен РАНЬШЕ, чем для неё зарегистрировали
+  // площадку (registerFlattenSite, terrain.ts): без пересборки первая
+  // сборка так и останется без учёта площадки до выгрузки/повторной
+  // загрузки чанка (а игрок может не покидать область достаточно долго,
+  // чтобы это случилось само).
+  function rebuildTerrainChunkIfLoaded(cx: number, cz: number) {
+    const key = chunkKey(cx, cz);
+    if (!loadedChunks.has(key)) return;
+    const x0 = cx * CHUNK_SIZE, z0 = cz * CHUNK_SIZE;
+    renderer.setTerrainChunk(key, buildTerrainPatch(x0, z0, x0 + CHUNK_SIZE, z0 + CHUNK_SIZE, 1));
+  }
+
   // ---- дальнее грубое кольцо рельефа — "задник", вроде extended backdrop
   // старого рендера (obyom-3d-infinite.html, "кольцо фона+тумана"): при
   // типичном наклоне камеры (pitch) луч в верхний край экрана бьёт в землю
@@ -740,6 +763,8 @@ async function main() {
   // что уже работало для мелких/дальних точек) — новый расчёт только
   // расширяет площадь попадания, никогда не сужает.
   const TAP_MIN_RADIUS_PX = 46;
+  // dx/dz офсеты для оценки экранного радиуса — см. комментарий ниже.
+  const RADIUS_PROBE_DIRS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
   function findEntityAtScreen(px: number, py: number): number | null {
     let best = -1;
     let bestMargin = 0; // выбираем не ближайшую по сырой дистанции, а ту, где тап глубже всего внутри радиуса — иначе крупная дальняя модель отбирала бы тап у мелкой, но реально более близкой
@@ -751,12 +776,21 @@ async function main() {
       if (clip.w <= 0.001) continue; // за спиной камеры
       const sx = (clip.x / clip.w * 0.5 + 0.5) * canvas.width;
       const sy = (1 - (clip.y / clip.w * 0.5 + 0.5)) * canvas.height;
+      // Раньше пробовалась только ОДНА мировая точка (wx+scale) — на
+      // некоторых углах камеры (yaw) направление +X проецировалось почти
+      // "в глубину экрана" вместо "поперёк", экранный радиус схлопывался
+      // почти до нуля, и тап по видимой (широкой на экране!) модели не
+      // засчитывался, или засчитывался соседней сущности ("иногда отмечая
+      // кого-то другого" — репорт пользователя). Пробуем ОБА мировых
+      // направления (±X, ±Z) и берём максимум — экранный радиус модели
+      // корректен при любом yaw камеры, а не только "удачном".
       let radius = TAP_MIN_RADIUS_PX;
-      const edgeClip = transformPoint(currentVP, [wx + scale, wy, wz]);
-      if (edgeClip.w > 0.001) {
+      for (const [dx, dz] of RADIUS_PROBE_DIRS) {
+        const edgeClip = transformPoint(currentVP, [wx + dx * scale, wy, wz + dz * scale]);
+        if (edgeClip.w <= 0.001) continue;
         const ex = (edgeClip.x / edgeClip.w * 0.5 + 0.5) * canvas.width;
         const ey = (1 - (edgeClip.y / edgeClip.w * 0.5 + 0.5)) * canvas.height;
-        radius = Math.max(TAP_MIN_RADIUS_PX, Math.hypot(ex - sx, ey - sy) * 1.25);
+        radius = Math.max(radius, Math.hypot(ex - sx, ey - sy) * 1.25);
       }
       const d = Math.hypot(sx - px, sy - py);
       const margin = radius - d;
@@ -865,6 +899,12 @@ async function main() {
           .catch(() => {})
       );
       decorDirtyChunks.add(chunkKey(Math.floor(e.x / CHUNK_SIZE), Math.floor(e.y / CHUNK_SIZE)));
+      // spawnEntity уже зарегистрировал площадку под эту сущность (см.
+      // выше), но если её чанк рельефа был собран РАНЬШЕ (площадки тогда
+      // ещё не было) — меш нужно пересобрать, иначе площадка появится
+      // только для декора/heightAt-запросов, а сам рельеф под моделью
+      // так и останется старым, неровным.
+      rebuildTerrainChunkIfLoaded(Math.floor(e.x / CHUNK_SIZE), Math.floor(e.y / CHUNK_SIZE));
     }
     for (const [key, eid] of Array.from(keyToEid)) {
       if (seenKeys.has(key)) continue;

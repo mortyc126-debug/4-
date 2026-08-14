@@ -1519,7 +1519,11 @@ function newPlayer(id,race,x,y,isBot){
     res:{food:100000,wood:100000,stone:100000,gold:100000},resAt:0,
     b:{},queues:[null,null],train:{inf:null,arc:null,cav:null,sie:null},
     troops:{},wounded:{},heal:null,
-    gen:{lv:1,xp:0,pts:0,tal:{},id:isBot?(aggr>0.5?0:1):null}, gear:{}, tech:{}, rsch:null,
+    // pts:5 — свободные очки талантов сразу на старте (просьба игрока:
+    // "чтобы у каждого было хоть что-то, чтобы начать вкладываться"), не
+    // ноль, как раньше. Ботов это не задевает — их pts тут же
+    // перезаписываются отдельно (b.gen.pts=b.gen.lv-1, см. ниже по файлу).
+    gen:{lv:1,xp:0,pts:5,tal:{},id:isBot?(aggr>0.5?0:1):null}, gear:{}, tech:{}, rsch:null,
     inventory:Object.fromEntries(GEAR_SLOTS.map(s=>[s.id,{bastion:[0,0,0,0,0],storm:[0,0,0,0,0]}])),
     materials:{ore:[0,0,0,0,0],leather:[0,0,0,0,0],bone:[0,0,0,0,0],ebony:[0,0,0,0,0]}, craft:null,
     tomes:{},
@@ -1662,7 +1666,10 @@ function hashPick(arr,x,y,salt){ return arr[Math.floor(hash2(x,y,salt)*arr.lengt
 // применяется одинаково что к стартовому кластеру, что к любому чанку при
 // дальнейшем исследовании — та же смысловая плотность везде, не только у
 // истока.
-const NODE_CHUNK_CHANCE=22/49, CAMP_CHUNK_CHANCE=13/49;
+// Пользователь снова счёл карту слишком плотной — сократил ещё на 66%
+// (×0.34) поверх прежних 22/49 и 13/49 (см. thinMapDensity6 ниже для
+// ретроактивного применения к уже сгенерированным чанкам).
+const NODE_CHUNK_CHANCE=22/49*0.34, CAMP_CHUNK_CHANCE=13/49*0.34;
 function ensureChunkContent(cx,cy){
   const ck=cx+","+cy;
   if(W.genChunks[ck]) return;
@@ -1778,7 +1785,7 @@ function genWorld(seed){
 
   // Свежий мир уже построен через ensureChunkContent (зазор + вода +
   // "монетка" на чанк) — всем миграциям ниже тут нечего делать.
-  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.densityMigrated5=true; W.infiniteWorldMigrated=true; W.levelMigrated=true;
+  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.densityMigrated5=true; W.densityMigrated6=true; W.infiniteWorldMigrated=true; W.levelMigrated=true;
   logg("Мир создан. Зерно "+seed+". Городов: "+W.players.length+".", "good");
   return W;
 }
@@ -1898,6 +1905,30 @@ function thinMapDensity5(){
   for(const o of drop) delete W.map[key(o.x,o.y)];
   W.densityMigrated5=true;
   if(drop.length) logg("Убраны лагеря/точки, застрявшие в городах: "+drop.length+".","good");
+}
+// thinMapDensity6 — ещё одна волна разрежения: пользователь счёл карту
+// всё ещё слишком плотной, NODE_CHUNK_CHANCE/CAMP_CHUNK_CHANCE урезаны
+// ещё на 66% (см. выше). Тот же приём, что и thinMapDensity4 (та же соль
+// STRUCT_SALT_NODE/CAMP — раз объект физически стоит в W.map, повторная
+// проверка того же детерминированного хэша против НОВОГО, более низкого
+// порога отбирает именно ту долю, что осталась бы, генерируйся мир заново
+// с текущими константами) — отдельная функция и свой флаг миграции, а не
+// повторный вызов thinMapDensity4(), чтобы не переписывать её уже
+// сработавшую (для старых сохранений) историю миграции.
+function thinMapDensity6(){
+  if(W.densityMigrated6) return;
+  const drop=[];
+  for(const k in W.map){
+    const o=W.map[k];
+    if(o.t==="city") continue;
+    const isNode=o.t==="node";
+    const salt=isNode?STRUCT_SALT_NODE:STRUCT_SALT_CAMP;
+    const chance=isNode?NODE_CHUNK_CHANCE:CAMP_CHUNK_CHANCE;
+    if(!structChunkOk(o.x,o.y,salt,chance)) drop.push(o);
+  }
+  for(const o of drop) delete W.map[key(o.x,o.y)];
+  W.densityMigrated6=true;
+  if(drop.length) logg("Плотность точек/лагерей сокращена ещё раз: убрано "+drop.length+".","good");
 }
 // Шестая волна: старые сохранения несут в себе уровни, посчитанные ещё по
 // originDist от фиксированной точки {50,50} — за пределами исходного
@@ -3365,6 +3396,7 @@ async function load(){
     thinMapDensity3();
     thinMapDensity4();
     thinMapDensity5();
+    thinMapDensity6();
     migrateInfiniteWorld();
     migrateStructLevels();
     // Старые походы в старом сохранении не несут m.path (маршрут в обход
@@ -3607,7 +3639,6 @@ function renderCartouche(){
     const gp=o.busy!=null?W.players.find(q=>q.id===o.busy):null;
     const mine=g&&g.pid===p.id;
     let body="<div class='hd'>"+RES_SITE_NAME[o.res]+" "+coord+"</div>"+
-      "<div class='co'><span>Уровень</span><b>"+o.lv+" из 5</b></div>"+
       "<div class='co'><span>Резервы</span><b>"+fmt(o.amount)+"</b></div>"+
       "<div class='co'><span>Сборщик</span><b>"+(gp?gp.nick:"Никто")+"</b></div>";
     if(mine){
@@ -3628,7 +3659,6 @@ function renderCartouche(){
              : my>fp*0.8?["Исход не ясен","var(--gilt)"]
              : ["Отряд поляжет","var(--garnet)"];
     put("<div class='hd'>"+(o.t==="fort"?"Форт":"Лагерь")+" разбойников "+coord+"</div>"+
-      "<div class='co'><span>Уровень</span><b>"+o.lv+"</b></div>"+
       "<div class='co'><span>Сила заставы</span><b>"+fmt(fp)+"</b></div>"+
       "<div class='co'><span>Ваше войско</span><b>"+fmt(my)+"</b></div>"+
       "<div class='co'><span>Прогноз</span><b style='color:"+ok[1]+"'>"+ok[0]+"</b></div>"+
@@ -3670,8 +3700,7 @@ function renderCartouche(){
     const shielded=W.t<q.shieldUntil;
     put("<div class='hd'>"+shieldSvg(q.race,14)+q.nick+" "+coord+"</div>"+
       "<div class='co'><span>Город</span><b>"+q.name+"</b></div>"+
-      "<div class='co'><span>Знамя</span><b>"+RACES[q.race].name+"</b></div>"+
-      "<div class='co'><span>Ратуша</span><b>"+q.b.hall+" · эпоха "+epochOf(q.b.hall)+"</b></div>"+
+      "<div class='co'><span>Ратуша</span><b>"+q.b.hall+"</b></div>"+
       "<div class='co'><span>Сила</span><b>"+fmt(power(q))+"</b></div>"+
       (shielded?"<div class='co'><span>Статус</span><b style='color:#7ab2e0'>Под щитом мира</b></div>":"")+
       scout+
@@ -4854,7 +4883,7 @@ $("#building-modal").addEventListener("input",e=>{
 
 /* ---- Витрина юнитов: все тиры листаются вправо-влево, обучение — прямо с той же карточки ---- */
 let carouselCtx=null, trainCtx=null;
-let healCtx=null, healCarouselOpen=false;
+let healCtx=null, healCarouselOpen=false, lastHealFingerprint="";
 function openUnitCarousel(type){
   const p=me(), maxT=tierUnlockedFor(p,type);
   carouselCtx={type}; researchCtx=null; healCarouselOpen=false; healCtx=null;
@@ -5006,6 +5035,7 @@ function openHealCarousel(){
   trainCtx=null; carouselCtx=null; researchCtx=null; forgeTab=null; forgeRarity=null;
   buildingModalSel=-1; healCarouselOpen=true; healCtx=null;
   $("#bm-body").innerHTML = healCarouselHtml();
+  lastHealFingerprint = woundedList(me()).map(x=>x.type+x.tier).join(",");
   $("#building-modal").classList.add("open");
   updateHealSheet();
 }
@@ -5112,10 +5142,26 @@ function refreshOpenModal(){
       $("#bm-body").innerHTML=researchCarouselHtml();
       const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
     } else if(healCarouselOpen){
-      const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
-      $("#bm-body").innerHTML=healCarouselHtml();
+      // Раньше тут карусель раненых пересобиралась целиком (innerHTML)
+      // КАЖДУЮ секунду безусловно, даже когда список раненых не менялся —
+      // #uc-track (со scroll-snap, см. CSS) уничтожался и пересоздавался
+      // прямо посреди свайпа/тапа "Вперёд", жест срывался на середине
+      // (баг с реального устройства: "не могу листать странички с
+      // ранеными"). Тот же приём, что уже работает у trainCtx ниже —
+      // пересобираем DOM, только когда список раненых или доступность
+      // лечения реально изменились, а не на каждый тик таймера.
+      const p=me();
+      const fp=woundedList(p).map(x=>x.type+x.tier).join(",");
+      const newMax=healCtx?healMaxN(p,healCtx.type,healCtx.tier):0;
+      const newLocked=healCtx?(!!p.heal||newMax<1):true;
+      if(fp!==lastHealFingerprint || (healCtx && newLocked!==healCtx.lastLocked)){
+        if(healCtx){ healCtx.max=newMax; healCtx.n=Math.min(healCtx.n,newMax); healCtx.lastLocked=newLocked; }
+        lastHealFingerprint=fp;
+        const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
+        $("#bm-body").innerHTML=healCarouselHtml();
+        const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
+      }
       updateHealSheet();
-      const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
     } else if(buildingModalSel>=0){
       $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);    }
   }
