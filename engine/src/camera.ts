@@ -1,15 +1,25 @@
 /* =========================================================================
-   Орбитальная камера с управлением: перетаскивание (мышь/один палец) —
-   вращение вокруг цели, колесо/щипок двумя пальцами — масштаб. Панорама
-   (сдвиг cam.target по плоскости земли) — жест сдвига двумя пальцами
-   (составляющая движения помимо изменения расстояния между пальцами, т.е.
-   можно одновременно щипать и панорамировать) плюс WASD/стрелки для отладки
-   с клавиатуры на десктопе. Нужна теперь, когда мир не заканчивается на
-   границе одного острова (см. main.ts — потоковая подгрузка рельефа) —
-   раньше цель камеры была неподвижной точкой демо-сцены. Автооблёт из
-   прошлого шага остаётся, но останавливается, как только игрок хоть раз
-   тронул экран/клавиатуру, и не включается заново.
+   Камера — управление перенесено дословно из прошлого прототипа
+   (obyom-3d-infinite.html, см. блок "Камера: орбита вокруг подвижной цели"):
+   один палец двигает саму ЦЕЛЬ по земле — как обычная карта, к этому все
+   привыкли; поворот, наклон и масштаб отданы двум пальцам разом (щипок —
+   масштаб, разворот пальцев друг вокруг друга — поворот, совместное
+   движение вверх/вниз — наклон), чтобы случайное лёгкое дрожание одного
+   пальца при обычном перемещении не дёргало угол обзора. Прежняя схема
+   этого движка (один палец — вращение, два — зум+панорама) была первым
+   черновым приближением и ощущалась хуже старой — заменена полностью, а
+   не дополнена.
+
+   Единственное намеренное отличие от оригинала — верхняя граница зума
+   (MAX_DIST): там было 240, здесь меньше — калибровано под потоковую
+   подгрузку рельефа этого движка (см. main.ts, FAR_*), которая, в отличие
+   от старого рендера, не тянет детальную/грубую сетку сколь угодно далеко;
+   реальный скриншот с чёрной пустотой у горизонта на 240 показал бы её
+   снова. Автооблёт (idle-вращение, пока никто не тронул экран) — тоже
+   местное дополнение этого движка, в оригинале его не было; останавливается
+   тем же способом (stopAuto), что и в остальных жестах.
    ========================================================================= */
+import { heightAt, HMAX } from "./terrain";
 
 export interface OrbitCamera {
   yaw: number;
@@ -18,50 +28,65 @@ export interface OrbitCamera {
   target: [number, number, number];
 }
 
-// dx/dz — единичное направление на плоскости экрана ("вправо"/"вперёд по
-// экрану"), не мировые оси — panByScreenDelta ниже сама поворачивает их по
-// текущему yaw камеры.
-const PAN_KEYS: Record<string, [number, number]> = {
-  w: [0, -1], arrowup: [0, -1],
-  s: [0, 1], arrowdown: [0, 1],
-  a: [-1, 0], arrowleft: [-1, 0],
-  d: [1, 0], arrowright: [1, 0],
-};
-const KEY_PAN_SPEED = 900; // «экранных пикселей» в секунду — тот же порядок, что и скорость жеста пальцем
-// Раньше было 160 — с реального устройства пришёл скриншот с гигантской
-// чёрной пустотой у горизонта: при typical pitch чем дальше камера (dist),
-// тем дальше от цели луч в верхний край экрана бьёт в землю (пропорционально
-// dist), а рельеф стримится (см. main.ts) лишь на ограниченный радиус вокруг
-// цели. 100 — верхняя практическая граница вместе с дальним грубым кольцом
-// рельефа (см. main.ts, FAR_*): без него даже дефолтный зум был на грани.
+const MIN_DIST = 9;
+// Раньше было 240 (как в оригинале) — с реального устройства пришёл
+// скриншот с гигантской чёрной пустотой у горизонта: при типичном pitch чем
+// дальше камера (dist), тем дальше от цели луч в верхний край экрана бьёт в
+// землю (пропорционально dist), а рельеф стримится (см. main.ts) лишь на
+// ограниченный радиус вокруг цели. 100 — верхняя практическая граница
+// вместе с дальним грубым кольцом рельефа (см. main.ts, FAR_*).
 const MAX_DIST = 100;
+const TAP_MOVE = 10; // px — сдвиг пальца больше этого расстояния значит "это уже не тап, а жест"
+const TAP_TIME = 380; // ms — дольше этого значит "это уже не тап, а долгое удержание"
+
+// dx/dy — единичное направление на плоскости экрана, тот же смысл, что и
+// (e.clientX-drag.x)/(drag.y-e.clientY) у панорамы одним пальцем ниже —
+// клавиатура (отладка на десктопе, оригинал её не знал) просто эмулирует
+// тот же жест поэлементно, а не отдельную формулу.
+const PAN_KEYS: Record<string, [number, number]> = {
+  d: [1, 0], arrowright: [1, 0],
+  a: [-1, 0], arrowleft: [-1, 0],
+  w: [0, 1], arrowup: [0, 1],
+  s: [0, -1], arrowdown: [0, -1],
+};
+const KEY_PAN_SPEED = 700; // «экранных пикселей» в секунду — тот же порядок, что и скорость жеста пальцем
 
 export function attachOrbitControls(canvas: HTMLCanvasElement, cam: OrbitCamera) {
   let autoOrbit = true;
-  let dragging = false;
-  let lastX = 0, lastY = 0;
   const pts = new Map<number, { x: number; y: number }>();
-  let pinchStartDist = 0, pinchStartCamDist = 0;
-  let pinchMid: { x: number; y: number } | null = null;
+  let drag: { x: number; y: number; tx: number; tz: number } | null = null;
+  let pinch: { d: number; y: number; dist: number; yaw: number; pitch: number; angle: number } | null = null;
+  let tapCand: { x: number; y: number; t: number } | null = null;
+  let onTap: ((clientX: number, clientY: number) => void) | null = null;
 
   function stopAuto() {
     autoOrbit = false;
   }
 
-  // Сдвигает cam.target по плоскости земли вдоль ЭКРАННЫХ осей текущего
-  // вида (право/вперёд камеры на плоскости XZ), не в мировых X/Z напрямую —
-  // иначе при повороте камеры (yaw) жест «вправо» перестаёт соответствовать
-  // видимому «вправо» на экране. Масштаб — от cam.dist: чем дальше камера
-  // отдалена, тем быстрее должен идти сдвиг, чтобы жест ощущался одинаково
-  // на любом зуме (тот же приём, что и в zoomAt() старого 2D-рендера).
-  function panByScreenDelta(dx: number, dy: number) {
-    if (dx === 0 && dy === 0) return;
-    stopAuto();
-    const scale = cam.dist * 0.0018;
-    const rightX = Math.cos(cam.yaw), rightZ = -Math.sin(cam.yaw);
-    const fwdX = -Math.sin(cam.yaw), fwdZ = -Math.cos(cam.yaw);
-    cam.target[0] += (-rightX * dx - fwdX * dy) * scale;
-    cam.target[2] += (-rightZ * dx - fwdZ * dy) * scale;
+  function mid(): { x: number; y: number; d: number } {
+    const a = [...pts.values()];
+    return { x: (a[0].x + a[1].x) / 2, y: (a[0].y + a[1].y) / 2, d: Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) };
+  }
+  function twistAngle(): number {
+    const a = [...pts.values()];
+    return Math.atan2(a[1].y - a[0].y, a[1].x - a[0].x);
+  }
+
+  // Сдвигает cam.target по плоскости земли на dxScreen/dyScreen "экранных"
+  // единиц (dyScreen>0 — тот же смысл, что "потянул вверх по экрану"),
+  // масштаб — от cam.dist (дальше камера — быстрее сдвиг, жест ощущается
+  // одинаково на любом зуме), поворот — на текущий yaw (иначе при
+  // развёрнутой камере "вправо" на экране перестаёт быть "вправо" в мире).
+  // Дословно формула из прошлого прототипа. Высота цели (target[1])
+  // подтягивается под рельеф под ней в конце — камера не проваливается и
+  // не зависает в воздухе при переезде через холм/впадину.
+  function panTargetBy(dxScreen: number, dyScreen: number) {
+    const k = cam.dist * 0.0022;
+    const dx = dxScreen * k, dy = dyScreen * k;
+    const c = Math.cos(cam.yaw), s = Math.sin(cam.yaw);
+    cam.target[0] -= dx * c - dy * s;
+    cam.target[2] += dx * s + dy * c;
+    cam.target[1] = heightAt(cam.target[0], cam.target[2]) * HMAX + 1;
   }
 
   canvas.addEventListener("pointerdown", (e) => {
@@ -72,66 +97,76 @@ export function attachOrbitControls(canvas: HTMLCanvasElement, cam: OrbitCamera)
     } catch (_) {
       // Редкий случай (или синтетическое событие в тестах) — без захвата
       // жест всё ещё работает через обычные слушатели, но состояние
-      // вращения/щипка/панорамы ниже не должно остаться неинициализированным
-      // из-за брошенного исключения (иначе pinchStartDist/pinchStartCamDist
-      // остаются нулями, и следующий pointermove с pts.size>=2 обнуляет
-      // cam.dist до минимума — настоящий баг, не только тестовый артефакт).
+      // панорамы/щипка ниже не должно остаться неинициализированным из-за
+      // брошенного исключения (иначе следующий pointermove мог бы обнулить
+      // cam.dist или дёрнуть камеру от несуществующего состояния).
     }
     if (pts.size === 1) {
-      dragging = true;
-      lastX = e.clientX;
-      lastY = e.clientY;
+      drag = { x: e.clientX, y: e.clientY, tx: cam.target[0], tz: cam.target[2] };
+      tapCand = { x: e.clientX, y: e.clientY, t: performance.now() };
     } else if (pts.size === 2) {
-      dragging = false;
-      const [a, b] = [...pts.values()];
-      pinchStartDist = Math.hypot(a.x - b.x, a.y - b.y);
-      pinchStartCamDist = cam.dist;
-      pinchMid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      drag = null;
+      tapCand = null;
+      const m = mid();
+      pinch = { d: m.d, y: m.y, dist: cam.dist, yaw: cam.yaw, pitch: cam.pitch, angle: twistAngle() };
     }
   });
 
   canvas.addEventListener("pointermove", (e) => {
     if (!pts.has(e.pointerId)) return;
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pts.size >= 2) {
-      const [a, b] = [...pts.values()];
-      const d = Math.hypot(a.x - b.x, a.y - b.y);
-      cam.dist = Math.max(8, Math.min(MAX_DIST, pinchStartCamDist * (pinchStartDist / Math.max(12, d))));
-      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-      if (pinchMid) panByScreenDelta(mid.x - pinchMid.x, mid.y - pinchMid.y);
-      pinchMid = mid;
+    if (tapCand && Math.hypot(e.clientX - tapCand.x, e.clientY - tapCand.y) > TAP_MOVE) tapCand = null;
+    if (pts.size >= 2 && pinch) {
+      const m = mid();
+      cam.dist = Math.max(MIN_DIST, Math.min(MAX_DIST, pinch.dist * (pinch.d / Math.max(12, m.d))));
+      cam.yaw = pinch.yaw + (twistAngle() - pinch.angle);
+      cam.pitch = Math.max(0.08, Math.min(1.42, pinch.pitch + (m.y - pinch.y) * 0.005));
       return;
     }
-    if (!dragging) return;
-    const dx = e.clientX - lastX, dy = e.clientY - lastY;
-    lastX = e.clientX;
-    lastY = e.clientY;
-    cam.yaw -= dx * 0.006;
-    cam.pitch = Math.max(0.12, Math.min(1.4, cam.pitch + dy * 0.006));
+    if (!drag) return;
+    // Не инкрементально (не от предыдущего move) — от ЗАФИКСИРОВАННОЙ на
+    // pointerdown/предыдущей смене числа пальцев точки старта (drag.x/y/tx/
+    // tz), тот же приём, что и в оригинале: не накапливает ошибку округления
+    // за долгий жест, и поведение не зависит от частоты pointermove-событий.
+    // panTargetBy сдвигает ОТ ТЕКУЩЕГО target — откатываем target к точке
+    // старта drag перед вызовом, тогда результат совпадает с формулой
+    // оригинала (target = drag-точка ± полный накопленный сдвиг пальца).
+    cam.target[0] = drag.tx;
+    cam.target[2] = drag.tz;
+    panTargetBy(e.clientX - drag.x, drag.y - e.clientY);
   });
 
-  function release(e: PointerEvent) {
+  function lift(e: PointerEvent) {
+    if (tapCand && pts.size === 1 && performance.now() - tapCand.t < TAP_TIME) {
+      onTap?.(tapCand.x, tapCand.y);
+    }
+    tapCand = null;
     pts.delete(e.pointerId);
-    dragging = pts.size === 1;
-    if (pts.size < 2) pinchMid = null;
+    if (pts.size < 2) pinch = null;
+    if (pts.size === 0) {
+      drag = null;
+    } else if (pts.size === 1) {
+      const a = [...pts.values()][0];
+      drag = { x: a.x, y: a.y, tx: cam.target[0], tz: cam.target[2] };
+    }
   }
-  canvas.addEventListener("pointerup", release);
-  canvas.addEventListener("pointercancel", release);
+  canvas.addEventListener("pointerup", lift);
+  canvas.addEventListener("pointercancel", lift);
 
   canvas.addEventListener(
     "wheel",
     (e) => {
       e.preventDefault();
       stopAuto();
-      cam.dist = Math.max(8, Math.min(MAX_DIST, cam.dist * (e.deltaY < 0 ? 0.9 : 1.11)));
+      cam.dist = Math.max(MIN_DIST, Math.min(MAX_DIST, cam.dist * (e.deltaY < 0 ? 0.9 : 1.11)));
     },
     { passive: false }
   );
 
-  // Клавиатура — отладка на десктопе (на телефоне панорама жестом выше).
-  // Набор зажатых клавиш, сдвиг применяется ежекадрово через update() (см.
-  // main.ts draw()), а не по одному событию keydown — иначе зажатая клавиша
-  // не даёт плавного непрерывного движения.
+  // Клавиатура — отладка на десктопе (на телефоне панорама пальцем выше;
+  // в оригинале этого не было). Набор зажатых клавиш, сдвиг применяется
+  // ежекадрово через update() (см. main.ts draw()), а не по одному событию
+  // keydown — иначе зажатая клавиша не даёт плавного непрерывного движения.
   const heldKeys = new Set<string>();
   window.addEventListener("keydown", (e) => {
     const k = e.key.toLowerCase();
@@ -151,7 +186,7 @@ export function attachOrbitControls(canvas: HTMLCanvasElement, cam: OrbitCamera)
     }
     const dt = Math.min(0.1, (nowMs - lastUpdateMs) / 1000);
     lastUpdateMs = nowMs;
-    if (heldKeys.size === 0) return;
+    if (heldKeys.size === 0 || drag) return; // палец на экране — приоритет у него, не мешаем клавиатурой
     let dx = 0, dy = 0;
     for (const k of heldKeys) {
       const [kx, ky] = PAN_KEYS[k];
@@ -159,12 +194,20 @@ export function attachOrbitControls(canvas: HTMLCanvasElement, cam: OrbitCamera)
       dy += ky;
     }
     if (dx === 0 && dy === 0) return;
-    panByScreenDelta(dx * KEY_PAN_SPEED * dt, dy * KEY_PAN_SPEED * dt);
+    panTargetBy(dx * KEY_PAN_SPEED * dt, dy * KEY_PAN_SPEED * dt);
   }
 
   return {
     isAutoOrbiting: () => autoOrbit,
     stopAuto,
     update,
+    // Тап — короткое (< TAP_TIME) касание одним пальцем, почти без сдвига
+    // (< TAP_MOVE): main.ts вешает сюда выбор сущности под пальцем вместо
+    // родного "click" — родной click не всегда надёжно отличает тап от
+    // только что случившейся панорамы тем же пальцем (тот же приём, что и
+    // tryTap()/lift() в прошлом прототипе).
+    onTap(fn: (clientX: number, clientY: number) => void) {
+      onTap = fn;
+    },
   };
 }
