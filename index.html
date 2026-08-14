@@ -1685,7 +1685,7 @@ function genWorld(seed){
 
   // Свежий мир уже построен через ensureChunkContent (зазор + вода +
   // "монетка" на чанк) — всем миграциям ниже тут нечего делать.
-  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.infiniteWorldMigrated=true;
+  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.infiniteWorldMigrated=true;
   logg("Мир создан. Зерно "+seed+". Городов: "+W.players.length+".", "good");
   return W;
 }
@@ -1756,6 +1756,33 @@ function thinMapDensity3(){
   for(const o of drop) delete W.map[key(o.x,o.y)];
   W.densityMigrated3=true;
   if(drop.length) logg("Карта разрежена в третий раз: убрано ещё "+drop.length+" точек/лагерей.","good");
+}
+// Четвёртая волна: NODE_CHUNK_CHANCE/CAMP_CHUNK_CHANCE (см. ensureChunkContent
+// выше) разделили общую монетку 0.5 на отдельные шансы для точек и лагерей
+// (лагерей было ровно вдвое больше нужного — ту же монету бросали ОБА раза),
+// но это правит только НОВЫЕ чанки — уже сгенерированные (W.genChunks[ck]=true)
+// ensureChunkContent больше не трогает никогда, а именно они и есть весь
+// исследованный игроком мир. Без этой волны игрок с давним сохранением
+// остаётся с прежней, вдвое завышенной плотностью лагерей навсегда, сколько
+// бы патчей ни вышло позже — тот самый баг с реального устройства ("фильтр
+// применяется к новым объектам, а старые так же остались"). structChunkOk
+// той же солью (STRUCT_SALT_NODE/CAMP), что и сама генерация — раз объект
+// физически СТОИТ в W.map, он либо единственный кандидат своего чанка (тогда
+// хватает одной проверки), либо уже пережил thinMapDensity2/3 выше.
+function thinMapDensity4(){
+  if(W.densityMigrated4) return;
+  const drop=[];
+  for(const k in W.map){
+    const o=W.map[k];
+    if(o.t==="city") continue;
+    const isNode=o.t==="node";
+    const salt=isNode?STRUCT_SALT_NODE:STRUCT_SALT_CAMP;
+    const chance=isNode?NODE_CHUNK_CHANCE:CAMP_CHUNK_CHANCE;
+    if(!structChunkOk(o.x,o.y,salt,chance)) drop.push(o);
+  }
+  for(const o of drop) delete W.map[key(o.x,o.y)];
+  W.densityMigrated4=true;
+  if(drop.length) logg("Плотность точек/лагерей приведена к текущей норме: убрано "+drop.length+".","good");
 }
 // Мигрирует сохранения до появления W.mapChunks/W.genChunks (координаты
 // объектов не меняются вообще — они и так абсолютные, остаются корректными
@@ -3192,6 +3219,7 @@ async function load(){
     thinMapDensity();
     thinMapDensity2();
     thinMapDensity3();
+    thinMapDensity4();
     migrateInfiniteWorld();
     // Старые походы в старом сохранении не несут m.path (маршрут в обход
     // воды появился позже) — без него marchPos() не может интерполировать

@@ -1,31 +1,58 @@
 /* =========================================================================
    Декоративные пропсы (деревья/камни) — процедурная низкополигональная
-   геометрия, как и весь остальной мир (см. terrain.ts): никаких новых
-   .glb-файлов, просто пара треугольных примитивов, собранных один раз при
-   старте (см. renderer.ts — общий локальный меш, инстансированный, как
-   пин-маркеры). Цвет запечён В МЕШЕ по вершинам (не приходит из инстанса,
-   в отличие от маркеров) — крона/ствол/камень должны быть разного цвета
-   внутри ОДНОГО инстанса, а не одного сплошного тона.
+   геометрия, как и весь остальной мир (см. terrain.ts). Портирована сама
+   ИДЕЯ разнообразия из старого прототипа (obyom-3d-infinite.html —
+   treeSpruce/treePine/treeBroad/treeBirch + палитры PINE/LEAF), не
+   дословный код: там цвет кроны запекался на CPU в геометрию каждого
+   отдельного дерева (тясячи уникальных мешей на статичный остров), тут
+   цвет — атрибут ИНСТАНСА (см. renderer.ts/DECOR_SHADER), а геометрия — две
+   переиспользуемые формы (хвойная/лиственная), потому что рельеф теперь
+   бесконечный и стримится чанками: разную геометрию на каждый инстанс себе
+   не позволить, а разный цвет на каждый инстанс — GPU-инстансинг именно для
+   этого и существует.
+
+   materialId у каждой вершины (0=ствол, 1=крона) — не цвет: ствол всегда
+   один и тот же бурый (см. TRUNK_COLOR в DECOR_SHADER), крона красится
+   цветом инстанса, выбранным на CPU из палитры PINE (хвоя) или LEAF
+   (лиственная — от оливкового до жёлто-оранжевого, тот самый "разнообразный"
+   осенний тон со скриншотов старого прототипа).
    ========================================================================= */
 import { cross, sub, norm, type Vec3 } from "./mat4";
 
 export interface DecorMesh {
   positions: Float32Array;
   normals: Float32Array;
-  colors: Float32Array;
+  materialIds: Float32Array;
   vertexCount: number;
 }
 
-function pushTri(pos: number[], nrm: number[], col: number[], a: Vec3, b: Vec3, c: Vec3, color: Vec3) {
+// Прямой перенос палитр из obyom-3d-infinite.html (PINE/LEAF): хвоя —
+// приглушённые тёмно-зелёные тона, лиственная крона — от оливкового до
+// тёплого золотисто-оранжевого. Само разнообразие ВНУТРИ палитры (не один
+// зафиксированный оттенок на весь тип дерева) — то, чего не хватало первой
+// версии декора.
+export const PINE: Vec3[] = [
+  [0.13, 0.22, 0.14], [0.17, 0.28, 0.16], [0.11, 0.19, 0.13],
+  [0.20, 0.31, 0.19], [0.15, 0.26, 0.20], [0.22, 0.30, 0.14],
+];
+export const LEAF: Vec3[] = [
+  [0.28, 0.34, 0.15], [0.36, 0.39, 0.18], [0.23, 0.30, 0.14],
+  [0.42, 0.36, 0.14], [0.31, 0.27, 0.12], [0.34, 0.41, 0.20], [0.45, 0.40, 0.17],
+];
+export const ROCK_TONES: Vec3[] = [
+  [0.40, 0.38, 0.34], [0.46, 0.43, 0.38], [0.35, 0.34, 0.33], [0.44, 0.38, 0.32],
+];
+
+function pushTri(pos: number[], nrm: number[], mid: number[], a: Vec3, b: Vec3, c: Vec3, m: number) {
   const n = norm(cross(sub(b, a), sub(c, a)));
   for (const p of [a, b, c]) {
     pos.push(p[0], p[1], p[2]);
     nrm.push(n[0], n[1], n[2]);
-    col.push(color[0], color[1], color[2]);
+    mid.push(m);
   }
 }
 
-function cone(pos: number[], nrm: number[], col: number[], sides: number, radius: number, height: number, baseY: number, color: Vec3) {
+function cone(pos: number[], nrm: number[], mid: number[], sides: number, radius: number, height: number, baseY: number, m: number) {
   const apex: Vec3 = [0, baseY + height, 0];
   const base: Vec3[] = [];
   for (let i = 0; i < sides; i++) {
@@ -34,55 +61,78 @@ function cone(pos: number[], nrm: number[], col: number[], sides: number, radius
   }
   for (let i = 0; i < sides; i++) {
     const b0 = base[i], b1 = base[(i + 1) % sides];
-    pushTri(pos, nrm, col, apex, b0, b1, color);
-  }
-  const center: Vec3 = [0, baseY, 0];
-  for (let i = 0; i < sides; i++) {
-    const b0 = base[i], b1 = base[(i + 1) % sides];
-    pushTri(pos, nrm, col, center, b1, b0, color); // обратная навивка — низ смотрит вниз
+    pushTri(pos, nrm, mid, apex, b0, b1, m);
   }
 }
 
-function box(pos: number[], nrm: number[], col: number[], hx: number, hy: number, hz: number, baseY: number, color: Vec3) {
+function box(pos: number[], nrm: number[], mid: number[], hx: number, hy: number, hz: number, baseY: number, m: number) {
   const y0 = baseY, y1 = baseY + hy * 2;
   const c: Vec3[] = [
     [-hx, y0, -hz], [hx, y0, -hz], [hx, y0, hz], [-hx, y0, hz],
     [-hx, y1, -hz], [hx, y1, -hz], [hx, y1, hz], [-hx, y1, hz],
   ];
   const quad = (a: Vec3, b: Vec3, cc: Vec3, d: Vec3) => {
-    pushTri(pos, nrm, col, a, b, cc, color);
-    pushTri(pos, nrm, col, a, cc, d, color);
+    pushTri(pos, nrm, mid, a, b, cc, m);
+    pushTri(pos, nrm, mid, a, cc, d, m);
   };
-  quad(c[0], c[1], c[5], c[4]); // -z
-  quad(c[1], c[2], c[6], c[5]); // +x
-  quad(c[2], c[3], c[7], c[6]); // +z
-  quad(c[3], c[0], c[4], c[7]); // -x
-  quad(c[4], c[5], c[6], c[7]); // +y
+  quad(c[0], c[1], c[5], c[4]);
+  quad(c[1], c[2], c[6], c[5]);
+  quad(c[2], c[3], c[7], c[6]);
+  quad(c[3], c[0], c[4], c[7]);
+  quad(c[4], c[5], c[6], c[7]);
 }
 
-// Ель: тонкий бурый ствол + широкий тёмно-зелёный конус кроны. Простая
-// низкополигональная форма (6-гранный конус), а не что-то более сложное —
-// декор фоновый, крупных деталей вблизи не разглядеть, и таких инстансов
-// на сцене может быть много разом (см. плотность в main.ts).
-const TRUNK_COLOR: Vec3 = [0.35, 0.26, 0.17];
-const CANOPY_COLOR: Vec3 = [0.22, 0.36, 0.17];
-export function buildTreeMesh(): DecorMesh {
-  const positions: number[] = [], normals: number[] = [], colors: number[] = [];
-  box(positions, normals, colors, 0.09, 0.5, 0.09, 0, TRUNK_COLOR);
-  cone(positions, normals, colors, 6, 0.85, 1.9, 0.55, CANOPY_COLOR);
-  return { positions: new Float32Array(positions), normals: new Float32Array(normals), colors: new Float32Array(colors), vertexCount: positions.length / 3 };
+// Октаэдр (8 треугольников) как дешёвый "шар" для лиственной кроны —
+// ellipsoid через масштаб по осям вместо честной сферы (см. treeBroad в
+// старом прототипе — там та же роль у их ball()).
+function blob(pos: number[], nrm: number[], mid: number[], cx: number, cy: number, cz: number, rx: number, ry: number, rz: number, m: number) {
+  const top: Vec3 = [cx, cy + ry, cz], bottom: Vec3 = [cx, cy - ry, cz];
+  const ring: Vec3[] = [];
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+    ring.push([cx + Math.cos(a) * rx, cy, cz + Math.sin(a) * rz]);
+  }
+  for (let i = 0; i < 4; i++) {
+    const r0 = ring[i], r1 = ring[(i + 1) % 4];
+    pushTri(pos, nrm, mid, top, r0, r1, m);
+    pushTri(pos, nrm, mid, bottom, r1, r0, m);
+  }
 }
 
-// Камень: куб с прыгающими по фиксированной (не случайной на лету — детерминизм
-// меша) таблице смещений углами — не идеальный кубик, но и не полноценный
-// procедурный блоб: дешёвая неровность формы почти бесплатно.
-const ROCK_COLOR: Vec3 = [0.4, 0.38, 0.34];
+const TRUNK_HALF = 0.09;
+
+// Ель/сосна: ствол + три сужающихся яруса конуса кроны (вместо одного
+// конуса — заметно более узнаваемый хвойный силуэт, тот же приём, что и
+// treeSpruce/treePine в прототипе).
+export function buildConiferMesh(): DecorMesh {
+  const positions: number[] = [], normals: number[] = [], materialIds: number[] = [];
+  box(positions, normals, materialIds, TRUNK_HALF, 0.5, TRUNK_HALF, 0, 0);
+  cone(positions, normals, materialIds, 6, 0.85, 1.05, 0.45, 1);
+  cone(positions, normals, materialIds, 6, 0.62, 0.85, 1.05, 1);
+  cone(positions, normals, materialIds, 6, 0.36, 0.65, 1.6, 1);
+  return { positions: new Float32Array(positions), normals: new Float32Array(normals), materialIds: new Float32Array(materialIds), vertexCount: positions.length / 3 };
+}
+
+// Лиственное дерево: ствол + три перекрывающихся "шара"-октаэдра кроны —
+// округлый силуэт, контрастный конусам хвойных (см. treeBroad в прототипе).
+export function buildBroadleafMesh(): DecorMesh {
+  const positions: number[] = [], normals: number[] = [], materialIds: number[] = [];
+  box(positions, normals, materialIds, TRUNK_HALF, 0.55, TRUNK_HALF, 0, 0);
+  blob(positions, normals, materialIds, 0, 1.35, 0, 0.62, 0.55, 0.62, 1);
+  blob(positions, normals, materialIds, 0.42, 1.18, 0.1, 0.42, 0.4, 0.42, 1);
+  blob(positions, normals, materialIds, -0.36, 1.22, -0.28, 0.4, 0.38, 0.4, 1);
+  return { positions: new Float32Array(positions), normals: new Float32Array(normals), materialIds: new Float32Array(materialIds), vertexCount: positions.length / 3 };
+}
+
+// Камень: куб с фиксированными по таблице сдвигами углов (детерминизм
+// меша) — цвет теперь тоже приходит из инстанса (см. ROCK_TONES), поэтому
+// materialId=1 везде, ствола-эквивалента у камня нет.
 const ROCK_JITTER: Vec3[] = [
   [-0.05, 0.02, 0.04], [0.06, -0.03, -0.02], [0.03, 0.04, 0.06], [-0.04, -0.02, -0.05],
   [0.05, 0.06, -0.03], [-0.06, 0.03, 0.02], [-0.02, -0.04, 0.05], [0.04, 0.05, -0.04],
 ];
 export function buildRockMesh(): DecorMesh {
-  const positions: number[] = [], normals: number[] = [], colors: number[] = [];
+  const positions: number[] = [], normals: number[] = [], materialIds: number[] = [];
   const hx = 0.5, hy = 0.34, hz = 0.5;
   const base: Vec3[] = [
     [-hx, 0, -hz], [hx, 0, -hz], [hx, 0, hz], [-hx, 0, hz],
@@ -90,14 +140,14 @@ export function buildRockMesh(): DecorMesh {
   ];
   const c: Vec3[] = base.map((p, i) => [p[0] + ROCK_JITTER[i][0], p[1] + ROCK_JITTER[i][1], p[2] + ROCK_JITTER[i][2]]);
   const quad = (a: Vec3, b: Vec3, cc: Vec3, d: Vec3) => {
-    pushTri(positions, normals, colors, a, b, cc, ROCK_COLOR);
-    pushTri(positions, normals, colors, a, cc, d, ROCK_COLOR);
+    pushTri(positions, normals, materialIds, a, b, cc, 1);
+    pushTri(positions, normals, materialIds, a, cc, d, 1);
   };
   quad(c[0], c[1], c[5], c[4]);
   quad(c[1], c[2], c[6], c[5]);
   quad(c[2], c[3], c[7], c[6]);
   quad(c[3], c[0], c[4], c[7]);
   quad(c[4], c[5], c[6], c[7]);
-  quad(c[3], c[2], c[1], c[0]); // низ — почти всегда в земле, но чтобы не было дырки на склоне
-  return { positions: new Float32Array(positions), normals: new Float32Array(normals), colors: new Float32Array(colors), vertexCount: positions.length / 3 };
+  quad(c[3], c[2], c[1], c[0]);
+  return { positions: new Float32Array(positions), normals: new Float32Array(normals), materialIds: new Float32Array(materialIds), vertexCount: positions.length / 3 };
 }
