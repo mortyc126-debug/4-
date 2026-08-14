@@ -166,11 +166,22 @@ async function main() {
   const format = navigator.gpu.getPreferredCanvasFormat();
   function resize() {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    canvas.width = Math.max(1, Math.floor(canvas.clientWidth * dpr));
-    canvas.height = Math.max(1, Math.floor(canvas.clientHeight * dpr));
+    const w = Math.max(1, Math.floor(canvas.clientWidth * dpr));
+    const h = Math.max(1, Math.floor(canvas.clientHeight * dpr));
+    if (canvas.width !== w) canvas.width = w;
+    if (canvas.height !== h) canvas.height = h;
   }
   resize();
-  window.addEventListener("resize", resize);
+  // ResizeObserver, не только window "resize" — тот не срабатывает, если
+  // финальный layout канвы устаканивается ПОСЛЕ первого запуска этого
+  // скрипта (обычная гонка на перезагрузке внутри iframe: сам iframe ещё
+  // не досчитал свой размер, clientWidth/clientHeight читаются нулями,
+  // канва застревает 1×1 пикселем навсегда — ничего не рисуется, хотя
+  // остальной JS, включая подписи над сущностями, продолжает работать как
+  // ни в чём не бывало, тот же обманчивый симптом, что и у прошлого
+  // шейдерного бага). ResizeObserver перевызывает resize() при любом
+  // фактическом изменении размера канвы, когда бы layout ни досчитался.
+  new ResizeObserver(resize).observe(canvas);
   ctx.configure({ device, format, alphaMode: "opaque" });
   lines.push(`WebGPU: устройство получено, формат — ${format}`);
 
@@ -262,7 +273,13 @@ async function main() {
       for (let i = 0; i < cellsPerSide; i++) {
         const gx = cx * cellsPerSide + i, gz = cz * cellsPerSide + j;
         if (hash2(gx, gz, SEED + 777) >= DECOR_CHANCE) continue;
-        const jx = hash2(gx, gz, SEED + 778), jz = hash2(gx, gz, SEED + 779);
+        // Джиттер ужат до средних 65% клетки (не 0..DECOR_CELL целиком) —
+        // иначе два дерева из СОСЕДНИХ клеток могли оказаться у общей
+        // границы почти вплотную друг к другу (пользователь заметил
+        // именно такие кучки на скриншоте). Плотность/число деревьев не
+        // меняются, меняется только то, где именно внутри клетки они могут
+        // оказаться.
+        const jx = 0.175 + hash2(gx, gz, SEED + 778) * 0.65, jz = 0.175 + hash2(gx, gz, SEED + 779) * 0.65;
         const wx = cx * CHUNK_SIZE + i * DECOR_CELL + jx * DECOR_CELL;
         const wz = cz * CHUNK_SIZE + j * DECOR_CELL + jz * DECOR_CELL;
         if (isWater(wx, wz)) continue;
@@ -873,7 +890,7 @@ async function main() {
     const vp = mul(persp(0.72, aspect, 0.5, 300), look(eye, cam.target, [0, 1, 0]));
     currentVP = vp;
     renderer.setVP(vp);
-    renderer.setFog(eye, FOG_COLOR, FOG_K);
+    renderer.setFog(eye, FOG_COLOR, FOG_K, tMs / 1000);
     modelPipeline.setFog(eye, FOG_COLOR, FOG_K);
     const markers = marchMarkers();
     if (highlightMarker) markers.push(highlightMarker);
