@@ -116,31 +116,72 @@ async function main() {
   ctx.configure({ device, format, alphaMode: "opaque" });
   lines.push(`WebGPU: устройство получено, формат — ${format}`);
 
-  // ---- рельеф: кусок вокруг сущностей демо, тот же остров, что и в игре;
-  // с настоящими данными сущности разбросаны по всей карте (CFG.MAP=100
-  // в живой игре) — рельеф строим на весь размер. Ни то, ни другое пока
-  // не чанкуется/не стримится, как в живом 3D (это отдельный будущий шаг,
-  // сейчас цель — увидеть настоящую партию целиком хоть одним куском).
-  //
-  // Запас за пределами официальной карты (0..100): игрок может
-  // стоять у самого края или в углу (см. живой скриншот — камера, глядя
-  // "наружу", упиралась в чёрную пустоту точно по границе патча). heightAt/
-  // groundColor/waterColor — чистые процедурные функции от (x,y) без
-  // привязки к границам CFG.MAP (см. terrain.ts), так что за пределами
-  // карты они честно продолжают тот же остров/воду, а не выдумывают что-то
-  // новое — тот же приём, что и extended backdrop в старом рендере
-  // (obyom-3d-infinite.html), просто через больший патч вместо кольца
-  // фона+тумана.
-  const MARGIN = 15;
-  const PATCH = usingReal
-    ? { x0: -MARGIN, y0: -MARGIN, x1: 100 + MARGIN, y1: 100 + MARGIN }
-    : { x0: 15, y0: 0, x1: 70, y1: 45 };
-  const mesh = buildTerrainPatch(PATCH.x0, PATCH.y0, PATCH.x1, PATCH.y1, 1);
-  lines.push(`рельеф: патч ${PATCH.x1 - PATCH.x0}×${PATCH.y1 - PATCH.y0} клеток, ${mesh.vertexCount} вершин`);
-  setStatus(lines);
-
   const renderer = createRenderer(device, ctx, format);
-  renderer.setTerrain(mesh);
+
+  // ---- рельеф: поток чанков 16×16 вокруг цели камеры вместо одного патча
+  // фиксированного размера — мир не заканчивается на границе одного острова
+  // (см. camera.ts — свободная панорама). heightAt/groundColor/waterColor —
+  // чистые процедурные функции от (x,y) без привязки к границам CFG.MAP
+  // (см. terrain.ts), так что соседние чанки автоматически совпадают по
+  // краю просто потому, что это один и тот же непрерывный шум, посчитанный
+  // в разных прямоугольниках — сшивать нечего, специального алгоритма
+  // склейки не нужно.
+  const CHUNK_SIZE = 16;
+  const LOAD_RADIUS = 3; // 7×7=49 чанков вокруг камеры — тот же порядок вершин, что уже выдержал стресс-тест на 60 к/с
+  const UNLOAD_RADIUS = 5; // с запасом против дребезга на границе загрузки/выгрузки
+  function chunkKey(cx: number, cz: number): string {
+    return cx + "," + cz;
+  }
+  // Мост движок↔игра (задел под Фазу 4 плана бесконечного мира): когда
+  // движок встроен внутри партии, уведомляем родителя о новом чанке
+  // рельефа, вошедшем в радиус загрузки — тот же приём-обёртка, что и
+  // notifyParentCartouche ниже. В index.html такой функции пока нет
+  // (появится вместе с генерацией дикого контента по чанкам) — вызов тихо
+  // no-op до тех пор, ничего не ломает.
+  function notifyParentChunk(cx: number, cz: number) {
+    try {
+      const w = window.parent;
+      if (w && w !== window && typeof (w as any).ensureWorldChunk === "function") {
+        (w as any).ensureWorldChunk(cx, cz);
+      }
+    } catch (_) {
+      /* кросс-origin или не встроено — тихо игнорируем */
+    }
+  }
+  const loadedChunks = new Set<string>();
+  let lastCamChunkX: number | null = null;
+  let lastCamChunkZ: number | null = null;
+  function updateTerrainChunks(centerX: number, centerZ: number, force = false) {
+    const ccx = Math.floor(centerX / CHUNK_SIZE);
+    const ccz = Math.floor(centerZ / CHUNK_SIZE);
+    // Дёшево: пересчитывать только при смене чанка камеры, не каждый кадр —
+    // сама проверка (два сравнения) ничего не стоит, а полный проход по
+    // радиусу загрузки/выгрузки экономится, пока камера гуляет внутри
+    // одного и того же чанка.
+    if (!force && ccx === lastCamChunkX && ccz === lastCamChunkZ) return;
+    lastCamChunkX = ccx;
+    lastCamChunkZ = ccz;
+    for (let dz = -LOAD_RADIUS; dz <= LOAD_RADIUS; dz++) {
+      for (let dx = -LOAD_RADIUS; dx <= LOAD_RADIUS; dx++) {
+        const cx = ccx + dx, cz = ccz + dz;
+        const key = chunkKey(cx, cz);
+        if (loadedChunks.has(key)) continue;
+        const x0 = cx * CHUNK_SIZE, z0 = cz * CHUNK_SIZE;
+        const chunkMesh = buildTerrainPatch(x0, z0, x0 + CHUNK_SIZE, z0 + CHUNK_SIZE, 1);
+        renderer.setTerrainChunk(key, chunkMesh);
+        loadedChunks.add(key);
+        notifyParentChunk(cx, cz);
+      }
+    }
+    for (const key of Array.from(loadedChunks)) {
+      const [kx, kz] = key.split(",").map(Number);
+      if (Math.max(Math.abs(kx - ccx), Math.abs(kz - ccz)) > UNLOAD_RADIUS) {
+        renderer.removeTerrainChunk(key);
+        loadedChunks.delete(key);
+      }
+    }
+    (window as any).__terrainChunkCount = loadedChunks.size;
+  }
 
   // ---- настоящие 3D-модели (те же .glb, что и в живой игре) для ВСЕХ
   // сущностей. Путь абсолютный от корня сайта: этот прототип живёт в
@@ -216,12 +257,19 @@ async function main() {
   // демо-патча. Управляемая — перетаскивание вращает, колесо/щипок
   // масштабирует (см. camera.ts); пока не тронули экран — тихо продолжает
   // медленный автооблёт, чтобы страница не выглядела застывшей картинкой.
+  const DEMO_CENTER = { x: 42, y: 22 }; // примерный центр демо-сущностей (см. seedEntities выше) — раньше это была середина фиксированного PATCH
   const own = real?.find((e) => e.own);
-  const cx = own ? own.x : (PATCH.x0 + PATCH.x1) / 2;
-  const cz = own ? own.y : (PATCH.y0 + PATCH.y1) / 2;
+  const cx = own ? own.x : DEMO_CENTER.x;
+  const cz = own ? own.y : DEMO_CENTER.y;
   const cy = heightAt(cx, cz) * HMAX;
   const cam: OrbitCamera = { yaw: 0, pitch: 0.55, dist: 42, target: [cx, cy + 2, cz] };
   const controls = attachOrbitControls(canvas, cam);
+  // Первая загрузка чанков рельефа вокруг стартовой позиции камеры — ДО
+  // первого кадра цикла отрисовки (force=true, т.к. lastCamChunk* ещё не
+  // установлены), тот же порядок, что и раньше со статичным патчем.
+  updateTerrainChunks(cam.target[0], cam.target[2], true);
+  lines.push(`рельеф: чанков ${loadedChunks.size} (${CHUNK_SIZE}×${CHUNK_SIZE} клеток каждый)`);
+  setStatus(lines);
 
   // ---- контракт для index.html: инструменты "+"/"−"/"к своему городу" и
   // клавиши +/-/h сейчас крутят СТАРЫЙ рендер через world3dWin() — читают
@@ -500,6 +548,8 @@ async function main() {
 
   function draw(tMs: number) {
     if (controls.isAutoOrbiting()) cam.yaw = tMs * 0.00015;
+    controls.update(tMs); // WASD/стрелки — панорама, зажатая клавиша даёт непрерывный сдвиг между кадрами
+    updateTerrainChunks(cam.target[0], cam.target[2]); // no-op, пока камера внутри того же чанка — дёшево звать каждый кадр
     const eye: Vec3 = [
       cam.target[0] + Math.sin(cam.yaw) * Math.cos(cam.pitch) * cam.dist,
       cam.target[1] + Math.sin(cam.pitch) * cam.dist,

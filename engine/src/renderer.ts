@@ -51,7 +51,12 @@ export interface MarkerEntity {
 }
 
 export interface Renderer {
-  setTerrain(mesh: MeshData): void;
+  // Рельеф стримится кусками (чанками) вокруг камеры — не одним куском на
+  // всю сцену (см. main.ts, менеджер чанков): setTerrainChunk кладёт/обновляет
+  // конкретный кусок по его ключу ("cx,cy"), removeTerrainChunk убирает кусок,
+  // вышедший из радиуса выгрузки.
+  setTerrainChunk(key: string, mesh: MeshData): void;
+  removeTerrainChunk(key: string): void;
   setMarkers(entities: MarkerEntity[]): void;
   setVP(vp: Float32Array): void;
   // drawExtra — вызывается ВНУТРИ того же render pass, что рельеф и маркеры
@@ -101,9 +106,12 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
     layout: terrainPipeline.getBindGroupLayout(0),
     entries: [{ binding: 0, resource: { buffer: uniformBuf } }],
   });
-  let terrainPosBuf: GPUBuffer | null = null;
-  let terrainColBuf: GPUBuffer | null = null;
-  let terrainVertexCount = 0;
+  // Map кусков рельефа по ключу чанка вместо одной пары буферов на всю
+  // сцену — потоковая подгрузка/выгрузка вокруг камеры (см. main.ts): при
+  // бесконечном мире держать вершины всей когда-либо увиденной территории
+  // в одном буфере не получится.
+  interface TerrainChunk { posBuf: GPUBuffer; colBuf: GPUBuffer; vertexCount: number }
+  const terrainChunks = new Map<string, TerrainChunk>();
 
   // ---- маркеры (инстансинг) ----
   const markerModule = device.createShaderModule({ code: MARKER_SHADER });
@@ -157,20 +165,29 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
     depthView = depthTex.createView();
   }
 
-  function setTerrain(mesh: MeshData) {
-    terrainVertexCount = mesh.vertexCount;
-    terrainPosBuf?.destroy();
-    terrainColBuf?.destroy();
-    terrainPosBuf = device.createBuffer({
+  function setTerrainChunk(key: string, mesh: MeshData) {
+    const prev = terrainChunks.get(key);
+    prev?.posBuf.destroy();
+    prev?.colBuf.destroy();
+    const posBuf = device.createBuffer({
       size: Math.max(mesh.positions.byteLength, 4),
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
-    terrainColBuf = device.createBuffer({
+    const colBuf = device.createBuffer({
       size: Math.max(mesh.colors.byteLength, 4),
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
-    device.queue.writeBuffer(terrainPosBuf, 0, mesh.positions);
-    device.queue.writeBuffer(terrainColBuf, 0, mesh.colors);
+    device.queue.writeBuffer(posBuf, 0, mesh.positions);
+    device.queue.writeBuffer(colBuf, 0, mesh.colors);
+    terrainChunks.set(key, { posBuf, colBuf, vertexCount: mesh.vertexCount });
+  }
+
+  function removeTerrainChunk(key: string) {
+    const chunk = terrainChunks.get(key);
+    if (!chunk) return;
+    chunk.posBuf.destroy();
+    chunk.colBuf.destroy();
+    terrainChunks.delete(key);
   }
 
   function setMarkers(entities: MarkerEntity[]) {
@@ -215,12 +232,15 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
       },
     });
 
-    if (terrainVertexCount > 0 && terrainPosBuf && terrainColBuf) {
+    if (terrainChunks.size > 0) {
       pass.setPipeline(terrainPipeline);
       pass.setBindGroup(0, terrainBindGroup);
-      pass.setVertexBuffer(0, terrainPosBuf);
-      pass.setVertexBuffer(1, terrainColBuf);
-      pass.draw(terrainVertexCount);
+      for (const chunk of terrainChunks.values()) {
+        if (chunk.vertexCount === 0) continue;
+        pass.setVertexBuffer(0, chunk.posBuf);
+        pass.setVertexBuffer(1, chunk.colBuf);
+        pass.draw(chunk.vertexCount);
+      }
     }
 
     if (instanceCount > 0 && instBuf) {
@@ -237,5 +257,5 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
     device.queue.submit([encoder.finish()]);
   }
 
-  return { setTerrain, setMarkers, setVP, frame };
+  return { setTerrainChunk, removeTerrainChunk, setMarkers, setVP, frame };
 }
