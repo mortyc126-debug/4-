@@ -15,7 +15,7 @@ import { mul, persp, look, modelMatrix, transformPoint, type Vec3, type Mat4 } f
 import { attachOrbitControls, type OrbitCamera } from "./camera";
 import { loadGLB } from "./glb";
 import { uploadGLB, createModelPipeline, type GpuModel, type ModelInstance } from "./modelRenderer";
-import { loadRealEntities, type RealEntity } from "./realData";
+import { loadRealEntities, getOwnCityPos, type RealEntity } from "./realData";
 import { loadLiveMarches } from "./marchData";
 
 const statusEl = document.getElementById("status") as HTMLDivElement;
@@ -26,11 +26,32 @@ function setStatus(lines: string[]) {
 async function main() {
   const lines: string[] = [];
 
+  // Чанк 16×16 — то же пространство координат, что и STRUCT_CHUNK в
+  // index.html (см. ensureChunkContent/W.mapChunks): и рельеф (ниже), и
+  // отбор сущностей на рендер (realData.ts) стримятся вокруг камеры одной
+  // и той же сеткой. ENTITY_RADIUS чуть шире радиуса выгрузки рельефа —
+  // сущности не должны пропадать раньше земли под ними.
+  const CHUNK_SIZE = 16;
+  const LOAD_RADIUS = 3; // 7×7=49 чанков вокруг камеры — тот же порядок вершин, что уже выдержал стресс-тест на 60 к/с
+  const UNLOAD_RADIUS = 5; // с запасом против дребезга на границе загрузки/выгрузки
+  const ENTITY_RADIUS = (UNLOAD_RADIUS + 1) * CHUNK_SIZE;
+  const DEMO_CENTER = { x: 42, y: 22 }; // примерный центр демо-сущностей (см. seedEntities ниже)
+
   // ---- bitECS: настоящие данные партии, если движок открыт внутри игры
   // (см. realData.ts — читает window.parent.W), иначе те же четыре
   // придуманные сущности демо, что и раньше. Масштаб моделей — как в
   // живой игре (город 10×, лагерь/точка 5×, форт покрупнее — 6.5×).
-  const real = loadRealEntities();
+  //
+  // loadRealEntities теперь принимает центр+радиус (см. Фазу 5 плана
+  // бесконечного мира) — при настоящей партии сущностей может быть сколько
+  // угодно по мере исследования, полный перебор W.map на каждую загрузку/
+  // опрос не годится. Центр для ПЕРВОГО вызова — позиция своего города,
+  // читается напрямую из W.players[0] через getOwnCityPos(), в обход
+  // loadRealEntities целиком: иначе курица и яйцо (чтобы найти свой город
+  // через loadRealEntities, нужен уже готовый центр отбора).
+  const ownPos = getOwnCityPos();
+  const initialCenter = ownPos ?? DEMO_CENTER;
+  const real = loadRealEntities(initialCenter.x, initialCenter.y, ENTITY_RADIUS);
   const usingReal = real !== null;
   // Отладочная сводка (#status) полезна в отдельном/демо-режиме, но
   // не игроку живой партии поверх настоящей сцены — не тот же экран, что
@@ -126,9 +147,6 @@ async function main() {
   // краю просто потому, что это один и тот же непрерывный шум, посчитанный
   // в разных прямоугольниках — сшивать нечего, специального алгоритма
   // склейки не нужно.
-  const CHUNK_SIZE = 16;
-  const LOAD_RADIUS = 3; // 7×7=49 чанков вокруг камеры — тот же порядок вершин, что уже выдержал стресс-тест на 60 к/с
-  const UNLOAD_RADIUS = 5; // с запасом против дребезга на границе загрузки/выгрузки
   function chunkKey(cx: number, cz: number): string {
     return cx + "," + cz;
   }
@@ -257,10 +275,8 @@ async function main() {
   // демо-патча. Управляемая — перетаскивание вращает, колесо/щипок
   // масштабирует (см. camera.ts); пока не тронули экран — тихо продолжает
   // медленный автооблёт, чтобы страница не выглядела застывшей картинкой.
-  const DEMO_CENTER = { x: 42, y: 22 }; // примерный центр демо-сущностей (см. seedEntities выше) — раньше это была середина фиксированного PATCH
-  const own = real?.find((e) => e.own);
-  const cx = own ? own.x : DEMO_CENTER.x;
-  const cz = own ? own.y : DEMO_CENTER.y;
+  const cx = ownPos ? ownPos.x : DEMO_CENTER.x;
+  const cz = ownPos ? ownPos.y : DEMO_CENTER.y;
   const cy = heightAt(cx, cz) * HMAX;
   const cam: OrbitCamera = { yaw: 0, pitch: 0.55, dist: 42, target: [cx, cy + 2, cz] };
   const controls = attachOrbitControls(canvas, cam);
@@ -399,7 +415,12 @@ async function main() {
   const SYNC_INTERVAL_MS = 3000;
   let syncCount = 0;
   async function syncLiveEntities() {
-    const fresh = loadRealEntities();
+    // Центр отбора — ТЕКУЩАЯ позиция камеры, не стартовая: по мере того как
+    // игрок панорамирует (см. camera.ts), в зону отбора естественно входят
+    // новые сущности и выходят старые — тот же диф ниже (seenKeys/keyToEid)
+    // обрабатывает оба случая одинаково, отдельной логики "вышло из вида"
+    // не потребовалось.
+    const fresh = loadRealEntities(cam.target[0], cam.target[2], ENTITY_RADIUS);
     if (!fresh) return; // связь с window.parent.W пропала — оставляем сцену как есть
     const seenKeys = new Set<string>();
     const pendingLoads: Promise<void>[] = [];
