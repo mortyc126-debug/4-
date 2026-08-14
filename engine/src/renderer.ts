@@ -72,7 +72,19 @@ fn fs(in: VOut) -> @location(0) vec4f {
 
   var albedo: vec3f;
   if (in.waterFlag > 0.5) {
-    albedo = in.waterColor;
+    // Воде нет смысла давать статичную текстуру-плитку — вода должна
+    // двигаться, а не быть узнаваемо повторяющимся узором. Вместо текстуры —
+    // процедурная рябь (две пересекающиеся синусоиды, сдвигаются со
+    // временем, fog.eye.w — секунды с начала работы страницы, см. main.ts)
+    // плюс грубый Френель: чем более "в упор" смотрит камера на воду (луч
+    // почти параллелен поверхности), тем ярче блик — то самое "небо
+    // отражается в воде под острым углом", без честного отражения.
+    let time = fog.eye.w;
+    let ripple = sin(in.worldPos.x * 1.6 + time * 1.3) * cos(in.worldPos.z * 1.4 + time * 1.05) * 0.05
+               + sin(in.worldPos.x * 0.5 - in.worldPos.z * 0.7 + time * 0.6) * 0.03;
+    let viewDir = normalize(fog.eye.xyz - in.worldPos);
+    let grazing = pow(1.0 - clamp(dot(n, viewDir), 0.0, 1.0), 4.0);
+    albedo = mix(in.waterColor * (1.0 + ripple), fog.color.rgb * 1.3, grazing * 0.5);
   } else {
     let t = clamp((in.elevation - 0.235) / (1.0 - 0.235), 0.0, 1.0);
     var a: vec3f; var b: vec3f; var blend: f32;
@@ -197,7 +209,16 @@ fn fs(in: VOut) -> @location(0) vec4f {
   }
   let sun = normalize(vec3f(0.62, 0.38, 0.30));
   let n = normalize(in.normal);
-  let diffuse = max(0.35, dot(n, sun));
+  // У карточек кроны/травы/куста (materialId=1) нормаль — это нормаль
+  // ПЛОСКОСТИ, а не настоящего объёма листвы: если плоскость развёрнута
+  // случайным yaw инстанса боком к солнцу, честный diffuse-пол 0.35 из
+  // TERRAIN_SHADER гасил её почти до черноты — в реальности объём листвы
+  // всё равно ловил бы рассеянный свет с других сторон. Пол повыше (0.6)
+  // только для карточек — ствол (materialId=0) остаётся на обычном 0.35,
+  // у него честная объёмная геометрия (гранёный конус), настоящая
+  // светотень там уместна и без этой поправки.
+  let diffuseFloor = select(0.35, 0.6, in.materialId > 0.5);
+  let diffuse = max(diffuseFloor, dot(n, sun));
   let lit = base.rgb * diffuse * in.shade;
   let d = distance(in.worldPos, fog.eye.xyz);
   let k = d * fog.color.w; let f = clamp(1.0 - exp(-k * k), 0.0, 1.0);
@@ -245,7 +266,13 @@ export interface Renderer {
   // Позиция камеры + цвет/плотность тумана — общие для рельефа и маркеров.
   // density — коэффициент экспоненциального затухания (см. TERRAIN_SHADER):
   // чем больше, тем ближе начинается дымка.
-  setFog(eye: [number, number, number], color: [number, number, number], density: number): void;
+  // timeSec — секунды с начала работы страницы, для процедурной анимации
+  // ряби воды (см. TERRAIN_SHADER) — текстуры у воды нет и не будет
+  // (статичная плитка выглядела бы хуже честной анимированной ряби), время
+  // передаётся тем же общим fog-буфером, что и позиция камеры/туман,
+  // отдельного uniform под одно число заводить не стали — eye.w всё равно
+  // не использовался.
+  setFog(eye: [number, number, number], color: [number, number, number], density: number, timeSec: number): void;
   // drawExtra — вызывается ВНУТРИ того же render pass, что рельеф и маркеры
   // (общий depth-буфер, единая VP-камера), после них: сюда вешаются
   // настоящие .glb-модели (см. main.ts/modelRenderer.ts) без отдельного
@@ -411,6 +438,9 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   // делят ель/сосна/дуб/сухостой/куст/трава/камень, у берёзы своя), грузим
   // каждый файл ОДИН раз и переиспользуем GPUTexture между bind group'ами
   // разных видов, а не заново фетчим один и тот же PNG по нескольку раз.
+  // "rock" тут не грузится отдельным fetch'ем вовсе — это та же гранитная
+  // текстура, что и у рельефа (texRock выше), незачем качать те же ~1МБ
+  // с телефона дважды.
   const decorTexPaths = {
     bark: "/textures/decor/bark.png",
     birchBark: "/textures/decor/birch_bark.png",
@@ -421,13 +451,12 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     birchLeaf: "/textures/decor/birch_leaf.png",
     bush: "/textures/decor/bush.png",
     grassTuft: "/textures/decor/grass_tuft.png",
-    rock: "/textures/ground/rock.png", // та же гранитная текстура, что и у рельефа — камень декора и камень рельефа одна порода
   };
-  type DecorTexKey = keyof typeof decorTexPaths;
+  type DecorTexKey = keyof typeof decorTexPaths | "rock";
   const decorTexEntries = await Promise.all(
     (Object.entries(decorTexPaths) as [DecorTexKey, string][]).map(async ([key, path]) => [key, await loadTexture(device, path)] as const)
   );
-  const decorTextures = Object.fromEntries(decorTexEntries) as Record<DecorTexKey, GPUTexture>;
+  const decorTextures = { ...Object.fromEntries(decorTexEntries), rock: texRock } as Record<DecorTexKey, GPUTexture>;
   const decorSampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
   // canopy у "dead"/"bush"/"grass"/"rock" — либо не используется вообще
   // (у сухостоя нет materialId=1 вершин), либо это и есть весь смысл вида;
@@ -623,8 +652,8 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     device.queue.writeBuffer(uniformBuf, 0, vp);
   }
 
-  function setFog(eye: [number, number, number], color: [number, number, number], density: number) {
-    const data = new Float32Array([eye[0], eye[1], eye[2], 0, color[0], color[1], color[2], density]);
+  function setFog(eye: [number, number, number], color: [number, number, number], density: number, timeSec: number) {
+    const data = new Float32Array([eye[0], eye[1], eye[2], timeSec, color[0], color[1], color[2], density]);
     device.queue.writeBuffer(fogBuf, 0, data);
   }
 
