@@ -1513,6 +1513,19 @@ const BOT_NICKS = {
 // в квадрате 16×16 клеток теперь ещё и монетка (своя для точек, своя для
 // лагерей — не спаяны в один бросок, иначе они бы либо всегда встречались
 // вместе, либо никогда), кроме зазора это даёт настоящие пустые области.
+// CITY_STRUCT_GAP отдельно от MIN_STRUCT_GAP: масштаб модели города в 3D
+// удвоился (5→10, см. историю коммитов), пока лагерь/форт/точка (6.5/5/5)
+// остались как были — общий MIN_STRUCT_GAP=6 тогда рассчитывался под
+// объекты близкого масштаба и с городом (визуально вдвое крупнее) больше
+// не даёт настоящего зазора: лагеря/точки застревали внутри города или
+// город внутри них. Не через MIN_STRUCT_GAP, а отдельной, более широкой
+// величиной — и проверяется НЕ через 3×3-соседство чанков (см. комментарий
+// у findFreeCellInChunk ниже: тот приём годится только для гэпов заведомо
+// меньше половины STRUCT_CHUNK=16, то есть <8, а CITY_STRUCT_GAP шире), а
+// напрямую по W.players — в этой локальной one-player-vs-bots партии их
+// всегда мало (игрок + до CFG.BOTS ботов), полный перебор дешёв и не имеет
+// слепых зон на границах чанков.
+const CITY_STRUCT_GAP=12;
 const MIN_STRUCT_GAP=6, STRUCT_TRIES=150, STRUCT_CHUNK=16, STRUCT_CHUNK_CHANCE=0.5;
 const STRUCT_SALT_NODE=501, STRUCT_SALT_CAMP=502;
 function structChunkOk(x,y,salt,chance){
@@ -1560,9 +1573,12 @@ function findFreeCellInChunk(cx,cy,salt){
     if(arr) for(const k of arr) neighborKeys.push(k);
   }
   function farEnough(x,y){
+    for(const p of W.players){
+      if(Math.hypot(p.x-x,p.y-y)<CITY_STRUCT_GAP) return false;
+    }
     for(const k of neighborKeys){
       const o=W.map[k];
-      if(o && Math.hypot(o.x-x,o.y-y)<MIN_STRUCT_GAP) return false;
+      if(o && o.t!=="city" && Math.hypot(o.x-x,o.y-y)<MIN_STRUCT_GAP) return false;
     }
     return true;
   }
@@ -1714,7 +1730,7 @@ function genWorld(seed){
 
   // Свежий мир уже построен через ensureChunkContent (зазор + вода +
   // "монетка" на чанк) — всем миграциям ниже тут нечего делать.
-  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.infiniteWorldMigrated=true; W.levelMigrated=true;
+  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.densityMigrated5=true; W.infiniteWorldMigrated=true; W.levelMigrated=true;
   logg("Мир создан. Зерно "+seed+". Городов: "+W.players.length+".", "good");
   return W;
 }
@@ -1813,7 +1829,29 @@ function thinMapDensity4(){
   W.densityMigrated4=true;
   if(drop.length) logg("Плотность точек/лагерей приведена к текущей норме: убрано "+drop.length+".","good");
 }
-// Пятая волна: старые сохранения несут в себе уровни, посчитанные ещё по
+// Пятая волна: старые сохранения размещали лагеря/точки по прежнему
+// MIN_STRUCT_GAP=6 даже рядом с городом — тогда как модель города с тех
+// пор визуально удвоилась (см. CITY_STRUCT_GAP выше). Результат виден
+// сразу: лагерь или точка ресурса буквально стоят внутри стен города.
+// Города не двигаем (привязаны к p.x/p.y реального игрока/бота) — убираем
+// младшего по правилу приоритета (город > форт/лагерь > точка), той же
+// безопасной механикой удаления, что и во всех волнах выше (respawn/
+// nodeback штатно возвращают убранное в другое, уже проверенное место).
+function thinMapDensity5(){
+  if(W.densityMigrated5) return;
+  const drop=[];
+  for(const k in W.map){
+    const o=W.map[k];
+    if(o.t==="city") continue;
+    for(const p of W.players){
+      if(Math.hypot(p.x-o.x,p.y-o.y)<CITY_STRUCT_GAP){ drop.push(o); break; }
+    }
+  }
+  for(const o of drop) delete W.map[key(o.x,o.y)];
+  W.densityMigrated5=true;
+  if(drop.length) logg("Убраны лагеря/точки, застрявшие в городах: "+drop.length+".","good");
+}
+// Шестая волна: старые сохранения несут в себе уровни, посчитанные ещё по
 // originDist от фиксированной точки {50,50} — за пределами исходного
 // кластера (originDist>~1.2) это ВСЕГДА давало floor(1), сколько бы игрок
 // ни исследовал дальше (см. комментарий у nodeLevelAt/campRawAt выше — тот
@@ -3281,6 +3319,7 @@ async function load(){
     thinMapDensity2();
     thinMapDensity3();
     thinMapDensity4();
+    thinMapDensity5();
     migrateInfiniteWorld();
     migrateStructLevels();
     // Старые походы в старом сохранении не несут m.path (маршрут в обход
