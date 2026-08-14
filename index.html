@@ -41,8 +41,8 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 
 #app{position:relative;z-index:1;display:flex;flex-direction:column;height:100%}
 
-#top{position:fixed;top:10px;left:10px;z-index:15;display:flex;flex-direction:row;
-  align-items:center;gap:8px;max-width:calc(100vw - 16px)}
+#top{position:fixed;top:10px;left:0;z-index:15;display:flex;flex-direction:row;
+  align-items:center;gap:8px;max-width:calc(100vw - 6px)}
 
 #crest{display:flex;align-items:center;cursor:pointer;flex:0 0 auto}
 #crest:hover .mark{color:var(--gilt-hi)}
@@ -60,8 +60,28 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   border:1px solid var(--gilt-dim);border-radius:4px;padding:1px 6px}
 #crest-power .ico{width:12px;height:12px;object-fit:contain}
 
-.profile-avatar-wrap{position:relative}
-.profile-avatar{width:52px;height:52px;object-fit:contain;display:block}
+/* RoK-стиль карточки профиля (пользователь прислал референс — круглый
+   аватар в золотом кольце, ник по центру под ним, снизу простая таблица
+   мощи) — раньше был левоприжатый маленький портрет + текст сбоку. */
+.profile-card{display:flex;flex-direction:column;align-items:center;text-align:center;padding:14px 10px}
+.profile-avatar-wrap{position:relative;flex:0 0 auto}
+.profile-avatar{width:96px;height:96px;object-fit:cover;display:block;border-radius:50%;
+  border:3px solid var(--gilt);box-shadow:0 0 0 1px var(--gilt-dim),0 4px 14px rgba(0,0,0,.6)}
+/* Герб — маленький значок расы поверх аватара (правый нижний угол, тот же
+   приём, что и бейдж класса/яруса у портретов юнитов), а не полноразмерная
+   замена: аватар полководца выбран почти всегда после первых минут игры. */
+.profile-shield-badge{position:absolute;right:-3px;bottom:-3px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.75))}
+/* Пока полководец не выбран (playerAvatarSrc()===null) — герб один и
+   должен заполнить собой место аватара целиком, а не жаться в угол. */
+.profile-avatar-fallback{width:96px;height:96px;border-radius:50%;display:flex;
+  align-items:center;justify-content:center;background:var(--wood);
+  border:3px solid var(--gilt);box-shadow:0 0 0 1px var(--gilt-dim),0 4px 14px rgba(0,0,0,.6)}
+.profile-name-row{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:10px}
+.profile-name-row input{text-align:center;font-size:15px}
+.profile-power-chip{display:inline-flex;align-items:center;gap:6px;margin-top:10px;
+  font-family:var(--data);font-size:15px;color:var(--gilt-hi);font-weight:bold;
+  background:rgba(0,0,0,.35);border:1px solid var(--gilt-dim);border-radius:6px;padding:5px 14px}
+.profile-power-chip img{width:16px;height:16px;object-fit:contain}
 
 .gen-portrait-wrap{position:relative}
 .gen-portrait{width:44px;height:44px;object-fit:contain;display:block}
@@ -157,14 +177,24 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   border:1px solid var(--rule);border-radius:2px;
   box-shadow:0 4px 18px rgba(0,0,0,.6),inset 0 1px 0 rgba(226,196,133,.09)}
 
-#cartouche{left:14px;bottom:14px;max-width:270px;padding:11px 13px;font-size:13.5px}
+/* Раньше висела в левом нижнем углу поверх инструментов/миникарты —
+   неудобно дотягиваться и легко перекрывалась. Центр экрана (относительно
+   #chart — общего position:relative-предка всех .plate, см. коммент выше) —
+   там же, где по тому же тапу появляется цель, так что взгляд не должен
+   прыгать через весь экран, чтобы прочитать панель. */
+#cartouche{left:50%;top:50%;transform:translate(-50%,-50%);max-width:270px;
+  padding:11px 13px;font-size:13.5px}
 #cartouche .hd{font-variant:small-caps;letter-spacing:.13em;font-size:14px;color:var(--gilt-hi);
-  display:flex;align-items:center;gap:7px;margin-bottom:5px}
+  display:flex;align-items:center;gap:7px;margin-bottom:5px;padding-right:16px}
 #cartouche .co{display:flex;justify-content:space-between;gap:16px;font-size:12.5px;
   color:var(--vellum-dim);padding:1.5px 0}
 #cartouche .co b{font-family:var(--data);color:var(--vellum);font-weight:400}
 #cartouche .hint{margin-top:7px;padding-top:6px;border-top:1px solid var(--rule-soft);
   font-size:11.5px;color:var(--vellum-faint);font-style:italic}
+#cartouche .cart-close{position:absolute;top:7px;right:8px;width:20px;height:20px;
+  line-height:18px;text-align:center;font-size:16px;color:var(--vellum-faint);
+  border-radius:50%;transition:color .15s,background .15s}
+#cartouche .cart-close:hover{color:var(--vellum);background:rgba(255,255,255,.08)}
 
 /* bottom:92px, не 14px — #menu-btn (70×70, z-index:20) сидит в том же углу
    (right:14px;bottom:14px) и перекрывал нижние две кнопки (t-out/t-home),
@@ -560,7 +590,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
     box-shadow:0 -8px 26px rgba(0,0,0,.55)}
   #chart{flex:1 1 46%}
   #key{display:none}
-  #top{top:8px;left:8px}
+  #top{top:8px;left:0}
   .coin .rate{display:none}
   #chron{gap:9px;padding-left:8px}
   #chron .stat s{display:none}
@@ -599,10 +629,10 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
     <div id="chart">
       <div id="key" class="plate">
         <span class="kl">Знамёна</span>
-        <span class="kr"><svg class="sh" viewBox="0 0 12 15"><path d="M1 1h10v8.2C11 12 6 14 6 14S1 12 1 9.2Z" fill="#d9b14b" stroke="#c2993c"/></svg>Люди</span>
-        <span class="kr"><svg class="sh" viewBox="0 0 12 15"><path d="M1 1h10v8.2C11 12 6 14 6 14S1 12 1 9.2Z" fill="#bb5730" stroke="#c2993c"/></svg>Гномы</span>
-        <span class="kr"><svg class="sh" viewBox="0 0 12 15"><path d="M1 1h10v8.2C11 12 6 14 6 14S1 12 1 9.2Z" fill="#4c8d5e" stroke="#c2993c"/></svg>Эльфы</span>
-        <span class="kr"><svg class="sh" viewBox="0 0 12 15"><path d="M1 1h10v8.2C11 12 6 14 6 14S1 12 1 9.2Z" fill="#7d56a4" stroke="#c2993c"/></svg>Нежить</span>
+        <span class="kr"><img class="sh" src="images/ui/Human.png" alt="" style="width:11px;height:17px;object-fit:contain">Люди</span>
+        <span class="kr"><img class="sh" src="images/ui/Dwarf.png" alt="" style="width:11px;height:17px;object-fit:contain">Гномы</span>
+        <span class="kr"><img class="sh" src="images/ui/Elf.png" alt="" style="width:11px;height:17px;object-fit:contain">Эльфы</span>
+        <span class="kr"><img class="sh" src="images/ui/Undead.png" alt="" style="width:11px;height:17px;object-fit:contain">Нежить</span>
       </div>
       <div id="cartouche" class="plate"></div>
       <div id="tools" class="plate">
@@ -790,7 +820,25 @@ const RESEARCH_GROWTH=1.6, RESEARCH_WAVE={1:1,2:5,3:20,4:60};
 // Откалибровано так, чтобы вся ветка на максимуме (все узлы, один венец) давала:
 // экономика ~25-30 млн, военные ~45-50 млн (заданный игроком бюджет).
 const RESEARCH_POWER_BASE={eco:28500, mil:26200};
-const researchPower = (branch,wave,lv) => lv*RESEARCH_WAVE[wave]*RESEARCH_POWER_BASE[branch];
+// RESEARCH_POWER_WAVE — ОТДЕЛЬНЫЙ от RESEARCH_WAVE вес волны, только для
+// мощи: тот же RESEARCH_WAVE ещё и задаёт время/стоимость исследования
+// (см. researchTime/researchCost ниже) — уменьшить вес волны 1 ТАМ значило
+// бы вместе с мощью уронить и время, и цену первых исследований почти до
+// нуля, чего никто не просил. Раньше researchPower делил RESEARCH_WAVE с
+// ними и на волне 1 (вес 1, т.е. lv*BASE) давал ПОЛНУЮ BASE (~26-28 тыс.)
+// уже за первый уровень первого узла — игрок получал больше мощи с одного
+// клика по исследованию, чем от полусотни уровней построек (там она почти
+// не растёт на первых уровнях, см. buildingPower — форма кривой калибрована
+// по табличке реального RoK и растёт медленно только в начале, что и
+// естественно: одно исследование — это НЕ то же самое усилие, что один
+// уровень постройки). Вес волны 1 здесь занижен так, чтобы первый уровень
+// первого узла (~500 силы) был того же порядка, что и типичная ранняя
+// постройка (buildingPower на 1 уровне — 550-4400 в зависимости от веса
+// здания) — а не на два порядка больше. Волны 2-4 оставлены как есть
+// (5/20/60) — они и раньше были основным вкладом в итоговый бюджет
+// (94% суммы), общий бюджет веток на максимуме почти не изменился.
+const RESEARCH_POWER_WAVE = {1:0.018, 2:5, 3:20, 4:60};
+const researchPower = (branch,wave,lv) => lv*RESEARCH_POWER_WAVE[wave]*RESEARCH_POWER_BASE[branch];
 const ECO_TIME_BASE=900, MIL_TIME_BASE=720;   // сек: первый узел первой волны — 15 и 12 минут
 function researchTime(branch,wave,lv){
   const base = branch==="eco"?ECO_TIME_BASE:MIL_TIME_BASE;
@@ -1993,9 +2041,6 @@ function production(p){ // единиц в час
     out[r]=v;
   }
   return out;   // Содержания армии нет: войска едят только при обучении и лечении.
-}
-function garrison(p){   // войск в городе — без потолка, просто для сводки
-  return countUnits(p.troops);
 }
 function capacity(p){    // теперь своя вместимость на каждый ресурс — склад + защита самих участков
   const B=bonuses(p), base=Math.round(storeCap(p.b.store)*(1+B.cap));
@@ -3462,10 +3507,17 @@ function centerOn(x,y){
    ПАНЕЛИ. Правая колонна — канцелярская книга похода: рубрики, записи,
    цены эмалевыми точками, цифры моноширинно.
    ========================================================================= */
+// Настоящие гербы рас (загружены пользователем в images/ui/) вместо
+// цветных SVG-щитков — картинки портретные (выше, чем шире, у каждой
+// расы свои пропорции), object-fit:contain в фиксированном боксе не
+// искажает исходник ни на одной из четырёх. Имя функции не поменяли —
+// звать её продолжают из тех же мест теми же аргументами (race, ширина в
+// px), поменялась только реализация внутри.
+const RACE_CREST={human:"Human",dwarf:"Dwarf",elf:"Elf",undead:"Undead"};
 function shieldSvg(race,w){
-  return "<svg class='shield' viewBox='0 0 12 15' style='width:"+(w||13)+"px'>"+
-    "<path d='M1 1h10v8.2C11 12 6 14 6 14S1 12 1 9.2Z' fill='"+TINCT[race]+
-    "' stroke='#c2993c' stroke-width='.8'/></svg>";
+  const width=w||13, height=Math.round(width*1.5);
+  return "<img class='shield' src='images/ui/"+RACE_CREST[race]+".png' alt='"+RACES[race].name+"' "+
+    "style='width:"+width+"px;height:"+height+"px;object-fit:contain'>";
 }
 function ring(lv,max){
   const f=Math.min(1,lv/(max||25)), C=2*Math.PI*14;
@@ -3533,7 +3585,13 @@ function renderTop(){
 let lastCart="";
 function renderCartouche(){
   const el=$("#cartouche");
-  const put=h=>{ if(h!==lastCart){ lastCart=h; el.innerHTML=h } el.style.display=h?"":"none"; };
+  // Крестик добавляется тут ОДИН раз, а не в каждой из трёх веток ниже
+  // (node/camp-fort/city) — put() оборачивает готовое тело панели, ветки
+  // ничего не знают про кнопку закрытия.
+  const put=h=>{
+    const full=h?"<button class='cart-close' data-act='closecartouche' title='Закрыть' aria-label='Закрыть'>&times;</button>"+h:h;
+    if(full!==lastCart){ lastCart=full; el.innerHTML=full } el.style.display=full?"":"none";
+  };
   if(!sel){ put(""); return }
   const o=W.map[key(sel.x,sel.y)], p=me();
   const coord="<span class='n' style='font-family:var(--data);font-size:10px;color:var(--vellum-faint)'>"+
@@ -4034,20 +4092,27 @@ function foProfile(){
   const p=me();
   const avSrc=playerAvatarSrc(p);
   let h=rubric("Профиль","в разработке");
-  h+="<div class='entry hot'><div class='line'>"+
-     "<div style='flex:0 0 auto' class='profile-avatar-wrap'>"+
-     (avSrc?("<img class='profile-avatar' src='"+avSrc+"' alt='' "+
-       "onload=\"this.nextElementSibling.style.display='none'\" onerror=\"this.remove()\">"):"")+
-     shieldSvg(p.race,26)+"</div><div class='fill'>"+
-     "<div class='title'>"+RACES[p.race].name+"</div>"+
-     "<div class='note'>"+RACES[p.race].desc+"</div></div></div>"+
-     "<div class='line' style='margin-top:9px'>"+
+  // Круглый аватар в золотом кольце + герб расы маленьким значком поверх
+  // (полководец ещё не выбран — герб один и большой, заполняет собой
+  // место аватара) — тот же визуальный язык, что и карточка чужого
+  // правителя в RoK (референс от пользователя): ник по центру под
+  // портретом, ниже — только мощь. "Войска в городе" убраны — это и есть
+  // та самая "прикидка армии", которой тут не место (её показывает
+  // разведка в картуше при тапе по чужому городу, отдельно и по запросу).
+  h+="<div class='entry hot profile-card'>"+
+     "<div class='profile-avatar-wrap'>"+
+     (avSrc
+       ? ("<img class='profile-avatar' src='"+avSrc+"' alt=''>"+
+          "<span class='profile-shield-badge'>"+shieldSvg(p.race,20)+"</span>")
+       : ("<span class='profile-avatar-fallback'>"+shieldSvg(p.race,52)+"</span>"))+
+     "</div>"+
+     "<div class='profile-name-row'>"+
      "<input id='nick-input' type='text' maxlength='24' value='"+(p.nick||"").replace(/'/g,"&#39;")+"' "+
-     "placeholder='Ваш ник' style='flex:1;min-width:0'>"+
+     "placeholder='Ваш ник'>"+
      "<button class='seal' data-act='savenick'>Сохранить</button></div>"+
-     "<table class='roll' style='margin-top:9px'>"+
-     "<tr><td>Мощь правителя</td><td>"+RU(power(p))+"</td></tr>"+
-     "<tr><td>Войска в городе</td><td>"+RU(garrison(p))+"</td></tr></table></div>";
+     "<div class='note'>"+RACES[p.race].name+"</div>"+
+     "<div class='profile-power-chip'><img src='images/ui/icon-power.png' alt=''>"+RU(power(p))+"</div>"+
+     "</div>";
   return h;
 }
 
@@ -4541,6 +4606,8 @@ function handleAct(e){
   if(closeBtn){ closeMenuModal(); return; }
   const closeBm=e.target.closest("[data-act='closebuilding']");
   if(closeBm){ closeBuildingModal(); return; }
+  const closeCart=e.target.closest("[data-act='closecartouche']");
+  if(closeCart){ sel=null; renderCartouche(); return; }
   const cell=e.target.closest("[data-cell]");
   if(cell && !e.target.closest("[data-act]")){
     openBuildingModal(+cell.dataset.cell);
