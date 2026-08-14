@@ -2163,29 +2163,42 @@ function miniHeap(){
   };
 }
 const WPATH_DIRS=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
-// Сама сетка клеток (вода/суша) на всю карту меняется только раз в игру
-// (рельеф — чистая функция от фиксированного RW_SEED) — считаем её один
-// раз лениво, а не на каждый A*.
-let _waterGrid=null;
-function waterBlocked(x,y){
-  if(!_waterGrid){
-    const N=CFG.MAP; _waterGrid=new Uint8Array(N*N);
-    // isRealWater(x,y) уже сама берёт центр клетки (+0.5 внутри неё) —
-    // прибавлять здесь ещё раз нельзя, иначе сетка A* сдвинется на целую
-    // клетку относительно настоящей воды, и найденный "обход" будет обходить
-    // не ту клетку.
-    for(let yy=0;yy<N;yy++)for(let xx=0;xx<N;xx++) _waterGrid[yy*N+xx]=isRealWater(xx,yy)?1:0;
-  }
-  if(x<0||y<0||x>=CFG.MAP||y>=CFG.MAP) return false;
-  return _waterGrid[y*CFG.MAP+x]===1;
+// Раньше здесь была одна сетка клеток (вода/суша) на всю карту, целиком
+// построенная лениво один раз за партию (CFG.MAP×CFG.MAP). При бесконечном
+// мире держать такую сетку негде — да и незачем: подавляющее большинство
+// походов огибает воду в маленькой области у собственного маршрута.
+// Строим маленькую сетку под конкретный поход — по ограничивающему
+// прямоугольнику начала/конца плюс запас (margin), тот же A* (miniHeap/
+// WPATH_DIRS/simplifyWaterPath), просто с локальными, а не глобальными
+// индексами. isRealWater(x,y) уже сама берёт центр клетки (+0.5 внутри
+// неё) — прибавлять здесь ещё раз нельзя, иначе сетка A* сдвинется на
+// целую клетку относительно настоящей воды.
+function buildLocalWaterGrid(x0,y0,x1,y1,margin){
+  const ox=Math.floor(Math.min(x0,x1))-margin;
+  const oy=Math.floor(Math.min(y0,y1))-margin;
+  const ex=Math.ceil(Math.max(x0,x1))+margin;
+  const ey=Math.ceil(Math.max(y0,y1))+margin;
+  const w=ex-ox+1, h=ey-oy+1;
+  const grid=new Uint8Array(w*h);
+  for(let yy=0;yy<h;yy++)for(let xx=0;xx<w;xx++) grid[yy*w+xx]=isRealWater(ox+xx,oy+yy)?1:0;
+  return {grid,ox,oy,w,h};
 }
-function waterPath(x0,y0,x1,y1){
-  if(!segmentCrossesWater(x0,y0,x1,y1)) return [{x:x0,y:y0},{x:x1,y:y1}];
-  const N=CFG.MAP;
-  const gx0=clamp(Math.round(x0),0,N-1), gy0=clamp(Math.round(y0),0,N-1);
-  const gx1=clamp(Math.round(x1),0,N-1), gy1=clamp(Math.round(y1),0,N-1);
-  if(waterBlocked(gx0,gy0)||waterBlocked(gx1,gy1)) return [{x:x0,y:y0},{x:x1,y:y1}];
-  const idx=(x,y)=>y*N+x;
+// Пробует найти обход в пределах локальной сетки заданного запаса;
+// null — не нашли (преграда крупнее запаса, либо сам старт/финиш в воде) —
+// вызывающий waterPath() пробует запас пошире, а если и это не помогло,
+// честно возвращает прямую (как и раньше при "не нашли обход").
+function tryWaterPath(x0,y0,x1,y1,margin){
+  const g=buildLocalWaterGrid(x0,y0,x1,y1,margin);
+  const blocked=(x,y)=>{
+    // За пределами локальной сетки — считаем непроходимым: не расширяем
+    // поиск бесконечно за пределы того, что реально построили.
+    if(x<g.ox||y<g.oy||x>=g.ox+g.w||y>=g.oy+g.h) return true;
+    return g.grid[(y-g.oy)*g.w+(x-g.ox)]===1;
+  };
+  const gx0=Math.round(x0), gy0=Math.round(y0);
+  const gx1=Math.round(x1), gy1=Math.round(y1);
+  if(blocked(gx0,gy0)||blocked(gx1,gy1)) return null;
+  const idx=(x,y)=>(y-g.oy)*g.w+(x-g.ox);
   const h=(x,y)=>Math.hypot(gx1-x,gy1-y);
   const gScore=new Map(), came=new Map();
   gScore.set(idx(gx0,gy0),0);
@@ -2199,7 +2212,7 @@ function waterPath(x0,y0,x1,y1){
     const curG=gScore.get(idx(cur.x,cur.y));
     for(const [dx,dy] of WPATH_DIRS){
       const nx=cur.x+dx, ny=cur.y+dy;
-      if(nx<0||ny<0||nx>=N||ny>=N||waterBlocked(nx,ny)) continue;
+      if(blocked(nx,ny)) continue;
       const ng=curG+(dx&&dy?Math.SQRT2:1);
       const nk=idx(nx,ny);
       if(gScore.has(nk)&&gScore.get(nk)<=ng) continue;
@@ -2207,13 +2220,21 @@ function waterPath(x0,y0,x1,y1){
       open.push({x:nx,y:ny,f:ng+h(nx,ny)});
     }
   }
-  if(!found) return [{x:x0,y:y0},{x:x1,y:y1}];   // не нашли обход — лучше прямая, чем не дать походу случиться
+  if(!found) return null;
   const path=[{x:gx1,y:gy1}];
   let ck=idx(gx1,gy1);
-  while(came.has(ck)){ ck=came.get(ck); path.push({x:ck%N,y:Math.floor(ck/N)}); }
+  while(came.has(ck)){ ck=came.get(ck); path.push({x:(ck%g.w)+g.ox,y:Math.floor(ck/g.w)+g.oy}); }
   path.reverse();
   path[0]={x:x0,y:y0}; path[path.length-1]={x:x1,y:y1};
   return simplifyWaterPath(path);
+}
+function waterPath(x0,y0,x1,y1){
+  if(!segmentCrossesWater(x0,y0,x1,y1)) return [{x:x0,y:y0},{x:x1,y:y1}];
+  for(const margin of [10,30]){
+    const path=tryWaterPath(x0,y0,x1,y1,margin);
+    if(path) return path;
+  }
+  return [{x:x0,y:y0},{x:x1,y:y1}];   // не нашли обход даже с запасом — лучше прямая, чем не дать походу случиться
 }
 function pathLength(path){
   let total=0;
