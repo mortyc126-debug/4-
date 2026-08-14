@@ -60,8 +60,28 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   border:1px solid var(--gilt-dim);border-radius:4px;padding:1px 6px}
 #crest-power .ico{width:12px;height:12px;object-fit:contain}
 
-.profile-avatar-wrap{position:relative}
-.profile-avatar{width:52px;height:52px;object-fit:contain;display:block}
+/* RoK-стиль карточки профиля (пользователь прислал референс — круглый
+   аватар в золотом кольце, ник по центру под ним, снизу простая таблица
+   мощи) — раньше был левоприжатый маленький портрет + текст сбоку. */
+.profile-card{display:flex;flex-direction:column;align-items:center;text-align:center;padding:14px 10px}
+.profile-avatar-wrap{position:relative;flex:0 0 auto}
+.profile-avatar{width:96px;height:96px;object-fit:cover;display:block;border-radius:50%;
+  border:3px solid var(--gilt);box-shadow:0 0 0 1px var(--gilt-dim),0 4px 14px rgba(0,0,0,.6)}
+/* Герб — маленький значок расы поверх аватара (правый нижний угол, тот же
+   приём, что и бейдж класса/яруса у портретов юнитов), а не полноразмерная
+   замена: аватар полководца выбран почти всегда после первых минут игры. */
+.profile-shield-badge{position:absolute;right:-3px;bottom:-3px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.75))}
+/* Пока полководец не выбран (playerAvatarSrc()===null) — герб один и
+   должен заполнить собой место аватара целиком, а не жаться в угол. */
+.profile-avatar-fallback{width:96px;height:96px;border-radius:50%;display:flex;
+  align-items:center;justify-content:center;background:var(--wood);
+  border:3px solid var(--gilt);box-shadow:0 0 0 1px var(--gilt-dim),0 4px 14px rgba(0,0,0,.6)}
+.profile-name-row{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:10px}
+.profile-name-row input{text-align:center;font-size:15px}
+.profile-power-chip{display:inline-flex;align-items:center;gap:6px;margin-top:10px;
+  font-family:var(--data);font-size:15px;color:var(--gilt-hi);font-weight:bold;
+  background:rgba(0,0,0,.35);border:1px solid var(--gilt-dim);border-radius:6px;padding:5px 14px}
+.profile-power-chip img{width:16px;height:16px;object-fit:contain}
 
 .gen-portrait-wrap{position:relative}
 .gen-portrait{width:44px;height:44px;object-fit:contain;display:block}
@@ -2003,9 +2023,6 @@ function production(p){ // единиц в час
     out[r]=v;
   }
   return out;   // Содержания армии нет: войска едят только при обучении и лечении.
-}
-function garrison(p){   // войск в городе — без потолка, просто для сводки
-  return countUnits(p.troops);
 }
 function capacity(p){    // теперь своя вместимость на каждый ресурс — склад + защита самих участков
   const B=bonuses(p), base=Math.round(storeCap(p.b.store)*(1+B.cap));
@@ -4057,20 +4074,27 @@ function foProfile(){
   const p=me();
   const avSrc=playerAvatarSrc(p);
   let h=rubric("Профиль","в разработке");
-  h+="<div class='entry hot'><div class='line'>"+
-     "<div style='flex:0 0 auto' class='profile-avatar-wrap'>"+
-     (avSrc?("<img class='profile-avatar' src='"+avSrc+"' alt='' "+
-       "onload=\"this.nextElementSibling.style.display='none'\" onerror=\"this.remove()\">"):"")+
-     shieldSvg(p.race,26)+"</div><div class='fill'>"+
-     "<div class='title'>"+RACES[p.race].name+"</div>"+
-     "<div class='note'>"+RACES[p.race].desc+"</div></div></div>"+
-     "<div class='line' style='margin-top:9px'>"+
+  // Круглый аватар в золотом кольце + герб расы маленьким значком поверх
+  // (полководец ещё не выбран — герб один и большой, заполняет собой
+  // место аватара) — тот же визуальный язык, что и карточка чужого
+  // правителя в RoK (референс от пользователя): ник по центру под
+  // портретом, ниже — только мощь. "Войска в городе" убраны — это и есть
+  // та самая "прикидка армии", которой тут не место (её показывает
+  // разведка в картуше при тапе по чужому городу, отдельно и по запросу).
+  h+="<div class='entry hot profile-card'>"+
+     "<div class='profile-avatar-wrap'>"+
+     (avSrc
+       ? ("<img class='profile-avatar' src='"+avSrc+"' alt=''>"+
+          "<span class='profile-shield-badge'>"+shieldSvg(p.race,20)+"</span>")
+       : ("<span class='profile-avatar-fallback'>"+shieldSvg(p.race,52)+"</span>"))+
+     "</div>"+
+     "<div class='profile-name-row'>"+
      "<input id='nick-input' type='text' maxlength='24' value='"+(p.nick||"").replace(/'/g,"&#39;")+"' "+
-     "placeholder='Ваш ник' style='flex:1;min-width:0'>"+
+     "placeholder='Ваш ник'>"+
      "<button class='seal' data-act='savenick'>Сохранить</button></div>"+
-     "<table class='roll' style='margin-top:9px'>"+
-     "<tr><td>Мощь правителя</td><td>"+RU(power(p))+"</td></tr>"+
-     "<tr><td>Войска в городе</td><td>"+RU(garrison(p))+"</td></tr></table></div>";
+     "<div class='note'>"+RACES[p.race].name+"</div>"+
+     "<div class='profile-power-chip'><img src='images/ui/icon-power.png' alt=''>"+RU(power(p))+"</div>"+
+     "</div>";
   return h;
 }
 
