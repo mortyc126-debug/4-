@@ -389,8 +389,19 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #ribbons button.on{color:var(--gilt-hi)}
 #ribbons button.on::after{transform:scaleX(1)}
 
-#folio{flex:1;overflow:hidden;padding:0;position:relative;
-  display:flex;align-items:center;justify-content:center}
+/* Раньше был display:flex;align-items:center;justify-content:center — это
+   годится только для одного центрированного элемента (карта города), но
+   ломает списки (армия/генерал/инвентарь): несколько rubric/entry-блоков
+   выстраивались в ОДНУ горизонтальную строку по центру и вылезали за края
+   экрана вместо обычного вертикального списка со скроллом (репорт
+   пользователя — сплошная "каша" на весь экран после отправки войск).
+   flex-direction:column — блоки снова идут друг под другом, растянутые на
+   всю ширину (align-items по умолчанию stretch), с прокруткой вместо
+   overflow:hidden. Карта города (foCity) остаётся единственным ребёнком в
+   этом случае — её собственные width/height:100% работают точно так же. */
+#folio{flex:1;overflow-y:auto;padding:0;position:relative;
+  display:flex;flex-direction:column}
+.folio-pad{padding:14px 16px}
 
 /* Заголовок раздела — с виньеточной линейкой, как в старой книге */
 .rubric{display:flex;align-items:center;gap:11px;margin:26px 0 11px;
@@ -1785,7 +1796,7 @@ function genWorld(seed){
 
   // Свежий мир уже построен через ensureChunkContent (зазор + вода +
   // "монетка" на чанк) — всем миграциям ниже тут нечего делать.
-  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.densityMigrated5=true; W.densityMigrated6=true; W.infiniteWorldMigrated=true; W.levelMigrated=true;
+  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.densityMigrated5=true; W.densityMigrated6=true; W.infiniteWorldMigrated=true; W.levelMigrated=true; W.marchRescueMigrated=true; W.marchSpeedMigrated=true;
   logg("Мир создан. Зерно "+seed+". Городов: "+W.players.length+".", "good");
   return W;
 }
@@ -1963,6 +1974,33 @@ function migrateStructLevels(){
   }
   W.levelMigrated=true;
   if(changed) logg("Сила лагерей и точек ресурсов пересчитана для всей исследованной карты ("+changed+" объектов).","good");
+}
+// Скорость похода была занижена буквально в MARCH_SPEED_SCALE раз (см.
+// marchSpeed) — путь через полкарты растягивался на часы вместо секунд-минут
+// по механике RoK (репорт пользователя: "3 часа на путь, а должно быть около
+// минуты"). Уже ИДУЩИЕ на момент фикса походы несут в себе t0/t1, посчитанные
+// по старой медленной скорости — простого умножения b.march задним числом
+// недостаточно, маршрут нужно пересчитать от ТЕКУЩЕЙ позиции (marchPos) до
+// той же цели (destination похода вперёд, либо родной город при возврате),
+// тем же способом, что и recallMarch. Прогресс похода при этом не теряется:
+// отряд просто резко ускоряется на оставшемся отрезке пути.
+function migrateMarchSpeed(){
+  if(W.marchSpeedMigrated) return;
+  W.marches.forEach(m=>{
+    if(m.state!=="go"&&m.state!=="back") return; // gather/siege — тайминг не про скорость марша
+    const p=W.players.find(q=>q.id===m.pid); if(!p) return;
+    const cur=marchPos(m);
+    const dest = m.state==="back" ? {x:p.x,y:p.y} : {x:m.tx,y:m.ty};
+    const path=waterPath(cur.x,cur.y,dest.x,dest.y);
+    const d=pathLength(path)*(1-portalShortcut(p));
+    const spd=marchSpeed(p,m.units);
+    const travel=Math.max(10, d/spd*60);
+    setMarchPath(m,path);
+    m.t0=W.t; m.t1=W.t+travel;
+    unschedule(e=>e.data&&e.data.mid===m.id);
+    schedule(travel, m.state==="back"?"home":"arrive", {mid:m.id});
+  });
+  W.marchSpeedMigrated=true;
 }
 // Мигрирует сохранения до появления W.mapChunks/W.genChunks (координаты
 // объектов не меняются вообще — они и так абсолютные, остаются корректными
@@ -2552,10 +2590,22 @@ function pathPointAt(m,f){
   return path[path.length-1];
 }
 
+// TROOP_TYPES[t].speed — относительный множитель для отображения в карточке
+// юнита ("×1.00" рядом с другими × статами, см. unitCarouselHtml) и остаётся
+// нетронутым; настоящая путевая скорость (клеток в минуту) получается
+// домножением на MARCH_SPEED_SCALE тут же, при расчёте похода. Раньше
+// множитель ×1.00 ИСПОЛЬЗОВАЛСЯ НАПРЯМУЮ как клеток/мин — при типичных
+// теперь-то расстояниях после расширения мира (сотни клеток) поход занимал
+// часы вместо ожидаемых по механике RoK секунд-минут (репорт пользователя:
+// 3 часа на путь, которого "на глаз" быть не должно). 24 клетки/мин у
+// пехоты (было буквально 1) откалибровано так, чтобы ближняя цель (десяток
+// клеток) укладывалась в ~30-60 секунд, а действительно дальняя (сотни
+// клеток, как в репорте) — в единицы-десятки минут, а не в часы.
+const MARCH_SPEED_SCALE=24;
 function marchSpeed(p,units){
   let s=99; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) if(units[t][i]>0) s=Math.min(s,TROOP_TYPES[t].speed*troopMod(p.race,t,"speed"))});
   if(s>90) s=1;
-  return s*bonuses(p).march;      // клеток в минуту
+  return s*MARCH_SPEED_SCALE*bonuses(p).march;      // клеток в минуту
 }
 function sendMarch(p,tx,ty,units,mode){
   const n=countUnits(units); if(n<=0) return {err:"Нет войск"};
@@ -3409,6 +3459,33 @@ async function load(){
       if(m.state==="back"&&p) setMarchPath(m,waterPath(m.tx,m.ty,p.x,p.y));
       else setMarchPath(m,waterPath(m.x0,m.y0,m.tx,m.ty));
     });
+    // Пользователь заметил армии, "застрявшие" на пустой клетке без всякой
+    // цели под ней — та же проблема, что чинит блок выше, но для походов,
+    // у которых m.path технически ЕСТЬ (проверка выше его пропускает), но
+    // испорчен (пустой массив/одна точка/NaN-длина) — pathPointAt() тогда
+    // молча проваливается в аварийный фолбэк {x:0,y:0}, буквально исток
+    // координат, и поход навсегда рисуется там. Восстанавливать исходный
+    // маршрут не пытаемся — цель могла уже не существовать (лагерь
+    // разбит, точка истощилась и уже респаунилась в другом месте) —
+    // войска просто принудительно возвращаются в казарму, тем же кодом,
+    // что и обычное штатное прибытие домой (см. QUEUE.home выше).
+    if(!W.marchRescueMigrated){
+      const lost=W.marches.filter(m=>!(m.path && m.path.length>=2 && isFinite(m.pathLen) && m.pathLen>=0));
+      lost.forEach(m=>{
+        const p=W.players.find(q=>q.id===m.pid);
+        if(p){
+          TKEYS.forEach(t=>{for(let i=1;i<=5;i++) p.troops[t][i]+=(m.units[t]&&m.units[t][i])||0});
+          if(m.carry) gain(p,m.carry);
+        }
+        unschedule(e=>e.data&&e.data.mid===m.id);
+      });
+      if(lost.length){
+        W.marches=W.marches.filter(m=>!lost.includes(m));
+        logg("Потерянные в пути отряды ("+lost.length+") принудительно возвращены домой.","good");
+      }
+      W.marchRescueMigrated=true;
+    }
+    migrateMarchSpeed();
     // догоняем реальное время, прошедшее с последнего захода
     const away=Math.max(0,(Date.now()-W.savedAt)/1000);
     if(away>60){
@@ -3615,20 +3692,57 @@ function renderTop(){
    атаковать, разведать), а не просто повторить то, что уже подписано в
    мире. Пустошь и своя столица не открывают панель вовсе. ---- */
 let lastCart="";
+// Выбранный поход (march.id, см. renderMarchCartoucheFor ниже — зовётся
+// из 3D при тапе по маркеру похода, engine/src/main.ts notifyParentMarchCartouche)
+// — отдельное состояние от sel (клетка карты): поход не привязан к
+// клетке, он движется. Взаимно исключают друг друга — выбор одного
+// сбрасывает другое (см. renderMarchCartoucheFor и обработчик
+// closecartouche в handleAct).
+let selMarch=null;
+function renderMarchCartoucheFor(marchId){ selMarch=marchId; sel=null; renderCartouche(); }
+const MARCH_STATE_RU={go:"в пути",gather:"собирает",back:"возвращается",siege:"осаждает"};
 function renderCartouche(){
   const el=$("#cartouche");
-  // Крестик добавляется тут ОДИН раз, а не в каждой из трёх веток ниже
-  // (node/camp-fort/city) — put() оборачивает готовое тело панели, ветки
-  // ничего не знают про кнопку закрытия.
+  // Крестик добавляется тут ОДИН раз, а не в каждой из веток ниже
+  // (node/camp-fort/city/march) — put() оборачивает готовое тело панели,
+  // ветки ничего не знают про кнопку закрытия.
   const put=h=>{
     const full=h?"<button class='cart-close' data-act='closecartouche' title='Закрыть' aria-label='Закрыть'>&times;</button>"+h:h;
     if(full!==lastCart){ lastCart=full; el.innerHTML=full } el.style.display=full?"":"none";
   };
+  if(selMarch!=null){
+    const m=W.marches.find(x=>x.id===selMarch);
+    if(!m){ selMarch=null; } // прибыл или был отозван, пока панель была открыта
+    else {
+      const owner=W.players.find(q=>q.id===m.pid);
+      const mine=owner&&owner.id===me().id;
+      const mcoord="<span class='n' style='font-family:var(--data);font-size:10px;color:var(--vellum-faint)'>"+
+        m.tx+" · "+m.ty+"</span>";
+      put("<div class='hd'>"+(owner?shieldSvg(owner.race,14):"")+(owner?owner.nick:"?")+" — отряд "+mcoord+"</div>"+
+        "<div class='co'><span>Состояние</span><b>"+(MARCH_STATE_RU[m.state]||m.state)+"</b></div>"+
+        "<div class='co'><span>Воинов</span><b>"+RU(countUnits(m.units))+"</b></div>"+
+        "<div class='co'><span>Цель</span><b>"+m.tx+" · "+m.ty+"</b></div>"+
+        (m.state!=="gather"&&m.state!=="siege"?"<div class='co'><span>Прибытие через</span><b>"+fmtDur(Math.max(0,m.t1-W.t))+"</b></div>":"")+
+        (mine?"<button class='seal wide' style='margin-top:9px' data-act='recall' data-m='"+m.id+"'>Отозвать</button>":
+          "<div class='hint'>Атака отряда в пути не поддерживается — только цели на карте (город/лагерь/точка).</div>"));
+      return;
+    }
+  }
   if(!sel){ put(""); return }
   const o=W.map[key(sel.x,sel.y)], p=me();
   const coord="<span class='n' style='font-family:var(--data);font-size:10px;color:var(--vellum-faint)'>"+
     sel.x+" · "+sel.y+"</span>";
-  if(!o){ put(""); return; }
+  if(!o){
+    // Свободный тап по пустой местности — пользователь просил видеть
+    // координаты клетки и иметь возможность послать туда отряд ("Пустошь").
+    // Цели там нет: снаряжённый марш просто дойдёт и сам развернётся домой
+    // (см. arriveMarch — !cell на месте прибытия сразу зовёт recallMarch).
+    const water=isRealWater(sel.x,sel.y);
+    put("<div class='hd'>Пустошь "+coord+"</div>"+
+      (water?"<div class='hint'>Здесь вода — отряд не высадить.</div>":
+        "<button class='seal wide' style='margin-top:9px' data-act='march' data-x='"+sel.x+"' data-y='"+sel.y+"'>Отправить отряд</button>"));
+    return;
+  }
 
   if(o.t==="node"){
     // "Сборщик" — кто сейчас черпает эту жилу (o.busy хранит id игрока,
@@ -4481,7 +4595,11 @@ function foLog(){
 }
 
 function renderFolio(){
-  const html = tab==="city"?foCity(): tab==="army"?foArmy(): tab==="gen"?foGen(): foInv();
+  // Карта города (foCity) хочет остаться единственным edge-to-edge ребёнком
+  // #folio (без padding — см. #citymap-wrap); списочные вкладки заворачиваем
+  // в один .folio-pad с внутренними отступами (см. CSS-комментарий у #folio).
+  const html = tab==="city"?foCity():
+    "<div class='folio-pad'>"+(tab==="army"?foArmy(): tab==="gen"?foGen(): foInv())+"</div>";
   if(html===lastFolio) return;                    // не перерисовываем зря
   lastFolio=html;
   const el=$("#folio"), st=el.scrollTop;
@@ -4493,8 +4611,14 @@ function renderFolio(){
    ========================================================================= */
 function openLevy(cx,cy){
   const p=me(); syncRes(p);
-  const o=W.map[key(cx,cy)];
-  if(!o) return herald("На пустошь войско слать незачем.");
+  let o=W.map[key(cx,cy)];
+  if(!o){
+    // Пустая клетка ("Пустошь") — свободный тап по местности, отряд можно
+    // отправить и сюда (просто дойдёт и сам развернётся домой, см.
+    // arriveMarch), кроме воды — туда высадка бессмысленна.
+    if(isRealWater(cx,cy)) return herald("Здесь вода — отряд не высадить.");
+    o={t:"waste",x:cx,y:cy};
+  }
   if(o.t==="city"&&o.pid===p.id) return herald("Это ваша столица.");
   if(W.marches.filter(m=>m.pid===p.id).length>=marchSlots(p.b.hall))
     return herald("Свободных отрядов нет. Отзовите марш или поднимите ратушу.");
@@ -4502,7 +4626,7 @@ function openLevy(cx,cy){
     const q=W.players.find(z=>z.id===o.pid);
     if(q&&W.t<q.shieldUntil) return herald("Город под щитом мира — приступить нельзя.");
   }
-  const mode = o.t==="node"?"gather":"attack";
+  const mode = o.t==="node"?"gather":o.t==="waste"?"scout":"attack";
   const capL = marchCapacity(p);
   const st={};
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++) st[t+i]=0});
@@ -4518,9 +4642,10 @@ function openLevy(cx,cy){
     let load=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++)load+=st[t+i]*TROOP_TYPES[t].load*TIER_MULT[i-1]*troopMod(p.race,t,"load")});
     const mine=armyPower(u,bonuses(p),p.race);
 
-    let head = mode==="gather"?"Сбор припасов":"Военный поход";
+    let head = mode==="gather"?"Сбор припасов":mode==="scout"?"Отправка отряда":"Военный поход";
     let lede = o.t==="node" ? RES_NAME[o.res]+", жила "+o.lv+" уровня — "+fmt(o.amount)+" осталось"
              : o.t==="city" ? "Столица "+(W.players.find(z=>z.id===o.pid)||{name:"?"}).name
+             : o.t==="waste" ? "Пустошь — свободные земли"
              : (o.t==="fort"?"Форт":"Лагерь")+" разбойников "+o.lv+" уровня";
 
     let h="<h2>"+head+"</h2><div class='lede'>"+lede+" · клетка "+cx+" · "+cy+"</div>";
@@ -4563,7 +4688,7 @@ function openLevy(cx,cy){
     }
     h+="<div class='chips' style='margin-top:16px;margin-bottom:0'>"+
        "<button class='seal' data-a='go' "+(n<=0||over?"disabled":"")+">"+
-       (mode==="gather"?"Выслать обоз":"Выступить в поход")+"</button>"+
+       (mode==="gather"?"Выслать обоз":mode==="scout"?"Отправить отряд":"Выступить в поход")+"</button>"+
        "<button class='seal' data-a='no'>Отставить</button></div>";
     box.innerHTML=h;
   }
@@ -4589,7 +4714,7 @@ function openLevy(cx,cy){
       const r=sendMarch(p,cx,cy,u,mode);
       if(r.err) return herald(r.err);
       closeScroll(); tab="army"; syncRibbons(); lastFolio=""; renderFolio();
-      herald(mode==="gather"?"Обоз выступил.":"Войско выступило в поход.");
+      herald(mode==="gather"?"Обоз выступил.":mode==="scout"?"Отряд отправлен.":"Войско выступило в поход.");
     }
   };
 }
@@ -4636,7 +4761,7 @@ function handleAct(e){
   const closeBm=e.target.closest("[data-act='closebuilding']");
   if(closeBm){ closeBuildingModal(); return; }
   const closeCart=e.target.closest("[data-act='closecartouche']");
-  if(closeCart){ sel=null; renderCartouche(); return; }
+  if(closeCart){ sel=null; selMarch=null; renderCartouche(); return; }
   const cell=e.target.closest("[data-cell]");
   if(cell && !e.target.closest("[data-act]")){
     openBuildingModal(+cell.dataset.cell);

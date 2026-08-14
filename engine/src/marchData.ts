@@ -12,15 +12,28 @@ export interface LiveMarchPos {
   x: number;
   y: number;
   own: boolean; // поход игрока (W.players[0]) или чужой — цвет маркера в main.ts
+  // Поля ниже — только для тапа/инфо-панели (см. main.ts findMarchAtScreen
+  // и index.html renderMarchCartoucheFor): march id из W.marches (не bitECS
+  // eid — марши не заведены как настоящие сущности, см. main.ts), ник
+  // владельца, суммарное число воинов, состояние и цель похода.
+  id: number;
+  nick: string;
+  unitsTotal: number;
+  state: string;
+  tx: number;
+  ty: number;
+  t1: number;
 }
 
 interface LiveMarch {
+  id: number;
   pid: number;
   tx: number;
   ty: number;
   t0: number;
   t1: number;
   state: string;
+  units: Record<string, Record<number, number>>;
   path?: { x: number; y: number }[];
   pathCum?: number[];
   pathLen?: number;
@@ -29,7 +42,13 @@ interface LiveMarch {
 interface LiveWorldMarches {
   t: number;
   marches: LiveMarch[];
-  players: Array<{ id: number }>;
+  players: Array<{ id: number; nick?: string; name?: string }>;
+}
+
+function countUnits(units: Record<string, Record<number, number>>): number {
+  let n = 0;
+  for (const t in units) for (const i in units[t]) n += units[t][+i] || 0;
+  return n;
 }
 
 function readLiveWorldMarches(): LiveWorldMarches | null {
@@ -68,7 +87,19 @@ export function loadLiveMarches(): LiveMarchPos[] | null {
       m.state === "gather" || m.state === "siege"
         ? { x: m.tx, y: m.ty }
         : pathPointAt(m, Math.max(0, Math.min(1, (W.t - m.t0) / Math.max(1, m.t1 - m.t0))));
-    out.push({ x: p.x, y: p.y, own: m.pid === ownId });
+    const owner = W.players.find((q) => q.id === m.pid);
+    out.push({
+      x: p.x,
+      y: p.y,
+      own: m.pid === ownId,
+      id: m.id,
+      nick: owner?.nick ?? owner?.name ?? "?",
+      unitsTotal: countUnits(m.units),
+      state: m.state,
+      tx: m.tx,
+      ty: m.ty,
+      t1: m.t1,
+    });
   }
   return out;
 }
