@@ -328,13 +328,26 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     vertex: {
       module: terrainModule,
       entryPoint: "vs",
+      // Один interleaved буфер на чанк (pos+color+normal+uv+elevation+water
+      // подряд на вершину), не шесть раздельных — раньше на ~130
+      // одновременно загруженных чанков (ближние+дальнее кольцо) выходило
+      // до 780 отдельных GPU-буферов только на рельеф; у слабого/софтверного
+      // GPU-драйвера (в т.ч. в этой песочнице, см. коммит про device.lost)
+      // само количество объектов даёт заметные накладные расходы, не только
+      // байты. См. TerrainChunk/setTerrainChunk ниже — тот же приём
+      // interleaving, что уже был у декора.
       buffers: [
-        { arrayStride: 3 * 4, attributes: [{ shaderLocation: 0, offset: 0, format: "float32x3" }] },
-        { arrayStride: 3 * 4, attributes: [{ shaderLocation: 1, offset: 0, format: "float32x3" }] },
-        { arrayStride: 3 * 4, attributes: [{ shaderLocation: 2, offset: 0, format: "float32x3" }] },
-        { arrayStride: 2 * 4, attributes: [{ shaderLocation: 3, offset: 0, format: "float32x2" }] },
-        { arrayStride: 4, attributes: [{ shaderLocation: 4, offset: 0, format: "float32" }] },
-        { arrayStride: 4, attributes: [{ shaderLocation: 5, offset: 0, format: "float32" }] },
+        {
+          arrayStride: 13 * 4,
+          attributes: [
+            { shaderLocation: 0, offset: 0, format: "float32x3" },
+            { shaderLocation: 1, offset: 3 * 4, format: "float32x3" },
+            { shaderLocation: 2, offset: 6 * 4, format: "float32x3" },
+            { shaderLocation: 3, offset: 9 * 4, format: "float32x2" },
+            { shaderLocation: 4, offset: 11 * 4, format: "float32" },
+            { shaderLocation: 5, offset: 12 * 4, format: "float32" },
+          ],
+        },
       ],
     },
     fragment: { module: terrainModule, entryPoint: "fs", targets: [{ format }] },
@@ -358,9 +371,7 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   // сцену — потоковая подгрузка/выгрузка вокруг камеры (см. main.ts): при
   // бесконечном мире держать вершины всей когда-либо увиденной территории
   // в одном буфере не получится.
-  interface TerrainChunk {
-    posBuf: GPUBuffer; colBuf: GPUBuffer; nrmBuf: GPUBuffer; uvBuf: GPUBuffer; elevBuf: GPUBuffer; waterBuf: GPUBuffer; vertexCount: number;
-  }
+  interface TerrainChunk { buf: GPUBuffer; vertexCount: number }
   const terrainChunks = new Map<string, TerrainChunk>();
 
   // ---- маркеры (инстансинг) ----
@@ -545,54 +556,28 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
 
   function setTerrainChunk(key: string, mesh: MeshData) {
     const prev = terrainChunks.get(key);
-    prev?.posBuf.destroy();
-    prev?.colBuf.destroy();
-    prev?.nrmBuf.destroy();
-    prev?.uvBuf.destroy();
-    prev?.elevBuf.destroy();
-    prev?.waterBuf.destroy();
-    const posBuf = device.createBuffer({
-      size: Math.max(mesh.positions.byteLength, 4),
+    prev?.buf.destroy();
+    const buf = device.createBuffer({
+      size: Math.max(mesh.vertexCount * 13 * 4, 4),
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
-    const colBuf = device.createBuffer({
-      size: Math.max(mesh.colors.byteLength, 4),
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    });
-    const nrmBuf = device.createBuffer({
-      size: Math.max(mesh.normals.byteLength, 4),
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    });
-    const uvBuf = device.createBuffer({
-      size: Math.max(mesh.uvs.byteLength, 4),
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    });
-    const elevBuf = device.createBuffer({
-      size: Math.max(mesh.elevations.byteLength, 4),
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    });
-    const waterBuf = device.createBuffer({
-      size: Math.max(mesh.waterFlags.byteLength, 4),
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    });
-    device.queue.writeBuffer(posBuf, 0, mesh.positions);
-    device.queue.writeBuffer(colBuf, 0, mesh.colors);
-    device.queue.writeBuffer(nrmBuf, 0, mesh.normals);
-    device.queue.writeBuffer(uvBuf, 0, mesh.uvs);
-    device.queue.writeBuffer(elevBuf, 0, mesh.elevations);
-    device.queue.writeBuffer(waterBuf, 0, mesh.waterFlags);
-    terrainChunks.set(key, { posBuf, colBuf, nrmBuf, uvBuf, elevBuf, waterBuf, vertexCount: mesh.vertexCount });
+    const interleaved = new Float32Array(mesh.vertexCount * 13);
+    for (let i = 0; i < mesh.vertexCount; i++) {
+      interleaved.set(mesh.positions.subarray(i * 3, i * 3 + 3), i * 13);
+      interleaved.set(mesh.colors.subarray(i * 3, i * 3 + 3), i * 13 + 3);
+      interleaved.set(mesh.normals.subarray(i * 3, i * 3 + 3), i * 13 + 6);
+      interleaved.set(mesh.uvs.subarray(i * 2, i * 2 + 2), i * 13 + 9);
+      interleaved[i * 13 + 11] = mesh.elevations[i];
+      interleaved[i * 13 + 12] = mesh.waterFlags[i];
+    }
+    device.queue.writeBuffer(buf, 0, interleaved);
+    terrainChunks.set(key, { buf, vertexCount: mesh.vertexCount });
   }
 
   function removeTerrainChunk(key: string) {
     const chunk = terrainChunks.get(key);
     if (!chunk) return;
-    chunk.posBuf.destroy();
-    chunk.colBuf.destroy();
-    chunk.nrmBuf.destroy();
-    chunk.uvBuf.destroy();
-    chunk.elevBuf.destroy();
-    chunk.waterBuf.destroy();
+    chunk.buf.destroy();
     terrainChunks.delete(key);
   }
 
@@ -676,12 +661,7 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
       pass.setBindGroup(0, terrainBindGroup);
       for (const chunk of terrainChunks.values()) {
         if (chunk.vertexCount === 0) continue;
-        pass.setVertexBuffer(0, chunk.posBuf);
-        pass.setVertexBuffer(1, chunk.colBuf);
-        pass.setVertexBuffer(2, chunk.nrmBuf);
-        pass.setVertexBuffer(3, chunk.uvBuf);
-        pass.setVertexBuffer(4, chunk.elevBuf);
-        pass.setVertexBuffer(5, chunk.waterBuf);
+        pass.setVertexBuffer(0, chunk.buf);
         pass.draw(chunk.vertexCount);
       }
     }
