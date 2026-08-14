@@ -1519,7 +1519,11 @@ function newPlayer(id,race,x,y,isBot){
     res:{food:100000,wood:100000,stone:100000,gold:100000},resAt:0,
     b:{},queues:[null,null],train:{inf:null,arc:null,cav:null,sie:null},
     troops:{},wounded:{},heal:null,
-    gen:{lv:1,xp:0,pts:0,tal:{},id:isBot?(aggr>0.5?0:1):null}, gear:{}, tech:{}, rsch:null,
+    // pts:5 — свободные очки талантов сразу на старте (просьба игрока:
+    // "чтобы у каждого было хоть что-то, чтобы начать вкладываться"), не
+    // ноль, как раньше. Ботов это не задевает — их pts тут же
+    // перезаписываются отдельно (b.gen.pts=b.gen.lv-1, см. ниже по файлу).
+    gen:{lv:1,xp:0,pts:5,tal:{},id:isBot?(aggr>0.5?0:1):null}, gear:{}, tech:{}, rsch:null,
     inventory:Object.fromEntries(GEAR_SLOTS.map(s=>[s.id,{bastion:[0,0,0,0,0],storm:[0,0,0,0,0]}])),
     materials:{ore:[0,0,0,0,0],leather:[0,0,0,0,0],bone:[0,0,0,0,0],ebony:[0,0,0,0,0]}, craft:null,
     tomes:{},
