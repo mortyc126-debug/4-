@@ -20,6 +20,30 @@
 import type { MeshData } from "./terrainMesh";
 import { buildSpruceMesh, buildPineMesh, buildBroadleafMesh, buildBirchMesh, buildDeadTreeMesh, buildBushMesh, buildGrassMesh, buildRockMesh, type DecorMesh } from "./decorMesh";
 import { loadTexture } from "./textures";
+import { ortho, look, mul, type Vec3, type Mat4 } from "./mat4";
+
+// Направление НА солнце — должно дословно совпадать с "sun" внутри
+// TERRAIN_SHADER/DECOR_SHADER (обычная подсветка по нормали) и здесь же
+// определяет, откуда теневая камера "смотрит" на сцену: одно и то же
+// солнце и красит поверхности, и отбрасывает тени, иначе они бы не
+// совпадали по направлению (тень падала бы не в ту сторону от подсветки).
+const SUN_DIR: Vec3 = (() => {
+  const [x, y, z] = [0.62, 0.38, 0.3];
+  const l = Math.hypot(x, y, z);
+  return [x / l, y / l, z / l];
+})();
+// Ортографическая "камера" солнца следует за целью игрока (см. setSunTarget),
+// не за всей бесконечной картой — полный охват невозможен и не нужен:
+// видимая в любой момент область — то же окно, что уже покрывает ближний
+// детальный рельеф (CHUNK_SIZE×LOAD_RADIUS в main.ts, ~48 клеток от камеры
+// в каждую сторону). EXTENT чуть шире этого радиуса, с запасом на то, что
+// сам объект-кастер может стоять чуть за кромкой видимой области, а тень
+// от него — падать в кадр.
+const SHADOW_MAP_SIZE = 2048;
+const SHADOW_EXTENT = 60;
+const SHADOW_DIST = 100; // расстояние от цели до "глаза" теневой камеры вдоль SUN_DIR
+const SHADOW_NEAR = 1;
+const SHADOW_FAR = 220;
 
 // Суша красится настоящими текстурами (см. textures.ts/textures/ground/*),
 // не запечённым на CPU градиентом цвета — 5 текстур смешиваются по высоте
@@ -31,6 +55,7 @@ import { loadTexture } from "./textures";
 const TERRAIN_SHADER = /* wgsl */ `
 struct Uniforms { vp: mat4x4f };
 struct Fog { eye: vec4f, color: vec4f };
+struct Light { vp: mat4x4f };
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var<uniform> fog: Fog;
 @group(0) @binding(2) var samp: sampler;
@@ -39,10 +64,14 @@ struct Fog { eye: vec4f, color: vec4f };
 @group(0) @binding(5) var texDry: texture_2d<f32>;
 @group(0) @binding(6) var texScree: texture_2d<f32>;
 @group(0) @binding(7) var texRock: texture_2d<f32>;
+@group(0) @binding(8) var<uniform> light: Light;
+@group(0) @binding(9) var shadowSamp: sampler_comparison;
+@group(0) @binding(10) var shadowTex: texture_depth_2d;
 
 struct VOut {
   @builtin(position) pos: vec4f, @location(0) waterColor: vec3f, @location(1) worldPos: vec3f,
   @location(2) normal: vec3f, @location(3) uv: vec2f, @location(4) elevation: f32, @location(5) waterFlag: f32,
+  @location(6) lightClip: vec4f,
 };
 
 @vertex
@@ -58,7 +87,33 @@ fn vs(
   out.uv = uv;
   out.elevation = elevation;
   out.waterFlag = waterFlag;
+  out.lightClip = light.vp * vec4f(pos, 1.0);
   return out;
+}
+// Доля света, дошедшая до точки: 1.0 — на свету, 0.0 — в тени. clip —
+// позиция точки в клип-пространстве СОЛНЦА (ортографическая проекция, см.
+// setSunTarget ниже), не основной камеры. За пределами теневой карты
+// (ndc вне [-1,1] по XY или [0,1] по Z) точка вне охвата карты — считаем
+// освещённой, а не тёмной: обрыв на границе куда заметнее, чем отсутствие
+// тени там, где её и не считали. 3×3 PCF (усреднение по соседним текс
+// елям) смягчает ступенчатую границу тени — с одной выборкой на пиксель
+// карты 2048×2048 на объекте с чётким краем (дерево, скала) была бы
+// заметная лесенка.
+fn shadowFactor(clip: vec4f) -> f32 {
+  let ndc = clip.xyz / clip.w;
+  if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) {
+    return 1.0;
+  }
+  let uv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+  let bias = 0.0025;
+  let texel = 1.0 / ${SHADOW_MAP_SIZE.toFixed(1)};
+  var sum = 0.0;
+  for (var dy = -1; dy <= 1; dy = dy + 1) {
+    for (var dx = -1; dx <= 1; dx = dx + 1) {
+      sum = sum + textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f(f32(dx), f32(dy)) * texel, ndc.z - bias);
+    }
+  }
+  return sum / 9.0;
 }
 @fragment
 fn fs(in: VOut) -> @location(0) vec4f {
@@ -68,7 +123,9 @@ fn fs(in: VOut) -> @location(0) vec4f {
   // одна плоская яркость на весь треугольник.
   let sun = normalize(vec3f(0.62, 0.38, 0.30));
   let n = normalize(in.normal);
-  let diffuse = max(0.35, dot(n, sun));
+  let ndotl = max(0.0, dot(n, sun));
+  let shadow = shadowFactor(in.lightClip);
+  let diffuse = max(0.35, ndotl * shadow);
 
   var albedo: vec3f;
   if (in.waterFlag > 0.5) {
@@ -164,15 +221,20 @@ fn fs(in: VOut) -> @location(0) vec4f {
 const DECOR_SHADER = /* wgsl */ `
 struct Uniforms { vp: mat4x4f };
 struct Fog { eye: vec4f, color: vec4f };
+struct Light { vp: mat4x4f };
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var<uniform> fog: Fog;
 @group(0) @binding(2) var samp: sampler;
 @group(0) @binding(3) var trunkTex: texture_2d<f32>;
 @group(0) @binding(4) var canopyTex: texture_2d<f32>;
+@group(0) @binding(5) var<uniform> light: Light;
+@group(0) @binding(6) var shadowSamp: sampler_comparison;
+@group(0) @binding(7) var shadowTex: texture_depth_2d;
 
 struct VOut {
   @builtin(position) pos: vec4f, @location(0) worldPos: vec3f, @location(1) normal: vec3f,
   @location(2) uv: vec2f, @location(3) materialId: f32, @location(4) shade: f32, @location(5) tintColor: vec3f,
+  @location(6) lightClip: vec4f,
 };
 
 @vertex
@@ -192,7 +254,28 @@ fn vs(
   out.materialId = materialId;
   out.shade = shade;
   out.tintColor = tintColor;
+  out.lightClip = light.vp * vec4f(wp, 1.0);
   return out;
+}
+// Дословная копия shadowFactor из TERRAIN_SHADER — отдельные строки
+// шейдеров (createShaderModule компилирует каждую независимо), общий
+// WGSL-модуль на оба пайплайна тут не заводили нигде в файле, дублирование
+// тут того же порядка, что и у тумана (см. MARKER_SHADER/TERRAIN_SHADER).
+fn shadowFactor(clip: vec4f) -> f32 {
+  let ndc = clip.xyz / clip.w;
+  if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) {
+    return 1.0;
+  }
+  let uv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+  let bias = 0.0025;
+  let texel = 1.0 / ${SHADOW_MAP_SIZE.toFixed(1)};
+  var sum = 0.0;
+  for (var dy = -1; dy <= 1; dy = dy + 1) {
+    for (var dx = -1; dx <= 1; dx = dx + 1) {
+      sum = sum + textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f(f32(dx), f32(dy)) * texel, ndc.z - bias);
+    }
+  }
+  return sum / 9.0;
 }
 @fragment
 fn fs(in: VOut) -> @location(0) vec4f {
@@ -218,11 +301,70 @@ fn fs(in: VOut) -> @location(0) vec4f {
   // у него честная объёмная геометрия (гранёный конус), настоящая
   // светотень там уместна и без этой поправки.
   let diffuseFloor = select(0.35, 0.6, in.materialId > 0.5);
-  let diffuse = max(diffuseFloor, dot(n, sun));
+  let ndotl = max(0.0, dot(n, sun));
+  let shadow = shadowFactor(in.lightClip);
+  let diffuse = max(diffuseFloor, ndotl * shadow);
   let lit = base.rgb * diffuse * in.shade;
   let d = distance(in.worldPos, fog.eye.xyz);
   let k = d * fog.color.w; let f = clamp(1.0 - exp(-k * k), 0.0, 1.0);
   return vec4f(mix(lit, fog.color.rgb, f), 1.0);
+}
+`;
+
+// ---- теневая карта: depth-only проход ДО основного кадра, из "глаз"
+// солнца (ортографическая проекция — параллельный пучок, как и положено
+// солнцу, см. setSunTarget ниже) в отдельную depth-текстуру. Рельеф и
+// декор — то, что реально бросает узнаваемую тень (холм на долину, дерево
+// на траву) — единственные два кастера; сами .glb-модели (города/лагеря/
+// точки) сюда осознанно не включены (см. план сессии: тени для них — уже
+// отдельный, куда более тяжёлый кусок работы через modelRenderer.ts, не
+// оправдан для маленьких построек с их и так узнаваемым силуэтом).
+//
+// Рельефу тут не нужен фрагментный шейдер вообще — суша непрозрачна,
+// глубина сама себя пишет через builtin, fragment-стадия у пайплайна ниже
+// просто отсутствует (легально в WebGPU, когда нет цветовых таргетов).
+const TERRAIN_SHADOW_SHADER = /* wgsl */ `
+struct Uniforms { vp: mat4x4f };
+@group(0) @binding(0) var<uniform> u: Uniforms;
+@vertex
+fn vs(@location(0) pos: vec3f) -> @builtin(position) vec4f {
+  return u.vp * vec4f(pos, 1.0);
+}
+`;
+
+// Декору, в отличие от рельефа, нужен фрагментный шейдер даже в теневом
+// проходе — крона/трава/куст (materialId=1) это плоскость с alpha-cutout
+// текстурой (см. DECOR_SHADER), а не честный объём: депth-only без выреза
+// по альфе отбросил бы тень целого прямоугольника карточки, а не силуэт
+// листвы. Ствол (materialId=0) — просто непрозрачная геометрия, ему тест
+// не нужен, sampler на trunkTex в этом проходе поэтому не заводим вовсе.
+const DECOR_SHADOW_SHADER = /* wgsl */ `
+struct Uniforms { vp: mat4x4f };
+@group(0) @binding(0) var<uniform> u: Uniforms;
+@group(0) @binding(1) var samp: sampler;
+@group(0) @binding(2) var canopyTex: texture_2d<f32>;
+
+struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f, @location(1) materialId: f32 };
+
+@vertex
+fn vs(
+  @location(0) localPos: vec3f, @location(2) materialId: f32, @location(4) uv: vec2f,
+  @location(5) worldPos: vec3f, @location(6) scale: vec3f, @location(7) yaw: f32
+) -> VOut {
+  var out: VOut;
+  let c = cos(yaw); let s = sin(yaw);
+  let rp = vec3f(localPos.x * c - localPos.z * s, localPos.y, localPos.x * s + localPos.z * c) * scale;
+  out.pos = u.vp * vec4f(worldPos + rp, 1.0);
+  out.uv = uv;
+  out.materialId = materialId;
+  return out;
+}
+@fragment
+fn fs(in: VOut) {
+  if (in.materialId > 0.5) {
+    let a = textureSampleLevel(canopyTex, samp, in.uv, 0.0).a;
+    if (a < 0.5) { discard; }
+  }
 }
 `;
 
@@ -273,6 +415,13 @@ export interface Renderer {
   // отдельного uniform под одно число заводить не стали — eye.w всё равно
   // не использовался.
   setFog(eye: [number, number, number], color: [number, number, number], density: number, timeSec: number): void;
+  // Куда сейчас смотрит игрок (cam.target из main.ts, не позиция глаза
+  // камеры) — ортографическая теневая камера следует за этой точкой (см.
+  // SHADOW_EXTENT выше): пересчитывает light-VP и решает, какие чанки
+  // рельефа вообще стоит рисовать в теневой проход (см. frame() ниже),
+  // остальное вне SHADOW_EXTENT от неё тени всё равно бы не бросило в
+  // кадр. Достаточно дёшево, чтобы звать каждый кадр, как setVP/setFog.
+  setSunTarget(x: number, z: number): void;
   // drawExtra — вызывается ВНУТРИ того же render pass, что рельеф и маркеры
   // (общий depth-буфер, единая VP-камера), после них: сюда вешаются
   // настоящие .glb-модели (см. main.ts/modelRenderer.ts) без отдельного
@@ -307,6 +456,39 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     size: 8 * 4,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
+
+  // ---- тень ----
+  // lightBuf несёт ту же mat4x4f, что и uniformBuf, только это VP теневой
+  // (ортографической) камеры солнца, а не игрока — используется дважды:
+  // как единственный uniform у depth-only проходов рельефа/декора (см.
+  // TERRAIN_SHADOW_SHADER/DECOR_SHADOW_SHADER) и как ДОПОЛНИТЕЛЬНАЯ entry в
+  // основных bind group рельефа/декора (см. ниже), чтобы их вершинные
+  // шейдеры могли посчитать lightClip для сэмплинга тени во фрагментном.
+  const lightBuf = device.createBuffer({
+    size: 16 * 4,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+  const shadowTex = device.createTexture({
+    size: [SHADOW_MAP_SIZE, SHADOW_MAP_SIZE],
+    format: "depth32float",
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+  });
+  const shadowView = shadowTex.createView();
+  // compare: "less" — тот же смысл, что и depthCompare пайплайнов: сэмпл
+  // возвращает 1.0, когда СОХРАНЁННАЯ в карте глубина МЕНЬШЕ переданного
+  // порога (ndc.z - bias в шейдере), то есть между светом и точкой карты
+  // НЕТ более близкого к свету объекта — точка освещена.
+  const shadowSampler = device.createSampler({ compare: "less", magFilter: "linear", minFilter: "linear" });
+  let lightVP: Mat4 = ortho(-1, 1, -1, 1, 0.1, 1);
+  let sunTargetX = 0, sunTargetZ = 0;
+  function setSunTarget(x: number, z: number) {
+    sunTargetX = x; sunTargetZ = z;
+    const eye: Vec3 = [x + SUN_DIR[0] * SHADOW_DIST, SUN_DIR[1] * SHADOW_DIST, z + SUN_DIR[2] * SHADOW_DIST];
+    const view = look(eye, [x, 0, z], [0, 1, 0]);
+    const proj = ortho(-SHADOW_EXTENT, SHADOW_EXTENT, -SHADOW_EXTENT, SHADOW_EXTENT, SHADOW_NEAR, SHADOW_FAR);
+    lightVP = mul(proj, view);
+    device.queue.writeBuffer(lightBuf, 0, lightVP);
+  }
 
   // ---- рельеф ----
   // Настоящие текстуры земли (см. textures/ground/*, сгенерированы нейросетью
@@ -365,13 +547,43 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
       { binding: 5, resource: texDry.createView() },
       { binding: 6, resource: texScree.createView() },
       { binding: 7, resource: texRock.createView() },
+      { binding: 8, resource: { buffer: lightBuf } },
+      { binding: 9, resource: shadowSampler },
+      { binding: 10, resource: shadowView },
     ],
+  });
+  // Depth-only проход для теневой карты (см. TERRAIN_SHADOW_SHADER выше) —
+  // тот же вершинный буфер чанка (interleaved, позиция в первых 3 float),
+  // но со своим пайплайном/bind group: НЕ переиспользуем terrainPipeline
+  // ни для чего, кроме основного прохода — у него уже есть весь набор
+  // текстур/тумана, который тут не нужен и не должен участвовать в
+  // компиляции depth-only варианта.
+  const terrainShadowModule = device.createShaderModule({ code: TERRAIN_SHADOW_SHADER });
+  const terrainShadowPipeline = device.createRenderPipeline({
+    layout: "auto",
+    vertex: {
+      module: terrainShadowModule,
+      entryPoint: "vs",
+      buffers: [{ arrayStride: 13 * 4, attributes: [{ shaderLocation: 0, offset: 0, format: "float32x3" }] }],
+    },
+    primitive: { topology: "triangle-list", cullMode: "back" },
+    depthStencil: { format: "depth32float", depthWriteEnabled: true, depthCompare: "less" },
+  });
+  const terrainShadowBindGroup = device.createBindGroup({
+    layout: terrainShadowPipeline.getBindGroupLayout(0),
+    entries: [{ binding: 0, resource: { buffer: lightBuf } }],
   });
   // Map кусков рельефа по ключу чанка вместо одной пары буферов на всю
   // сцену — потоковая подгрузка/выгрузка вокруг камеры (см. main.ts): при
   // бесконечном мире держать вершины всей когда-либо увиденной территории
-  // в одном буфере не получится.
-  interface TerrainChunk { buf: GPUBuffer; vertexCount: number }
+  // в одном буфере не получится. minX/maxX/minZ/maxZ — AABB чанка в мировых
+  // координатах (заполняется в setTerrainChunk ниже) — используются только
+  // для того, чтобы теневой проход мог пропускать чанки заведомо вне
+  // SHADOW_EXTENT от текущей цели камеры (см. frame()), а не гонять через
+  // depth-only пайплайн вообще все загруженные чанки, включая дальнее
+  // грубое кольцо (см. main.ts FAR_*), которое почти никогда не пересекает
+  // тень настолько тесную, как окно ближнего рельефа.
+  interface TerrainChunk { buf: GPUBuffer; vertexCount: number; minX: number; maxX: number; minZ: number; maxZ: number }
   const terrainChunks = new Map<string, TerrainChunk>();
 
   // ---- маркеры (инстансинг) ----
@@ -442,7 +654,8 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     return buf;
   }
   interface DecorKindState {
-    mesh: DecorMesh; localBuf: GPUBuffer; instBuf: GPUBuffer | null; instCapacity: number; instanceCount: number; bindGroup: GPUBindGroup;
+    mesh: DecorMesh; localBuf: GPUBuffer; instBuf: GPUBuffer | null; instCapacity: number; instanceCount: number;
+    bindGroup: GPUBindGroup; shadowBindGroup: GPUBindGroup;
   }
   // Текстуры декора (см. textures/decor/*, сгенерированы нейросетью по
   // промптам этой сессии) — уникальных файлов меньше, чем видов (bark.png
@@ -489,38 +702,49 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     spruce: buildSpruceMesh, pine: buildPineMesh, broadleaf: buildBroadleafMesh, autumn: buildBroadleafMesh,
     birch: buildBirchMesh, dead: buildDeadTreeMesh, bush: buildBushMesh, grass: buildGrassMesh, rock: buildRockMesh,
   };
-  const decorPipeline = device.createRenderPipeline({
-    layout: "auto",
-    vertex: {
-      module: decorModule,
-      entryPoint: "vs",
-      buffers: [
-        {
-          arrayStride: 10 * 4,
-          stepMode: "vertex",
-          attributes: [
-            { shaderLocation: 0, offset: 0, format: "float32x3" },
-            { shaderLocation: 1, offset: 3 * 4, format: "float32x3" },
-            { shaderLocation: 2, offset: 6 * 4, format: "float32" },
-            { shaderLocation: 3, offset: 7 * 4, format: "float32" },
-            { shaderLocation: 4, offset: 8 * 4, format: "float32x2" },
-          ],
-        },
-        {
-          arrayStride: DECOR_INST_STRIDE_FLOATS * 4,
-          stepMode: "instance",
-          attributes: [
-            { shaderLocation: 5, offset: 0, format: "float32x3" },
-            { shaderLocation: 6, offset: 3 * 4, format: "float32x3" },
-            { shaderLocation: 7, offset: 6 * 4, format: "float32" },
-            { shaderLocation: 8, offset: 7 * 4, format: "float32x3" },
-          ],
-        },
+  // Общий vertex-layout для основного и теневого пайплайнов декора — можно
+  // объявлять больше атрибутов, чем реально читает конкретный вершинный
+  // шейдер (DECOR_SHADOW_SHADER использует только часть локаций, см. выше),
+  // лишние entries тут не мешают: WebGPU валидирует только то, что шейдер
+  // ДЕЙСТВИТЕЛЬНО использует, и одна и та же пара GPU-буферов (localBuf +
+  // instBuf конкретного вида) подходит под оба пайплайна без переделки.
+  const decorVertexBuffers: GPUVertexBufferLayout[] = [
+    {
+      arrayStride: 10 * 4,
+      stepMode: "vertex",
+      attributes: [
+        { shaderLocation: 0, offset: 0, format: "float32x3" },
+        { shaderLocation: 1, offset: 3 * 4, format: "float32x3" },
+        { shaderLocation: 2, offset: 6 * 4, format: "float32" },
+        { shaderLocation: 3, offset: 7 * 4, format: "float32" },
+        { shaderLocation: 4, offset: 8 * 4, format: "float32x2" },
       ],
     },
+    {
+      arrayStride: DECOR_INST_STRIDE_FLOATS * 4,
+      stepMode: "instance",
+      attributes: [
+        { shaderLocation: 5, offset: 0, format: "float32x3" },
+        { shaderLocation: 6, offset: 3 * 4, format: "float32x3" },
+        { shaderLocation: 7, offset: 6 * 4, format: "float32" },
+        { shaderLocation: 8, offset: 7 * 4, format: "float32x3" },
+      ],
+    },
+  ];
+  const decorPipeline = device.createRenderPipeline({
+    layout: "auto",
+    vertex: { module: decorModule, entryPoint: "vs", buffers: decorVertexBuffers },
     fragment: { module: decorModule, entryPoint: "fs", targets: [{ format }] },
     primitive: { topology: "triangle-list" },
     depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "less" },
+  });
+  const decorShadowModule = device.createShaderModule({ code: DECOR_SHADOW_SHADER });
+  const decorShadowPipeline = device.createRenderPipeline({
+    layout: "auto",
+    vertex: { module: decorShadowModule, entryPoint: "vs", buffers: decorVertexBuffers },
+    fragment: { module: decorShadowModule, entryPoint: "fs", targets: [] },
+    primitive: { topology: "triangle-list" },
+    depthStencil: { format: "depth32float", depthWriteEnabled: true, depthCompare: "less" },
   });
   const decorKinds = new Map<DecorEntity["kind"], DecorKindState>();
   for (const kind of Object.keys(decorKindSpec) as DecorEntity["kind"][]) {
@@ -534,9 +758,20 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
         { binding: 2, resource: decorSampler },
         { binding: 3, resource: decorTextures[spec.trunk].createView() },
         { binding: 4, resource: decorTextures[spec.canopy].createView() },
+        { binding: 5, resource: { buffer: lightBuf } },
+        { binding: 6, resource: shadowSampler },
+        { binding: 7, resource: shadowView },
       ],
     });
-    decorKinds.set(kind, { mesh, localBuf: uploadDecorMesh(mesh), instBuf: null, instCapacity: 0, instanceCount: 0, bindGroup });
+    const shadowBindGroup = device.createBindGroup({
+      layout: decorShadowPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: lightBuf } },
+        { binding: 1, resource: decorSampler },
+        { binding: 2, resource: decorTextures[spec.canopy].createView() },
+      ],
+    });
+    decorKinds.set(kind, { mesh, localBuf: uploadDecorMesh(mesh), instBuf: null, instCapacity: 0, instanceCount: 0, bindGroup, shadowBindGroup });
   }
 
   // ---- глубина ----
@@ -562,7 +797,11 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
     const interleaved = new Float32Array(mesh.vertexCount * 13);
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
     for (let i = 0; i < mesh.vertexCount; i++) {
+      const px = mesh.positions[i * 3], pz = mesh.positions[i * 3 + 2];
+      if (px < minX) minX = px; if (px > maxX) maxX = px;
+      if (pz < minZ) minZ = pz; if (pz > maxZ) maxZ = pz;
       interleaved.set(mesh.positions.subarray(i * 3, i * 3 + 3), i * 13);
       interleaved.set(mesh.colors.subarray(i * 3, i * 3 + 3), i * 13 + 3);
       interleaved.set(mesh.normals.subarray(i * 3, i * 3 + 3), i * 13 + 6);
@@ -571,7 +810,7 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
       interleaved[i * 13 + 12] = mesh.waterFlags[i];
     }
     device.queue.writeBuffer(buf, 0, interleaved);
-    terrainChunks.set(key, { buf, vertexCount: mesh.vertexCount });
+    terrainChunks.set(key, { buf, vertexCount: mesh.vertexCount, minX, maxX, minZ, maxZ });
   }
 
   function removeTerrainChunk(key: string) {
@@ -645,6 +884,45 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   function frame(clearColor: GPUColorDict, drawExtra?: (pass: GPURenderPassEncoder) => void) {
     ensureDepth();
     const encoder = device.createCommandEncoder();
+
+    // ---- теневой проход: depth-only в shadowTex, отдельный render pass ДО
+    // основного (общий encoder — одна отправка на GPU, не два submit()).
+    // Терраин-чанки культятся по AABB (см. TerrainChunk выше) против
+    // SHADOW_EXTENT вокруг цели камеры — дальнее грубое кольцо рельефа
+    // (main.ts, FAR_*) почти всегда снаружи этого окна и не тратит впустую
+    // draw call на тень, которую всё равно никто не увидит.
+    {
+      const shadowPass = encoder.beginRenderPass({
+        colorAttachments: [],
+        depthStencilAttachment: { view: shadowView, depthClearValue: 1.0, depthLoadOp: "clear", depthStoreOp: "store" },
+      });
+      const sMinX = sunTargetX - SHADOW_EXTENT, sMaxX = sunTargetX + SHADOW_EXTENT;
+      const sMinZ = sunTargetZ - SHADOW_EXTENT, sMaxZ = sunTargetZ + SHADOW_EXTENT;
+      if (terrainChunks.size > 0) {
+        shadowPass.setPipeline(terrainShadowPipeline);
+        shadowPass.setBindGroup(0, terrainShadowBindGroup);
+        for (const chunk of terrainChunks.values()) {
+          if (chunk.vertexCount === 0) continue;
+          if (chunk.maxX < sMinX || chunk.minX > sMaxX || chunk.maxZ < sMinZ || chunk.minZ > sMaxZ) continue;
+          shadowPass.setVertexBuffer(0, chunk.buf);
+          shadowPass.draw(chunk.vertexCount);
+        }
+      }
+      let anyDecorShadow = false;
+      for (const state of decorKinds.values()) if (state.instanceCount > 0) { anyDecorShadow = true; break; }
+      if (anyDecorShadow) {
+        shadowPass.setPipeline(decorShadowPipeline);
+        for (const state of decorKinds.values()) {
+          if (state.instanceCount === 0 || !state.instBuf) continue;
+          shadowPass.setBindGroup(0, state.shadowBindGroup);
+          shadowPass.setVertexBuffer(0, state.localBuf);
+          shadowPass.setVertexBuffer(1, state.instBuf);
+          shadowPass.draw(state.mesh.vertexCount, state.instanceCount);
+        }
+      }
+      shadowPass.end();
+    }
+
     const view = ctx.getCurrentTexture().createView();
     const pass = encoder.beginRenderPass({
       colorAttachments: [{ view, clearValue: clearColor, loadOp: "clear", storeOp: "store" }],
@@ -696,5 +974,5 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     device.queue.submit([encoder.finish()]);
   }
 
-  return { setTerrainChunk, removeTerrainChunk, setMarkers, setDecor, setVP, setFog, frame };
+  return { setTerrainChunk, removeTerrainChunk, setMarkers, setDecor, setVP, setFog, setSunTarget, frame };
 }

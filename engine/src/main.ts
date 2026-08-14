@@ -961,6 +961,7 @@ async function main() {
     currentVP = vp;
     renderer.setVP(vp);
     renderer.setFog(eye, FOG_COLOR, FOG_K, tMs / 1000);
+    renderer.setSunTarget(cam.target[0], cam.target[2]);
     modelPipeline.setFog(eye, FOG_COLOR, FOG_K);
     const markers = marchMarkers();
     if (highlightMarker) markers.push(highlightMarker);
