@@ -11,7 +11,7 @@ import { createWorld, addEntity, addComponent, removeEntity, query } from "bitec
 import { createRenderer, type MarkerEntity, type DecorEntity } from "./renderer";
 import { buildTerrainPatch } from "./terrainMesh";
 import { heightAt, HMAX, hash2, isWater, SEED } from "./terrain";
-import { PINE, LEAF, GRASS_TONES, ROCK_TONES } from "./decorMesh";
+import { PINE, LEAF, GRASS_TONES, BUSH_TONES, ROCK_TONES } from "./decorMesh";
 import { mul, persp, look, modelMatrix, transformPoint, type Vec3, type Mat4 } from "./mat4";
 import { attachOrbitControls, type OrbitCamera } from "./camera";
 import { loadGLB } from "./glb";
@@ -193,10 +193,12 @@ async function main() {
   // 25 кадров, ради красоты") — плотность и число видов заметно выросли
   // против первой версии (была одна subgrid 4×4 и два вида дерева).
   const DECOR_CELL = 4; // сторона подсетки деревьев/камней, кратно CHUNK_SIZE (÷4)
-  const DECOR_CHANCE = 0.45;
-  const TREE_FRACTION = 0.8; // доля деревьев среди сгенерированных — остальное камни
+  const DECOR_CHANCE = 0.65;
+  const TREE_FRACTION = 0.82; // доля деревьев среди сгенерированных — остальное камни
   const GRASS_CELL = 2; // трава — своя, более мелкая подсетка (гуще)
-  const GRASS_CHANCE = 0.5;
+  const GRASS_CHANCE = 0.7;
+  const BUSH_CELL = 3; // кусты — средний ярус между травой и деревьями, своя подсетка
+  const BUSH_CHANCE = 0.35;
   // Хвойный/лиственный порог по высоте — тот же приём, что и в старом
   // прототипе (obyom-3d-infinite.html: `const conif = e>0.50`) — хвоя на
   // возвышенностях, лиственный лес в низинах, а не вперемешку где попало.
@@ -220,13 +222,18 @@ async function main() {
     return false;
   }
   // Выбор вида дерева по высоте — та же цепочка вероятностей, что и в
-  // прототипе (treeSpruce/treePine слиты в один общий "conifer"-меш здесь,
-  // но соотношение живое/сухое и хвоя/лиственная/берёза — оттуда же).
+  // прототипе (treeSpruce/treePine/treeBroad/treeBirch/treeDead): хвоя
+  // (ель/сосна) на возвышенностях, лиственный лес (дуб/берёза) в низинах,
+  // с редкой примесью другого вида и сухостоя в обоих случаях.
   function pickTreeKind(e: number, r: number): DecorEntity["kind"] {
-    if (e > CONIFER_ELEVATION) return r < 0.85 ? "conifer" : "dead";
-    if (r < 0.55) return "broadleaf";
-    if (r < 0.78) return "birch";
-    if (r < 0.92) return "conifer"; // редкая хвоя вперемешку в низине
+    if (e > CONIFER_ELEVATION) {
+      if (r < 0.62) return "spruce";
+      if (r < 0.94) return "pine";
+      return "dead";
+    }
+    if (r < 0.58) return "broadleaf";
+    if (r < 0.80) return "birch";
+    if (r < 0.94) return "spruce"; // редкая хвоя вперемешку в низине
     return "dead";
   }
   function genDecorForChunk(cx: number, cz: number): DecorEntity[] {
@@ -253,9 +260,9 @@ async function main() {
         if (isTree) {
           const kind = pickTreeKind(e, hash2(gx, gz, SEED + 780));
           // "dead" — голый ствол без кроны, свой цвет инстанса нигде не
-          // используется (весь меш materialId=0, см. decorMesh.ts), но
+          // используется (весь меш materialId=4, см. decorMesh.ts), но
           // структура DecorEntity общая — просто берём любую палитру.
-          const palette = kind === "conifer" ? PINE : LEAF;
+          const palette = kind === "spruce" || kind === "pine" ? PINE : LEAF;
           const base = palette[Math.floor(hash2(gx, gz, SEED + 784) * palette.length)];
           out.push({
             x: wx, y: wy, z: wz, scale: [scaleXZ, scaleY, scaleXZ], yaw,
@@ -290,6 +297,26 @@ async function main() {
         const base = GRASS_TONES[Math.floor(hash2(gx, gz, SEED + 892) * GRASS_TONES.length)];
         const s = 0.8 + hash2(gx, gz, SEED + 893) * 0.6;
         out.push({ x: wx, y: wy, z: wz, scale: [s, s, s], yaw, color: jitterColor(base, jitter), kind: "grass" });
+      }
+    }
+    const bushCellsPerSide = CHUNK_SIZE / BUSH_CELL;
+    for (let j = 0; j < bushCellsPerSide; j++) {
+      for (let i = 0; i < bushCellsPerSide; i++) {
+        const gx = cx * bushCellsPerSide + i, gz = cz * bushCellsPerSide + j;
+        if (hash2(gx, gz, SEED + 997) >= BUSH_CHANCE) continue;
+        const jx = hash2(gx, gz, SEED + 998), jz = hash2(gx, gz, SEED + 999);
+        const wx = cx * CHUNK_SIZE + i * BUSH_CELL + jx * BUSH_CELL;
+        const wz = cz * CHUNK_SIZE + j * BUSH_CELL + jz * BUSH_CELL;
+        if (isWater(wx, wz)) continue;
+        if (blockedByStructure(wx, wz, 1.3, 1)) continue;
+        const e = heightAt(wx, wz);
+        if (e > 0.75) continue;
+        const wy = e * HMAX;
+        const yaw = hash2(gx, gz, SEED + 1000) * Math.PI * 2;
+        const jitter = 0.85 + hash2(gx, gz, SEED + 1001) * 0.3;
+        const base = BUSH_TONES[Math.floor(hash2(gx, gz, SEED + 1002) * BUSH_TONES.length)];
+        const s = 0.9 + hash2(gx, gz, SEED + 1003) * 0.7;
+        out.push({ x: wx, y: wy, z: wz, scale: [s, s, s], yaw, color: jitterColor(base, jitter), kind: "bush" });
       }
     }
     return out;

@@ -18,7 +18,7 @@
    устройства.
    ========================================================================= */
 import type { MeshData } from "./terrainMesh";
-import { buildConiferMesh, buildBroadleafMesh, buildBirchMesh, buildDeadTreeMesh, buildGrassMesh, buildRockMesh, type DecorMesh } from "./decorMesh";
+import { buildSpruceMesh, buildPineMesh, buildBroadleafMesh, buildBirchMesh, buildDeadTreeMesh, buildBushMesh, buildGrassMesh, buildRockMesh, type DecorMesh } from "./decorMesh";
 
 const TERRAIN_SHADER = /* wgsl */ `
 struct Uniforms { vp: mat4x4f };
@@ -86,11 +86,15 @@ fn fs(in: VOut) -> @location(0) vec4f {
 // нужна, тут же в шейдере, применяется и к позиции, и к нормали одинаково.
 //
 // materialId вместо запечённого в меш цвета (см. decorMesh.ts) — роль, не
-// сам цвет: 0=обычный ствол (TRUNK_COLOR), 1=крона/камень/трава (цвет
+// сам цвет: 0=обычный ствол (TRUNK_COLOR), 1=крона/камень/куст/трава (цвет
 // ИНСТАНСА — палитра выбирается на CPU, см. main.ts), 2=бледный ствол
-// берёзы (BIRCH_TRUNK). Масштаб — vec3, не скаляр: неравномерное растяжение
+// берёзы (BIRCH_TRUNK), 3=тёмная полоса коры берёзы (BIRCH_MARK), 4=сухой
+// ствол (DEAD_COLOR). Масштаб — vec3, не скаляр: неравномерное растяжение
 // по осям даёт заметно разные силуэты у инстансов ОДНОЙ и той же геометрии
 // (шире/уже/выше) почти бесплатно, без новых мешей под каждый вариант формы.
+// shade — запечённый в вершину множитель яркости (0.7..1.3, см.
+// decorMesh.ts): у "крона"-вершин разных блобов одного дерева получается
+// естественная рябь светотени, а не одна плоская заливка на весь силуэт.
 const DECOR_SHADER = /* wgsl */ `
 struct Uniforms { vp: mat4x4f };
 struct Fog { eye: vec4f, color: vec4f };
@@ -98,13 +102,15 @@ struct Fog { eye: vec4f, color: vec4f };
 @group(0) @binding(1) var<uniform> fog: Fog;
 const TRUNK_COLOR = vec3f(0.35, 0.26, 0.17);
 const BIRCH_TRUNK = vec3f(0.76, 0.73, 0.65);
+const BIRCH_MARK = vec3f(0.16, 0.14, 0.12);
+const DEAD_COLOR = vec3f(0.34, 0.31, 0.27);
 
 struct VOut { @builtin(position) pos: vec4f, @location(0) color: vec3f, @location(1) worldPos: vec3f, @location(2) normal: vec3f };
 
 @vertex
 fn vs(
-  @location(0) localPos: vec3f, @location(1) localNormal: vec3f, @location(2) materialId: f32,
-  @location(3) worldPos: vec3f, @location(4) scale: vec3f, @location(5) yaw: f32, @location(6) tintColor: vec3f
+  @location(0) localPos: vec3f, @location(1) localNormal: vec3f, @location(2) materialId: f32, @location(3) shade: f32,
+  @location(4) worldPos: vec3f, @location(5) scale: vec3f, @location(6) yaw: f32, @location(7) tintColor: vec3f
 ) -> VOut {
   var out: VOut;
   let c = cos(yaw); let s = sin(yaw);
@@ -113,9 +119,11 @@ fn vs(
   let wp = worldPos + rp;
   out.pos = u.vp * vec4f(wp, 1.0);
   var base = TRUNK_COLOR;
-  if (materialId > 1.5) { base = BIRCH_TRUNK; }
+  if (materialId > 3.5) { base = DEAD_COLOR; }
+  else if (materialId > 2.5) { base = BIRCH_MARK; }
+  else if (materialId > 1.5) { base = BIRCH_TRUNK; }
   else if (materialId > 0.5) { base = tintColor; }
-  out.color = base;
+  out.color = base * shade;
   out.worldPos = wp;
   out.normal = rn;
   return out;
@@ -153,7 +161,7 @@ export interface DecorEntity {
   scale: [number, number, number];
   yaw: number;
   color: [number, number, number];
-  kind: "conifer" | "broadleaf" | "birch" | "dead" | "rock" | "grass";
+  kind: "spruce" | "pine" | "broadleaf" | "birch" | "dead" | "bush" | "rock" | "grass";
 }
 
 export interface Renderer {
@@ -290,28 +298,32 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
   const decorModule = device.createShaderModule({ code: DECOR_SHADER });
   function uploadDecorMesh(mesh: DecorMesh) {
     const buf = device.createBuffer({
-      size: Math.max(mesh.vertexCount * 7 * 4, 4),
+      size: Math.max(mesh.vertexCount * 8 * 4, 4),
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
-    // Один буфер на локальный меш: pos(3)+normal(3)+materialId(1) переплетены
-    // подряд на вершину — геометрия строится один раз при старте, не каждый
-    // кадр, поэтому собрать один interleaved Float32Array тут же на CPU
-    // проще, чем городить раздельные vertex-буферы ради статичного меша.
-    const interleaved = new Float32Array(mesh.vertexCount * 7);
+    // Один буфер на локальный меш: pos(3)+normal(3)+materialId(1)+shade(1)
+    // переплетены подряд на вершину — геометрия строится один раз при
+    // старте, не каждый кадр, поэтому собрать один interleaved
+    // Float32Array тут же на CPU проще, чем городить раздельные vertex-
+    // буферы ради статичного меша.
+    const interleaved = new Float32Array(mesh.vertexCount * 8);
     for (let i = 0; i < mesh.vertexCount; i++) {
-      interleaved.set(mesh.positions.subarray(i * 3, i * 3 + 3), i * 7);
-      interleaved.set(mesh.normals.subarray(i * 3, i * 3 + 3), i * 7 + 3);
-      interleaved[i * 7 + 6] = mesh.materialIds[i];
+      interleaved.set(mesh.positions.subarray(i * 3, i * 3 + 3), i * 8);
+      interleaved.set(mesh.normals.subarray(i * 3, i * 3 + 3), i * 8 + 3);
+      interleaved[i * 8 + 6] = mesh.materialIds[i];
+      interleaved[i * 8 + 7] = mesh.shades[i];
     }
     device.queue.writeBuffer(buf, 0, interleaved);
     return buf;
   }
   interface DecorKindState { mesh: DecorMesh; localBuf: GPUBuffer; instBuf: GPUBuffer | null; instCapacity: number; instanceCount: number }
   const decorKinds = new Map<DecorEntity["kind"], DecorKindState>([
-    ["conifer", { mesh: buildConiferMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
+    ["spruce", { mesh: buildSpruceMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
+    ["pine", { mesh: buildPineMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
     ["broadleaf", { mesh: buildBroadleafMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
     ["birch", { mesh: buildBirchMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
     ["dead", { mesh: buildDeadTreeMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
+    ["bush", { mesh: buildBushMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
     ["rock", { mesh: buildRockMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
     ["grass", { mesh: buildGrassMesh(), localBuf: null as any, instBuf: null, instCapacity: 0, instanceCount: 0 }],
   ]);
@@ -323,22 +335,23 @@ export function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, format:
       entryPoint: "vs",
       buffers: [
         {
-          arrayStride: 7 * 4,
+          arrayStride: 8 * 4,
           stepMode: "vertex",
           attributes: [
             { shaderLocation: 0, offset: 0, format: "float32x3" },
             { shaderLocation: 1, offset: 3 * 4, format: "float32x3" },
             { shaderLocation: 2, offset: 6 * 4, format: "float32" },
+            { shaderLocation: 3, offset: 7 * 4, format: "float32" },
           ],
         },
         {
           arrayStride: DECOR_INST_STRIDE_FLOATS * 4,
           stepMode: "instance",
           attributes: [
-            { shaderLocation: 3, offset: 0, format: "float32x3" },
-            { shaderLocation: 4, offset: 3 * 4, format: "float32x3" },
-            { shaderLocation: 5, offset: 6 * 4, format: "float32" },
-            { shaderLocation: 6, offset: 7 * 4, format: "float32x3" },
+            { shaderLocation: 4, offset: 0, format: "float32x3" },
+            { shaderLocation: 5, offset: 3 * 4, format: "float32x3" },
+            { shaderLocation: 6, offset: 6 * 4, format: "float32" },
+            { shaderLocation: 7, offset: 7 * 4, format: "float32x3" },
           ],
         },
       ],
