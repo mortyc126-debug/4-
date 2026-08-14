@@ -138,6 +138,25 @@ async function main() {
     return;
   }
   const device = await adapter.requestDevice();
+  // GPU-ошибки валидации (например, из-за багов в шейдерах, layout'ах,
+  // текстурах) не бросают JS-исключение и не проходят через main().catch()
+  // ниже — иначе они бы никогда не долетели до отладки на телефоне (там нет
+  // доступа к devtools, а #status спрятан внутри iframe, см. ниже). Баннер
+  // виден всегда, встроен ли движок в игру или открыт отдельно.
+  device.addEventListener("uncapturederror", (event) => {
+    const message = (event as GPUUncapturedErrorEvent).error.message;
+    console.error("WebGPU error:", message);
+    let banner = document.getElementById("gpu-error-banner");
+    if (!banner) {
+      banner = document.createElement("div");
+      banner.id = "gpu-error-banner";
+      banner.style.cssText =
+        "position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#4a0f0f;color:#fff;" +
+        "font:11px/1.4 monospace;padding:6px 8px;max-height:40vh;overflow:auto;white-space:pre-wrap;";
+      document.body.appendChild(banner);
+    }
+    banner.textContent += (banner.textContent ? "\n---\n" : "") + message;
+  });
   const canvas = document.getElementById("gpu") as HTMLCanvasElement;
   const ctx = canvas.getContext("webgpu");
   if (!ctx) {
