@@ -2590,18 +2590,16 @@ function pathPointAt(m,f){
   return path[path.length-1];
 }
 
-// TROOP_TYPES[t].speed — относительный множитель для отображения в карточке
-// юнита ("×1.00" рядом с другими × статами, см. unitCarouselHtml) и остаётся
-// нетронутым; настоящая путевая скорость (клеток в минуту) получается
-// домножением на MARCH_SPEED_SCALE тут же, при расчёте похода. Раньше
-// множитель ×1.00 ИСПОЛЬЗОВАЛСЯ НАПРЯМУЮ как клеток/мин — при типичных
-// теперь-то расстояниях после расширения мира (сотни клеток) поход занимал
-// часы вместо ожидаемых по механике RoK секунд-минут (репорт пользователя:
-// 3 часа на путь, которого "на глаз" быть не должно). 24 клетки/мин у
-// пехоты (было буквально 1) откалибровано так, чтобы ближняя цель (десяток
-// клеток) укладывалась в ~30-60 секунд, а действительно дальняя (сотни
-// клеток, как в репорте) — в единицы-десятки минут, а не в часы.
-const MARCH_SPEED_SCALE=24;
+// TROOP_TYPES[t].speed — относительный множитель, настоящая путевая скорость
+// (клеток в минуту) получается домножением на MARCH_SPEED_SCALE тут же, при
+// расчёте похода (см. unitCardStatsHtml — карточка юнита показывает уже
+// готовое "N кл/мин", а не голый множитель). Раньше множитель ×1.00
+// ИСПОЛЬЗОВАЛСЯ НАПРЯМУЮ как клеток/мин — при типичных теперь-то расстояниях
+// после расширения мира (сотни клеток) поход занимал часы вместо ожидаемых
+// по механике RoK секунд-минут (репорт пользователя: 3 часа на путь,
+// которого "на глаз" быть не должно) — тогда откалибровали на 24 клетки/мин
+// у пехоты. Пользователь попросил ещё +33% сверху (32 = round(24*1.33)).
+const MARCH_SPEED_SCALE=32;
 function marchSpeed(p,units){
   let s=99; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) if(units[t][i]>0) s=Math.min(s,TROOP_TYPES[t].speed*troopMod(p.race,t,"speed"))});
   if(s>90) s=1;
@@ -2756,7 +2754,9 @@ function arriveMarch(m){
 
   if(cell.t==="node" && m.mode==="gather"){
     const B=bonuses(p);
-    let rate=(60+p.b.hall*22)*(1+B.gather);
+    // ×3 — пользователь отметил, что сбор с точек ощущался слишком
+    // медленным относительно резервов точки (o.amount) и марш-таймингов.
+    let rate=(60+p.b.hall*22)*3*(1+B.gather);
     rate*= (cell.res==="food"||cell.res==="wood") ? 1+(B.gatherFW||0) : 1+(B.gatherSG||0);
     let load=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) load+=m.units[t][i]*TROOP_TYPES[t].load*TIER_MULT[i-1]*troopMod(p.race,t,"load")});
     load=Math.round(load*(1+B.load));
@@ -5030,7 +5030,7 @@ function unitCardStatsHtml(p,type,tier){
     "<tr><td>"+statIcon("hp")+"Здоровье</td><td>"+troopStat(type,tier,"hp")+"</td></tr>"+
     "<tr><td>"+statIcon("matk")+"Магическая атака</td><td>"+troopStat(type,tier,"magicAtk")+"</td></tr>"+
     "<tr><td>"+statIcon("mdef")+"Магическая защита</td><td>"+troopStat(type,tier,"magicDef")+"</td></tr>"+
-    "<tr><td>"+statIcon("speed")+"Скорость</td><td>&times;"+TROOP_TYPES[type].speed.toFixed(2)+"</td></tr>"+
+    "<tr><td>"+statIcon("speed")+"Скорость</td><td>"+Math.round(TROOP_TYPES[type].speed*troopMod(p.race,type,"speed")*MARCH_SPEED_SCALE)+" кл/мин</td></tr>"+
     "<tr><td>"+statIcon("load")+"Грузоподъёмность</td><td>"+TROOP_TYPES[type].load+"</td></tr>"+
     "<tr><td><img class='stat-ico' src='images/ui/icon-power.png' alt=''>Мощь</td><td>"+unitPower(tier)+"</td></tr>"+
   "</table>";
