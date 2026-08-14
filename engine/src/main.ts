@@ -728,19 +728,40 @@ async function main() {
     (window as any).__selectedLabel = null;
     selectedEl.style.display = "none";
   }
+  // Раньше порог попадания был одним и тем же плоским числом (46px) для
+  // любой сущности — у крупного города (scale 10) вблизи силуэт модели на
+  // экране мог быть заметно шире этого круга, тап по видимой крыше замка
+  // мимо его спроецированного центра не засчитывался ("непонятно, как
+  // работает тач"). Порог теперь считается для КАЖДОЙ сущности отдельно —
+  // проекция точки, отступленной на её мировой scale от центра, даёт
+  // экранный радиус именно ЭТОЙ модели на ЭТОЙ дистанции (честная
+  // перспектива, не константа), ×1.25 — небольшой запас территории вокруг
+  // модели, как и просили. 46px остаётся ЖЁСТКИМ ПОЛОМ (не уменьшаем то,
+  // что уже работало для мелких/дальних точек) — новый расчёт только
+  // расширяет площадь попадания, никогда не сужает.
+  const TAP_MIN_RADIUS_PX = 46;
   function findEntityAtScreen(px: number, py: number): number | null {
     let best = -1;
-    let bestDist = 46; // px — совпадает по духу с радиусом попадания в 2D
+    let bestMargin = 0; // выбираем не ближайшую по сырой дистанции, а ту, где тап глубже всего внутри радиуса — иначе крупная дальняя модель отбирала бы тап у мелкой, но реально более близкой
     for (const eid of found) {
       const wx = Position.x[eid], wz = Position.y[eid];
-      const wy = heightAt(wx, wz) * HMAX + (modelScaleOf.get(eid) ?? 5) * 0.35;
+      const scale = modelScaleOf.get(eid) ?? 5;
+      const wy = heightAt(wx, wz) * HMAX + scale * 0.35;
       const clip = transformPoint(currentVP, [wx, wy, wz]);
       if (clip.w <= 0.001) continue; // за спиной камеры
       const sx = (clip.x / clip.w * 0.5 + 0.5) * canvas.width;
       const sy = (1 - (clip.y / clip.w * 0.5 + 0.5)) * canvas.height;
+      let radius = TAP_MIN_RADIUS_PX;
+      const edgeClip = transformPoint(currentVP, [wx + scale, wy, wz]);
+      if (edgeClip.w > 0.001) {
+        const ex = (edgeClip.x / edgeClip.w * 0.5 + 0.5) * canvas.width;
+        const ey = (1 - (edgeClip.y / edgeClip.w * 0.5 + 0.5)) * canvas.height;
+        radius = Math.max(TAP_MIN_RADIUS_PX, Math.hypot(ex - sx, ey - sy) * 1.25);
+      }
       const d = Math.hypot(sx - px, sy - py);
-      if (d < bestDist) {
-        bestDist = d;
+      const margin = radius - d;
+      if (margin > bestMargin) {
+        bestMargin = margin;
         best = eid;
       }
     }
