@@ -143,9 +143,7 @@ async function main() {
   // ниже — иначе они бы никогда не долетели до отладки на телефоне (там нет
   // доступа к devtools, а #status спрятан внутри iframe, см. ниже). Баннер
   // виден всегда, встроен ли движок в игру или открыт отдельно.
-  device.addEventListener("uncapturederror", (event) => {
-    const message = (event as GPUUncapturedErrorEvent).error.message;
-    console.error("WebGPU error:", message);
+  function showGpuBanner(message: string) {
     let banner = document.getElementById("gpu-error-banner");
     if (!banner) {
       banner = document.createElement("div");
@@ -156,6 +154,31 @@ async function main() {
       document.body.appendChild(banner);
     }
     banner.textContent += (banner.textContent ? "\n---\n" : "") + message;
+  }
+  device.addEventListener("uncapturederror", (event) => {
+    const message = (event as GPUUncapturedErrorEvent).error.message;
+    console.error("WebGPU error:", message);
+    showGpuBanner(message);
+  });
+  // "Белый экран спустя время, без перезагрузки" — не гонка layout'а (та
+  // чинилась ResizeObserver'ом выше), а живая потеря GPU-устройства
+  // (device.lost — драйвер сбросился, не хватило памяти, вкладка ушла в
+  // фон и ОС отобрала GPU-контекст у неё). После потери ЛЮБОЙ вызов к
+  // устройству становится no-op — рельеф/декор/модели молча перестают
+  // рисоваться, а весь остальной JS (bitECS, подписи над сущностями)
+  // как ни в чём не бывало продолжает крутиться: тот же обманчивый
+  // симптом, что и у прошлых двух багов. Полноценно пересоздать всю сцену
+  // на новом device на лету — отдельный большой рефакторинг, а простая и
+  // рекомендованная самой спецификацией WebGPU перезагрузка страницы даёт
+  // тот же результат для пользователя (свежий адаптер/device) без него.
+  // reason "destroyed" — само устройство намеренно уничтожили НАШИМ же
+  // кодом (нигде не вызываем device.destroy(), так что этой ветки на
+  // практике не бывает) — на неё перезагружаться не нужно.
+  device.lost.then((info) => {
+    console.error("WebGPU device lost:", info.reason, info.message);
+    if (info.reason === "destroyed") return;
+    showGpuBanner(`WebGPU-устройство потеряно (${info.reason}): ${info.message}\nПерезагрузка через 2с...`);
+    setTimeout(() => location.reload(), 2000);
   });
   const canvas = document.getElementById("gpu") as HTMLCanvasElement;
   const ctx = canvas.getContext("webgpu");
