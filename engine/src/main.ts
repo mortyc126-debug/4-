@@ -11,6 +11,7 @@ import { createWorld, addEntity, addComponent, removeEntity, query } from "bitec
 import { createRenderer, type MarkerEntity, type DecorEntity } from "./renderer";
 import { buildTerrainPatch } from "./terrainMesh";
 import { heightAt, HMAX, hash2, isWater, SEED } from "./terrain";
+import { PINE, LEAF, ROCK_TONES } from "./decorMesh";
 import { mul, persp, look, modelMatrix, transformPoint, type Vec3, type Mat4 } from "./mat4";
 import { attachOrbitControls, type OrbitCamera } from "./camera";
 import { loadGLB } from "./glb";
@@ -190,9 +191,16 @@ async function main() {
   // не лес на весь остров: по подсетке 4×4 внутри каждого чанка 16×16 с
   // низким шансом на подсетку, а не "деталь на каждую клетку".
   const DECOR_CELL = 4; // сторона подсетки, кратно CHUNK_SIZE (÷4)
-  const DECOR_CHANCE = 0.14; // ~2 инстанса на чанк в среднем (16 подсеток × 0.14)
-  const TREE_FRACTION = 0.72; // доля деревьев среди сгенерированных — остальное камни
+  const DECOR_CHANCE = 0.22; // ~3.5 инстанса на чанк в среднем (16 подсеток × 0.22)
+  const TREE_FRACTION = 0.78; // доля деревьев среди сгенерированных — остальное камни
+  // Хвойный/лиственный порог по высоте — тот же приём, что и в старом
+  // прототипе (obyom-3d-infinite.html: `const conif = e>0.50`) — хвоя на
+  // возвышенностях, лиственный лес в низинах, а не вперемешку где попало.
+  const CONIFER_ELEVATION = 0.50;
   const decorByChunk = new Map<string, DecorEntity[]>();
+  function jitterColor(base: readonly [number, number, number], k: number): [number, number, number] {
+    return [base[0] * k, base[1] * k, base[2] * k];
+  }
   function genDecorForChunk(cx: number, cz: number): DecorEntity[] {
     const out: DecorEntity[] = [];
     const cellsPerSide = CHUNK_SIZE / DECOR_CELL;
@@ -218,12 +226,20 @@ async function main() {
         if (blocked) continue;
         const isTree = hash2(gx, gz, SEED + 780) < TREE_FRACTION;
         const yaw = hash2(gx, gz, SEED + 781) * Math.PI * 2;
-        const tint = hash2(gx, gz, SEED + 782);
-        const wy = heightAt(wx, wz) * HMAX;
+        const jitter = 0.85 + hash2(gx, gz, SEED + 782) * 0.3; // 0.85..1.15 — та же роль, что и tone/warm в старом прототипе
+        const e = heightAt(wx, wz);
+        const wy = e * HMAX;
         if (isTree) {
-          out.push({ x: wx, y: wy, z: wz, scale: 1.0 + hash2(gx, gz, SEED + 783) * 1.2, yaw, tint, kind: "tree" });
+          const conifer = e > CONIFER_ELEVATION;
+          const palette = conifer ? PINE : LEAF;
+          const base = palette[Math.floor(hash2(gx, gz, SEED + 784) * palette.length)];
+          out.push({
+            x: wx, y: wy, z: wz, scale: 1.0 + hash2(gx, gz, SEED + 783) * 1.2, yaw,
+            color: jitterColor(base, jitter), kind: conifer ? "conifer" : "broadleaf",
+          });
         } else {
-          out.push({ x: wx, y: wy, z: wz, scale: 0.6 + hash2(gx, gz, SEED + 783) * 0.8, yaw, tint, kind: "rock" });
+          const base = ROCK_TONES[Math.floor(hash2(gx, gz, SEED + 784) * ROCK_TONES.length)];
+          out.push({ x: wx, y: wy, z: wz, scale: 0.6 + hash2(gx, gz, SEED + 783) * 0.8, yaw, color: jitterColor(base, jitter), kind: "rock" });
         }
       }
     }
