@@ -1425,7 +1425,18 @@ function syncWall(p){
 var W = null;
 const key=(x,y)=>x+","+y;
 const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
-const centerDist=p=>Math.hypot(p.x-CFG.MAP/2,p.y-CFG.MAP/2)/(CFG.MAP/2); // 0 центр → 1 край
+// Раньше centerDist: "расстояние до центра карты, нормированное на её
+// половину" — имело смысл только пока у мира был край. Мир теперь не
+// заканчивается на границе 0..100, но исток партии (город игрока и 12
+// ботов) как был, так и остаётся расставлен вокруг той же неподвижной
+// точки {50,50} — originDist считает расстояние от НЕЁ, той же формулой
+// (тут CFG.MAP/2 — это по-прежнему буквально 50, просто больше не "половина
+// ширины мира", а "радиус стартового кластера"). За пределами старого
+// радиуса (originDist>1) ничего не обрывается: во всех местах ниже итог
+// всё равно проходит через clamp() на итоговый уровень/сложность — значение
+// естественно продолжает расти и упирается в потолок/пол однажды заданного
+// диапазона, то есть плато, а не обрыв.
+const originDist=p=>Math.hypot(p.x-CFG.MAP/2,p.y-CFG.MAP/2)/(CFG.MAP/2);
 
 function newPlayer(id,race,x,y,isBot){
   const aggr=.4+RNG()*.5;
@@ -1515,7 +1526,7 @@ function genWorld(seed){
   function findSpot(minD,maxD){
     for(let tries=0;tries<4000;tries++){
       const x=ri(3,CFG.MAP-4), y=ri(3,CFG.MAP-4);
-      const d=centerDist({x,y});
+      const d=originDist({x,y});
       if(d<minD||d>maxD) continue;
       if(isRealWater(x,y)) continue;   // город на воде — нельзя, вода исключение без компромиссов
       if(spots.some(s=>Math.hypot(s.x-x,s.y-y)<minGap)) continue;
@@ -1600,7 +1611,7 @@ function genWorld(seed){
   for(let i=0;i<nodeCount;i++){
     const spot=findFreeCell(STRUCT_SALT_NODE); if(!spot) continue;
     const {x,y}=spot;
-    const d=centerDist({x,y});
+    const d=originDist({x,y});
     let lv = clamp(Math.round(5 - d*4 + (RNG()*1.6-0.8)),1,5);
     const type = pick(RES);
     W.map[key(x,y)] = {t:"node",x,y,res:type,lv,
@@ -1611,7 +1622,7 @@ function genWorld(seed){
   for(let i=0;i<campCount;i++){
     const spot=findFreeCell(STRUCT_SALT_CAMP); if(!spot) continue;
     const {x,y}=spot;
-    const d=centerDist({x,y});
+    const d=originDist({x,y});
     const raw = clamp(Math.round(30 - d*26 + (RNG()*8-4)),1,30);
     const isFort = raw>15;
     W.map[key(x,y)] = {t:isFort?"fort":"camp",x,y,lv:raw,
@@ -2383,7 +2394,7 @@ const EV = {
     // свёл бы на нет и зазор, и запрет на воду, и пропуски по чанкам.
     const spot=findFreeCell(STRUCT_SALT_CAMP); if(!spot) return;
     const {x,y}=spot;
-    const dd=centerDist({x,y});
+    const dd=originDist({x,y});
     const lv=clamp(Math.round(30-dd*26+(RNG()*8-4)),1,30);
     W.map[key(x,y)]={t:lv>15?"fort":"camp",x,y,lv,power:banditPower(lv),busy:null};
   },
@@ -2391,7 +2402,7 @@ const EV = {
     if(W.map[key(d.x,d.y)]) return;
     const spot=findFreeCell(STRUCT_SALT_NODE); if(!spot) return;
     const {x,y}=spot;
-    const dd=centerDist({x,y});
+    const dd=originDist({x,y});
     const lv=clamp(Math.round(5-dd*4+(RNG()*1.6-.8)),1,5);
     const amt=Math.round(6000*Math.pow(2.6,lv-1));
     W.map[key(x,y)]={t:"node",x,y,res:pick(RES),lv,amount:amt,max:amt,busy:null};
