@@ -425,7 +425,24 @@ async function main() {
     (window as any).__decorList = merged; // отладка (см. test_decor_overlap.mjs)
   }
 
+  // Стриминг чанков растянут по кадрам, а не построен одним синхронным
+  // залпом: раньше первый заход в "Мир" вызывал updateTerrainChunks(force=
+  // true) — 49 ближних чанков (сетка heightAt+нормали) плюс сразу следом
+  // updateFarTerrain на 81 дальний — ВСЕ синхронно, одним тиком JS, ДО
+  // первого кадра. Замер той же самой математики (см. bench в описании
+  // коммита) — около 150-230мс сплошной блокировки основного потока на
+  // десктопе, на телефоне заметно больше: то самое "подвисание при
+  // открытии Мира", о котором сообщил пользователь. Постройка каждого
+  // отдельного чанка сама по себе дёшева и не нуждается в переписывании —
+  // проблема исключительно в том, что их все строили одним махом. Решение:
+  // needed-чанки только СКЛАДЫВАЕМ в очередь (это дёшево — просто счёт
+  // расстояний), а реальную стройку (buildTerrainPatch/декор) забирает
+  // drainPendingNear ниже с бюджетом времени на кадр — тот же итоговый
+  // набор чанков, просто размазанный по нескольким кадрам вместо одного.
+  const CHUNK_BUDGET_MS = 6; // на кадр (near+far вместе, см. draw()) — не съедает весь кадр целиком
   const loadedChunks = new Set<string>();
+  const queuedNearKeys = new Set<string>(); // зарезервированы под стройку, ещё не построены
+  let pendingNear: Array<{ cx: number; cz: number; key: string }> = [];
   let lastCamChunkX: number | null = null;
   let lastCamChunkZ: number | null = null;
   function updateTerrainChunks(centerX: number, centerZ: number, force = false) {
@@ -438,21 +455,18 @@ async function main() {
     if (!force && ccx === lastCamChunkX && ccz === lastCamChunkZ) return;
     lastCamChunkX = ccx;
     lastCamChunkZ = ccz;
-    let decorChanged = false;
+    let queueChanged = false;
     for (let dz = -LOAD_RADIUS; dz <= LOAD_RADIUS; dz++) {
       for (let dx = -LOAD_RADIUS; dx <= LOAD_RADIUS; dx++) {
         const cx = ccx + dx, cz = ccz + dz;
         const key = chunkKey(cx, cz);
-        if (loadedChunks.has(key)) continue;
-        const x0 = cx * CHUNK_SIZE, z0 = cz * CHUNK_SIZE;
-        const chunkMesh = buildTerrainPatch(x0, z0, x0 + CHUNK_SIZE, z0 + CHUNK_SIZE, 1);
-        renderer.setTerrainChunk(key, chunkMesh);
-        loadedChunks.add(key);
-        notifyParentChunk(cx, cz);
-        decorByChunk.set(key, genDecorForChunk(cx, cz));
-        decorChanged = true;
+        if (loadedChunks.has(key) || queuedNearKeys.has(key)) continue;
+        queuedNearKeys.add(key);
+        pendingNear.push({ cx, cz, key });
+        queueChanged = true;
       }
     }
+    let decorChanged = false;
     for (const key of Array.from(loadedChunks)) {
       const [kx, kz] = key.split(",").map(Number);
       if (Math.max(Math.abs(kx - ccx), Math.abs(kz - ccz)) > UNLOAD_RADIUS) {
@@ -462,8 +476,49 @@ async function main() {
         decorChanged = true;
       }
     }
+    // Чанки, которые ещё только в очереди (камера успела уйти дальше, чем
+    // drainPendingNear успел их построить) — отменяем стройку, а не строим
+    // впустую то, что уже вышло за радиус выгрузки.
+    for (const key of Array.from(queuedNearKeys)) {
+      const [kx, kz] = key.split(",").map(Number);
+      if (Math.max(Math.abs(kx - ccx), Math.abs(kz - ccz)) > UNLOAD_RADIUS) {
+        queuedNearKeys.delete(key);
+        queueChanged = true;
+      }
+    }
+    if (queueChanged) {
+      pendingNear = pendingNear.filter((p) => queuedNearKeys.has(p.key));
+      // Ближайшие к камере чанки — первыми: то, что прямо под игроком,
+      // должно появиться раньше дальней кромки радиуса загрузки.
+      pendingNear.sort((a, b) => {
+        const da = (a.cx - ccx) ** 2 + (a.cz - ccz) ** 2;
+        const db = (b.cx - ccx) ** 2 + (b.cz - ccz) ** 2;
+        return da - db;
+      });
+    }
     (window as any).__terrainChunkCount = loadedChunks.size;
     if (decorChanged) refreshDecor();
+  }
+  // Строит чанки из очереди, пока не выйдет бюджет времени (deadline,
+  // performance.now()) — вызывается из draw() каждый кадр, см. там же.
+  function drainPendingNear(deadline: number): void {
+    let decorChanged = false;
+    while (pendingNear.length && performance.now() < deadline) {
+      const { cx, cz, key } = pendingNear.shift()!;
+      if (!queuedNearKeys.has(key)) continue; // отменено (см. updateTerrainChunks) — пропускаем
+      queuedNearKeys.delete(key);
+      const x0 = cx * CHUNK_SIZE, z0 = cz * CHUNK_SIZE;
+      const chunkMesh = buildTerrainPatch(x0, z0, x0 + CHUNK_SIZE, z0 + CHUNK_SIZE, 1);
+      renderer.setTerrainChunk(key, chunkMesh);
+      loadedChunks.add(key);
+      notifyParentChunk(cx, cz);
+      decorByChunk.set(key, genDecorForChunk(cx, cz));
+      decorChanged = true;
+    }
+    if (decorChanged) {
+      (window as any).__terrainChunkCount = loadedChunks.size;
+      refreshDecor();
+    }
   }
 
   // Пересборка меша УЖЕ загруженного ближнего чанка — нужна, когда новая
@@ -516,6 +571,12 @@ async function main() {
   // в renderer.ts), так что визуально обычно не проваливается наружу.
   const NEAR_CLEAR_RADIUS = LOAD_RADIUS * CHUNK_SIZE;
   const loadedFarChunks = new Set<string>();
+  // Та же отложенная стройка, что и у ближних чанков выше (см. комментарий
+  // там) — дальнее кольцо само по себе дешевле (грубая сетка), но на старте
+  // строилось СРАЗУ ЖЕ следом за 49 ближними чанками, в той же самой
+  // синхронной паузе, так что тоже переведено на очередь с бюджетом.
+  const queuedFarKeys = new Set<string>();
+  let pendingFar: Array<{ cx: number; cz: number; rkey: string }> = [];
   let lastFarChunkX: number | null = null;
   let lastFarChunkZ: number | null = null;
   function updateFarTerrain(centerX: number, centerZ: number, force = false) {
@@ -524,22 +585,17 @@ async function main() {
     if (!force && ccx === lastFarChunkX && ccz === lastFarChunkZ) return;
     lastFarChunkX = ccx;
     lastFarChunkZ = ccz;
+    let queueChanged = false;
     for (let dz = -FAR_LOAD_RADIUS; dz <= FAR_LOAD_RADIUS; dz++) {
       for (let dx = -FAR_LOAD_RADIUS; dx <= FAR_LOAD_RADIUS; dx++) {
         const cx = ccx + dx, cz = ccz + dz;
         const rkey = "far:" + cx + "," + cz;
-        if (loadedFarChunks.has(rkey)) continue;
+        if (loadedFarChunks.has(rkey) || queuedFarKeys.has(rkey)) continue;
         const fcx = cx * FAR_CHUNK_SIZE + FAR_CHUNK_SIZE / 2, fcz = cz * FAR_CHUNK_SIZE + FAR_CHUNK_SIZE / 2;
         if (Math.hypot(fcx - centerX, fcz - centerZ) < NEAR_CLEAR_RADIUS) continue;
-        const x0 = cx * FAR_CHUNK_SIZE, z0 = cz * FAR_CHUNK_SIZE;
-        const mesh = buildTerrainPatch(x0, z0, x0 + FAR_CHUNK_SIZE, z0 + FAR_CHUNK_SIZE, FAR_STEP);
-        renderer.setTerrainChunk(rkey, mesh);
-        loadedFarChunks.add(rkey);
-        // Дальнее кольцо — только видимость, не задел под дикий контент:
-        // не зовём notifyParentChunk отсюда (в отличие от ближних чанков
-        // выше) — иначе радиус в 256+ клеток мгновенно засыпал бы игрока
-        // сгенерированным контентом во всех направлениях разом вместо
-        // постепенного появления по мере реального исследования камерой.
+        queuedFarKeys.add(rkey);
+        pendingFar.push({ cx, cz, rkey });
+        queueChanged = true;
       }
     }
     for (const rkey of Array.from(loadedFarChunks)) {
@@ -551,6 +607,38 @@ async function main() {
         renderer.removeTerrainChunk(rkey);
         loadedFarChunks.delete(rkey);
       }
+    }
+    for (const rkey of Array.from(queuedFarKeys)) {
+      const [kx, kz] = rkey.slice(4).split(",").map(Number);
+      if (Math.max(Math.abs(kx - ccx), Math.abs(kz - ccz)) > FAR_UNLOAD_RADIUS) {
+        queuedFarKeys.delete(rkey);
+        queueChanged = true;
+      }
+    }
+    if (queueChanged) {
+      pendingFar = pendingFar.filter((p) => queuedFarKeys.has(p.rkey));
+      pendingFar.sort((a, b) => {
+        const da = (a.cx - ccx) ** 2 + (a.cz - ccz) ** 2;
+        const db = (b.cx - ccx) ** 2 + (b.cz - ccz) ** 2;
+        return da - db;
+      });
+    }
+    (window as any).__farChunkCount = loadedFarChunks.size;
+  }
+  function drainPendingFar(deadline: number): void {
+    while (pendingFar.length && performance.now() < deadline) {
+      const { cx, cz, rkey } = pendingFar.shift()!;
+      if (!queuedFarKeys.has(rkey)) continue;
+      queuedFarKeys.delete(rkey);
+      const x0 = cx * FAR_CHUNK_SIZE, z0 = cz * FAR_CHUNK_SIZE;
+      const mesh = buildTerrainPatch(x0, z0, x0 + FAR_CHUNK_SIZE, z0 + FAR_CHUNK_SIZE, FAR_STEP);
+      renderer.setTerrainChunk(rkey, mesh);
+      loadedFarChunks.add(rkey);
+      // Дальнее кольцо — только видимость, не задел под дикий контент:
+      // не зовём notifyParentChunk отсюда (в отличие от ближних чанков
+      // выше) — иначе радиус в 256+ клеток мгновенно засыпал бы игрока
+      // сгенерированным контентом во всех направлениях разом вместо
+      // постепенного появления по мере реального исследования камерой.
     }
     (window as any).__farChunkCount = loadedFarChunks.size;
   }
@@ -635,12 +723,24 @@ async function main() {
   const cy = heightAt(cx, cz) * HMAX;
   const cam: OrbitCamera = { yaw: 0, pitch: 0.55, dist: 42, target: [cx, cy + 2, cz] };
   const controls = attachOrbitControls(canvas, cam);
-  // Первая загрузка чанков рельефа вокруг стартовой позиции камеры — ДО
-  // первого кадра цикла отрисовки (force=true, т.к. lastCamChunk* ещё не
-  // установлены), тот же порядок, что и раньше со статичным патчем.
+  // Первая загрузка чанков рельефа вокруг стартовой позиции камеры (force=
+  // true, т.к. lastCamChunk* ещё не установлены) — теперь двухфазная, не
+  // один синхронный залп. updateTerrainChunks/updateFarTerrain тут только
+  // СКЛАДЫВАЮТ нужные чанки в очередь (дёшево, никакой стройки), а короткий
+  // "прайминг"-дрейн ниже строит из неё то, что успевает за 40мс — обычно
+  // хватает на несколько ближайших к камере чанков, чтобы под игроком сразу
+  // была видна земля, а не голый туман. Остаток очереди (дальние кольца
+  // радиуса загрузки, которые всё равно не видны в первый же кадр)
+  // дотягивает drainPendingNear/drainPendingFar из draw() ниже, по budget'у
+  // на кадр — тот же итоговый набор чанков, что и раньше, просто без одной
+  // долгой блокирующей паузы перед первым кадром (была ~150-230мс на
+  // одном только рельефе, замерено вне браузера — см. историю коммита).
   updateTerrainChunks(cam.target[0], cam.target[2], true);
   updateFarTerrain(cam.target[0], cam.target[2], true);
-  lines.push(`рельеф: чанков ${loadedChunks.size} (${CHUNK_SIZE}×${CHUNK_SIZE}) + дальних ${loadedFarChunks.size} (${FAR_CHUNK_SIZE}×${FAR_CHUNK_SIZE}, шаг ${FAR_STEP})`);
+  const primeDeadline = performance.now() + 40;
+  drainPendingNear(primeDeadline);
+  drainPendingFar(primeDeadline);
+  lines.push(`рельеф: чанков ${loadedChunks.size} (${CHUNK_SIZE}×${CHUNK_SIZE}) + дальних ${loadedFarChunks.size} (${FAR_CHUNK_SIZE}×${FAR_CHUNK_SIZE}, шаг ${FAR_STEP}), в очереди ещё ${pendingNear.length + pendingFar.length}`);
   setStatus(lines);
   // Отладочная проверка покрытия земли (тест на отсутствие "дыр" между
   // ближним и дальним слоем рельефа — тот самый баг со скриншота): любую
@@ -1206,6 +1306,12 @@ async function main() {
     }
     updateTerrainChunks(cam.target[0], cam.target[2]); // no-op, пока камера внутри того же чанка — дёшево звать каждый кадр
     updateFarTerrain(cam.target[0], cam.target[2]); // то же самое, но для дальнего грубого кольца
+    // Стройка чанков из очереди (см. pendingNear/pendingFar выше) — общий
+    // бюджет на near+far вместе, near в приоритете (первым забирает своё
+    // время из бюджета), т.к. он ближе к камере и заметнее дальнего кольца.
+    const chunkDeadline = performance.now() + CHUNK_BUDGET_MS;
+    drainPendingNear(chunkDeadline);
+    drainPendingFar(chunkDeadline);
     const eye: Vec3 = [
       cam.target[0] + Math.sin(cam.yaw) * Math.cos(cam.pitch) * cam.dist,
       cam.target[1] + Math.sin(cam.pitch) * cam.dist,
