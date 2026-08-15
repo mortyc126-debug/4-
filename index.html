@@ -242,26 +242,13 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 
 /* ─────────────── Переключение Город/Мир ─────────────── */
 #app.view-city #chart{display:none}
-/* padding-top:100px — #top (шапка с аватаром/ресурсами) висит
-   position:fixed НАД содержимым, а не толкает его вниз обычным потоком
-   (тот же расчёт высоты шапки, что и у #coordBar движка: top:10px +
-   аватар 78px + отступы). #ledger был исходно боковой панелью РЯДОМ с
-   картой (см. ширину 400px чуть ниже) — с этим отступом ribbons/#folio
-   не оказываются раньше под шапкой, когда #ledger растягивается на весь
-   экран в мобильном view-city. */
-#app.view-city #ledger{width:100%;flex:1;border-left:none;box-shadow:none;padding-top:100px}
-/* УБРАНО: #app.view-city #ribbons{display:none} — эта строка прятала
-   единственную панель вкладок (Город/Армия/Генерал/Инвентарь) ровно в
-   том режиме, где #folio (которому и нужны эти вкладки для переключения)
-   остаётся полностью видимым. Любой код, меняющий tab на "army"/"gen"/
-   "inv" вне клика по самим ribbons (например, openLevy — после отправки
-   похода выставляет tab="army", чтобы сразу показать список отрядов),
-   намертво запирал игрока на этой вкладке: назад на "Город" вернуться
-   было нечем — ни кнопки "Город" (ribbons скрыты), ни закрытия (это не
-   модалка, а основной контент #ledger). Живой репорт пользователя: "меню
-   открывается само... нельзя не то что закрыть, но выйти из него" —
-   воспроизведено и подтверждено: ribbons были невидимы уже на старте
-   партии (умолчание #app.view-city), задолго до какого-либо похода. */
+#app.view-city #ledger{width:100%;flex:1;border-left:none;box-shadow:none}
+/* Снова скрыты — дублировали гамбургер-меню (пользователь явно попросил
+   убрать именно эту панель целиком, не подписи внутри неё). Единственный
+   путь, который раньше уводил tab с "city" без клика по самим ribbons
+   (openLevy "go", после отправки похода — см. script ниже), убран вместе
+   с этим, так что застрять вне "Город" теперь неоткуда даже без ribbons. */
+#app.view-city #ribbons{display:none}
 #app.view-world #ledger{display:none}
 #view-toggle{position:fixed;left:14px;bottom:14px;z-index:20;width:70px;height:70px;padding:0;
   background:transparent;border:none;border-radius:50%;color:var(--gilt-hi);
@@ -4885,7 +4872,13 @@ function openLevy(cx,cy){
       const u=emptyUnits(); TKEYS.forEach(t=>{for(let i=1;i<=5;i++)u[t][i]=st[t+i]});
       const r=sendMarch(p,cx,cy,u,mode);
       if(r.err) return herald(r.err);
-      closeScroll(); tab="army"; syncRibbons(); lastFolio=""; renderFolio();
+      // Раньше тут был tab="army" (сразу показать список отрядов) — но
+      // ribbons скрыты в городском режиме (см. CSS-комментарий у #ribbons),
+      // а это единственный не-ribbons-путь, уводивший игрока с "city":
+      // застревал на вкладке "Войско" без способа вернуться на карту
+      // города (репорт пользователя). Список похода и так виден через
+      // герольд ниже и панель "Отряды в поле" в мире/гамбургер-меню.
+      closeScroll(); lastFolio=""; renderFolio();
       herald(mode==="gather"?"Обоз выступил.":mode==="scout"?"Отряд отправлен.":"Войско выступило в поход.");
     }
   };

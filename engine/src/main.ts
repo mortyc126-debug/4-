@@ -789,45 +789,94 @@ async function main() {
     (window as any).__selectedLabel = null;
     selectedEl.style.display = "none";
   }
-  // Раньше порог попадания был одним и тем же плоским числом (46px) для
-  // любой сущности — у крупного города (scale 10) вблизи силуэт модели на
-  // экране мог быть заметно шире этого круга, тап по видимой крыше замка
-  // мимо его спроецированного центра не засчитывался ("непонятно, как
-  // работает тач"). Порог теперь считается для КАЖДОЙ сущности отдельно —
-  // проекция точки, отступленной на её мировой scale от центра, даёт
-  // экранный радиус именно ЭТОЙ модели на ЭТОЙ дистанции (честная
-  // перспектива, не константа), ×1.25 — небольшой запас территории вокруг
-  // модели, как и просили. 46px остаётся ЖЁСТКИМ ПОЛОМ (не уменьшаем то,
-  // что уже работало для мелких/дальних точек) — новый расчёт только
-  // расширяет площадь попадания, никогда не сужает.
-  const TAP_MIN_RADIUS_PX = 46;
-  // dx/dz офсеты для оценки экранного радиуса — см. комментарий ниже.
-  const RADIUS_PROBE_DIRS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-  function entityScreenHit(eid: number, px: number, py: number): { d: number; radius: number; depth: number } | null {
-    const wx = Position.x[eid], wz = Position.y[eid];
-    const scale = modelScaleOf.get(eid) ?? 5;
-    const wy = heightAt(wx, wz) * HMAX + scale * 0.35;
-    const clip = transformPoint(currentVP, [wx, wy, wz]);
-    if (clip.w <= 0.001) return null; // за спиной камеры
-    const sx = (clip.x / clip.w * 0.5 + 0.5) * canvas.width;
-    const sy = (1 - (clip.y / clip.w * 0.5 + 0.5)) * canvas.height;
-    // Раньше пробовалась только ОДНА мировая точка (wx+scale) — на
-    // некоторых углах камеры (yaw) направление +X проецировалось почти
-    // "в глубину экрана" вместо "поперёк", экранный радиус схлопывался
-    // почти до нуля, и тап по видимой (широкой на экране!) модели не
-    // засчитывался, или засчитывался соседней сущности ("иногда отмечая
-    // кого-то другого" — репорт пользователя). Пробуем ОБА мировых
-    // направления (±X, ±Z) и берём максимум — экранный радиус модели
-    // корректен при любом yaw камеры, а не только "удачном".
-    let radius = TAP_MIN_RADIUS_PX;
-    for (const [dx, dz] of RADIUS_PROBE_DIRS) {
-      const edgeClip = transformPoint(currentVP, [wx + dx * scale, wy, wz + dz * scale]);
-      if (edgeClip.w <= 0.001) continue;
-      const ex = (edgeClip.x / edgeClip.w * 0.5 + 0.5) * canvas.width;
-      const ey = (1 - (edgeClip.y / edgeClip.w * 0.5 + 0.5)) * canvas.height;
-      radius = Math.max(radius, Math.hypot(ex - sx, ey - sy) * 1.25);
+  // ───────────────────────── Тач-пикинг: полностью переписан ─────────────────────────
+  // Старая версия проецировала МИРОВЫЕ точки в ЭКРАННЫЕ (transformPoint через
+  // currentVP) и сравнивала плоские пиксельные расстояния. У этого подхода
+  // был скрытый численный баг: радиус хитбокса сущности оценивался, пробуя
+  // спроецировать точку "край модели" (wx+scale) и меряя её экранное
+  // расстояние от центра. Если эта пробная точка попадала БЛИЗКО к плоскости
+  // камеры (clip.w около нуля, но выше порога отсечения 0.001), перспективное
+  // деление (x/w) могло взорвать её экранные координаты до тысяч пикселей —
+  // и тогда "радиус" сущности мог перекрыть весь экран целиком, из-за чего
+  // тап ЛЮБОЙ точки канвы засчитывался этой сущности, даже впустую по земле
+  // далеко от неё (живой репорт: тап по пустоши в центре экрана открыл
+  // "Лесопилку" совсем в другом месте). Это не была случайность — эффект
+  // зависит только от угла камеры в момент тапа, поэтому воспроизводился
+  // стабильно на одном и том же экране.
+  //
+  // Новый подход — честный 3D-пикинг, БЕЗ повторной проекции экранных
+  // координат вообще: один луч через тапнутый пиксель (тот же базис камеры,
+  // что и раньше в screenToGround), и пересечение луча со СФЕРОЙ каждой
+  // сущности/похода В МИРОВЫХ координатах (классическая формула
+  // луч-сфера — квадратное уравнение, никакого деления на w, численно
+  // устойчиво при любом угле камеры). Пороговый радиус сферы переводится из
+  // "минимум N пикселей на экране" в мировые единицы через фокусное
+  // расстояние камеры (см. FOCAL_PX) — тот же зрительный результат
+  // (далёкие мелкие объекты остаются тактильно кликабельными), что и раньше,
+  // но без хрупкой повторной проекции пробных точек.
+  //
+  // Окклюзия рельефом: раньше сущности/походы вообще не проверялись на
+  // перекрытие горой/холмом — сфера "видна" сквозь любой рельеф. Теперь
+  // рельеф — ТАКОЙ ЖЕ участник конкурса по параметру t (расстояние вдоль
+  // луча до пересечения), что и сущности/походы: побеждает наименьшее t
+  // среди всех кандидатов, значит ближайшее пересечение по лучу зрения
+  // всегда выигрывает — то же самое "что ближе к камере, то и видно",
+  // но теперь честно распространяется и на землю.
+  function pixelRay(px: number, py: number): { origin: Vec3; dir: Vec3 } {
+    const aspect = canvas.width / Math.max(1, canvas.height);
+    const tanHalf = Math.tan(CAM_FOVY / 2);
+    const ndcX = (px / canvas.width) * 2 - 1;
+    const ndcY = 1 - (py / canvas.height) * 2;
+    // Тот же базис камеры, что и в look() (mat4.ts): z — "назад" (от цели к
+    // глазу), x/y — право/верх. Луч через пиксель — комбинация x/y по НОК,
+    // минус z (вперёд, "в экран").
+    const zAxis = norm(sub(currentEye, cam.target));
+    const xAxis = norm(cross([0, 1, 0], zAxis));
+    const yAxis = cross(zAxis, xAxis);
+    const dir = norm([
+      ndcX * aspect * tanHalf * xAxis[0] + ndcY * tanHalf * yAxis[0] - zAxis[0],
+      ndcX * aspect * tanHalf * xAxis[1] + ndcY * tanHalf * yAxis[1] - zAxis[1],
+      ndcX * aspect * tanHalf * xAxis[2] + ndcY * tanHalf * yAxis[2] - zAxis[2],
+    ]);
+    return { origin: currentEye, dir };
+  }
+  // Ближайшее пересечение луча (origin+dir*t, dir единичной длины) со сферой
+  // (center, radius). null — мимо, либо сфера целиком позади камеры.
+  function raySphereT(origin: Vec3, dir: Vec3, center: Vec3, radius: number): number | null {
+    const ocx = origin[0] - center[0], ocy = origin[1] - center[1], ocz = origin[2] - center[2];
+    const b = ocx * dir[0] + ocy * dir[1] + ocz * dir[2];
+    const c = ocx * ocx + ocy * ocy + ocz * ocz - radius * radius;
+    const h = b * b - c;
+    if (h < 0) return null; // луч мимо сферы
+    const sh = Math.sqrt(h);
+    let t = -b - sh;
+    if (t < 0) t = -b + sh; // камера внутри сферы — берём точку выхода
+    if (t < 0) return null; // сфера целиком позади камеры
+    return t;
+  }
+  // Рельеф — процедурная heightfield-функция, не буфер треугольников под
+  // рукой в это время, поэтому пересечение ищем марш-шагом вдоль луча до
+  // heightAt(), затем бисекция на найденном отрезке для точности — тот же
+  // общий приём, что и везде в этом проекте для heightfield-рейкастов.
+  const CAM_FOVY = 0.72;
+  const GROUND_RAY_STEP = 2, GROUND_RAY_MAX = 400, GROUND_RAY_BISECT_ITERS = 12;
+  function groundRayT(origin: Vec3, dir: Vec3): { t: number; x: number; z: number } | null {
+    let prevT = 0;
+    for (let t = GROUND_RAY_STEP; t <= GROUND_RAY_MAX; t += GROUND_RAY_STEP) {
+      const wx = origin[0] + dir[0] * t, wy = origin[1] + dir[1] * t, wz = origin[2] + dir[2] * t;
+      if (wy - heightAt(wx, wz) * HMAX <= 0) {
+        let lo = prevT, hi = t;
+        for (let i = 0; i < GROUND_RAY_BISECT_ITERS; i++) {
+          const mid = (lo + hi) / 2;
+          const mx = origin[0] + dir[0] * mid, mz = origin[2] + dir[2] * mid;
+          const my = origin[1] + dir[1] * mid;
+          if (my - heightAt(mx, mz) * HMAX > 0) lo = mid; else hi = mid;
+        }
+        return { t: hi, x: origin[0] + dir[0] * hi, z: origin[2] + dir[2] * hi };
+      }
+      prevT = t;
     }
-    return { d: Math.hypot(sx - px, sy - py), radius, depth: clip.w };
+    return null;
   }
   // Если движок открыт внутри игры (тот же приём, что и readLiveWorld в
   // realData.ts), клик по сущности не просто подсвечивает её локально, но
@@ -859,92 +908,47 @@ async function main() {
       /* кросс-origin или не встроено */
     }
   }
-  // Раньше маркеры походов были чисто декоративными — не входили в found
-  // (bitECS-запрос, который читает findEntityAtScreen), тапнуть по ним
-  // было нечем ("армии где-то застряли, никак не отметить" — репорт
-  // пользователя). MARCH_TAP_RADIUS_PX меньше TAP_MIN_RADIUS_PX городов —
-  // маркер похода (маленький октаэдр-пин) сам по себе мельче любой
-  // настоящей модели, раздувать его хитбокс до того же размера не нужно.
-  const MARCH_TAP_RADIUS_PX = 40;
-  function marchScreenHit(m: LiveMarchPos, px: number, py: number): { d: number; radius: number; depth: number } | null {
-    const wy = heightAt(m.x, m.y) * HMAX + 2.2;
-    const clip = transformPoint(currentVP, [m.x, wy, m.y]);
-    if (clip.w <= 0.001) return null;
-    const sx = (clip.x / clip.w * 0.5 + 0.5) * canvas.width;
-    const sy = (1 - (clip.y / clip.w * 0.5 + 0.5)) * canvas.height;
-    return { d: Math.hypot(sx - px, sy - py), radius: MARCH_TAP_RADIUS_PX, depth: clip.w };
-  }
-  // Раньше сущности и походы искались ДВУМЯ отдельными проходами
-  // (findEntityAtScreen побеждал по наибольшему "запасу" radius-d, а не по
-  // близости к тапу) — крупный/дальний объект с большим радиусом мог
-  // перетянуть тап у объекта, который был к пальцу пользователя ощутимо
-  // ближе. Объединили в единый проход по ближайшему 2D-пикселю — но
-  // выяснилось, что и это неверная метрика: два объекта на РАЗНОЙ глубине
-  // (один рядом, другой далеко), стоящие примерно на одном луче взгляда,
-  // проецируются в близкие экранные координаты — 2D-дистанция не отличает
-  // "рядом" от "далеко, но на глаз почти там же" (живой репорт: тап по
-  // собственному маршу открыл лагерь разбойников за много клеток
-  // расстояния). У честного 3D-пикинга с окклюзией ближний объект всегда
-  // должен закрывать собой дальний, даже если их экранные пятна почти
-  // совпадают — поэтому среди ВСЕХ, кто попал в свой радиус (d<=radius),
-  // выбираем МИНИМАЛЬНУЮ ГЛУБИНУ (clip.w — дистанция до камеры в
-  // пространстве вида), а не минимальную 2D-дистанцию до пальца.
-  type TapHit = { kind: "entity"; eid: number } | { kind: "march"; march: LiveMarchPos };
+  // Минимальный экранный радиус хитбокса (px) — гарантирует, что мелкая или
+  // далёкая модель остаётся тактильно кликабельной, даже когда её реальный
+  // силуэт на экране меньше пальца. Переводится в мировые единицы через
+  // фокусное расстояние камеры (стандартная формула перспективной проекции:
+  // экранный_радиус_px = FOCAL_PX * мировой_радиус / дистанция_вдоль_взгляда).
+  const MIN_TAP_PX = 46;
+  // Хитбокс похода — маленький октаэдр-пин, объективно мельче настоящей
+  // модели, минимальный порог поменьше городского.
+  const MIN_MARCH_TAP_PX = 40;
+  const MARCH_HIT_WORLD_RADIUS = 3;
+  type TapHit =
+    | { kind: "entity"; eid: number; t: number }
+    | { kind: "march"; march: LiveMarchPos; t: number }
+    | { kind: "ground"; x: number; z: number; t: number };
   function findTapTarget(px: number, py: number): TapHit | null {
+    const { origin, dir } = pixelRay(px, py);
+    const focalPx = canvas.height / (2 * Math.tan(CAM_FOVY / 2));
     let best: TapHit | null = null;
-    let bestDepth = Infinity;
+    let bestT = Infinity;
     for (const eid of found) {
-      const hit = entityScreenHit(eid, px, py);
-      if (hit && hit.d <= hit.radius && hit.depth < bestDepth) { bestDepth = hit.depth; best = { kind: "entity", eid }; }
+      const wx = Position.x[eid], wz = Position.y[eid];
+      const scale = modelScaleOf.get(eid) ?? 5;
+      const center: Vec3 = [wx, heightAt(wx, wz) * HMAX + scale * 0.5, wz];
+      const dist = Math.hypot(center[0] - origin[0], center[1] - origin[1], center[2] - origin[2]);
+      const radius = Math.max(scale * 1.15, MIN_TAP_PX * dist / focalPx);
+      const t = raySphereT(origin, dir, center, radius);
+      if (t !== null && t < bestT) { bestT = t; best = { kind: "entity", eid, t }; }
     }
     for (const m of lastMarches) {
-      const hit = marchScreenHit(m, px, py);
-      if (hit && hit.d <= hit.radius && hit.depth < bestDepth) { bestDepth = hit.depth; best = { kind: "march", march: m }; }
+      const center: Vec3 = [m.x, heightAt(m.x, m.y) * HMAX + 2.2, m.y];
+      const dist = Math.hypot(center[0] - origin[0], center[1] - origin[1], center[2] - origin[2]);
+      const radius = Math.max(MARCH_HIT_WORLD_RADIUS, MIN_MARCH_TAP_PX * dist / focalPx);
+      const t = raySphereT(origin, dir, center, radius);
+      if (t !== null && t < bestT) { bestT = t; best = { kind: "march", march: m, t }; }
+    }
+    const ground = groundRayT(origin, dir);
+    if (ground !== null && ground.t < bestT) {
+      best = { kind: "ground", x: ground.x, z: ground.z, t: ground.t };
+      bestT = ground.t;
     }
     return best;
-  }
-  // Тап мимо любой сущности/похода — "свободный тап по местности"
-  // (пользователь просил: тап по пустой земле показывает координаты и даёт
-  // отправить туда отряд, см. index.html renderCartoucheFor + openLevy).
-  // Честного рейкаста по мешу тут нет (рельеф — процедурная heightfield-
-  // функция, не буфер треугольников под рукой в это время), поэтому — марш
-  // вдоль луча камеры мелким шагом до пересечения с heightAt(), затем
-  // бисекция на этом отрезке для точности, тот же общий приём, что и везде
-  // в этом проекте для heightfield-рейкастов.
-  const CAM_FOVY = 0.72;
-  const GROUND_RAY_STEP = 2, GROUND_RAY_MAX = 400, GROUND_RAY_BISECT_ITERS = 12;
-  function screenToGround(px: number, py: number): { x: number; z: number } | null {
-    const aspect = canvas.width / Math.max(1, canvas.height);
-    const tanHalf = Math.tan(CAM_FOVY / 2);
-    const ndcX = (px / canvas.width) * 2 - 1;
-    const ndcY = 1 - (py / canvas.height) * 2;
-    // Тот же базис камеры, что и в look() (mat4.ts): z — "назад" (от цели к
-    // глазу), x/y — право/верх. Луч через пиксель — комбинация x/y по НОК,
-    // минус z (вперёд, "в экран").
-    const zAxis = norm(sub(currentEye, cam.target));
-    const xAxis = norm(cross([0, 1, 0], zAxis));
-    const yAxis = cross(zAxis, xAxis);
-    const dir = norm([
-      ndcX * aspect * tanHalf * xAxis[0] + ndcY * tanHalf * yAxis[0] - zAxis[0],
-      ndcX * aspect * tanHalf * xAxis[1] + ndcY * tanHalf * yAxis[1] - zAxis[1],
-      ndcX * aspect * tanHalf * xAxis[2] + ndcY * tanHalf * yAxis[2] - zAxis[2],
-    ]);
-    let prevT = 0;
-    for (let t = GROUND_RAY_STEP; t <= GROUND_RAY_MAX; t += GROUND_RAY_STEP) {
-      const wx = currentEye[0] + dir[0] * t, wy = currentEye[1] + dir[1] * t, wz = currentEye[2] + dir[2] * t;
-      if (wy - heightAt(wx, wz) * HMAX <= 0) {
-        let lo = prevT, hi = t;
-        for (let i = 0; i < GROUND_RAY_BISECT_ITERS; i++) {
-          const mid = (lo + hi) / 2;
-          const mx = currentEye[0] + dir[0] * mid, mz = currentEye[2] + dir[2] * mid;
-          const my = currentEye[1] + dir[1] * mid;
-          if (my - heightAt(mx, mz) * HMAX > 0) lo = mid; else hi = mid;
-        }
-        return { x: currentEye[0] + dir[0] * hi, z: currentEye[2] + dir[2] * hi };
-      }
-      prevT = t;
-    }
-    return null;
   }
   // Тап определяет camera.ts (короткое почти-неподвижное касание, тот же
   // приём, что и tryTap()/lift() в прошлом прототипе) — не родной "click":
@@ -971,12 +975,11 @@ async function main() {
     }
     clearSelection();
     selectedMarchId = null;
-    // Ни сущность, ни поход — "свободный тап" по пустой местности:
-    // сообщаем родителю координаты клетки той же готовой панелью cartouche
-    // (renderCartoucheFor уже умеет показывать пустую клетку как "Пустошь",
-    // см. index.html — та же точка входа, что и для города/лагеря/точки).
-    const ground = screenToGround(px, py);
-    if (ground !== null) notifyParentCartouche(Math.floor(ground.x), Math.floor(ground.z));
+    // Ни сущность, ни поход, ни рельеф под лучом — тап ушёл в небо (за
+    // пределы GROUND_RAY_MAX) либо сразу за границу карты. Ничего не
+    // открываем — старый код в этом случае тоже показывал бы мусор
+    // (screenToGround(...) === null тут раньше просто ничего не делал).
+    if (hit?.kind === "ground") notifyParentCartouche(Math.floor(hit.x), Math.floor(hit.z));
   });
 
   // ---- живая синхронизация: партия внутри игры не стоит на месте —
