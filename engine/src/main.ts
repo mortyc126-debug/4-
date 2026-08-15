@@ -803,7 +803,7 @@ async function main() {
   const TAP_MIN_RADIUS_PX = 46;
   // dx/dz офсеты для оценки экранного радиуса — см. комментарий ниже.
   const RADIUS_PROBE_DIRS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-  function entityScreenHit(eid: number, px: number, py: number): { d: number; radius: number } | null {
+  function entityScreenHit(eid: number, px: number, py: number): { d: number; radius: number; depth: number } | null {
     const wx = Position.x[eid], wz = Position.y[eid];
     const scale = modelScaleOf.get(eid) ?? 5;
     const wy = heightAt(wx, wz) * HMAX + scale * 0.35;
@@ -827,7 +827,7 @@ async function main() {
       const ey = (1 - (edgeClip.y / edgeClip.w * 0.5 + 0.5)) * canvas.height;
       radius = Math.max(radius, Math.hypot(ex - sx, ey - sy) * 1.25);
     }
-    return { d: Math.hypot(sx - px, sy - py), radius };
+    return { d: Math.hypot(sx - px, sy - py), radius, depth: clip.w };
   }
   // Если движок открыт внутри игры (тот же приём, что и readLiveWorld в
   // realData.ts), клик по сущности не просто подсвечивает её локально, но
@@ -866,35 +866,40 @@ async function main() {
   // маркер похода (маленький октаэдр-пин) сам по себе мельче любой
   // настоящей модели, раздувать его хитбокс до того же размера не нужно.
   const MARCH_TAP_RADIUS_PX = 40;
-  function marchScreenHit(m: LiveMarchPos, px: number, py: number): { d: number; radius: number } | null {
+  function marchScreenHit(m: LiveMarchPos, px: number, py: number): { d: number; radius: number; depth: number } | null {
     const wy = heightAt(m.x, m.y) * HMAX + 2.2;
     const clip = transformPoint(currentVP, [m.x, wy, m.y]);
     if (clip.w <= 0.001) return null;
     const sx = (clip.x / clip.w * 0.5 + 0.5) * canvas.width;
     const sy = (1 - (clip.y / clip.w * 0.5 + 0.5)) * canvas.height;
-    return { d: Math.hypot(sx - px, sy - py), radius: MARCH_TAP_RADIUS_PX };
+    return { d: Math.hypot(sx - px, sy - py), radius: MARCH_TAP_RADIUS_PX, depth: clip.w };
   }
   // Раньше сущности и походы искались ДВУМЯ отдельными проходами
   // (findEntityAtScreen побеждал по наибольшему "запасу" radius-d, а не по
   // близости к тапу) — крупный/дальний объект с большим радиусом мог
   // перетянуть тап у объекта, который был к пальцу пользователя ощутимо
-  // ближе (тап "в упор" по маленькой соседней точке ресурсов иногда всё
-  // равно засчитывался городу рядом). Единый проход по ВСЕМ кандидатам
-  // (сущности + маркеры походов) с выбором ближайшего к пальцу СРЕДИ ТЕХ, КТО
-  // ВООБЩЕ ПОПАЛ в свой радиус — стандартный, предсказуемый 2D-пикинг:
-  // тап всегда достаётся тому, что реально ближе всего к месту касания,
-  // а не тому, у кого раздутый хитбокс оказался щедрее.
+  // ближе. Объединили в единый проход по ближайшему 2D-пикселю — но
+  // выяснилось, что и это неверная метрика: два объекта на РАЗНОЙ глубине
+  // (один рядом, другой далеко), стоящие примерно на одном луче взгляда,
+  // проецируются в близкие экранные координаты — 2D-дистанция не отличает
+  // "рядом" от "далеко, но на глаз почти там же" (живой репорт: тап по
+  // собственному маршу открыл лагерь разбойников за много клеток
+  // расстояния). У честного 3D-пикинга с окклюзией ближний объект всегда
+  // должен закрывать собой дальний, даже если их экранные пятна почти
+  // совпадают — поэтому среди ВСЕХ, кто попал в свой радиус (d<=radius),
+  // выбираем МИНИМАЛЬНУЮ ГЛУБИНУ (clip.w — дистанция до камеры в
+  // пространстве вида), а не минимальную 2D-дистанцию до пальца.
   type TapHit = { kind: "entity"; eid: number } | { kind: "march"; march: LiveMarchPos };
   function findTapTarget(px: number, py: number): TapHit | null {
     let best: TapHit | null = null;
-    let bestD = Infinity;
+    let bestDepth = Infinity;
     for (const eid of found) {
       const hit = entityScreenHit(eid, px, py);
-      if (hit && hit.d <= hit.radius && hit.d < bestD) { bestD = hit.d; best = { kind: "entity", eid }; }
+      if (hit && hit.d <= hit.radius && hit.depth < bestDepth) { bestDepth = hit.depth; best = { kind: "entity", eid }; }
     }
     for (const m of lastMarches) {
       const hit = marchScreenHit(m, px, py);
-      if (hit && hit.d <= hit.radius && hit.d < bestD) { bestD = hit.d; best = { kind: "march", march: m }; }
+      if (hit && hit.d <= hit.radius && hit.depth < bestDepth) { bestDepth = hit.depth; best = { kind: "march", march: m }; }
     }
     return best;
   }

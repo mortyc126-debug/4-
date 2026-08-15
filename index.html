@@ -266,6 +266,10 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #side-menu button:hover{background:rgba(0,0,0,.35);color:var(--gilt-hi)}
 #side-menu button img{width:66px;height:66px;object-fit:contain;flex:0 0 auto;
   filter:drop-shadow(0 3px 8px rgba(0,0,0,.9))}
+/* Только иконки, без подписи (пользователь явно попросил) — текст
+   остаётся в разметке как aria-label на самой кнопке, а не потерян для
+   скринридеров, просто визуально скрыт. */
+#side-menu button span{display:none}
 
 #menu-modal{position:fixed;inset:0;z-index:25;display:none;background:rgba(8,5,2,.72);
   overflow-y:auto}
@@ -696,9 +700,9 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 <button id="menu-btn" data-act="togglemenu" aria-label="Меню"><span>&#9776;</span></button>
 
 <nav id="side-menu">
-  <button data-menu="army"><img src="images/ui/icon-army.png" alt=""><span>Войско</span></button>
-  <button data-menu="gen"><img src="images/ui/icon-gen.png" alt=""><span>Генерал</span></button>
-  <button data-menu="inv"><img src="images/ui/icon-inv.png" alt=""><span>Инвентарь</span></button>
+  <button data-menu="army" aria-label="Войско"><img src="images/ui/icon-army.png" alt=""><span>Войско</span></button>
+  <button data-menu="gen" aria-label="Генерал"><img src="images/ui/icon-gen.png" alt=""><span>Генерал</span></button>
+  <button data-menu="inv" aria-label="Инвентарь"><img src="images/ui/icon-inv.png" alt=""><span>Инвентарь</span></button>
 </nav>
 <div id="menu-modal"><button id="menu-modal-close" data-act="closemenu">&times;</button><div id="menu-modal-body"></div></div>
 
