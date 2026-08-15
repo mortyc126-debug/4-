@@ -209,16 +209,23 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 /* Отряды в поле поверх 3D-мира — раньше видны были только на вкладке
    "Город" (renderFieldArmy внутри #folio), приходилось переключаться туда
    и обратно, чтобы просто посмотреть на свой марш (репорт пользователя).
-   Те же .slotcell, что и в renderFieldArmy/renderBrigades, просто в
-   .plate-панели поверх iframe (см. .plate — z-index:4 выше #world3d).
-   top:66px..bottom:194px — тот же верх, что у #key, но снизу останавливается
-   ДО #tools (right:14px;bottom:92px, три кнопки по 34px ≈ 102px), overflow
-   на случай марш-слотов больше, чем влезает по высоте (marchSlots до 5). */
-#fieldarmy-world{right:14px;top:66px;bottom:194px;padding:8px;
-  display:flex;flex-direction:column;gap:6px;overflow-y:auto;scrollbar-width:none;
+   Голые .slotcell без общей панели — тот же приём, что и у #fieldarmy в
+   самом городе (см. ниже): у .slotcell уже есть свой drop-shadow под
+   иконку, обёртка-плашка не нужна (пользователь явно попросил убрать фон,
+   оставить только иконку). z-index:4 — тот же, что у .plate (см. коммент
+   там), иначе просто не будет видно/некликабельно поверх iframe (z-index:3).
+   top:190px — ниже и плашки ресурсов родителя, и плавающей coordBar
+   ДВИЖКА (та сама рассчитана на top:100px + своя высота, обе панели в
+   одной системе координат — #chart, где и коордBar через iframe:inset:0,
+   и это меню начинаются от истинного верха экрана, см. #top:position:fixed).
+   Раньше стояла заметно выше и заходила на coordBar (репорт пользователя:
+   "опусти её, она заходит за другую часть интерфейса"). Высота — по
+   содержимому (без bottom), max-height + скролл только на случай марш-
+   слотов больше, чем разумно влезает (marchSlots до 5). */
+#fieldarmy-world{position:absolute;z-index:4;right:14px;top:190px;max-height:40vh;
+  display:flex;flex-direction:column;gap:10px;overflow-y:auto;scrollbar-width:none;
   align-items:center}
 #fieldarmy-world::-webkit-scrollbar{display:none}
-#fieldarmy-world:empty{display:none}
 
 #key{left:14px;top:66px;padding:9px 12px;display:flex;flex-direction:column;gap:5px;
   pointer-events:none;font-size:11.5px}
@@ -245,16 +252,20 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #view-toggle span{display:none} /* текстовый фолбэк, если картинки нет */
 
 /* ─────────────── Выдвижное меню справа ─────────────── */
+/* Раньше — тёмная кожаная плашка вокруг кнопок; пользователь попросил
+   убрать фон целиком (только сами кнопки) и увеличить их втрое. Без
+   плашки кнопки повисают прямо над картой/3D-миром — drop-shadow/
+   text-shadow на иконке и подписи (та же идея, что у .slotcell) держат
+   их читаемыми на любом фоне вместо самой плашки. */
 #side-menu{position:fixed;bottom:90px;right:14px;z-index:19;display:none;flex-direction:column;
-  gap:2px;background:linear-gradient(180deg,var(--leather-lit),var(--leather) 30%,#1b1510);
-  border:1px solid var(--rule);border-radius:4px;box-shadow:0 8px 26px rgba(0,0,0,.6);
-  padding:6px;min-width:150px}
+  align-items:flex-end;gap:14px}
 #side-menu.open{display:flex}
-#side-menu button{display:flex;align-items:center;gap:10px;padding:9px 10px;background:transparent;
-  border:none;color:var(--vellum-dim);font-size:13px;font-variant:small-caps;letter-spacing:.06em;
-  text-align:left;border-radius:3px}
-#side-menu button:hover{background:rgba(194,153,60,.14);color:var(--gilt-hi)}
-#side-menu button img{width:22px;height:22px;object-fit:contain;flex:0 0 auto}
+#side-menu button{display:flex;align-items:center;gap:14px;padding:6px;background:transparent;
+  border:none;color:var(--vellum);font-size:33px;font-variant:small-caps;letter-spacing:.06em;
+  text-align:left;text-shadow:0 2px 6px rgba(0,0,0,.9),0 0 10px rgba(0,0,0,.85);border-radius:6px}
+#side-menu button:hover{background:rgba(0,0,0,.35);color:var(--gilt-hi)}
+#side-menu button img{width:66px;height:66px;object-fit:contain;flex:0 0 auto;
+  filter:drop-shadow(0 3px 8px rgba(0,0,0,.9))}
 
 #menu-modal{position:fixed;inset:0;z-index:25;display:none;background:rgba(8,5,2,.72);
   overflow-y:auto}
@@ -665,7 +676,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
         <button id="t-out" title="Отдалить">&minus;</button>
         <button id="t-home" title="К своему городу">&#9884;</button>
       </div>
-      <div id="fieldarmy-world" class="plate"></div>
+      <div id="fieldarmy-world"></div>
       <iframe id="world3d" title="Мир"></iframe>
     </div>
 
@@ -1397,6 +1408,13 @@ const COUNTER_UP = 1.5, COUNTER_DOWN = 0.7;
 /* ---- Ресурсы ---- */
 const RES = ["food","wood","stone","gold"];
 const RES_NAME = {food:"Еда",wood:"Дерево",stone:"Камень",gold:"Золото"};
+// Настоящие базовые скорости сбора из RoK на старте партии (1 ур. ратуши,
+// без бонусов) — единиц в час. Раньше все 4 ресурса делили одну общую
+// формулу с произвольным множителем (пользователь сверил с реальной игрой
+// и прислал точные цифры). См. arriveMarch — базовая скорость масштабируется
+// с уровнем ратуши той же кривой, что была и раньше, только теперь
+// откалиброванной так, чтобы на 1 ур. ратуши совпадать ровно с этими числами.
+const GATHER_BASE_RATE = {food:3000, wood:3000, stone:2250, gold:1000};
 const RES_DESC = {
   food:"Идёт на стройку и содержание войск. Основной расход эпоху за эпохой.",
   wood:"Идёт на стройку наравне с едой — почти любое здание просит и то, и другое.",
@@ -2774,7 +2792,18 @@ const EV = {
     if(!p.isBot) logg(unitName(H.type,H.tier,p.race)+" вылечено: ×"+n.toLocaleString("ru")+".","good");
   },
   arrive(d){ arriveMarch(W.marches.find(m=>m.id===d.mid)) },
-  gathered(d){ const m=W.marches.find(m=>m.id===d.mid); if(m) recallMarch(m) },
+  // Снос узла (если он опустел) — теперь тут, а не в момент прибытия
+  // отряда (см. комментарий у arriveMarch), плюс перестраховка на случай,
+  // если cell вдруг уже пропал по другой причине к этому моменту.
+  gathered(d){
+    const m=W.marches.find(m=>m.id===d.mid); if(!m) return;
+    const cell=W.map[key(m.tx,m.ty)];
+    if(cell && cell.t==="node" && cell.amount<=0){
+      mapDelete(m.tx,m.ty);
+      schedule(CFG.NODE_RESPAWN,"nodeback",{x:m.tx,y:m.ty});
+    }
+    recallMarch(m);
+  },
   home(d){
     const m=W.marches.find(m=>m.id===d.mid); if(!m)return;
     const p=W.players.find(q=>q.id===m.pid);
@@ -2827,9 +2856,12 @@ function arriveMarch(m){
 
   if(cell.t==="node" && m.mode==="gather"){
     const B=bonuses(p);
-    // ×3 — пользователь отметил, что сбор с точек ощущался слишком
-    // медленным относительно резервов точки (o.amount) и марш-таймингов.
-    let rate=(60+p.b.hall*22)*3*(1+B.gather);
+    // GATHER_BASE_RATE — настоящие цифры RoK на 1 ур. ратуши (пользователь
+    // прислал точные значения). Масштабирование с уровнем ратуши — та же
+    // кривая (60+hall*22), что и раньше, только теперь нормированная на
+    // hall=1 (60+22=82), чтобы на самом старте партии совпасть с реальными
+    // числами ровно, а не расти от произвольной базы.
+    let rate=GATHER_BASE_RATE[cell.res]*(60+p.b.hall*22)/82*(1+B.gather);
     rate*= (cell.res==="food"||cell.res==="wood") ? 1+(B.gatherFW||0) : 1+(B.gatherSG||0);
     let load=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) load+=m.units[t][i]*TROOP_TYPES[t].load*TIER_MULT[i-1]*troopMod(p.race,t,"load")});
     load=Math.round(load*(1+B.load));
@@ -2838,7 +2870,14 @@ function arriveMarch(m){
     m.state="gather"; m.t0=W.t; m.t1=W.t+secs;
     cell.amount-=take; cell.busy=p.id;
     m.carry={}; m.carry[cell.res]=take;
-    if(cell.amount<=0){ mapDelete(m.tx,m.ty); schedule(CFG.NODE_RESPAWN,"nodeback",{x:m.tx,y:m.ty}) }
+    // Опустошение (mapDelete) откладываем до события "gathered" (см. EV.gathered
+    // ниже) — раньше точка пропадала с карты/из 3D СРАЗУ по прибытии отряда,
+    // хотя тот только начал собирать (репорт пользователя: "точки исчезают,
+    // как только армия туда заходит", хотя должны быть видны до самого конца
+    // сбора). cell.amount уменьшаем уже сейчас (бронируем добычу за этим
+    // марш-отрядом, как и раньше — чтобы второй марш на ту же точку не мог
+    // рассчитывать на уже занятые ресурсы), просто СНОС узла с карты теперь
+    // происходит не раньше, чем отряд реально закончит собирать.
     schedule(secs,"gathered",{mid:m.id});
     return;
   }
