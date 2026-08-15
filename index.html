@@ -78,9 +78,17 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    приём, что и бейдж класса/яруса у портретов юнитов), теперь в гербовом
    картуше вместо голого SVG-щита: тот же geraldic-shield ассет, что и у
    кольца, с процедурным щитом расы (shieldSvg) внутри его прозрачного окна. */
+/* Порядок в разметке ниже (см. foProfile): сначала .fill (герб расы),
+   ПОТОМ картинка рамки — рамка красится последней и оказывается визуально
+   СВЕРХУ герба (репорт пользователя: было наоборот, герб лежал поверх
+   рамки, из-за чего его края перекрывали/перебивали тонкую золотую
+   окантовку рамки вместо того, чтобы рамка аккуратно охватывала герб).
+   Раз рамка теперь сверху — она же маскирует любое небольшое несовпадение
+   между прямоугольным object-fit:fill гербом и фигурным (не прямоугольным)
+   прозрачным окном рамки по самому краю. */
 .profile-shield-badge{position:absolute;right:-10px;bottom:-8px;width:46px;height:46px;
   filter:drop-shadow(0 2px 4px rgba(0,0,0,.75))}
-.profile-shield-badge img{width:100%;height:100%;object-fit:contain;display:block}
+.profile-shield-badge>img{width:100%;height:100%;object-fit:contain;display:block}
 /* Первая правка (19px -> 22px) не помогла — не в размере было дело.
    RACE_CREST-картинки (Human.png и т.д.) не голый щит, а целая композиция
    "корона + скрещенные мечи + щит" — сам щит внутри неё занимает только
@@ -100,7 +108,13 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    бокам у более узких гербов (Дворф/Нежить). fill растягивает каждый
    ПОД СВОЁ окошко без остатка — небольшое искажение по ширине у пары рас
    менее заметно на 46px значке, чем гарантированный зазор до рамки. */
-.profile-shield-badge .fill img{width:23px;height:26px;object-fit:fill;display:block}
+/* Крупнее самого окна рамки НАРОЧНО (репорт: "у людей чуть расшир,
+   есть зазоры") — герб-силуэт (даже обрезанный) не прямоугольный,
+   у прямоугольного object-fit:fill бокса остаются пустые уголки на
+   стыке с фигурным окном рамки. Теперь рамка красится ПОСЛЕ герба
+   (см. .profile-shield-badge выше) — переполнение герба за пределы
+   окна просто прячется под рамкой сверху, ничем не грозит. */
+.profile-shield-badge .fill img{width:27px;height:30px;object-fit:fill;display:block}
 /* Пока полководец не выбран (playerAvatarSrc()===null) — герб один и
    должен заполнить собой место аватара целиком, а не жаться в угол. */
 .profile-avatar-fallback{width:96px;height:96px;border-radius:50%;display:flex;
@@ -727,9 +741,31 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .seal.wide{width:100%;text-align:center;padding:9px}
 
 /* Ход работ */
-.progress{margin-top:8px;height:5px;background:rgba(0,0,0,.45);position:relative;
-  border:1px solid var(--rule-soft)}
-.progress i{position:absolute;inset:0 auto 0 0;
+/* Раньше — плоский тёмный прямоугольник с золотым градиентом внутри.
+   Теперь рамка — border-image по одному ассету (симметричные заострённые
+   концы, средняя часть растягивается/повторяется на любую ширину без
+   искажений формы уголков — то, ради чего и просили именно симметричный
+   исходник, не с разными концами). border-image-slice взят из реальных
+   пикселей источника (900×114, уголок кончается на x≈83, верх/низ рамки
+   ≈8px) — fill заодно красит и середину исходником (тёмный желобок),
+   отдельный background под ним больше не нужен. */
+/* box-sizing:border-box действует глобально (см. сброс в начале файла) —
+   height здесь означает ПОЛНУЮ высоту коробки, включая border, а не высоту
+   "начинки" за вычетом рамки (проверил через getComputedStyle: при
+   height:4px и border-width 8px сверху/снизу контент схлопывался в 0).
+   border-image-slice тоже был неверный при первой попытке: 8px — это
+   расстояние всего лишь до начала фигуры (сглаженный край), а не граница
+   золото/жёлобок — картинка получалась сплюснутой, вся резьба уезжала в
+   растянутую середину. Промерил по цвету вдоль вертикали в прямом участке
+   исходника (не по силуэту): жёлобок (тёмные RGB) начинается на y≈49,
+   заканчивается на y≈142 из 192px общей высоты обрезанного оригинала —
+   рамка сверху/снизу занимает ~26% высоты каждая, не 4%. */
+.progress{margin-top:8px;height:22px;position:relative;
+  border-style:solid;border-width:6px 16px;
+  border-image-source:url(images/ui/progress-frame.png);
+  border-image-slice:29 83 fill;
+  border-image-repeat:stretch}
+.progress i{position:absolute;top:2px;bottom:2px;left:2px;border-radius:2px;
   background:linear-gradient(90deg,var(--gilt-dim),var(--gilt-hi));
   box-shadow:0 0 7px rgba(226,194,115,.4)}
 
@@ -4679,8 +4715,9 @@ function foProfile(){
        : "<span class='profile-avatar-fallback'>"+shieldSvg(p.race,52)+"</span>")+
      "<img class='profile-ring' src='images/ui/profile-ring.png' alt=''>"+
      (avSrc
-       ? "<span class='profile-shield-badge'><img src='images/ui/profile-shield-frame.png' alt=''>"+
-         "<span class='fill'><img src='images/ui/"+RACE_CREST[p.race]+"-badge.png' alt='"+RACES[p.race].name+"'></span></span>"
+       ? "<span class='profile-shield-badge'>"+
+         "<span class='fill'><img src='images/ui/"+RACE_CREST[p.race]+"-badge.png' alt='"+RACES[p.race].name+"'></span>"+
+         "<img src='images/ui/profile-shield-frame.png' alt=''></span>"
        : "")+
      "</div>"+
      "<div class='profile-name-row'>"+
