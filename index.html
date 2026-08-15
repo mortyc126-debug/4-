@@ -93,7 +93,14 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    размере). object-fit:contain — у 4 рас разное соотношение сторон после
    обрезки (не выравнивали искусственно), не искажает форму. */
 .profile-shield-badge .fill{position:absolute;top:52%;left:50%;transform:translate(-50%,-50%)}
-.profile-shield-badge .fill img{width:23px;height:26px;object-fit:contain;display:block}
+/* object-fit:fill (не contain) по прямой просьбе пользователя — обрезка
+   уже впритык к контенту (проверено по альфа-каналу: нулевой прозрачный
+   отступ у всех 4 файлов), но соотношения сторон у рас РАЗНЫЕ (0.65-0.82),
+   а окно рамки — одно (0.88), так что contain оставлял пустые поля по
+   бокам у более узких гербов (Дворф/Нежить). fill растягивает каждый
+   ПОД СВОЁ окошко без остатка — небольшое искажение по ширине у пары рас
+   менее заметно на 46px значке, чем гарантированный зазор до рамки. */
+.profile-shield-badge .fill img{width:23px;height:26px;object-fit:fill;display:block}
 /* Пока полководец не выбран (playerAvatarSrc()===null) — герб один и
    должен заполнить собой место аватара целиком, а не жаться в угол. */
 .profile-avatar-fallback{width:96px;height:96px;border-radius:50%;display:flex;
@@ -118,7 +125,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    выше геометрического центра картинки. */
 .profile-power-wrap{position:relative;display:inline-flex;align-items:center;justify-content:center;
   margin-top:2px}
-.profile-power-wrap .wreath{width:150px;height:auto;pointer-events:none}
+.profile-power-wrap .wreath{width:166px;height:auto;pointer-events:none}
 /* font-size задаётся ИНЛАЙНОМ через profilePowerFontSize() в JS, не тут —
    мощь растёт без потолка (поздняя игра легко уходит в миллионы), поэтому
    фиксированный размер, подобранный под "19 933", рано или поздно снова
