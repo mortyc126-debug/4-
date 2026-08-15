@@ -2774,7 +2774,18 @@ const EV = {
     if(!p.isBot) logg(unitName(H.type,H.tier,p.race)+" вылечено: ×"+n.toLocaleString("ru")+".","good");
   },
   arrive(d){ arriveMarch(W.marches.find(m=>m.id===d.mid)) },
-  gathered(d){ const m=W.marches.find(m=>m.id===d.mid); if(m) recallMarch(m) },
+  // Снос узла (если он опустел) — теперь тут, а не в момент прибытия
+  // отряда (см. комментарий у arriveMarch), плюс перестраховка на случай,
+  // если cell вдруг уже пропал по другой причине к этому моменту.
+  gathered(d){
+    const m=W.marches.find(m=>m.id===d.mid); if(!m) return;
+    const cell=W.map[key(m.tx,m.ty)];
+    if(cell && cell.t==="node" && cell.amount<=0){
+      mapDelete(m.tx,m.ty);
+      schedule(CFG.NODE_RESPAWN,"nodeback",{x:m.tx,y:m.ty});
+    }
+    recallMarch(m);
+  },
   home(d){
     const m=W.marches.find(m=>m.id===d.mid); if(!m)return;
     const p=W.players.find(q=>q.id===m.pid);
@@ -2838,7 +2849,14 @@ function arriveMarch(m){
     m.state="gather"; m.t0=W.t; m.t1=W.t+secs;
     cell.amount-=take; cell.busy=p.id;
     m.carry={}; m.carry[cell.res]=take;
-    if(cell.amount<=0){ mapDelete(m.tx,m.ty); schedule(CFG.NODE_RESPAWN,"nodeback",{x:m.tx,y:m.ty}) }
+    // Опустошение (mapDelete) откладываем до события "gathered" (см. EV.gathered
+    // ниже) — раньше точка пропадала с карты/из 3D СРАЗУ по прибытии отряда,
+    // хотя тот только начал собирать (репорт пользователя: "точки исчезают,
+    // как только армия туда заходит", хотя должны быть видны до самого конца
+    // сбора). cell.amount уменьшаем уже сейчас (бронируем добычу за этим
+    // марш-отрядом, как и раньше — чтобы второй марш на ту же точку не мог
+    // рассчитывать на уже занятые ресурсы), просто СНОС узла с карты теперь
+    // происходит не раньше, чем отряд реально закончит собирать.
     schedule(secs,"gathered",{mid:m.id});
     return;
   }
