@@ -285,6 +285,21 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #menu-modal{position:fixed;inset:0;z-index:25;display:none;background:rgba(8,5,2,.72);
   overflow-y:auto}
 #menu-modal.open{display:block}
+/* Золотые уголки поверх тёмной подложки #menu-modal — тот же ассет, что и
+   в почте (.mail-corner), не нужно менять тёмную цветовую схему Войска/
+   Генерала/Инвентаря/Профиля целиком ради декора: золото на тёмном фоне
+   само по себе смотрится нарядно. position:fixed (не absolute), потому что
+   #menu-modal сам по себе fixed и скроллится своим overflow-y — уголки
+   должны оставаться приклеенными к углам ЭКРАНА, а не уезжать со скроллом
+   контента. Лежат в статичной разметке #menu-modal (см. index.html), а не
+   генерируются в каждой foArmy/foGen/foInv/foMail — иначе живое обновление
+   #menu-modal-body раз в секунду пересоздавало бы и их без всякой пользы. */
+.menu-corner{position:fixed;width:110px;height:auto;pointer-events:none;
+  opacity:.8;z-index:24}
+.menu-corner.tl{top:0;left:0}
+.menu-corner.tr{top:0;right:0;transform:scaleX(-1)}
+.menu-corner.bl{bottom:0;left:0;transform:scaleY(-1)}
+.menu-corner.br{bottom:0;right:0;transform:scale(-1,-1)}
 #menu-modal-body{max-width:560px;margin:0 auto;padding:60px 16px 30px}
 #menu-modal-close{position:fixed;top:14px;right:14px;z-index:26;width:38px;height:38px;
   border-radius:50%;background:rgba(22,17,11,.9);border:1px solid var(--gilt-dim);
@@ -438,8 +453,9 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .mail-tabs button.on{background:rgba(236,226,202,.9);color:#2c2114;font-weight:bold}
 .mail-tabs button .n{position:absolute;top:-6px;right:2px;min-width:15px;height:15px;padding:0 3px;
   border-radius:8px;background:#8a2f22;color:#fce9c9;font-size:9.5px;line-height:15px;font-family:var(--data)}
+.mail-divider{display:block;width:100%;height:auto;position:relative;z-index:2;opacity:.85}
 .mail-list{flex:1;min-height:0;overflow-y:auto;position:relative;z-index:2;
-  border-top:1px solid rgba(90,69,48,.35);background:rgba(236,226,202,.55)}
+  background:rgba(236,226,202,.55)}
 .mail-row{display:flex;align-items:center;gap:10px;padding:11px 14px;
   border-bottom:1px solid rgba(90,69,48,.22)}
 .mail-row .ico{width:30px;height:30px;border-radius:50%;flex:0 0 auto;object-fit:contain;
@@ -456,7 +472,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .mail-empty{padding:40px 20px;text-align:center;color:#5a4530;font-size:13px;font-style:italic;
   position:relative;z-index:2}
 .mail-detail{flex:1;min-height:0;overflow-y:auto;position:relative;z-index:2;padding:16px 16px 8px;
-  border-top:1px solid rgba(90,69,48,.35);background:rgba(236,226,202,.55)}
+  background:rgba(236,226,202,.55)}
 .mail-back{display:flex;align-items:center;gap:6px;color:#5a4530;font-size:12.5px;
   font-variant:small-caps;letter-spacing:.08em;margin-bottom:12px}
 .mail-note{font-size:13.5px;line-height:1.6;color:#2c2114;padding:6px 2px}
@@ -788,7 +804,12 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   <button data-menu="gen" aria-label="Генерал"><img src="images/ui/icon-gen.png" alt=""><span>Генерал</span></button>
   <button data-menu="inv" aria-label="Инвентарь"><img src="images/ui/icon-inv.png" alt=""><span>Инвентарь</span></button>
 </nav>
-<div id="menu-modal"><button id="menu-modal-close" data-act="closemenu">&times;</button><div id="menu-modal-body"></div></div>
+<div id="menu-modal">
+  <img class="menu-corner tl" src="images/ui/mail-corner.png" alt="">
+  <img class="menu-corner tr" src="images/ui/mail-corner.png" alt="">
+  <img class="menu-corner bl" src="images/ui/mail-corner.png" alt="">
+  <img class="menu-corner br" src="images/ui/mail-corner.png" alt="">
+  <button id="menu-modal-close" data-act="closemenu">&times;</button><div id="menu-modal-body"></div></div>
 
 <div id="building-modal"><div id="bm-sheet">
   <button id="bm-close" data-act="closebuilding"><span>&times;</span></button>
@@ -4583,7 +4604,7 @@ function mailAvatarHtml(avatar,race,w){
 }
 function mailRowHtml(m){
   const isBattle=m.kind==="battle";
-  const icon = isBattle ? "images/ui/icon-army.png" : m.cat==="personal" ? "images/ui/icon-gen.png" : "images/ui/icon-world.png";
+  const icon = isBattle ? "images/ui/mail-seal.png" : m.cat==="personal" ? "images/ui/icon-gen.png" : "images/ui/icon-world.png";
   const cls = isBattle ? (m.win?"win":"lose") : "";
   const title = isBattle ? (m.win?"Победа":"Поражение") : m.title;
   const sub = isBattle ? (m.attacker?"Вы атаковали "+m.oppNick:"Вас атаковал "+m.oppNick) : m.body;
@@ -4632,6 +4653,7 @@ function foMail(){
     return "<button data-act='mailtab' data-cat='"+cat+"' class='"+(mailCat===cat&&!openEntry?"on":"")+"'>"+
       label+(n?"<span class='n'>"+n+"</span>":"")+"</button>";
   }).join("")+"</div>";
+  h+="<img class='mail-divider' src='images/ui/mail-divider.png' alt=''>";
   if(openEntry){
     h+="<div class='mail-detail'>"+mailDetailHtml(openEntry)+"</div>";
     h+="<div class='mail-bar'>"+
