@@ -263,9 +263,15 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    text-shadow на иконке и подписи (та же идея, что у .slotcell) держат
    их читаемыми на любом фоне вместо самой плашки. */
 #side-menu{position:fixed;bottom:90px;right:14px;z-index:19;display:none;flex-direction:column;
-  align-items:flex-end;gap:4px}
+  align-items:flex-end;gap:0}
 #side-menu.open{display:flex}
-#side-menu button{display:flex;align-items:center;gap:14px;padding:6px;background:transparent;
+/* Видимое расстояние между иконками — это gap (выше) ПЛЮС вертикальный
+   padding каждой кнопки сверху и снизу (кнопки прозрачные, своей рамки не
+   видно, так что глаз читает именно суммарный зазор). Раньше уменьшали
+   только gap (14px->4px) и не учли, что padding:6px даёт ещё +12px —
+   реальное сокращение получалось ~38%, а не запрошенные 70%. Целевой
+   зазор: (14+6+6)*0.3 ≈ 8px = 4px сверху + 4px снизу при gap:0 (выше). */
+#side-menu button{display:flex;align-items:center;gap:14px;padding:4px 6px;background:transparent;
   border:none;color:var(--vellum);font-size:33px;font-variant:small-caps;letter-spacing:.06em;
   text-align:left;text-shadow:0 2px 6px rgba(0,0,0,.9),0 0 10px rgba(0,0,0,.85);border-radius:6px}
 #side-menu button:hover{background:rgba(0,0,0,.35);color:var(--gilt-hi)}
