@@ -263,9 +263,15 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    text-shadow на иконке и подписи (та же идея, что у .slotcell) держат
    их читаемыми на любом фоне вместо самой плашки. */
 #side-menu{position:fixed;bottom:90px;right:14px;z-index:19;display:none;flex-direction:column;
-  align-items:flex-end;gap:4px}
+  align-items:flex-end;gap:0}
 #side-menu.open{display:flex}
-#side-menu button{display:flex;align-items:center;gap:14px;padding:6px;background:transparent;
+/* Видимое расстояние между иконками — это gap (выше) ПЛЮС вертикальный
+   padding каждой кнопки сверху и снизу (кнопки прозрачные, своей рамки не
+   видно, так что глаз читает именно суммарный зазор). Раньше уменьшали
+   только gap (14px->4px) и не учли, что padding:6px даёт ещё +12px —
+   реальное сокращение получалось ~38%, а не запрошенные 70%. Целевой
+   зазор: (14+6+6)*0.3 ≈ 8px = 4px сверху + 4px снизу при gap:0 (выше). */
+#side-menu button{display:flex;align-items:center;gap:14px;padding:4px 6px;background:transparent;
   border:none;color:var(--vellum);font-size:33px;font-variant:small-caps;letter-spacing:.06em;
   text-align:left;text-shadow:0 2px 6px rgba(0,0,0,.9),0 0 10px rgba(0,0,0,.85);border-radius:6px}
 #side-menu button:hover{background:rgba(0,0,0,.35);color:var(--gilt-hi)}
@@ -407,6 +413,78 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   border:1px solid rgba(107,82,48,.85);border-radius:3px;color:#e2c485;font-variant:small-caps;
   letter-spacing:.1em;font-size:14px;text-shadow:0 1px 2px rgba(0,0,0,.7)}
 #bm-btn:disabled{opacity:.5}
+
+/* ─────────────── Почта ─────────────── */
+/* .mail-wrap отменяет отступы/ширину #menu-modal-body (60px 16px 30px,
+   max-width:560px) — почта, в отличие от вертикальных списков foArmy/
+   foGen/foInv, сама себе "лист пергамента" во весь экран с собственной
+   рамкой, ей мешает чужой отступ модалки. Светлый пергамент + тёмные
+   чернила — та же пара цветов, что и у #bm-sheet (карточка здания) выше,
+   а не тёмный vellum-на-дереве, как у остального #menu-modal: письмо
+   читают на бумаге, не на грифельной доске. */
+.mail-wrap{margin:-60px -16px -30px;height:100dvh;display:flex;flex-direction:column}
+.mail-card{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;
+  background-image:url(images/ui/mail-parchment.jpg);background-size:cover;background-position:center;
+  color:#2c2114;box-shadow:inset 0 0 60px rgba(58,44,28,.25)}
+.mail-corner{position:absolute;width:72px;height:auto;pointer-events:none;opacity:.85;z-index:1}
+.mail-corner.tl{top:6px;left:6px}
+.mail-corner.tr{top:6px;right:6px;transform:scaleX(-1)}
+.mail-corner.bl{bottom:6px;left:6px;transform:scaleY(-1)}
+.mail-corner.br{bottom:6px;right:6px;transform:scale(-1,-1)}
+.mail-tabs{flex:0 0 auto;display:flex;gap:2px;padding:52px 10px 0;position:relative;z-index:2}
+.mail-tabs button{flex:1;padding:8px 2px;font-size:11.5px;font-variant:small-caps;letter-spacing:.06em;
+  color:#5a4530;background:rgba(90,69,48,.1);border:1px solid rgba(90,69,48,.3);border-radius:5px 5px 0 0;
+  border-bottom:none;position:relative}
+.mail-tabs button.on{background:rgba(236,226,202,.9);color:#2c2114;font-weight:bold}
+.mail-tabs button .n{position:absolute;top:-6px;right:2px;min-width:15px;height:15px;padding:0 3px;
+  border-radius:8px;background:#8a2f22;color:#fce9c9;font-size:9.5px;line-height:15px;font-family:var(--data)}
+.mail-list{flex:1;min-height:0;overflow-y:auto;position:relative;z-index:2;
+  border-top:1px solid rgba(90,69,48,.35);background:rgba(236,226,202,.55)}
+.mail-row{display:flex;align-items:center;gap:10px;padding:11px 14px;
+  border-bottom:1px solid rgba(90,69,48,.22)}
+.mail-row .ico{width:30px;height:30px;border-radius:50%;flex:0 0 auto;object-fit:contain;
+  background:rgba(90,69,48,.12);border:1px solid rgba(90,69,48,.35);padding:5px}
+.mail-row .ico.win{filter:sepia(1) saturate(2) hue-rotate(60deg) brightness(.9)}
+.mail-row .ico.lose{filter:sepia(1) saturate(3) hue-rotate(-40deg) brightness(.85)}
+.mail-row .tx{flex:1;min-width:0}
+.mail-row .tt{font-size:13.5px;color:#2c2114;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mail-row:not(.read) .tt{font-weight:bold}
+.mail-row .sb{font-size:11.5px;color:#5a4530;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mail-row .tm{font-size:10.5px;color:#8a6d2c;flex:0 0 auto;white-space:nowrap}
+.mail-row:not(.read)::before{content:"";width:7px;height:7px;border-radius:50%;background:#8a2f22;flex:0 0 auto}
+.mail-row.read::before{content:"";width:7px;flex:0 0 auto}
+.mail-empty{padding:40px 20px;text-align:center;color:#5a4530;font-size:13px;font-style:italic;
+  position:relative;z-index:2}
+.mail-detail{flex:1;min-height:0;overflow-y:auto;position:relative;z-index:2;padding:16px 16px 8px;
+  border-top:1px solid rgba(90,69,48,.35);background:rgba(236,226,202,.55)}
+.mail-back{display:flex;align-items:center;gap:6px;color:#5a4530;font-size:12.5px;
+  font-variant:small-caps;letter-spacing:.08em;margin-bottom:12px}
+.mail-note{font-size:13.5px;line-height:1.6;color:#2c2114;padding:6px 2px}
+.mail-vs{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:14px}
+.mail-side{flex:1;min-width:0;text-align:center}
+.mail-side img.av{width:52px;height:52px;border-radius:50%;object-fit:cover;border:2px solid #8a6d2c;
+  box-shadow:0 2px 6px rgba(0,0,0,.35)}
+.mail-side .nm{font-size:13px;color:#2c2114;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mail-side .co{font-size:10.5px;color:#8a6d2c;font-family:var(--data)}
+.mail-side .pw{font-size:11px;color:#5a4530;margin-top:2px}
+.mail-side .gen{font-size:11px;color:#5a4530;margin-top:3px}
+.mail-vmid{flex:0 0 auto;font-size:20px;color:#8a2f22;margin-top:14px}
+.mail-stamp{text-align:center;font-variant:small-caps;letter-spacing:.15em;font-size:22px;font-weight:bold;
+  margin:2px 0 16px;padding:4px;border:3px solid;border-radius:4px;transform:rotate(-3deg)}
+.mail-stamp.win{color:#3f6b3f;border-color:#3f6b3f}
+.mail-stamp.lose{color:#8a2f22;border-color:#8a2f22}
+.mail-stats{width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:10px}
+.mail-stats th{text-align:left;font-weight:normal;color:#8a6d2c;font-size:10.5px;
+  text-transform:uppercase;letter-spacing:.06em;padding-bottom:5px}
+.mail-stats th:last-child{text-align:right}
+.mail-stats td{padding:4px 0;border-top:1px solid rgba(90,69,48,.18);color:#3a2c1c}
+.mail-stats td:last-child{text-align:right;font-family:var(--data)}
+.mail-bar{flex:0 0 auto;display:flex;gap:6px;padding:8px 10px;position:relative;z-index:2;
+  background:rgba(58,44,28,.12);border-top:1px solid rgba(90,69,48,.35)}
+.mail-bar button{flex:1;padding:8px 4px;font-size:11px;font-variant:small-caps;letter-spacing:.05em;
+  color:#5a4530;background:rgba(90,69,48,.1);border:1px solid rgba(90,69,48,.3);border-radius:4px}
+.mail-bar button:disabled{opacity:.4}
+.mail-bar button.danger{color:#8a2f22}
 
 /* ─────────────── Правая колонна ─────────────── */
 #ledger{width:400px;flex:0 0 400px;min-height:0;display:flex;flex-direction:column;
@@ -1759,7 +1837,7 @@ function ensureWorldChunk(cx,cy){
 function genWorld(seed){
   RNG = mulberry(seed);
   W = { seed, t:0, born:Date.now(), map:{}, mapChunks:{}, genChunks:{}, players:[], marches:[], events:[],
-        log:[], nextId:1, savedAt:Date.now() };
+        log:[], nextId:1, savedAt:Date.now(), mail:[], mailNextId:1 };
 
   // Города — первыми и с гарантией места (findSpot ниже всегда что-нибудь
   // найдёт, пусть и с нарушением зазора после 4000 попыток): без города
@@ -2960,7 +3038,11 @@ function addXp(p,xp){
   p.gen.xp+=xp;
   while(p.gen.xp>=genXpNeed(p.gen.lv) && p.gen.lv<Math.min(60,epochOf(p.b.hall)*12)){
     p.gen.xp-=genXpNeed(p.gen.lv); p.gen.lv++; p.gen.pts++;
-    if(!p.isBot) logg("Генерал достиг "+p.gen.lv+" уровня. Очко таланта доступно.","good");
+    if(!p.isBot){
+      logg("Генерал достиг "+p.gen.lv+" уровня. Очко таланта доступно.","good");
+      pushMail({cat:"personal",kind:"note",title:"Генерал повышен",
+        body:"Ваш генерал достиг "+p.gen.lv+" уровня. Доступно новое очко таланта."});
+    }
   }
   if(p.isBot) autoTalents(p);
 }
@@ -2983,7 +3065,57 @@ function autoTalents(p){
   }
 }
 
+/* ---- Почта: боевые отчёты ---- */
+function pushMail(entry){
+  entry.id=W.mailNextId++;
+  entry.t=Date.now();
+  entry.read=false;
+  entry.fav=false;
+  W.mail.unshift(entry);
+  if(W.mail.length>300) W.mail.length=300;   // не даём расти бесконечно
+}
+function genInfo(p){
+  return (p.gen&&p.gen.id!=null) ? {name:GENERALS[p.race][p.gen.id].name, lv:p.gen.lv} : null;
+}
+// Отчёт о штурме города — отдельная запись для КАЖДОЙ человеческой стороны
+// (боты почту не читают, см. !att.isBot/!def.isBot ниже — тот же принцип,
+// что и у существующего logMsg): у атакующего и защитника разные потери и
+// разный исход одного и того же боя, поэтому это не одна запись с двумя
+// углами обзора, а две независимые.
+function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords){
+  if(!att.isBot) pushMail({
+    cat:"report", kind:"battle", win: win==="A",
+    selfNick:att.nick||"Безымянный лорд", oppNick:def.nick||"Безымянный лорд",
+    selfRace:att.race, oppRace:def.race,
+    selfCoords:{x:att.x,y:att.y}, oppCoords:{x:def.x,y:def.y}, fightCoords:coords,
+    selfPower:powA, oppPower:powD,
+    selfGen:genInfo(att), oppGen:genInfo(def),
+    selfAvatar:playerAvatarSrc(att), oppAvatar:playerAvatarSrc(def),
+    selfStart:startA, oppStart:startD,
+    selfDead:la.dead, selfHurt:la.hurt, selfRemain:Math.max(0,startA-la.dead-la.hurt),
+    oppDead:ld.dead, oppHurt:ld.hurt, oppRemain:Math.max(0,startD-ld.dead-ld.hurt),
+    attacker:true,
+  });
+  if(!def.isBot) pushMail({
+    cat:"report", kind:"battle", win: win==="D",
+    selfNick:def.nick||"Безымянный лорд", oppNick:att.nick||"Безымянный лорд",
+    selfRace:def.race, oppRace:att.race,
+    selfCoords:{x:def.x,y:def.y}, oppCoords:{x:att.x,y:att.y}, fightCoords:coords,
+    selfPower:powD, oppPower:powA,
+    selfGen:genInfo(def), oppGen:genInfo(att),
+    selfAvatar:playerAvatarSrc(def), oppAvatar:playerAvatarSrc(att),
+    selfStart:startD, oppStart:startA,
+    selfDead:ld.dead, selfHurt:ld.hurt, selfRemain:Math.max(0,startD-ld.dead-ld.hurt),
+    oppDead:la.dead, oppHurt:la.hurt, oppRemain:Math.max(0,startA-la.dead-la.hurt),
+    attacker:false,
+  });
+}
 function battleCity(att,def,m){
+  // Мощь и число войск ДО боя — то же самое "сколько было на входе", что
+  // показывает отчёт (см. pushBattleReport ниже); после боя и splitLosses
+  // оба числа уже не те, что были в момент столкновения.
+  const powA=power(att), powD=power(def);
+  const startA=countUnits(m.units), startD=countUnits(def.troops);
   const garrison=emptyUnits();
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++)garrison[t][i]=def.troops[t][i]});
   const A=makeForce(m.units,att,{name:att.name});
@@ -3019,7 +3151,7 @@ function battleCity(att,def,m){
     logMsg(att,def,"Штурм "+def.name+" провалился. Убито "+la.dead+", ранено "+la.hurt+".",
                    "Отражена атака "+att.name+". Убито "+ld.dead+", ранено "+ld.hurt+".");
   }
-  if(!def.isBot||!att.isBot){/* nothing */}
+  pushBattleReport(att,def,startA,startD,powA,powD,la,ld,r.win,{x:m.tx,y:m.ty});
   recallMarch(m);
 }
 function logMsg(att,def,forAtt,forDef){
@@ -3563,6 +3695,9 @@ async function load(){
       // над их замком в 3D теперь должен висеть ник, не пустая строка.
       if(p.isBot && !p.nick){ const pool=BOT_NICKS[p.race]||BOT_NICKS.human; p.nick=pool[i%pool.length]; }
     });
+    // Старые сохранения — до появления почты — не несут W.mail вовсе.
+    if(!W.mail) W.mail=[];
+    if(!W.mailNextId) W.mailNextId=1;
     thinMapDensity();
     thinMapDensity2();
     thinMapDensity3();
@@ -3613,6 +3748,8 @@ async function load(){
     if(away>60){
       advanceTo(W.t+away);
       logg("Пока вас не было, прошло "+fmtDur(away)+". Мир жил своей жизнью.","good");
+      pushMail({cat:"system",kind:"note",title:"Мир не стоял на месте",
+        body:"Пока вас не было, прошло "+fmtDur(away)+". Мир жил своей жизнью — проверьте отчёты о сражениях."});
     }
     return true;
   }catch(e){ return false }
@@ -4419,12 +4556,97 @@ function foProfile(){
   return h;
 }
 
-// Заглушка на первом шаге — сама почта (список писем, награды, массовый
-// сбор) будет следующим отдельным куском работы; сейчас только открывает
-// кнопку в меню, ничего не отображая, кроме рубрики "в разработке" (тот же
-// приём, что и у foProfile() выше, пока полководец ещё не выбран).
+/* ---- Почта ---- */
+// Только категории, у которых реально есть источник данных в этой игре:
+// "Отчёты" (бои за город, см. pushBattleReport), "Личное" (события уровня
+// игрока — пока только повышение генерала), "Система" (например, сводка
+// "пока вас не было"), "Избранное" (не своя категория, а фильтр fav===true
+// по всем остальным). "Альянс"/"Отправленные" из референса — НЕ добавлены:
+// в этой игре нет ни альянсов, ни переписки между игроками (single-player
+// против ботов), вкладка без единого способа когда-либо получить в неё
+// хоть одну запись — мёртвый UI, а не функциональность про запас.
+let mailCat="report", mailOpenId=null;
+const MAIL_TABS=[["report","Отчёты"],["personal","Личное"],["system","Система"],["fav","Избранное"]];
+function mailInCat(cat){
+  return cat==="fav" ? W.mail.filter(m=>m.fav) : W.mail.filter(m=>m.cat===cat);
+}
+function mailAgo(t){
+  const s=Math.max(0,(Date.now()-t)/1000);
+  if(s<60) return "только что";
+  if(s<3600) return Math.floor(s/60)+" мин назад";
+  if(s<86400) return Math.floor(s/3600)+" ч назад";
+  return Math.floor(s/86400)+" дн назад";
+}
+function mailAvatarHtml(avatar,race,w){
+  return avatar ? "<img class='av' style='width:"+w+"px;height:"+w+"px' src='"+avatar+"' alt=''>"
+                : "<span class='av' style='width:"+w+"px;height:"+w+"px;display:inline-flex;align-items:center;justify-content:center'>"+shieldSvg(race,w*0.55)+"</span>";
+}
+function mailRowHtml(m){
+  const isBattle=m.kind==="battle";
+  const icon = isBattle ? "images/ui/icon-army.png" : m.cat==="personal" ? "images/ui/icon-gen.png" : "images/ui/icon-world.png";
+  const cls = isBattle ? (m.win?"win":"lose") : "";
+  const title = isBattle ? (m.win?"Победа":"Поражение") : m.title;
+  const sub = isBattle ? (m.attacker?"Вы атаковали "+m.oppNick:"Вас атаковал "+m.oppNick) : m.body;
+  return "<div class='mail-row"+(m.read?" read":"")+"' data-act='mailopen' data-id='"+m.id+"'>"+
+    "<img class='ico "+cls+"' src='"+icon+"' alt=''>"+
+    "<div class='tx'><div class='tt'>"+title+"</div><div class='sb'>"+sub+"</div></div>"+
+    "<div class='tm'>"+mailAgo(m.t)+"</div></div>";
+}
+function mailDetailHtml(m){
+  let h="<div class='mail-back' data-act='mailback'>&#8592; Назад к списку</div>";
+  if(m.kind==="battle"){
+    h+="<div class='mail-vs'>"+
+       "<div class='mail-side'>"+mailAvatarHtml(m.selfAvatar,m.selfRace,52)+
+         "<div class='nm'>"+m.selfNick+"</div><div class='co'>X:"+m.selfCoords.x+" Y:"+m.selfCoords.y+"</div>"+
+         "<div class='pw'>Мощь "+RU(m.selfPower)+"</div>"+
+         (m.selfGen?"<div class='gen'>"+m.selfGen.name+" (ур. "+m.selfGen.lv+")</div>":"")+
+       "</div>"+
+       "<div class='mail-vmid'>&#9876;</div>"+
+       "<div class='mail-side'>"+mailAvatarHtml(m.oppAvatar,m.oppRace,52)+
+         "<div class='nm'>"+m.oppNick+"</div><div class='co'>X:"+m.oppCoords.x+" Y:"+m.oppCoords.y+"</div>"+
+         "<div class='pw'>Мощь "+RU(m.oppPower)+"</div>"+
+         (m.oppGen?"<div class='gen'>"+m.oppGen.name+" (ур. "+m.oppGen.lv+")</div>":"")+
+       "</div></div>"+
+       "<div class='mail-stamp "+(m.win?"win":"lose")+"'>"+(m.win?"Победа":"Поражение")+"</div>"+
+       "<table class='mail-stats'><tr><th></th><th>"+m.selfNick+"</th><th>"+m.oppNick+"</th></tr>"+
+       "<tr><td>Войск</td><td>"+RU(m.selfStart)+"</td><td>"+RU(m.oppStart)+"</td></tr>"+
+       "<tr><td>Убито</td><td>"+RU(m.selfDead)+"</td><td>"+RU(m.oppDead)+"</td></tr>"+
+       "<tr><td>Ранено</td><td>"+RU(m.selfHurt)+"</td><td>"+RU(m.oppHurt)+"</td></tr>"+
+       "<tr><td>Осталось</td><td>"+RU(m.selfRemain)+"</td><td>"+RU(m.oppRemain)+"</td></tr>"+
+       "</table>"+
+       "<div class='mail-note'>Место боя: X:"+m.fightCoords.x+" Y:"+m.fightCoords.y+"</div>";
+  } else {
+    h+="<div class='mail-note'><b>"+m.title+"</b><br>"+m.body+"</div>";
+  }
+  return h;
+}
 function foMail(){
-  return rubric("Почта","в разработке");
+  const openEntry = mailOpenId!=null ? W.mail.find(x=>x.id===mailOpenId) : null;
+  let h="<div class='mail-wrap'><div class='mail-card'>"+
+    "<img class='mail-corner tl' src='images/ui/mail-corner.png' alt=''>"+
+    "<img class='mail-corner tr' src='images/ui/mail-corner.png' alt=''>"+
+    "<img class='mail-corner bl' src='images/ui/mail-corner.png' alt=''>"+
+    "<img class='mail-corner br' src='images/ui/mail-corner.png' alt=''>";
+  h+="<div class='mail-tabs'>"+MAIL_TABS.map(([cat,label])=>{
+    const n=mailInCat(cat).filter(m=>!m.read).length;
+    return "<button data-act='mailtab' data-cat='"+cat+"' class='"+(mailCat===cat&&!openEntry?"on":"")+"'>"+
+      label+(n?"<span class='n'>"+n+"</span>":"")+"</button>";
+  }).join("")+"</div>";
+  if(openEntry){
+    h+="<div class='mail-detail'>"+mailDetailHtml(openEntry)+"</div>";
+    h+="<div class='mail-bar'>"+
+       "<button data-act='mailfav' data-id='"+openEntry.id+"'>"+(openEntry.fav?"Убрать из избранного":"В избранное")+"</button>"+
+       "<button class='danger' data-act='maildel' data-id='"+openEntry.id+"'>Удалить</button></div>";
+  } else {
+    const list=mailInCat(mailCat).sort((a,b)=>b.t-a.t);
+    h+="<div class='mail-list'>"+
+       (list.length ? list.map(mailRowHtml).join("") : "<div class='mail-empty'>Здесь пока пусто.</div>")+
+       "</div>";
+    const hasUnread=list.some(m=>!m.read);
+    h+="<div class='mail-bar'><button data-act='mailreadall'"+(hasUnread?"":" disabled")+">Прочитать всё</button></div>";
+  }
+  h+="</div></div>";
+  return h;
 }
 function foCity(){
   const p=me(); syncRes(p);
@@ -5097,6 +5319,41 @@ function handleAct(e){
     const menu=$("#menu-modal");
     if(menu.classList.contains("open")&&menu.dataset.tab==="inv"){ lastMenuBody=foInv(); $("#menu-modal-body").innerHTML=lastMenuBody; }
   }
+  else if(a==="mailtab"){
+    mailCat=b.dataset.cat; mailOpenId=null;
+    lastMenuBody=foMail(); $("#menu-modal-body").innerHTML=lastMenuBody;
+    return;
+  }
+  else if(a==="mailopen"){
+    const id=+b.dataset.id, m=W.mail.find(x=>x.id===id);
+    if(m) m.read=true;
+    mailOpenId=id;
+    lastMenuBody=foMail(); $("#menu-modal-body").innerHTML=lastMenuBody;
+    return;
+  }
+  else if(a==="mailback"){
+    mailOpenId=null;
+    lastMenuBody=foMail(); $("#menu-modal-body").innerHTML=lastMenuBody;
+    return;
+  }
+  else if(a==="mailreadall"){
+    mailInCat(mailCat).forEach(m=>m.read=true);
+    lastMenuBody=foMail(); $("#menu-modal-body").innerHTML=lastMenuBody;
+    return;
+  }
+  else if(a==="mailfav"){
+    const m=W.mail.find(x=>x.id===+b.dataset.id);
+    if(m) m.fav=!m.fav;
+    lastMenuBody=foMail(); $("#menu-modal-body").innerHTML=lastMenuBody;
+    return;
+  }
+  else if(a==="maildel"){
+    const id=+b.dataset.id;
+    W.mail=W.mail.filter(x=>x.id!==id);
+    mailOpenId=null;
+    lastMenuBody=foMail(); $("#menu-modal-body").innerHTML=lastMenuBody;
+    return;
+  }
   else if(a==="recall"){ const m=W.marches.find(x=>x.id==b.dataset.m);
     if(m){ recallMarch(m); renderCartouche(); herald("Отряд поворачивает домой.") } }
   else if(a==="scouttoggle"){
@@ -5138,7 +5395,7 @@ function handleAct(e){
   const modal=$("#menu-modal");
   if(modal.classList.contains("open")){
     const t=modal.dataset.tab;
-    lastMenuBody = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): foInv();
+    lastMenuBody = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): foInv();
     $("#menu-modal-body").innerHTML = lastMenuBody;
   }
 }
