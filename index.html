@@ -78,11 +78,43 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    приём, что и бейдж класса/яруса у портретов юнитов), теперь в гербовом
    картуше вместо голого SVG-щита: тот же geraldic-shield ассет, что и у
    кольца, с процедурным щитом расы (shieldSvg) внутри его прозрачного окна. */
+/* Порядок в разметке ниже (см. foProfile): сначала .fill (герб расы),
+   ПОТОМ картинка рамки — рамка красится последней и оказывается визуально
+   СВЕРХУ герба (репорт пользователя: было наоборот, герб лежал поверх
+   рамки, из-за чего его края перекрывали/перебивали тонкую золотую
+   окантовку рамки вместо того, чтобы рамка аккуратно охватывала герб).
+   Раз рамка теперь сверху — она же маскирует любое небольшое несовпадение
+   между прямоугольным object-fit:fill гербом и фигурным (не прямоугольным)
+   прозрачным окном рамки по самому краю. */
 .profile-shield-badge{position:absolute;right:-10px;bottom:-8px;width:46px;height:46px;
   filter:drop-shadow(0 2px 4px rgba(0,0,0,.75))}
-.profile-shield-badge img{width:100%;height:100%;object-fit:contain;display:block}
-.profile-shield-badge .fill{position:absolute;top:52%;left:50%;transform:translate(-50%,-50%);
-  width:19px}
+.profile-shield-badge>img{width:100%;height:100%;object-fit:contain;display:block}
+/* Первая правка (19px -> 22px) не помогла — не в размере было дело.
+   RACE_CREST-картинки (Human.png и т.д.) не голый щит, а целая композиция
+   "корона + скрещенные мечи + щит" — сам щит внутри неё занимает только
+   среднюю часть кадра, поэтому даже увеличенная иконка внутри своей же
+   рамки выглядела мельче рамки (репорт: "не обхватывает реальное
+   изображение иконки"). Обрезали 4 картинки под именно щит (без короны/
+   рукоятей мечей, см. images/ui/{Race}-badge.png) — новые файлы используют
+   ТОЛЬКО в этом маленьком гербе-картуше, оригиналы не трогали (они уже
+   верно смотрятся полной композицией в других местах игры при большем
+   размере). object-fit:contain — у 4 рас разное соотношение сторон после
+   обрезки (не выравнивали искусственно), не искажает форму. */
+.profile-shield-badge .fill{position:absolute;top:52%;left:50%;transform:translate(-50%,-50%)}
+/* object-fit:fill (не contain) по прямой просьбе пользователя — обрезка
+   уже впритык к контенту (проверено по альфа-каналу: нулевой прозрачный
+   отступ у всех 4 файлов), но соотношения сторон у рас РАЗНЫЕ (0.65-0.82),
+   а окно рамки — одно (0.88), так что contain оставлял пустые поля по
+   бокам у более узких гербов (Дворф/Нежить). fill растягивает каждый
+   ПОД СВОЁ окошко без остатка — небольшое искажение по ширине у пары рас
+   менее заметно на 46px значке, чем гарантированный зазор до рамки. */
+/* Крупнее самого окна рамки НАРОЧНО (репорт: "у людей чуть расшир,
+   есть зазоры") — герб-силуэт (даже обрезанный) не прямоугольный,
+   у прямоугольного object-fit:fill бокса остаются пустые уголки на
+   стыке с фигурным окном рамки. Теперь рамка красится ПОСЛЕ герба
+   (см. .profile-shield-badge выше) — переполнение герба за пределы
+   окна просто прячется под рамкой сверху, ничем не грозит. */
+.profile-shield-badge .fill img{width:27px;height:30px;object-fit:fill;display:block}
 /* Пока полководец не выбран (playerAvatarSrc()===null) — герб один и
    должен заполнить собой место аватара целиком, а не жаться в угол. */
 .profile-avatar-fallback{width:96px;height:96px;border-radius:50%;display:flex;
@@ -91,12 +123,33 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .profile-name-row input{text-align:center;font-size:15px}
 /* Венок — фон ЗА чипом мощи, тот же приём: собственное соотношение сторон,
    чип остаётся обычным текстовым блоком поверх него по центру. */
+/* Венок раньше был 190px при 15px-цифрах — сам венок доминировал над
+   содержимым (репорт пользователя: "венок слишком огромен, а цифры
+   малы"). Первая правка (118px + крупнее цифры) сама сломалась иначе:
+   свободное место ВНУТРИ венка — не полукруг, а узкий проём между двумя
+   ветками (промерено по альфа-каналу: на высоте венка чистый зазор ~45%
+   от общей ширины, а не половина) — при 118px эта щель у́же, чем "19 933"
+   с иконкой мощи рядом, отсюда наезд цифр на левую ветку. Решение: венок
+   покрупнее (150px — компромисс, не крайность в 190px), а иконку внутри
+   убрали вовсе (сам венок уже читается как символ "мощь", дублировать
+   его отдельной иконкой было избыточно и съедало ширину, которой и так
+   не хватало) — оставшегося места ровно под цифру.
+   top:37% (не 50%) — то же промерение: лента внизу венка занимает
+   заметную долю его высоты, реальный визуальный центр СВОБОДНОЙ прогалины
+   выше геометрического центра картинки. */
 .profile-power-wrap{position:relative;display:inline-flex;align-items:center;justify-content:center;
-  margin-top:6px}
-.profile-power-wrap .wreath{width:190px;height:auto;pointer-events:none}
-.profile-power-chip{position:absolute;display:inline-flex;align-items:center;gap:6px;
-  font-family:var(--data);font-size:15px;color:var(--gilt-hi);font-weight:bold;padding:5px 14px}
-.profile-power-chip img{width:16px;height:16px;object-fit:contain}
+  margin-top:2px}
+.profile-power-wrap .wreath{width:166px;height:auto;pointer-events:none}
+/* font-size задаётся ИНЛАЙНОМ через profilePowerFontSize() в JS, не тут —
+   мощь растёт без потолка (поздняя игра легко уходит в миллионы), поэтому
+   фиксированный размер, подобранный под "19 933", рано или поздно снова
+   пробил бы границы венка тем же способом, что и раньше. Сокращение через
+   fmt() (millions -> "1.23 млн") решает проблему только частично: даже
+   сокращённая запись растёт в символах медленнее, чем сам венок остаётся
+   тем же (152px не резиновые) — так что дополнительно ужимаем шрифт по
+   длине результата, а не только сокращаем разряды. */
+.profile-power-chip{position:absolute;top:37%;left:50%;transform:translate(-50%,-50%);
+  font-family:var(--data);color:var(--gilt-hi);font-weight:bold;white-space:nowrap}
 
 .gen-portrait-wrap{position:relative}
 .gen-portrait{width:44px;height:44px;object-fit:contain;display:block}
@@ -197,19 +250,39 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    #chart — общего position:relative-предка всех .plate, см. коммент выше) —
    там же, где по тому же тапу появляется цель, так что взгляд не должен
    прыгать через весь экран, чтобы прочитать панель. */
+/* Тот же пергамент, что и у почты/модалки здания (пользователь явно
+   попросил: "тот фон, что используется у нас в письмах, страничках
+   зданий") — переопределяем ТОЛЬКО #cartouche, не сам .plate целиком:
+   .plate также рисует #key (легенда карты) и #tools (кнопки зума), их
+   светлый пергамент не просили и не нужно — это разные по духу элементы
+   (лёгкие оверлей-кнопки поверх карты, не "документ"). Раз фон стал
+   светлым — все внутренние цвета текста (были подобраны под тёмный
+   .plate) переопределены здесь же на тёмные чернила, тот же приём и те же
+   цвета, что и у #bm-sheet/.mail-detail. */
 #cartouche{left:50%;top:50%;transform:translate(-50%,-50%);max-width:270px;
-  padding:11px 13px;font-size:13.5px}
-#cartouche .hd{font-variant:small-caps;letter-spacing:.13em;font-size:14px;color:var(--gilt-hi);
-  display:flex;align-items:center;gap:7px;margin-bottom:5px;padding-right:16px}
+  padding:11px 13px;font-size:13.5px;
+  background:none;background-image:url(images/ui/mail-parchment.jpg);background-size:cover;
+  background-position:center;border-color:rgba(90,69,48,.4);
+  box-shadow:0 4px 18px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.25)}
+#cartouche .hd{font-variant:small-caps;letter-spacing:.13em;font-size:14px;color:#2c2114;
+  display:flex;align-items:center;gap:7px;margin-bottom:5px;padding-right:16px;font-weight:bold}
 #cartouche .co{display:flex;justify-content:space-between;gap:16px;font-size:12.5px;
-  color:var(--vellum-dim);padding:1.5px 0}
-#cartouche .co b{font-family:var(--data);color:var(--vellum);font-weight:400}
-#cartouche .hint{margin-top:7px;padding-top:6px;border-top:1px solid var(--rule-soft);
-  font-size:11.5px;color:var(--vellum-faint);font-style:italic}
+  color:#5a4530;padding:1.5px 0}
+#cartouche .co b{font-family:var(--data);color:#2c2114;font-weight:400}
+#cartouche .hint{margin-top:7px;padding-top:6px;border-top:1px solid rgba(90,69,48,.3);
+  font-size:11.5px;color:#5a4530;font-style:italic}
+#cartouche .n{color:#8a6d2c !important}
 #cartouche .cart-close{position:absolute;top:7px;right:8px;width:20px;height:20px;
-  line-height:18px;text-align:center;font-size:16px;color:var(--vellum-faint);
+  line-height:18px;text-align:center;font-size:16px;color:#5a4530;
   border-radius:50%;transition:color .15s,background .15s}
-#cartouche .cart-close:hover{color:var(--vellum);background:rgba(255,255,255,.08)}
+#cartouche .cart-close:hover{color:#2c2114;background:rgba(90,69,48,.15)}
+/* .seal подобран под тёмный .plate (светлое золото на почти-прозрачном) —
+   на светлом пергаменте контраст слабый, та же коррекция, что уже
+   применена к похожим кнопкам в #bm-tree (тёмные чернила вместо золота). */
+#cartouche .seal{border-color:#8a6d2c;color:#5a4530;background:rgba(90,69,48,.1)}
+#cartouche .seal:hover:not(:disabled){background:rgba(90,69,48,.22);color:#2c2114;border-color:#6b5230}
+#cartouche .seal.blood{border-color:#8a2f22;color:#8a2f22;background:rgba(138,47,34,.08)}
+#cartouche .seal.blood:hover{background:rgba(138,47,34,.18);color:#6b1f16;border-color:#6b1f16}
 
 /* bottom:92px, не 14px — #menu-btn (70×70, z-index:20) сидит в том же углу
    (right:14px;bottom:14px) и перекрывал нижние две кнопки (t-out/t-home),
@@ -668,9 +741,31 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .seal.wide{width:100%;text-align:center;padding:9px}
 
 /* Ход работ */
-.progress{margin-top:8px;height:5px;background:rgba(0,0,0,.45);position:relative;
-  border:1px solid var(--rule-soft)}
-.progress i{position:absolute;inset:0 auto 0 0;
+/* Раньше — плоский тёмный прямоугольник с золотым градиентом внутри.
+   Теперь рамка — border-image по одному ассету (симметричные заострённые
+   концы, средняя часть растягивается/повторяется на любую ширину без
+   искажений формы уголков — то, ради чего и просили именно симметричный
+   исходник, не с разными концами). border-image-slice взят из реальных
+   пикселей источника (900×114, уголок кончается на x≈83, верх/низ рамки
+   ≈8px) — fill заодно красит и середину исходником (тёмный желобок),
+   отдельный background под ним больше не нужен. */
+/* box-sizing:border-box действует глобально (см. сброс в начале файла) —
+   height здесь означает ПОЛНУЮ высоту коробки, включая border, а не высоту
+   "начинки" за вычетом рамки (проверил через getComputedStyle: при
+   height:4px и border-width 8px сверху/снизу контент схлопывался в 0).
+   border-image-slice тоже был неверный при первой попытке: 8px — это
+   расстояние всего лишь до начала фигуры (сглаженный край), а не граница
+   золото/жёлобок — картинка получалась сплюснутой, вся резьба уезжала в
+   растянутую середину. Промерил по цвету вдоль вертикали в прямом участке
+   исходника (не по силуэту): жёлобок (тёмные RGB) начинается на y≈49,
+   заканчивается на y≈142 из 192px общей высоты обрезанного оригинала —
+   рамка сверху/снизу занимает ~26% высоты каждая, не 4%. */
+.progress{margin-top:8px;height:22px;position:relative;
+  border-style:solid;border-width:6px 16px;
+  border-image-source:url(images/ui/progress-frame.png);
+  border-image-slice:29 83 fill;
+  border-image-repeat:stretch}
+.progress i{position:absolute;top:2px;bottom:2px;left:2px;border-radius:2px;
   background:linear-gradient(90deg,var(--gilt-dim),var(--gilt-hi));
   box-shadow:0 0 7px rgba(226,194,115,.4)}
 
@@ -4589,6 +4684,16 @@ function buildingModalHtml(ci){
   return h;
 }
 
+// Венок под мощью — фиксированного размера (152px), а сама мощь без
+// потолка растёт всю партию. Сокращаем разряды через fmt() ("1.23 млн"),
+// но даже сокращённая строка не гарантированно влезает в тот же зазор при
+// любой длине — поэтому шрифт ещё и подстраивается под длину результата:
+// 6 символов ("19 933") — те самые 20px, на которых венок подгонялся, а
+// на каждый лишний символ чуть сжимаем, до жёсткого пола в 12px (дальше
+// нечитаемо мелко, лучше слегка вылезти за край, чем свести число к пыли).
+function profilePowerFontSize(str){
+  return Math.max(12, 20-Math.max(0,str.length-6)*1.4);
+}
 /* ---- Профиль игрока — заглушка, полноценный экран доделаем позже.
    Сюда со временем переедут: сводка по войскам, снаряжение генерала,
    достижения и т.п. Пока только то, что раньше висело в карточке города. ---- */
@@ -4610,8 +4715,9 @@ function foProfile(){
        : "<span class='profile-avatar-fallback'>"+shieldSvg(p.race,52)+"</span>")+
      "<img class='profile-ring' src='images/ui/profile-ring.png' alt=''>"+
      (avSrc
-       ? "<span class='profile-shield-badge'><img src='images/ui/profile-shield-frame.png' alt=''>"+
-         "<span class='fill'>"+shieldSvg(p.race,19)+"</span></span>"
+       ? "<span class='profile-shield-badge'>"+
+         "<span class='fill'><img src='images/ui/"+RACE_CREST[p.race]+"-badge.png' alt='"+RACES[p.race].name+"'></span>"+
+         "<img src='images/ui/profile-shield-frame.png' alt=''></span>"
        : "")+
      "</div>"+
      "<div class='profile-name-row'>"+
@@ -4620,7 +4726,7 @@ function foProfile(){
      "<button class='seal' data-act='savenick'>Сохранить</button></div>"+
      "<div class='note'>"+RACES[p.race].name+"</div>"+
      "<div class='profile-power-wrap'><img class='wreath' src='images/ui/profile-wreath.png' alt=''>"+
-     "<span class='profile-power-chip'><img src='images/ui/icon-power.png' alt=''>"+RU(power(p))+"</span></div>"+
+     "<span class='profile-power-chip' style='font-size:"+profilePowerFontSize(fmt(power(p)))+"px'>"+fmt(power(p))+"</span></div>"+
      "</div>";
   return h;
 }
