@@ -5066,13 +5066,7 @@ function foInv(){
 
   if(invTab==="res"){
     let h=tabsHtml+rubric("Ресурсы");
-    RES.forEach(r=>{
-      h+="<div class='entry'><div class='line'><div style='flex:0 0 auto'>"+
-        "<img src='images/ui/res-"+r+".png' style='width:26px;height:26px;object-fit:contain'></div>"+
-        "<div class='fill'><div class='title'>"+RES_NAME[r]+"</div>"+
-        "<div class='note'>"+RES_DESC[r]+"</div></div>"+
-        "<div style='flex:0 0 auto;font-family:var(--data);font-size:14px'>"+fmt(p.res[r])+"</div></div></div>";
-    });
+    h+=hollow("&#9884;","Пока нет ни одного предмета, дающего ресурсы.");
     return h;
   }
 
