@@ -81,13 +81,19 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .profile-shield-badge{position:absolute;right:-10px;bottom:-8px;width:46px;height:46px;
   filter:drop-shadow(0 2px 4px rgba(0,0,0,.75))}
 .profile-shield-badge img{width:100%;height:100%;object-fit:contain;display:block}
-/* 19px оставлял заметный зазор до золотой рамки (репорт пользователя:
-   "герб... не обхватывает реальное изображение иконки") — промерено по
-   альфа-каналу картуша: прозрачное окно ~52% ширины/57% высоты от
-   полного кадра, при высоте окна 46px-значка это ~22px по ширине щита
-   (12:15) впритык, не вылезая за рамку. */
-.profile-shield-badge .fill{position:absolute;top:52%;left:50%;transform:translate(-50%,-50%);
-  width:22px}
+/* Первая правка (19px -> 22px) не помогла — не в размере было дело.
+   RACE_CREST-картинки (Human.png и т.д.) не голый щит, а целая композиция
+   "корона + скрещенные мечи + щит" — сам щит внутри неё занимает только
+   среднюю часть кадра, поэтому даже увеличенная иконка внутри своей же
+   рамки выглядела мельче рамки (репорт: "не обхватывает реальное
+   изображение иконки"). Обрезали 4 картинки под именно щит (без короны/
+   рукоятей мечей, см. images/ui/{Race}-badge.png) — новые файлы используют
+   ТОЛЬКО в этом маленьком гербе-картуше, оригиналы не трогали (они уже
+   верно смотрятся полной композицией в других местах игры при большем
+   размере). object-fit:contain — у 4 рас разное соотношение сторон после
+   обрезки (не выравнивали искусственно), не искажает форму. */
+.profile-shield-badge .fill{position:absolute;top:52%;left:50%;transform:translate(-50%,-50%)}
+.profile-shield-badge .fill img{width:23px;height:26px;object-fit:contain;display:block}
 /* Пока полководец не выбран (playerAvatarSrc()===null) — герб один и
    должен заполнить собой место аватара целиком, а не жаться в угол. */
 .profile-avatar-fallback{width:96px;height:96px;border-radius:50%;display:flex;
@@ -113,8 +119,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .profile-power-wrap{position:relative;display:inline-flex;align-items:center;justify-content:center;
   margin-top:2px}
 .profile-power-wrap .wreath{width:150px;height:auto;pointer-events:none}
+/* font-size задаётся ИНЛАЙНОМ через profilePowerFontSize() в JS, не тут —
+   мощь растёт без потолка (поздняя игра легко уходит в миллионы), поэтому
+   фиксированный размер, подобранный под "19 933", рано или поздно снова
+   пробил бы границы венка тем же способом, что и раньше. Сокращение через
+   fmt() (millions -> "1.23 млн") решает проблему только частично: даже
+   сокращённая запись растёт в символах медленнее, чем сам венок остаётся
+   тем же (152px не резиновые) — так что дополнительно ужимаем шрифт по
+   длине результата, а не только сокращаем разряды. */
 .profile-power-chip{position:absolute;top:37%;left:50%;transform:translate(-50%,-50%);
-  font-family:var(--data);font-size:20px;color:var(--gilt-hi);font-weight:bold;white-space:nowrap}
+  font-family:var(--data);color:var(--gilt-hi);font-weight:bold;white-space:nowrap}
 
 .gen-portrait-wrap{position:relative}
 .gen-portrait{width:44px;height:44px;object-fit:contain;display:block}
@@ -4627,6 +4641,16 @@ function buildingModalHtml(ci){
   return h;
 }
 
+// Венок под мощью — фиксированного размера (152px), а сама мощь без
+// потолка растёт всю партию. Сокращаем разряды через fmt() ("1.23 млн"),
+// но даже сокращённая строка не гарантированно влезает в тот же зазор при
+// любой длине — поэтому шрифт ещё и подстраивается под длину результата:
+// 6 символов ("19 933") — те самые 20px, на которых венок подгонялся, а
+// на каждый лишний символ чуть сжимаем, до жёсткого пола в 12px (дальше
+// нечитаемо мелко, лучше слегка вылезти за край, чем свести число к пыли).
+function profilePowerFontSize(str){
+  return Math.max(12, 20-Math.max(0,str.length-6)*1.4);
+}
 /* ---- Профиль игрока — заглушка, полноценный экран доделаем позже.
    Сюда со временем переедут: сводка по войскам, снаряжение генерала,
    достижения и т.п. Пока только то, что раньше висело в карточке города. ---- */
@@ -4649,7 +4673,7 @@ function foProfile(){
      "<img class='profile-ring' src='images/ui/profile-ring.png' alt=''>"+
      (avSrc
        ? "<span class='profile-shield-badge'><img src='images/ui/profile-shield-frame.png' alt=''>"+
-         "<span class='fill'>"+shieldSvg(p.race,22)+"</span></span>"
+         "<span class='fill'><img src='images/ui/"+RACE_CREST[p.race]+"-badge.png' alt='"+RACES[p.race].name+"'></span></span>"
        : "")+
      "</div>"+
      "<div class='profile-name-row'>"+
@@ -4658,7 +4682,7 @@ function foProfile(){
      "<button class='seal' data-act='savenick'>Сохранить</button></div>"+
      "<div class='note'>"+RACES[p.race].name+"</div>"+
      "<div class='profile-power-wrap'><img class='wreath' src='images/ui/profile-wreath.png' alt=''>"+
-     "<span class='profile-power-chip'>"+RU(power(p))+"</span></div>"+
+     "<span class='profile-power-chip' style='font-size:"+profilePowerFontSize(fmt(power(p)))+"px'>"+fmt(power(p))+"</span></div>"+
      "</div>";
   return h;
 }
