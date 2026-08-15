@@ -65,22 +65,37 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    мощи) — раньше был левоприжатый маленький портрет + текст сбоку. */
 .profile-card{display:flex;flex-direction:column;align-items:center;text-align:center;padding:14px 10px}
 .profile-avatar-wrap{position:relative;flex:0 0 auto}
-.profile-avatar{width:96px;height:96px;object-fit:cover;display:block;border-radius:50%;
-  border:3px solid var(--gilt);box-shadow:0 0 0 1px var(--gilt-dim),0 4px 14px rgba(0,0,0,.6)}
-/* Герб — маленький значок расы поверх аватара (правый нижний угол, тот же
-   приём, что и бейдж класса/яруса у портретов юнитов), а не полноразмерная
-   замена: аватар полководца выбран почти всегда после первых минут игры. */
-.profile-shield-badge{position:absolute;right:-3px;bottom:-3px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.75))}
+.profile-avatar{width:96px;height:96px;object-fit:cover;display:block;border-radius:50%}
+/* Золотое кольцо — раньше был плоский CSS-border, теперь отдельная
+   декоративная картинка ПОВЕРХ аватара (тот же приём, что и уголки/печать
+   у почты и модалки здания): кольцо крупнее аватара и центрировано над
+   ним, никогда не искажается, потому что не привязано растяжением к чужому
+   боксу. pointer-events:none — клики по аватару (если когда-то понадобятся)
+   не должны перехватываться декором. */
+.profile-ring{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:132px;height:auto;pointer-events:none;filter:drop-shadow(0 3px 8px rgba(0,0,0,.6))}
+/* Герб расы — маленький значок поверх аватара (правый нижний угол, тот же
+   приём, что и бейдж класса/яруса у портретов юнитов), теперь в гербовом
+   картуше вместо голого SVG-щита: тот же geraldic-shield ассет, что и у
+   кольца, с процедурным щитом расы (shieldSvg) внутри его прозрачного окна. */
+.profile-shield-badge{position:absolute;right:-10px;bottom:-8px;width:46px;height:46px;
+  filter:drop-shadow(0 2px 4px rgba(0,0,0,.75))}
+.profile-shield-badge img{width:100%;height:100%;object-fit:contain;display:block}
+.profile-shield-badge .fill{position:absolute;top:52%;left:50%;transform:translate(-50%,-50%);
+  width:19px}
 /* Пока полководец не выбран (playerAvatarSrc()===null) — герб один и
    должен заполнить собой место аватара целиком, а не жаться в угол. */
 .profile-avatar-fallback{width:96px;height:96px;border-radius:50%;display:flex;
-  align-items:center;justify-content:center;background:var(--wood);
-  border:3px solid var(--gilt);box-shadow:0 0 0 1px var(--gilt-dim),0 4px 14px rgba(0,0,0,.6)}
-.profile-name-row{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:10px}
+  align-items:center;justify-content:center;background:var(--wood)}
+.profile-name-row{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:14px}
 .profile-name-row input{text-align:center;font-size:15px}
-.profile-power-chip{display:inline-flex;align-items:center;gap:6px;margin-top:10px;
-  font-family:var(--data);font-size:15px;color:var(--gilt-hi);font-weight:bold;
-  background:rgba(0,0,0,.35);border:1px solid var(--gilt-dim);border-radius:6px;padding:5px 14px}
+/* Венок — фон ЗА чипом мощи, тот же приём: собственное соотношение сторон,
+   чип остаётся обычным текстовым блоком поверх него по центру. */
+.profile-power-wrap{position:relative;display:inline-flex;align-items:center;justify-content:center;
+  margin-top:6px}
+.profile-power-wrap .wreath{width:190px;height:auto;pointer-events:none}
+.profile-power-chip{position:absolute;display:inline-flex;align-items:center;gap:6px;
+  font-family:var(--data);font-size:15px;color:var(--gilt-hi);font-weight:bold;padding:5px 14px}
 .profile-power-chip img{width:16px;height:16px;object-fit:contain}
 
 .gen-portrait-wrap{position:relative}
@@ -285,6 +300,21 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #menu-modal{position:fixed;inset:0;z-index:25;display:none;background:rgba(8,5,2,.72);
   overflow-y:auto}
 #menu-modal.open{display:block}
+/* Золотые уголки поверх тёмной подложки #menu-modal — тот же ассет, что и
+   в почте (.mail-corner), не нужно менять тёмную цветовую схему Войска/
+   Генерала/Инвентаря/Профиля целиком ради декора: золото на тёмном фоне
+   само по себе смотрится нарядно. position:fixed (не absolute), потому что
+   #menu-modal сам по себе fixed и скроллится своим overflow-y — уголки
+   должны оставаться приклеенными к углам ЭКРАНА, а не уезжать со скроллом
+   контента. Лежат в статичной разметке #menu-modal (см. index.html), а не
+   генерируются в каждой foArmy/foGen/foInv/foMail — иначе живое обновление
+   #menu-modal-body раз в секунду пересоздавало бы и их без всякой пользы. */
+.menu-corner{position:fixed;width:110px;height:auto;pointer-events:none;
+  opacity:.8;z-index:24}
+.menu-corner.tl{top:0;left:0}
+.menu-corner.tr{top:0;right:0;transform:scaleX(-1)}
+.menu-corner.bl{bottom:0;left:0;transform:scaleY(-1)}
+.menu-corner.br{bottom:0;right:0;transform:scale(-1,-1)}
 #menu-modal-body{max-width:560px;margin:0 auto;padding:60px 16px 30px}
 #menu-modal-close{position:fixed;top:14px;right:14px;z-index:26;width:38px;height:38px;
   border-radius:50%;background:rgba(22,17,11,.9);border:1px solid var(--gilt-dim);
@@ -295,10 +325,32 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #building-modal{position:fixed;inset:0;z-index:27;display:none;background:rgba(8,5,2,.78);
   align-items:center;justify-content:center;padding:0}
 #building-modal.open{display:flex}
+/* Раньше фон #bm-sheet тянулся ОДНОЙ картинкой parchment.jpg с двумя
+   РАЗНЫМИ процентами по осям (139.13% ширина / 107.84% высота) — грубый
+   ручной подбор, чтобы декор (уголки, круглая печать), запечённый ПРЯМО В
+   ТЕКСТУРУ, хоть как-то совпадал с краями карточки на одном конкретном
+   экране. При любом другом соотношении сторон печать neизбежно превращалась
+   в овал (репорт пользователя: "печать там как бы непропорционально").
+   Теперь фон — просто ровная бесшовная текстура пергамента без декора,
+   растягивать нечего (background-size:cover одинаково по обеим осям —
+   искажать нечего, там нет направленных деталей). Уголки и печать — ниже,
+   ОТДЕЛЬНЫЕ <img> у #building-modal (см. .bm-corner/.bm-seal), каждый в
+   своём естественном соотношении сторон, никогда не деформируется. */
 #bm-sheet{position:relative;width:100%;max-width:700px;max-height:100vh;overflow-y:auto;
-  background-image:url(images/ui/parchment.jpg);background-size:139.13% 107.84%;background-position:47.2% 46.8%;
-  padding:44px 52px 60px;color:#2c2114;box-shadow:0 20px 60px rgba(0,0,0,.7);
+  background-image:url(images/ui/mail-parchment.jpg);background-size:cover;background-position:center;
+  padding:44px 52px 90px;color:#2c2114;box-shadow:0 20px 60px rgba(0,0,0,.7);
   display:flex;flex-direction:column}
+/* Фиксированы к #building-modal (сам он position:fixed;inset:0, не
+   скроллится — скроллится только #bm-sheet внутри), поэтому уголки/печать
+   не уезжают вместе с длинным текстом здания, остаются на месте кадра —
+   тот же приём, что и у .menu-corner для #menu-modal. */
+.bm-corner{position:fixed;width:110px;height:auto;pointer-events:none;opacity:.85;z-index:28}
+.bm-corner.tl{top:0;left:0}
+.bm-corner.tr{top:0;right:0;transform:scaleX(-1)}
+.bm-corner.bl{bottom:0;left:0;transform:scaleY(-1)}
+.bm-corner.br{bottom:0;right:0;transform:scale(-1,-1)}
+.bm-seal{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);width:64px;height:auto;
+  pointer-events:none;opacity:.75;z-index:28;filter:drop-shadow(0 3px 6px rgba(0,0,0,.5))}
 #bm-close{position:absolute;top:12px;right:14px;width:30px;height:30px;
   background:transparent url(images/ui/icon-close.png) center/contain no-repeat;
   border:none;color:#5a4530;font-size:22px;line-height:1}
@@ -438,8 +490,9 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .mail-tabs button.on{background:rgba(236,226,202,.9);color:#2c2114;font-weight:bold}
 .mail-tabs button .n{position:absolute;top:-6px;right:2px;min-width:15px;height:15px;padding:0 3px;
   border-radius:8px;background:#8a2f22;color:#fce9c9;font-size:9.5px;line-height:15px;font-family:var(--data)}
+.mail-divider{display:block;width:100%;height:auto;position:relative;z-index:2;opacity:.85}
 .mail-list{flex:1;min-height:0;overflow-y:auto;position:relative;z-index:2;
-  border-top:1px solid rgba(90,69,48,.35);background:rgba(236,226,202,.55)}
+  background:rgba(236,226,202,.55)}
 .mail-row{display:flex;align-items:center;gap:10px;padding:11px 14px;
   border-bottom:1px solid rgba(90,69,48,.22)}
 .mail-row .ico{width:30px;height:30px;border-radius:50%;flex:0 0 auto;object-fit:contain;
@@ -456,7 +509,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .mail-empty{padding:40px 20px;text-align:center;color:#5a4530;font-size:13px;font-style:italic;
   position:relative;z-index:2}
 .mail-detail{flex:1;min-height:0;overflow-y:auto;position:relative;z-index:2;padding:16px 16px 8px;
-  border-top:1px solid rgba(90,69,48,.35);background:rgba(236,226,202,.55)}
+  background:rgba(236,226,202,.55)}
 .mail-back{display:flex;align-items:center;gap:6px;color:#5a4530;font-size:12.5px;
   font-variant:small-caps;letter-spacing:.08em;margin-bottom:12px}
 .mail-note{font-size:13.5px;line-height:1.6;color:#2c2114;padding:6px 2px}
@@ -788,9 +841,20 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   <button data-menu="gen" aria-label="Генерал"><img src="images/ui/icon-gen.png" alt=""><span>Генерал</span></button>
   <button data-menu="inv" aria-label="Инвентарь"><img src="images/ui/icon-inv.png" alt=""><span>Инвентарь</span></button>
 </nav>
-<div id="menu-modal"><button id="menu-modal-close" data-act="closemenu">&times;</button><div id="menu-modal-body"></div></div>
+<div id="menu-modal">
+  <img class="menu-corner tl" src="images/ui/mail-corner.png" alt="">
+  <img class="menu-corner tr" src="images/ui/mail-corner.png" alt="">
+  <img class="menu-corner bl" src="images/ui/mail-corner.png" alt="">
+  <img class="menu-corner br" src="images/ui/mail-corner.png" alt="">
+  <button id="menu-modal-close" data-act="closemenu">&times;</button><div id="menu-modal-body"></div></div>
 
-<div id="building-modal"><div id="bm-sheet">
+<div id="building-modal">
+  <img class="bm-corner tl" src="images/ui/mail-corner.png" alt="">
+  <img class="bm-corner tr" src="images/ui/mail-corner.png" alt="">
+  <img class="bm-corner bl" src="images/ui/mail-corner.png" alt="">
+  <img class="bm-corner br" src="images/ui/mail-corner.png" alt="">
+  <img class="bm-seal" src="images/ui/mail-seal.png" alt="">
+  <div id="bm-sheet">
   <button id="bm-close" data-act="closebuilding"><span>&times;</span></button>
   <div id="bm-body"></div>
 </div></div>
@@ -4542,16 +4606,21 @@ function foProfile(){
   h+="<div class='entry hot profile-card'>"+
      "<div class='profile-avatar-wrap'>"+
      (avSrc
-       ? ("<img class='profile-avatar' src='"+avSrc+"' alt=''>"+
-          "<span class='profile-shield-badge'>"+shieldSvg(p.race,20)+"</span>")
-       : ("<span class='profile-avatar-fallback'>"+shieldSvg(p.race,52)+"</span>"))+
+       ? "<img class='profile-avatar' src='"+avSrc+"' alt=''>"
+       : "<span class='profile-avatar-fallback'>"+shieldSvg(p.race,52)+"</span>")+
+     "<img class='profile-ring' src='images/ui/profile-ring.png' alt=''>"+
+     (avSrc
+       ? "<span class='profile-shield-badge'><img src='images/ui/profile-shield-frame.png' alt=''>"+
+         "<span class='fill'>"+shieldSvg(p.race,19)+"</span></span>"
+       : "")+
      "</div>"+
      "<div class='profile-name-row'>"+
      "<input id='nick-input' type='text' maxlength='24' value='"+(p.nick||"").replace(/'/g,"&#39;")+"' "+
      "placeholder='Ваш ник'>"+
      "<button class='seal' data-act='savenick'>Сохранить</button></div>"+
      "<div class='note'>"+RACES[p.race].name+"</div>"+
-     "<div class='profile-power-chip'><img src='images/ui/icon-power.png' alt=''>"+RU(power(p))+"</div>"+
+     "<div class='profile-power-wrap'><img class='wreath' src='images/ui/profile-wreath.png' alt=''>"+
+     "<span class='profile-power-chip'><img src='images/ui/icon-power.png' alt=''>"+RU(power(p))+"</span></div>"+
      "</div>";
   return h;
 }
@@ -4583,7 +4652,7 @@ function mailAvatarHtml(avatar,race,w){
 }
 function mailRowHtml(m){
   const isBattle=m.kind==="battle";
-  const icon = isBattle ? "images/ui/icon-army.png" : m.cat==="personal" ? "images/ui/icon-gen.png" : "images/ui/icon-world.png";
+  const icon = isBattle ? "images/ui/mail-seal.png" : m.cat==="personal" ? "images/ui/icon-gen.png" : "images/ui/icon-world.png";
   const cls = isBattle ? (m.win?"win":"lose") : "";
   const title = isBattle ? (m.win?"Победа":"Поражение") : m.title;
   const sub = isBattle ? (m.attacker?"Вы атаковали "+m.oppNick:"Вас атаковал "+m.oppNick) : m.body;
@@ -4632,6 +4701,7 @@ function foMail(){
     return "<button data-act='mailtab' data-cat='"+cat+"' class='"+(mailCat===cat&&!openEntry?"on":"")+"'>"+
       label+(n?"<span class='n'>"+n+"</span>":"")+"</button>";
   }).join("")+"</div>";
+  h+="<img class='mail-divider' src='images/ui/mail-divider.png' alt=''>";
   if(openEntry){
     h+="<div class='mail-detail'>"+mailDetailHtml(openEntry)+"</div>";
     h+="<div class='mail-bar'>"+
