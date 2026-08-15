@@ -704,6 +704,11 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   font-size:8.5px;color:var(--gilt-hi);text-shadow:0 1px 3px rgba(0,0,0,1),0 0 4px rgba(0,0,0,1)}
 .slotcell .progress{position:absolute;left:8%;right:8%;bottom:0;margin:0;height:3px;
   background:rgba(0,0,0,.5);border:none;border-radius:2px}
+/* Общий .progress i целится в высокую (22px) полоску (top/bottom:2px внутрь
+   рамки) — в этой 3px-плашке от такого отступа заливка схлопывалась в
+   нулевую/отрицательную высоту и не была видна вовсе, сколько ни ставь
+   width. Тут отступов внутрь не нужно — полоска и так тонкая. */
+.slotcell .progress i{top:0;bottom:0;left:0;border-radius:2px}
 #citymap-toggle{display:flex;gap:8px;margin-bottom:10px}
 #citymap-toggle button{flex:1;padding:7px;font-size:12px;font-variant:small-caps;letter-spacing:.08em;
   background:rgba(0,0,0,.25);border:1px solid var(--rule-soft);color:var(--vellum-dim)}
