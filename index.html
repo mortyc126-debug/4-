@@ -3046,6 +3046,11 @@ const EV = {
   gathered(d){
     const m=W.marches.find(m=>m.id===d.mid); if(!m) return;
     const cell=W.map[key(m.tx,m.ty)];
+    const p=W.players.find(q=>q.id===m.pid);
+    if(p && !p.isBot && m.carry){
+      const rr=Object.keys(m.carry).find(k=>m.carry[k]>0);
+      if(rr) pushMail({cat:"report",kind:"gather",res:rr,amount:m.carry[rr],coords:{x:m.tx,y:m.ty}});
+    }
     if(cell && cell.t==="node" && cell.amount<=0){
       mapDelete(m.tx,m.ty);
       schedule(CFG.NODE_RESPAWN,"nodeback",{x:m.tx,y:m.ty});
@@ -3150,8 +3155,14 @@ function arriveMarch(m){
       m.carry=loot;
       mapDelete(m.tx,m.ty);
       schedule(CFG.RESPAWN_CAMP,"respawn",{x:m.tx,y:m.ty});
-      if(!p.isBot) logg("Разбитый лагерь ур. "+cell.lv+". Опыт +"+xp+bookTxt+", убито "+sp.dead+
-        ", ранено "+sp.hurt+".","war");
+      if(!p.isBot){
+        logg("Разбитый лагерь ур. "+cell.lv+". Опыт +"+xp+bookTxt+", убито "+sp.dead+
+          ", ранено "+sp.hurt+".","war");
+        // "О варварах" — только обычные лагеря; форты идут под штурмы/осады,
+        // которые в этом раунде правок отложены пользователем на потом.
+        if(cell.t==="camp") pushMail({cat:"report",kind:"barbarian",lv:cell.lv,coords:{x:m.tx,y:m.ty},
+          xp, dead:sp.dead, hurt:sp.hurt, loot, tomesTxt:bookTxt.replace(/^, /,"")});
+      }
     } else {
       if(!p.isBot) logg("Отряд разбит лагерем ур. "+cell.lv+". Убито "+sp.dead+", ранено "+sp.hurt+".","war");
     }
@@ -3236,6 +3247,22 @@ function pushMail(entry){
 }
 function genInfo(p){
   return (p.gen&&p.gen.id!=null) ? {name:GENERALS[p.race][p.gen.id].name, lv:p.gen.lv} : null;
+}
+// Слепок разведданных на момент разведки (та же градация по эпохе разведки,
+// что и в живой панели cartouche) — снимок, а не ссылка на живые войска q,
+// потому что у противника они продолжат меняться уже после того, как отчёт
+// лёг в почту.
+function scoutSnapshot(p,q){
+  const sl=p.b.scout||0, se=epochOf(sl), total=countUnits(q.troops);
+  const snap={se,total};
+  if(se>=3) snap.byType=TKEYS.map(t=>({t,n:Object.values(q.troops[t]).reduce((a,b)=>a+b,0)})).filter(x=>x.n>0);
+  if(se>=4) snap.byTier=TKEYS.map(t=>{
+    const parts=[]; for(let i=1;i<=5;i++) if(q.troops[t][i]) parts.push({i,n:q.troops[t][i]});
+    return {t,parts};
+  }).filter(x=>x.parts.length);
+  if(se>=2){ snap.res={}; RES.forEach(rr=>snap.res[rr]=q.res[rr]); }
+  if(se>=5){ snap.gen=(q.gen&&q.gen.id!=null)?GENERALS[q.race][q.gen.id].name:null; snap.wall=q.b.wall; snap.garrison=q.b.garrison; }
+  return snap;
 }
 // Отчёт о штурме города — отдельная запись для КАЖДОЙ человеческой стороны
 // (боты почту не читают, см. !att.isBot/!def.isBot ниже — тот же принцип,
@@ -4233,6 +4260,9 @@ function renderCartouche(){
               "<div class='co'><span>Стена / гарнизон</span><b>"+q.b.wall+" / "+q.b.garrison+"</b></div>";
           }
         }
+        // Ресурсы разведанного игрока — с той же ступени, что и точная численность войск.
+        if(se>=2) scout+="<div class='co' style='display:block'><span>Ресурсы</span><b style='display:block;text-align:left'>"+
+          RES.map(rr=>RES_NAME[rr]+" "+fmt(q.res[rr])).join(", ")+"</b></div>";
       }
     }
     const shielded=W.t<q.shieldUntil;
@@ -4764,10 +4794,21 @@ function mailAvatarHtml(avatar,race,w){
 }
 function mailRowHtml(m){
   const isBattle=m.kind==="battle";
-  const icon = isBattle ? "images/ui/mail-seal.png" : m.cat==="personal" ? "images/ui/icon-gen.png" : "images/ui/icon-world.png";
-  const cls = isBattle ? (m.win?"win":"lose") : "";
-  const title = isBattle ? (m.win?"Победа":"Поражение") : m.title;
-  const sub = isBattle ? (m.attacker?"Вы атаковали "+m.oppNick:"Вас атаковал "+m.oppNick) : m.body;
+  const icon = isBattle||m.kind==="barbarian" ? "images/ui/mail-seal.png"
+             : m.kind==="scout" ? "images/ui/icon-world.png"
+             : m.kind==="gather" ? "images/ui/icon-march.png"
+             : m.cat==="personal" ? "images/ui/icon-gen.png" : "images/ui/icon-world.png";
+  const cls = isBattle ? (m.win?"win":"lose") : m.kind==="barbarian" ? "win" : "";
+  const title = isBattle ? (m.win?"Победа":"Поражение")
+              : m.kind==="barbarian" ? "Лагерь разбит"
+              : m.kind==="scout" ? "Разведка"
+              : m.kind==="gather" ? "Сбор ресурсов"
+              : m.title;
+  const sub = isBattle ? (m.attacker?"Вы атаковали "+m.oppNick:"Вас атаковал "+m.oppNick)
+            : m.kind==="barbarian" ? "Лагерь "+m.lv+" ур. · X:"+m.coords.x+" Y:"+m.coords.y
+            : m.kind==="scout" ? m.oppNick+" · X:"+m.oppCoords.x+" Y:"+m.oppCoords.y
+            : m.kind==="gather" ? RES_NAME[m.res]+" "+fmt(m.amount)+" · X:"+m.coords.x+" Y:"+m.coords.y
+            : m.body;
   return "<div class='mail-row"+(m.read?" read":"")+"' data-act='mailopen' data-id='"+m.id+"'>"+
     "<img class='ico "+cls+"' src='"+icon+"' alt=''>"+
     "<div class='tx'><div class='tt'>"+title+"</div><div class='sb'>"+sub+"</div></div>"+
@@ -4796,6 +4837,30 @@ function mailDetailHtml(m){
        "<tr><td>Осталось</td><td>"+RU(m.selfRemain)+"</td><td>"+RU(m.oppRemain)+"</td></tr>"+
        "</table>"+
        "<div class='mail-note'>Место боя: X:"+m.fightCoords.x+" Y:"+m.fightCoords.y+"</div>";
+  } else if(m.kind==="barbarian"){
+    h+="<div class='mail-stamp win'>Победа</div>"+
+       "<div class='mail-note'>Разбит лагерь разбойников "+m.lv+" уровня у X:"+m.coords.x+" Y:"+m.coords.y+".<br>"+
+       "Опыт генерала: +"+RU(m.xp)+"<br>"+
+       "Потери отряда: убито "+RU(m.dead)+", ранено "+RU(m.hurt)+
+       (m.tomesTxt?"<br>Найдены книги опыта: "+m.tomesTxt:"")+
+       "<br>Захвачено: "+RES.filter(rr=>m.loot[rr]>0).map(rr=>RES_NAME[rr]+" "+fmt(m.loot[rr])).join(", ")+"</div>";
+  } else if(m.kind==="scout"){
+    const iv=m.intel;
+    h+="<div class='mail-vs'><div class='mail-side'>"+mailAvatarHtml(m.oppAvatar,m.oppRace,52)+
+       "<div class='nm'>"+m.oppNick+"</div><div class='co'>X:"+m.oppCoords.x+" Y:"+m.oppCoords.y+"</div>"+
+       "<div class='pw'>Ратуша "+m.hall+" · мощь "+RU(m.oppPower)+"</div></div></div>"+
+       "<div class='mail-note'>"+
+       (iv.se>=4 ? iv.byTier.map(x=>TROOP_TYPES[x.t].name+": "+x.parts.map(pp=>"T"+pp.i+" ×"+RU(pp.n)).join(", ")).join("<br>")
+        : iv.se>=3 ? iv.byType.map(x=>TROOP_TYPES[x.t].name+": "+RU(x.n)).join("<br>")
+        : iv.se>=2 ? "Войск (точно): "+RU(iv.total)
+        : "Войск (примерно): ~"+fmt(Math.round(iv.total/100)*100))+
+       (iv.res?"<br>Ресурсы: "+RES.map(rr=>RES_NAME[rr]+" "+fmt(iv.res[rr])).join(", "):"")+
+       (iv.gen?"<br>Полководец: "+iv.gen:"")+
+       (iv.wall!=null?"<br>Стена / гарнизон: "+iv.wall+" / "+iv.garrison:"")+
+       "</div>";
+  } else if(m.kind==="gather"){
+    h+="<div class='mail-note'>Обоз собрал "+RES_NAME[m.res]+": "+fmt(m.amount)+".<br>"+
+       "Точка сбора: X:"+m.coords.x+" Y:"+m.coords.y+"</div>";
   } else {
     h+="<div class='mail-note'><b>"+m.title+"</b><br>"+m.body+"</div>";
   }
@@ -5536,9 +5601,19 @@ function handleAct(e){
   else if(a==="recall"){ const m=W.marches.find(x=>x.id==b.dataset.m);
     if(m){ recallMarch(m); renderCartouche(); herald("Отряд поворачивает домой.") } }
   else if(a==="scouttoggle"){
-    const k=b.dataset.x+","+b.dataset.y;
-    scoutOpenKey = scoutOpenKey===k ? null : k;
+    const x=+b.dataset.x, y=+b.dataset.y, k=x+","+y, opening=scoutOpenKey!==k;
+    scoutOpenKey = opening ? k : null;
     renderCartouche();
+    if(opening){
+      const p=me(), sl=p.b.scout||0, cell=W.map[key(x,y)];
+      if(sl>0 && cell && cell.t==="city"){
+        const q=W.players.find(z=>z.id===cell.pid);
+        if(q && q.id!==p.id) pushMail({cat:"report",kind:"scout",
+          oppNick:q.nick||"Безымянный лорд", oppRace:q.race, oppCoords:{x:q.x,y:q.y},
+          oppAvatar:playerAvatarSrc(q), hall:q.b.hall, oppPower:power(q),
+          intel:scoutSnapshot(p,q)});
+      }
+    }
     return;
   }
   else if(a==="shield"){
