@@ -81,8 +81,13 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .profile-shield-badge{position:absolute;right:-10px;bottom:-8px;width:46px;height:46px;
   filter:drop-shadow(0 2px 4px rgba(0,0,0,.75))}
 .profile-shield-badge img{width:100%;height:100%;object-fit:contain;display:block}
+/* 19px оставлял заметный зазор до золотой рамки (репорт пользователя:
+   "герб... не обхватывает реальное изображение иконки") — промерено по
+   альфа-каналу картуша: прозрачное окно ~52% ширины/57% высоты от
+   полного кадра, при высоте окна 46px-значка это ~22px по ширине щита
+   (12:15) впритык, не вылезая за рамку. */
 .profile-shield-badge .fill{position:absolute;top:52%;left:50%;transform:translate(-50%,-50%);
-  width:19px}
+  width:22px}
 /* Пока полководец не выбран (playerAvatarSrc()===null) — герб один и
    должен заполнить собой место аватара целиком, а не жаться в угол. */
 .profile-avatar-fallback{width:96px;height:96px;border-radius:50%;display:flex;
@@ -91,17 +96,25 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .profile-name-row input{text-align:center;font-size:15px}
 /* Венок — фон ЗА чипом мощи, тот же приём: собственное соотношение сторон,
    чип остаётся обычным текстовым блоком поверх него по центру. */
-/* Венок раньше был 190px при 15px-цифрах внутри — сам венок доминировал
-   над содержимым, которое он должен обрамлять (репорт пользователя:
-   "венок слишком огромен, а цифры малы"). Уменьшили венок и увеличили
-   цифру с иконкой мощи — обе стороны навстречу друг другу, а не только
-   одна, иначе рисковали получить обратный перекос. */
+/* Венок раньше был 190px при 15px-цифрах — сам венок доминировал над
+   содержимым (репорт пользователя: "венок слишком огромен, а цифры
+   малы"). Первая правка (118px + крупнее цифры) сама сломалась иначе:
+   свободное место ВНУТРИ венка — не полукруг, а узкий проём между двумя
+   ветками (промерено по альфа-каналу: на высоте венка чистый зазор ~45%
+   от общей ширины, а не половина) — при 118px эта щель у́же, чем "19 933"
+   с иконкой мощи рядом, отсюда наезд цифр на левую ветку. Решение: венок
+   покрупнее (150px — компромисс, не крайность в 190px), а иконку внутри
+   убрали вовсе (сам венок уже читается как символ "мощь", дублировать
+   его отдельной иконкой было избыточно и съедало ширину, которой и так
+   не хватало) — оставшегося места ровно под цифру.
+   top:37% (не 50%) — то же промерение: лента внизу венка занимает
+   заметную долю его высоты, реальный визуальный центр СВОБОДНОЙ прогалины
+   выше геометрического центра картинки. */
 .profile-power-wrap{position:relative;display:inline-flex;align-items:center;justify-content:center;
   margin-top:2px}
-.profile-power-wrap .wreath{width:118px;height:auto;pointer-events:none}
-.profile-power-chip{position:absolute;display:inline-flex;align-items:center;gap:5px;
-  font-family:var(--data);font-size:19px;color:var(--gilt-hi);font-weight:bold}
-.profile-power-chip img{width:20px;height:20px;object-fit:contain}
+.profile-power-wrap .wreath{width:150px;height:auto;pointer-events:none}
+.profile-power-chip{position:absolute;top:37%;left:50%;transform:translate(-50%,-50%);
+  font-family:var(--data);font-size:20px;color:var(--gilt-hi);font-weight:bold;white-space:nowrap}
 
 .gen-portrait-wrap{position:relative}
 .gen-portrait{width:44px;height:44px;object-fit:contain;display:block}
@@ -4636,7 +4649,7 @@ function foProfile(){
      "<img class='profile-ring' src='images/ui/profile-ring.png' alt=''>"+
      (avSrc
        ? "<span class='profile-shield-badge'><img src='images/ui/profile-shield-frame.png' alt=''>"+
-         "<span class='fill'>"+shieldSvg(p.race,19)+"</span></span>"
+         "<span class='fill'>"+shieldSvg(p.race,22)+"</span></span>"
        : "")+
      "</div>"+
      "<div class='profile-name-row'>"+
@@ -4645,7 +4658,7 @@ function foProfile(){
      "<button class='seal' data-act='savenick'>Сохранить</button></div>"+
      "<div class='note'>"+RACES[p.race].name+"</div>"+
      "<div class='profile-power-wrap'><img class='wreath' src='images/ui/profile-wreath.png' alt=''>"+
-     "<span class='profile-power-chip'><img src='images/ui/icon-power.png' alt=''>"+RU(power(p))+"</span></div>"+
+     "<span class='profile-power-chip'>"+RU(power(p))+"</span></div>"+
      "</div>";
   return h;
 }
