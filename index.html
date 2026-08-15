@@ -65,22 +65,37 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    мощи) — раньше был левоприжатый маленький портрет + текст сбоку. */
 .profile-card{display:flex;flex-direction:column;align-items:center;text-align:center;padding:14px 10px}
 .profile-avatar-wrap{position:relative;flex:0 0 auto}
-.profile-avatar{width:96px;height:96px;object-fit:cover;display:block;border-radius:50%;
-  border:3px solid var(--gilt);box-shadow:0 0 0 1px var(--gilt-dim),0 4px 14px rgba(0,0,0,.6)}
-/* Герб — маленький значок расы поверх аватара (правый нижний угол, тот же
-   приём, что и бейдж класса/яруса у портретов юнитов), а не полноразмерная
-   замена: аватар полководца выбран почти всегда после первых минут игры. */
-.profile-shield-badge{position:absolute;right:-3px;bottom:-3px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.75))}
+.profile-avatar{width:96px;height:96px;object-fit:cover;display:block;border-radius:50%}
+/* Золотое кольцо — раньше был плоский CSS-border, теперь отдельная
+   декоративная картинка ПОВЕРХ аватара (тот же приём, что и уголки/печать
+   у почты и модалки здания): кольцо крупнее аватара и центрировано над
+   ним, никогда не искажается, потому что не привязано растяжением к чужому
+   боксу. pointer-events:none — клики по аватару (если когда-то понадобятся)
+   не должны перехватываться декором. */
+.profile-ring{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:132px;height:auto;pointer-events:none;filter:drop-shadow(0 3px 8px rgba(0,0,0,.6))}
+/* Герб расы — маленький значок поверх аватара (правый нижний угол, тот же
+   приём, что и бейдж класса/яруса у портретов юнитов), теперь в гербовом
+   картуше вместо голого SVG-щита: тот же geraldic-shield ассет, что и у
+   кольца, с процедурным щитом расы (shieldSvg) внутри его прозрачного окна. */
+.profile-shield-badge{position:absolute;right:-10px;bottom:-8px;width:46px;height:46px;
+  filter:drop-shadow(0 2px 4px rgba(0,0,0,.75))}
+.profile-shield-badge img{width:100%;height:100%;object-fit:contain;display:block}
+.profile-shield-badge .fill{position:absolute;top:52%;left:50%;transform:translate(-50%,-50%);
+  width:19px}
 /* Пока полководец не выбран (playerAvatarSrc()===null) — герб один и
    должен заполнить собой место аватара целиком, а не жаться в угол. */
 .profile-avatar-fallback{width:96px;height:96px;border-radius:50%;display:flex;
-  align-items:center;justify-content:center;background:var(--wood);
-  border:3px solid var(--gilt);box-shadow:0 0 0 1px var(--gilt-dim),0 4px 14px rgba(0,0,0,.6)}
-.profile-name-row{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:10px}
+  align-items:center;justify-content:center;background:var(--wood)}
+.profile-name-row{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:14px}
 .profile-name-row input{text-align:center;font-size:15px}
-.profile-power-chip{display:inline-flex;align-items:center;gap:6px;margin-top:10px;
-  font-family:var(--data);font-size:15px;color:var(--gilt-hi);font-weight:bold;
-  background:rgba(0,0,0,.35);border:1px solid var(--gilt-dim);border-radius:6px;padding:5px 14px}
+/* Венок — фон ЗА чипом мощи, тот же приём: собственное соотношение сторон,
+   чип остаётся обычным текстовым блоком поверх него по центру. */
+.profile-power-wrap{position:relative;display:inline-flex;align-items:center;justify-content:center;
+  margin-top:6px}
+.profile-power-wrap .wreath{width:190px;height:auto;pointer-events:none}
+.profile-power-chip{position:absolute;display:inline-flex;align-items:center;gap:6px;
+  font-family:var(--data);font-size:15px;color:var(--gilt-hi);font-weight:bold;padding:5px 14px}
 .profile-power-chip img{width:16px;height:16px;object-fit:contain}
 
 .gen-portrait-wrap{position:relative}
@@ -4591,16 +4606,21 @@ function foProfile(){
   h+="<div class='entry hot profile-card'>"+
      "<div class='profile-avatar-wrap'>"+
      (avSrc
-       ? ("<img class='profile-avatar' src='"+avSrc+"' alt=''>"+
-          "<span class='profile-shield-badge'>"+shieldSvg(p.race,20)+"</span>")
-       : ("<span class='profile-avatar-fallback'>"+shieldSvg(p.race,52)+"</span>"))+
+       ? "<img class='profile-avatar' src='"+avSrc+"' alt=''>"
+       : "<span class='profile-avatar-fallback'>"+shieldSvg(p.race,52)+"</span>")+
+     "<img class='profile-ring' src='images/ui/profile-ring.png' alt=''>"+
+     (avSrc
+       ? "<span class='profile-shield-badge'><img src='images/ui/profile-shield-frame.png' alt=''>"+
+         "<span class='fill'>"+shieldSvg(p.race,19)+"</span></span>"
+       : "")+
      "</div>"+
      "<div class='profile-name-row'>"+
      "<input id='nick-input' type='text' maxlength='24' value='"+(p.nick||"").replace(/'/g,"&#39;")+"' "+
      "placeholder='Ваш ник'>"+
      "<button class='seal' data-act='savenick'>Сохранить</button></div>"+
      "<div class='note'>"+RACES[p.race].name+"</div>"+
-     "<div class='profile-power-chip'><img src='images/ui/icon-power.png' alt=''>"+RU(power(p))+"</div>"+
+     "<div class='profile-power-wrap'><img class='wreath' src='images/ui/profile-wreath.png' alt=''>"+
+     "<span class='profile-power-chip'><img src='images/ui/icon-power.png' alt=''>"+RU(power(p))+"</span></div>"+
      "</div>";
   return h;
 }
