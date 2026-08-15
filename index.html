@@ -91,12 +91,17 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .profile-name-row input{text-align:center;font-size:15px}
 /* Венок — фон ЗА чипом мощи, тот же приём: собственное соотношение сторон,
    чип остаётся обычным текстовым блоком поверх него по центру. */
+/* Венок раньше был 190px при 15px-цифрах внутри — сам венок доминировал
+   над содержимым, которое он должен обрамлять (репорт пользователя:
+   "венок слишком огромен, а цифры малы"). Уменьшили венок и увеличили
+   цифру с иконкой мощи — обе стороны навстречу друг другу, а не только
+   одна, иначе рисковали получить обратный перекос. */
 .profile-power-wrap{position:relative;display:inline-flex;align-items:center;justify-content:center;
-  margin-top:6px}
-.profile-power-wrap .wreath{width:190px;height:auto;pointer-events:none}
-.profile-power-chip{position:absolute;display:inline-flex;align-items:center;gap:6px;
-  font-family:var(--data);font-size:15px;color:var(--gilt-hi);font-weight:bold;padding:5px 14px}
-.profile-power-chip img{width:16px;height:16px;object-fit:contain}
+  margin-top:2px}
+.profile-power-wrap .wreath{width:118px;height:auto;pointer-events:none}
+.profile-power-chip{position:absolute;display:inline-flex;align-items:center;gap:5px;
+  font-family:var(--data);font-size:19px;color:var(--gilt-hi);font-weight:bold}
+.profile-power-chip img{width:20px;height:20px;object-fit:contain}
 
 .gen-portrait-wrap{position:relative}
 .gen-portrait{width:44px;height:44px;object-fit:contain;display:block}
@@ -197,19 +202,39 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    #chart — общего position:relative-предка всех .plate, см. коммент выше) —
    там же, где по тому же тапу появляется цель, так что взгляд не должен
    прыгать через весь экран, чтобы прочитать панель. */
+/* Тот же пергамент, что и у почты/модалки здания (пользователь явно
+   попросил: "тот фон, что используется у нас в письмах, страничках
+   зданий") — переопределяем ТОЛЬКО #cartouche, не сам .plate целиком:
+   .plate также рисует #key (легенда карты) и #tools (кнопки зума), их
+   светлый пергамент не просили и не нужно — это разные по духу элементы
+   (лёгкие оверлей-кнопки поверх карты, не "документ"). Раз фон стал
+   светлым — все внутренние цвета текста (были подобраны под тёмный
+   .plate) переопределены здесь же на тёмные чернила, тот же приём и те же
+   цвета, что и у #bm-sheet/.mail-detail. */
 #cartouche{left:50%;top:50%;transform:translate(-50%,-50%);max-width:270px;
-  padding:11px 13px;font-size:13.5px}
-#cartouche .hd{font-variant:small-caps;letter-spacing:.13em;font-size:14px;color:var(--gilt-hi);
-  display:flex;align-items:center;gap:7px;margin-bottom:5px;padding-right:16px}
+  padding:11px 13px;font-size:13.5px;
+  background:none;background-image:url(images/ui/mail-parchment.jpg);background-size:cover;
+  background-position:center;border-color:rgba(90,69,48,.4);
+  box-shadow:0 4px 18px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.25)}
+#cartouche .hd{font-variant:small-caps;letter-spacing:.13em;font-size:14px;color:#2c2114;
+  display:flex;align-items:center;gap:7px;margin-bottom:5px;padding-right:16px;font-weight:bold}
 #cartouche .co{display:flex;justify-content:space-between;gap:16px;font-size:12.5px;
-  color:var(--vellum-dim);padding:1.5px 0}
-#cartouche .co b{font-family:var(--data);color:var(--vellum);font-weight:400}
-#cartouche .hint{margin-top:7px;padding-top:6px;border-top:1px solid var(--rule-soft);
-  font-size:11.5px;color:var(--vellum-faint);font-style:italic}
+  color:#5a4530;padding:1.5px 0}
+#cartouche .co b{font-family:var(--data);color:#2c2114;font-weight:400}
+#cartouche .hint{margin-top:7px;padding-top:6px;border-top:1px solid rgba(90,69,48,.3);
+  font-size:11.5px;color:#5a4530;font-style:italic}
+#cartouche .n{color:#8a6d2c !important}
 #cartouche .cart-close{position:absolute;top:7px;right:8px;width:20px;height:20px;
-  line-height:18px;text-align:center;font-size:16px;color:var(--vellum-faint);
+  line-height:18px;text-align:center;font-size:16px;color:#5a4530;
   border-radius:50%;transition:color .15s,background .15s}
-#cartouche .cart-close:hover{color:var(--vellum);background:rgba(255,255,255,.08)}
+#cartouche .cart-close:hover{color:#2c2114;background:rgba(90,69,48,.15)}
+/* .seal подобран под тёмный .plate (светлое золото на почти-прозрачном) —
+   на светлом пергаменте контраст слабый, та же коррекция, что уже
+   применена к похожим кнопкам в #bm-tree (тёмные чернила вместо золота). */
+#cartouche .seal{border-color:#8a6d2c;color:#5a4530;background:rgba(90,69,48,.1)}
+#cartouche .seal:hover:not(:disabled){background:rgba(90,69,48,.22);color:#2c2114;border-color:#6b5230}
+#cartouche .seal.blood{border-color:#8a2f22;color:#8a2f22;background:rgba(138,47,34,.08)}
+#cartouche .seal.blood:hover{background:rgba(138,47,34,.18);color:#6b1f16;border-color:#6b1f16}
 
 /* bottom:92px, не 14px — #menu-btn (70×70, z-index:20) сидит в том же углу
    (right:14px;bottom:14px) и перекрывал нижние две кнопки (t-out/t-home),
