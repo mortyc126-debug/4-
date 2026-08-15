@@ -3084,6 +3084,7 @@ function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords){
     selfCoords:{x:att.x,y:att.y}, oppCoords:{x:def.x,y:def.y}, fightCoords:coords,
     selfPower:powA, oppPower:powD,
     selfGen:genInfo(att), oppGen:genInfo(def),
+    selfAvatar:playerAvatarSrc(att), oppAvatar:playerAvatarSrc(def),
     selfStart:startA, oppStart:startD,
     selfDead:la.dead, selfHurt:la.hurt, selfRemain:Math.max(0,startA-la.dead-la.hurt),
     oppDead:ld.dead, oppHurt:ld.hurt, oppRemain:Math.max(0,startD-ld.dead-ld.hurt),
@@ -3096,6 +3097,7 @@ function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords){
     selfCoords:{x:def.x,y:def.y}, oppCoords:{x:att.x,y:att.y}, fightCoords:coords,
     selfPower:powD, oppPower:powA,
     selfGen:genInfo(def), oppGen:genInfo(att),
+    selfAvatar:playerAvatarSrc(def), oppAvatar:playerAvatarSrc(att),
     selfStart:startD, oppStart:startA,
     selfDead:ld.dead, selfHurt:ld.hurt, selfRemain:Math.max(0,startD-ld.dead-ld.hurt),
     oppDead:la.dead, oppHurt:la.hurt, oppRemain:Math.max(0,startA-la.dead-la.hurt),
@@ -4548,12 +4550,97 @@ function foProfile(){
   return h;
 }
 
-// Заглушка на первом шаге — сама почта (список писем, награды, массовый
-// сбор) будет следующим отдельным куском работы; сейчас только открывает
-// кнопку в меню, ничего не отображая, кроме рубрики "в разработке" (тот же
-// приём, что и у foProfile() выше, пока полководец ещё не выбран).
+/* ---- Почта ---- */
+// Только категории, у которых реально есть источник данных в этой игре:
+// "Отчёты" (бои за город, см. pushBattleReport), "Личное" (события уровня
+// игрока — пока только повышение генерала), "Система" (например, сводка
+// "пока вас не было"), "Избранное" (не своя категория, а фильтр fav===true
+// по всем остальным). "Альянс"/"Отправленные" из референса — НЕ добавлены:
+// в этой игре нет ни альянсов, ни переписки между игроками (single-player
+// против ботов), вкладка без единого способа когда-либо получить в неё
+// хоть одну запись — мёртвый UI, а не функциональность про запас.
+let mailCat="report", mailOpenId=null;
+const MAIL_TABS=[["report","Отчёты"],["personal","Личное"],["system","Система"],["fav","Избранное"]];
+function mailInCat(cat){
+  return cat==="fav" ? W.mail.filter(m=>m.fav) : W.mail.filter(m=>m.cat===cat);
+}
+function mailAgo(t){
+  const s=Math.max(0,(Date.now()-t)/1000);
+  if(s<60) return "только что";
+  if(s<3600) return Math.floor(s/60)+" мин назад";
+  if(s<86400) return Math.floor(s/3600)+" ч назад";
+  return Math.floor(s/86400)+" дн назад";
+}
+function mailAvatarHtml(avatar,race,w){
+  return avatar ? "<img class='av' style='width:"+w+"px;height:"+w+"px' src='"+avatar+"' alt=''>"
+                : "<span class='av' style='width:"+w+"px;height:"+w+"px;display:inline-flex;align-items:center;justify-content:center'>"+shieldSvg(race,w*0.55)+"</span>";
+}
+function mailRowHtml(m){
+  const isBattle=m.kind==="battle";
+  const icon = isBattle ? "images/ui/icon-army.png" : m.cat==="personal" ? "images/ui/icon-gen.png" : "images/ui/icon-world.png";
+  const cls = isBattle ? (m.win?"win":"lose") : "";
+  const title = isBattle ? (m.win?"Победа":"Поражение") : m.title;
+  const sub = isBattle ? (m.attacker?"Вы атаковали "+m.oppNick:"Вас атаковал "+m.oppNick) : m.body;
+  return "<div class='mail-row"+(m.read?" read":"")+"' data-act='mailopen' data-id='"+m.id+"'>"+
+    "<img class='ico "+cls+"' src='"+icon+"' alt=''>"+
+    "<div class='tx'><div class='tt'>"+title+"</div><div class='sb'>"+sub+"</div></div>"+
+    "<div class='tm'>"+mailAgo(m.t)+"</div></div>";
+}
+function mailDetailHtml(m){
+  let h="<div class='mail-back' data-act='mailback'>&#8592; Назад к списку</div>";
+  if(m.kind==="battle"){
+    h+="<div class='mail-vs'>"+
+       "<div class='mail-side'>"+mailAvatarHtml(m.selfAvatar,m.selfRace,52)+
+         "<div class='nm'>"+m.selfNick+"</div><div class='co'>X:"+m.selfCoords.x+" Y:"+m.selfCoords.y+"</div>"+
+         "<div class='pw'>Мощь "+RU(m.selfPower)+"</div>"+
+         (m.selfGen?"<div class='gen'>"+m.selfGen.name+" (ур. "+m.selfGen.lv+")</div>":"")+
+       "</div>"+
+       "<div class='mail-vmid'>&#9876;</div>"+
+       "<div class='mail-side'>"+mailAvatarHtml(m.oppAvatar,m.oppRace,52)+
+         "<div class='nm'>"+m.oppNick+"</div><div class='co'>X:"+m.oppCoords.x+" Y:"+m.oppCoords.y+"</div>"+
+         "<div class='pw'>Мощь "+RU(m.oppPower)+"</div>"+
+         (m.oppGen?"<div class='gen'>"+m.oppGen.name+" (ур. "+m.oppGen.lv+")</div>":"")+
+       "</div></div>"+
+       "<div class='mail-stamp "+(m.win?"win":"lose")+"'>"+(m.win?"Победа":"Поражение")+"</div>"+
+       "<table class='mail-stats'><tr><th></th><th>"+m.selfNick+"</th><th>"+m.oppNick+"</th></tr>"+
+       "<tr><td>Войск</td><td>"+RU(m.selfStart)+"</td><td>"+RU(m.oppStart)+"</td></tr>"+
+       "<tr><td>Убито</td><td>"+RU(m.selfDead)+"</td><td>"+RU(m.oppDead)+"</td></tr>"+
+       "<tr><td>Ранено</td><td>"+RU(m.selfHurt)+"</td><td>"+RU(m.oppHurt)+"</td></tr>"+
+       "<tr><td>Осталось</td><td>"+RU(m.selfRemain)+"</td><td>"+RU(m.oppRemain)+"</td></tr>"+
+       "</table>"+
+       "<div class='mail-note'>Место боя: X:"+m.fightCoords.x+" Y:"+m.fightCoords.y+"</div>";
+  } else {
+    h+="<div class='mail-note'><b>"+m.title+"</b><br>"+m.body+"</div>";
+  }
+  return h;
+}
 function foMail(){
-  return rubric("Почта","в разработке");
+  const openEntry = mailOpenId!=null ? W.mail.find(x=>x.id===mailOpenId) : null;
+  let h="<div class='mail-wrap'><div class='mail-card'>"+
+    "<img class='mail-corner tl' src='images/ui/mail-corner.png' alt=''>"+
+    "<img class='mail-corner tr' src='images/ui/mail-corner.png' alt=''>"+
+    "<img class='mail-corner bl' src='images/ui/mail-corner.png' alt=''>"+
+    "<img class='mail-corner br' src='images/ui/mail-corner.png' alt=''>";
+  h+="<div class='mail-tabs'>"+MAIL_TABS.map(([cat,label])=>{
+    const n=mailInCat(cat).filter(m=>!m.read).length;
+    return "<button data-act='mailtab' data-cat='"+cat+"' class='"+(mailCat===cat&&!openEntry?"on":"")+"'>"+
+      label+(n?"<span class='n'>"+n+"</span>":"")+"</button>";
+  }).join("")+"</div>";
+  if(openEntry){
+    h+="<div class='mail-detail'>"+mailDetailHtml(openEntry)+"</div>";
+    h+="<div class='mail-bar'>"+
+       "<button data-act='mailfav' data-id='"+openEntry.id+"'>"+(openEntry.fav?"Убрать из избранного":"В избранное")+"</button>"+
+       "<button class='danger' data-act='maildel' data-id='"+openEntry.id+"'>Удалить</button></div>";
+  } else {
+    const list=mailInCat(mailCat).sort((a,b)=>b.t-a.t);
+    h+="<div class='mail-list'>"+
+       (list.length ? list.map(mailRowHtml).join("") : "<div class='mail-empty'>Здесь пока пусто.</div>")+
+       "</div>";
+    const hasUnread=list.some(m=>!m.read);
+    h+="<div class='mail-bar'><button data-act='mailreadall'"+(hasUnread?"":" disabled")+">Прочитать всё</button></div>";
+  }
+  h+="</div></div>";
+  return h;
 }
 function foCity(){
   const p=me(); syncRes(p);
@@ -5226,6 +5313,41 @@ function handleAct(e){
     const menu=$("#menu-modal");
     if(menu.classList.contains("open")&&menu.dataset.tab==="inv"){ lastMenuBody=foInv(); $("#menu-modal-body").innerHTML=lastMenuBody; }
   }
+  else if(a==="mailtab"){
+    mailCat=b.dataset.cat; mailOpenId=null;
+    lastMenuBody=foMail(); $("#menu-modal-body").innerHTML=lastMenuBody;
+    return;
+  }
+  else if(a==="mailopen"){
+    const id=+b.dataset.id, m=W.mail.find(x=>x.id===id);
+    if(m) m.read=true;
+    mailOpenId=id;
+    lastMenuBody=foMail(); $("#menu-modal-body").innerHTML=lastMenuBody;
+    return;
+  }
+  else if(a==="mailback"){
+    mailOpenId=null;
+    lastMenuBody=foMail(); $("#menu-modal-body").innerHTML=lastMenuBody;
+    return;
+  }
+  else if(a==="mailreadall"){
+    mailInCat(mailCat).forEach(m=>m.read=true);
+    lastMenuBody=foMail(); $("#menu-modal-body").innerHTML=lastMenuBody;
+    return;
+  }
+  else if(a==="mailfav"){
+    const m=W.mail.find(x=>x.id===+b.dataset.id);
+    if(m) m.fav=!m.fav;
+    lastMenuBody=foMail(); $("#menu-modal-body").innerHTML=lastMenuBody;
+    return;
+  }
+  else if(a==="maildel"){
+    const id=+b.dataset.id;
+    W.mail=W.mail.filter(x=>x.id!==id);
+    mailOpenId=null;
+    lastMenuBody=foMail(); $("#menu-modal-body").innerHTML=lastMenuBody;
+    return;
+  }
   else if(a==="recall"){ const m=W.marches.find(x=>x.id==b.dataset.m);
     if(m){ recallMarch(m); renderCartouche(); herald("Отряд поворачивает домой.") } }
   else if(a==="scouttoggle"){
@@ -5267,7 +5389,7 @@ function handleAct(e){
   const modal=$("#menu-modal");
   if(modal.classList.contains("open")){
     const t=modal.dataset.tab;
-    lastMenuBody = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): foInv();
+    lastMenuBody = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): foInv();
     $("#menu-modal-body").innerHTML = lastMenuBody;
   }
 }
