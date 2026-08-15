@@ -2029,6 +2029,7 @@ function genWorld(seed){
   const me = newPlayer(W.nextId++, "human", ps.x, ps.y, false);
   me.name="Ваш город";
   me.nick="Безымянный лорд";
+  me.gen.pts=5; me.gen.gotStartPts=true; // стартовые очки таланта — сразу есть что вложить; флаг гасит повторную выдачу в load()
   me.shieldUntil = 3*86400;      // три дня защиты новичка
   Object.assign(me.b,{hall:3,store:8,barracks:2,range:2,stable:1,academy:2,wall:2});
   me.b.farm[0]=3; me.b.lumber[0]=3; me.b.quarry[0]=2; me.b.mine[0]=2; me.b.hospital[0]=3;
@@ -3853,6 +3854,11 @@ async function load(){
       // Старые боты создавались до появления личных ников (см. BOT_NICKS) —
       // над их замком в 3D теперь должен висеть ник, не пустая строка.
       if(p.isBot && !p.nick){ const pool=BOT_NICKS[p.race]||BOT_NICKS.human; p.nick=pool[i%pool.length]; }
+      // Стартовые 5 очков таланта появились позже — довыдаём их старым
+      // сохранениям игрока задним числом, один раз (флаг gotStartPts, не
+      // повторять при каждой загрузке). Ботам не нужно — им очки уже
+      // считает b.gen.pts=b.gen.lv-1 при создании.
+      if(!p.isBot && !p.gen.gotStartPts){ p.gen.pts=(p.gen.pts||0)+5; p.gen.gotStartPts=true; }
     });
     // Старые сохранения — до появления почты — не несут W.mail вовсе.
     if(!W.mail) W.mail=[];
@@ -4917,7 +4923,7 @@ function genSkillBadges(p){
 const GEAR_LAYOUT = ["handL","helmet","handR","chest","acc1","gloves","pants","acc2","boots"];
 function genGearHtml(p){
   const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+(st[k]*100).toFixed(1)+"%")).join(", ");
-  let h=rubric("Экипировка","снаряжение куётся в горне, а не здесь");
+  let h=rubric("Экипировка");
   h+="<div class='gear-slots'>";
   GEAR_LAYOUT.forEach(id=>{
     const s=findGearSlot(id), it=p.gear[id];
@@ -4980,12 +4986,15 @@ function foGen(){
     (p.gen.lv>=lvCap&&lvCap<60?" · потолок эпохи: "+lvCap:"")+"</div></div></div>"+
     "<div class='line' style='margin-top:7px;gap:8px'><div class='progress' style='flex:1;margin-top:0'>"+
     "<i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>"+
-    "<div class='gen-tomes'>"+TOME_VALUES.map(v=>{
-      const cnt=(p.tomes&&p.tomes[v])||0; if(!cnt) return "";
-      return "<button class='gen-tome' data-act='usetome' data-v='"+v+"' "+(p.gen.lv>=lvCap?"disabled":"")+
-        " title='"+TOME_NAME[v]+" — восполняет "+RU(v)+" опыта'>"+
-        "<img src='images/ui/"+TOME_ICON[v]+".png' alt=''><s>×"+cnt+"</s></button>";
-    }).join("")+"</div>"+
+    "<div class='gen-tomes'>"+(TOME_VALUES.some(v=>(p.tomes&&p.tomes[v])||0) ?
+      TOME_VALUES.map(v=>{
+        const cnt=(p.tomes&&p.tomes[v])||0; if(!cnt) return "";
+        return "<button class='gen-tome' data-act='usetome' data-v='"+v+"' "+(p.gen.lv>=lvCap?"disabled":"")+
+          " title='"+TOME_NAME[v]+" — восполняет "+RU(v)+" опыта'>"+
+          "<img src='images/ui/"+TOME_ICON[v]+".png' alt=''><s>×"+cnt+"</s></button>";
+      }).join("") :
+      "<span class='hint'>Книги опыта пополняют шкалу полководца — они выпадают за победу над лагерями разбойников в мире.</span>"
+    )+"</div>"+
     "<table class='roll' style='margin-top:9px'><tr><td>Сила полководца</td><td>"+RU(genPower)+"</td></tr></table>"+
     genSkillBadges(p)+
     "</div>";
