@@ -263,7 +263,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    text-shadow на иконке и подписи (та же идея, что у .slotcell) держат
    их читаемыми на любом фоне вместо самой плашки. */
 #side-menu{position:fixed;bottom:90px;right:14px;z-index:19;display:none;flex-direction:column;
-  align-items:flex-end;gap:14px}
+  align-items:flex-end;gap:4px}
 #side-menu.open{display:flex}
 #side-menu button{display:flex;align-items:center;gap:14px;padding:6px;background:transparent;
   border:none;color:var(--vellum);font-size:33px;font-variant:small-caps;letter-spacing:.06em;
@@ -705,6 +705,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 <button id="menu-btn" data-act="togglemenu" aria-label="Меню"><span>&#9776;</span></button>
 
 <nav id="side-menu">
+  <button data-menu="mail" aria-label="Почта"><img src="images/ui/icon-mail.png" alt=""><span>Почта</span></button>
   <button data-menu="army" aria-label="Войско"><img src="images/ui/icon-army.png" alt=""><span>Войско</span></button>
   <button data-menu="gen" aria-label="Генерал"><img src="images/ui/icon-gen.png" alt=""><span>Генерал</span></button>
   <button data-menu="inv" aria-label="Инвентарь"><img src="images/ui/icon-inv.png" alt=""><span>Инвентарь</span></button>
@@ -4418,6 +4419,13 @@ function foProfile(){
   return h;
 }
 
+// Заглушка на первом шаге — сама почта (список писем, награды, массовый
+// сбор) будет следующим отдельным куском работы; сейчас только открывает
+// кнопку в меню, ничего не отображая, кроме рубрики "в разработке" (тот же
+// приём, что и у foProfile() выше, пока полководец ещё не выбран).
+function foMail(){
+  return rubric("Почта","в разработке");
+}
 function foCity(){
   const p=me(); syncRes(p);
   let h=renderCityMap();
@@ -5411,7 +5419,7 @@ function updateTrainSheet(){
 }
 function openMenuModal(t){
   $("#menu-modal").dataset.tab = t;
-  const html = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): foInv();
+  const html = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): foInv();
   lastMenuBody = html;
   $("#menu-modal-body").innerHTML = html;
   $("#menu-modal").classList.add("open");
@@ -5465,7 +5473,7 @@ function refreshOpenModal(){
     (document.activeElement.tagName==="INPUT"||document.activeElement.tagName==="TEXTAREA");
   if(menu.classList.contains("open") && !typingInModal){
     const t=menu.dataset.tab;
-    const html = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): foInv();
+    const html = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): foInv();
     if(html!==lastMenuBody){                       // не перерисовываем зря (иначе моргает аватар)
       lastMenuBody=html;
       $("#menu-modal-body").innerHTML = html;
