@@ -704,6 +704,11 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   font-size:8.5px;color:var(--gilt-hi);text-shadow:0 1px 3px rgba(0,0,0,1),0 0 4px rgba(0,0,0,1)}
 .slotcell .progress{position:absolute;left:8%;right:8%;bottom:0;margin:0;height:3px;
   background:rgba(0,0,0,.5);border:none;border-radius:2px}
+/* Общий .progress i целится в высокую (22px) полоску (top/bottom:2px внутрь
+   рамки) — в этой 3px-плашке от такого отступа заливка схлопывалась в
+   нулевую/отрицательную высоту и не была видна вовсе, сколько ни ставь
+   width. Тут отступов внутрь не нужно — полоска и так тонкая. */
+.slotcell .progress i{top:0;bottom:0;left:0;border-radius:2px}
 #citymap-toggle{display:flex;gap:8px;margin-bottom:10px}
 #citymap-toggle button{flex:1;padding:7px;font-size:12px;font-variant:small-caps;letter-spacing:.08em;
   background:rgba(0,0,0,.25);border:1px solid var(--rule-soft);color:var(--vellum-dim)}
@@ -2029,6 +2034,7 @@ function genWorld(seed){
   const me = newPlayer(W.nextId++, "human", ps.x, ps.y, false);
   me.name="Ваш город";
   me.nick="Безымянный лорд";
+  me.gen.pts=5; me.gen.gotStartPts=true; // стартовые очки таланта — сразу есть что вложить; флаг гасит повторную выдачу в load()
   me.shieldUntil = 3*86400;      // три дня защиты новичка
   Object.assign(me.b,{hall:3,store:8,barracks:2,range:2,stable:1,academy:2,wall:2});
   me.b.farm[0]=3; me.b.lumber[0]=3; me.b.quarry[0]=2; me.b.mine[0]=2; me.b.hospital[0]=3;
@@ -3045,6 +3051,11 @@ const EV = {
   gathered(d){
     const m=W.marches.find(m=>m.id===d.mid); if(!m) return;
     const cell=W.map[key(m.tx,m.ty)];
+    const p=W.players.find(q=>q.id===m.pid);
+    if(p && !p.isBot && m.carry){
+      const rr=Object.keys(m.carry).find(k=>m.carry[k]>0);
+      if(rr) pushMail({cat:"report",kind:"gather",res:rr,amount:m.carry[rr],coords:{x:m.tx,y:m.ty}});
+    }
     if(cell && cell.t==="node" && cell.amount<=0){
       mapDelete(m.tx,m.ty);
       schedule(CFG.NODE_RESPAWN,"nodeback",{x:m.tx,y:m.ty});
@@ -3149,8 +3160,14 @@ function arriveMarch(m){
       m.carry=loot;
       mapDelete(m.tx,m.ty);
       schedule(CFG.RESPAWN_CAMP,"respawn",{x:m.tx,y:m.ty});
-      if(!p.isBot) logg("Разбитый лагерь ур. "+cell.lv+". Опыт +"+xp+bookTxt+", убито "+sp.dead+
-        ", ранено "+sp.hurt+".","war");
+      if(!p.isBot){
+        logg("Разбитый лагерь ур. "+cell.lv+". Опыт +"+xp+bookTxt+", убито "+sp.dead+
+          ", ранено "+sp.hurt+".","war");
+        // "О варварах" — только обычные лагеря; форты идут под штурмы/осады,
+        // которые в этом раунде правок отложены пользователем на потом.
+        if(cell.t==="camp") pushMail({cat:"report",kind:"barbarian",lv:cell.lv,coords:{x:m.tx,y:m.ty},
+          xp, dead:sp.dead, hurt:sp.hurt, loot, tomesTxt:bookTxt.replace(/^, /,"")});
+      }
     } else {
       if(!p.isBot) logg("Отряд разбит лагерем ур. "+cell.lv+". Убито "+sp.dead+", ранено "+sp.hurt+".","war");
     }
@@ -3235,6 +3252,22 @@ function pushMail(entry){
 }
 function genInfo(p){
   return (p.gen&&p.gen.id!=null) ? {name:GENERALS[p.race][p.gen.id].name, lv:p.gen.lv} : null;
+}
+// Слепок разведданных на момент разведки (та же градация по эпохе разведки,
+// что и в живой панели cartouche) — снимок, а не ссылка на живые войска q,
+// потому что у противника они продолжат меняться уже после того, как отчёт
+// лёг в почту.
+function scoutSnapshot(p,q){
+  const sl=p.b.scout||0, se=epochOf(sl), total=countUnits(q.troops);
+  const snap={se,total};
+  if(se>=3) snap.byType=TKEYS.map(t=>({t,n:Object.values(q.troops[t]).reduce((a,b)=>a+b,0)})).filter(x=>x.n>0);
+  if(se>=4) snap.byTier=TKEYS.map(t=>{
+    const parts=[]; for(let i=1;i<=5;i++) if(q.troops[t][i]) parts.push({i,n:q.troops[t][i]});
+    return {t,parts};
+  }).filter(x=>x.parts.length);
+  if(se>=2){ snap.res={}; RES.forEach(rr=>snap.res[rr]=q.res[rr]); }
+  if(se>=5){ snap.gen=(q.gen&&q.gen.id!=null)?GENERALS[q.race][q.gen.id].name:null; snap.wall=q.b.wall; snap.garrison=q.b.garrison; }
+  return snap;
 }
 // Отчёт о штурме города — отдельная запись для КАЖДОЙ человеческой стороны
 // (боты почту не читают, см. !att.isBot/!def.isBot ниже — тот же принцип,
@@ -3853,6 +3886,11 @@ async function load(){
       // Старые боты создавались до появления личных ников (см. BOT_NICKS) —
       // над их замком в 3D теперь должен висеть ник, не пустая строка.
       if(p.isBot && !p.nick){ const pool=BOT_NICKS[p.race]||BOT_NICKS.human; p.nick=pool[i%pool.length]; }
+      // Стартовые 5 очков таланта появились позже — довыдаём их старым
+      // сохранениям игрока задним числом, один раз (флаг gotStartPts, не
+      // повторять при каждой загрузке). Ботам не нужно — им очки уже
+      // считает b.gen.pts=b.gen.lv-1 при создании.
+      if(!p.isBot && !p.gen.gotStartPts){ p.gen.pts=(p.gen.pts||0)+5; p.gen.gotStartPts=true; }
     });
     // Старые сохранения — до появления почты — не несут W.mail вовсе.
     if(!W.mail) W.mail=[];
@@ -4227,6 +4265,9 @@ function renderCartouche(){
               "<div class='co'><span>Стена / гарнизон</span><b>"+q.b.wall+" / "+q.b.garrison+"</b></div>";
           }
         }
+        // Ресурсы разведанного игрока — с той же ступени, что и точная численность войск.
+        if(se>=2) scout+="<div class='co' style='display:block'><span>Ресурсы</span><b style='display:block;text-align:left'>"+
+          RES.map(rr=>RES_NAME[rr]+" "+fmt(q.res[rr])).join(", ")+"</b></div>";
       }
     }
     const shielded=W.t<q.shieldUntil;
@@ -4758,10 +4799,21 @@ function mailAvatarHtml(avatar,race,w){
 }
 function mailRowHtml(m){
   const isBattle=m.kind==="battle";
-  const icon = isBattle ? "images/ui/mail-seal.png" : m.cat==="personal" ? "images/ui/icon-gen.png" : "images/ui/icon-world.png";
-  const cls = isBattle ? (m.win?"win":"lose") : "";
-  const title = isBattle ? (m.win?"Победа":"Поражение") : m.title;
-  const sub = isBattle ? (m.attacker?"Вы атаковали "+m.oppNick:"Вас атаковал "+m.oppNick) : m.body;
+  const icon = isBattle||m.kind==="barbarian" ? "images/ui/mail-seal.png"
+             : m.kind==="scout" ? "images/ui/icon-world.png"
+             : m.kind==="gather" ? "images/ui/icon-march.png"
+             : m.cat==="personal" ? "images/ui/icon-gen.png" : "images/ui/icon-world.png";
+  const cls = isBattle ? (m.win?"win":"lose") : m.kind==="barbarian" ? "win" : "";
+  const title = isBattle ? (m.win?"Победа":"Поражение")
+              : m.kind==="barbarian" ? "Лагерь разбит"
+              : m.kind==="scout" ? "Разведка"
+              : m.kind==="gather" ? "Сбор ресурсов"
+              : m.title;
+  const sub = isBattle ? (m.attacker?"Вы атаковали "+m.oppNick:"Вас атаковал "+m.oppNick)
+            : m.kind==="barbarian" ? "Лагерь "+m.lv+" ур. · X:"+m.coords.x+" Y:"+m.coords.y
+            : m.kind==="scout" ? m.oppNick+" · X:"+m.oppCoords.x+" Y:"+m.oppCoords.y
+            : m.kind==="gather" ? RES_NAME[m.res]+" "+fmt(m.amount)+" · X:"+m.coords.x+" Y:"+m.coords.y
+            : m.body;
   return "<div class='mail-row"+(m.read?" read":"")+"' data-act='mailopen' data-id='"+m.id+"'>"+
     "<img class='ico "+cls+"' src='"+icon+"' alt=''>"+
     "<div class='tx'><div class='tt'>"+title+"</div><div class='sb'>"+sub+"</div></div>"+
@@ -4790,6 +4842,30 @@ function mailDetailHtml(m){
        "<tr><td>Осталось</td><td>"+RU(m.selfRemain)+"</td><td>"+RU(m.oppRemain)+"</td></tr>"+
        "</table>"+
        "<div class='mail-note'>Место боя: X:"+m.fightCoords.x+" Y:"+m.fightCoords.y+"</div>";
+  } else if(m.kind==="barbarian"){
+    h+="<div class='mail-stamp win'>Победа</div>"+
+       "<div class='mail-note'>Разбит лагерь разбойников "+m.lv+" уровня у X:"+m.coords.x+" Y:"+m.coords.y+".<br>"+
+       "Опыт генерала: +"+RU(m.xp)+"<br>"+
+       "Потери отряда: убито "+RU(m.dead)+", ранено "+RU(m.hurt)+
+       (m.tomesTxt?"<br>Найдены книги опыта: "+m.tomesTxt:"")+
+       "<br>Захвачено: "+RES.filter(rr=>m.loot[rr]>0).map(rr=>RES_NAME[rr]+" "+fmt(m.loot[rr])).join(", ")+"</div>";
+  } else if(m.kind==="scout"){
+    const iv=m.intel;
+    h+="<div class='mail-vs'><div class='mail-side'>"+mailAvatarHtml(m.oppAvatar,m.oppRace,52)+
+       "<div class='nm'>"+m.oppNick+"</div><div class='co'>X:"+m.oppCoords.x+" Y:"+m.oppCoords.y+"</div>"+
+       "<div class='pw'>Ратуша "+m.hall+" · мощь "+RU(m.oppPower)+"</div></div></div>"+
+       "<div class='mail-note'>"+
+       (iv.se>=4 ? iv.byTier.map(x=>TROOP_TYPES[x.t].name+": "+x.parts.map(pp=>"T"+pp.i+" ×"+RU(pp.n)).join(", ")).join("<br>")
+        : iv.se>=3 ? iv.byType.map(x=>TROOP_TYPES[x.t].name+": "+RU(x.n)).join("<br>")
+        : iv.se>=2 ? "Войск (точно): "+RU(iv.total)
+        : "Войск (примерно): ~"+fmt(Math.round(iv.total/100)*100))+
+       (iv.res?"<br>Ресурсы: "+RES.map(rr=>RES_NAME[rr]+" "+fmt(iv.res[rr])).join(", "):"")+
+       (iv.gen?"<br>Полководец: "+iv.gen:"")+
+       (iv.wall!=null?"<br>Стена / гарнизон: "+iv.wall+" / "+iv.garrison:"")+
+       "</div>";
+  } else if(m.kind==="gather"){
+    h+="<div class='mail-note'>Обоз собрал "+RES_NAME[m.res]+": "+fmt(m.amount)+".<br>"+
+       "Точка сбора: X:"+m.coords.x+" Y:"+m.coords.y+"</div>";
   } else {
     h+="<div class='mail-note'><b>"+m.title+"</b><br>"+m.body+"</div>";
   }
@@ -4917,7 +4993,7 @@ function genSkillBadges(p){
 const GEAR_LAYOUT = ["handL","helmet","handR","chest","acc1","gloves","pants","acc2","boots"];
 function genGearHtml(p){
   const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+(st[k]*100).toFixed(1)+"%")).join(", ");
-  let h=rubric("Экипировка","снаряжение куётся в горне, а не здесь");
+  let h=rubric("Экипировка");
   h+="<div class='gear-slots'>";
   GEAR_LAYOUT.forEach(id=>{
     const s=findGearSlot(id), it=p.gear[id];
@@ -4980,12 +5056,15 @@ function foGen(){
     (p.gen.lv>=lvCap&&lvCap<60?" · потолок эпохи: "+lvCap:"")+"</div></div></div>"+
     "<div class='line' style='margin-top:7px;gap:8px'><div class='progress' style='flex:1;margin-top:0'>"+
     "<i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>"+
-    "<div class='gen-tomes'>"+TOME_VALUES.map(v=>{
-      const cnt=(p.tomes&&p.tomes[v])||0; if(!cnt) return "";
-      return "<button class='gen-tome' data-act='usetome' data-v='"+v+"' "+(p.gen.lv>=lvCap?"disabled":"")+
-        " title='"+TOME_NAME[v]+" — восполняет "+RU(v)+" опыта'>"+
-        "<img src='images/ui/"+TOME_ICON[v]+".png' alt=''><s>×"+cnt+"</s></button>";
-    }).join("")+"</div>"+
+    "<div class='gen-tomes'>"+(TOME_VALUES.some(v=>(p.tomes&&p.tomes[v])||0) ?
+      TOME_VALUES.map(v=>{
+        const cnt=(p.tomes&&p.tomes[v])||0; if(!cnt) return "";
+        return "<button class='gen-tome' data-act='usetome' data-v='"+v+"' "+(p.gen.lv>=lvCap?"disabled":"")+
+          " title='"+TOME_NAME[v]+" — восполняет "+RU(v)+" опыта'>"+
+          "<img src='images/ui/"+TOME_ICON[v]+".png' alt=''><s>×"+cnt+"</s></button>";
+      }).join("") :
+      "<span class='hint'>Книги опыта пополняют шкалу полководца — они выпадают за победу над лагерями разбойников в мире.</span>"
+    )+"</div>"+
     "<table class='roll' style='margin-top:9px'><tr><td>Сила полководца</td><td>"+RU(genPower)+"</td></tr></table>"+
     genSkillBadges(p)+
     "</div>";
@@ -5057,13 +5136,7 @@ function foInv(){
 
   if(invTab==="res"){
     let h=tabsHtml+rubric("Ресурсы");
-    RES.forEach(r=>{
-      h+="<div class='entry'><div class='line'><div style='flex:0 0 auto'>"+
-        "<img src='images/ui/res-"+r+".png' style='width:26px;height:26px;object-fit:contain'></div>"+
-        "<div class='fill'><div class='title'>"+RES_NAME[r]+"</div>"+
-        "<div class='note'>"+RES_DESC[r]+"</div></div>"+
-        "<div style='flex:0 0 auto;font-family:var(--data);font-size:14px'>"+fmt(p.res[r])+"</div></div></div>";
-    });
+    h+=hollow("&#9884;","Пока нет ни одного предмета, дающего ресурсы.");
     return h;
   }
 
@@ -5533,9 +5606,19 @@ function handleAct(e){
   else if(a==="recall"){ const m=W.marches.find(x=>x.id==b.dataset.m);
     if(m){ recallMarch(m); renderCartouche(); herald("Отряд поворачивает домой.") } }
   else if(a==="scouttoggle"){
-    const k=b.dataset.x+","+b.dataset.y;
-    scoutOpenKey = scoutOpenKey===k ? null : k;
+    const x=+b.dataset.x, y=+b.dataset.y, k=x+","+y, opening=scoutOpenKey!==k;
+    scoutOpenKey = opening ? k : null;
     renderCartouche();
+    if(opening){
+      const p=me(), sl=p.b.scout||0, cell=W.map[key(x,y)];
+      if(sl>0 && cell && cell.t==="city"){
+        const q=W.players.find(z=>z.id===cell.pid);
+        if(q && q.id!==p.id) pushMail({cat:"report",kind:"scout",
+          oppNick:q.nick||"Безымянный лорд", oppRace:q.race, oppCoords:{x:q.x,y:q.y},
+          oppAvatar:playerAvatarSrc(q), hall:q.b.hall, oppPower:power(q),
+          intel:scoutSnapshot(p,q)});
+      }
+    }
     return;
   }
   else if(a==="shield"){
