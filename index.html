@@ -310,10 +310,32 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #building-modal{position:fixed;inset:0;z-index:27;display:none;background:rgba(8,5,2,.78);
   align-items:center;justify-content:center;padding:0}
 #building-modal.open{display:flex}
+/* Раньше фон #bm-sheet тянулся ОДНОЙ картинкой parchment.jpg с двумя
+   РАЗНЫМИ процентами по осям (139.13% ширина / 107.84% высота) — грубый
+   ручной подбор, чтобы декор (уголки, круглая печать), запечённый ПРЯМО В
+   ТЕКСТУРУ, хоть как-то совпадал с краями карточки на одном конкретном
+   экране. При любом другом соотношении сторон печать neизбежно превращалась
+   в овал (репорт пользователя: "печать там как бы непропорционально").
+   Теперь фон — просто ровная бесшовная текстура пергамента без декора,
+   растягивать нечего (background-size:cover одинаково по обеим осям —
+   искажать нечего, там нет направленных деталей). Уголки и печать — ниже,
+   ОТДЕЛЬНЫЕ <img> у #building-modal (см. .bm-corner/.bm-seal), каждый в
+   своём естественном соотношении сторон, никогда не деформируется. */
 #bm-sheet{position:relative;width:100%;max-width:700px;max-height:100vh;overflow-y:auto;
-  background-image:url(images/ui/parchment.jpg);background-size:139.13% 107.84%;background-position:47.2% 46.8%;
-  padding:44px 52px 60px;color:#2c2114;box-shadow:0 20px 60px rgba(0,0,0,.7);
+  background-image:url(images/ui/mail-parchment.jpg);background-size:cover;background-position:center;
+  padding:44px 52px 90px;color:#2c2114;box-shadow:0 20px 60px rgba(0,0,0,.7);
   display:flex;flex-direction:column}
+/* Фиксированы к #building-modal (сам он position:fixed;inset:0, не
+   скроллится — скроллится только #bm-sheet внутри), поэтому уголки/печать
+   не уезжают вместе с длинным текстом здания, остаются на месте кадра —
+   тот же приём, что и у .menu-corner для #menu-modal. */
+.bm-corner{position:fixed;width:110px;height:auto;pointer-events:none;opacity:.85;z-index:28}
+.bm-corner.tl{top:0;left:0}
+.bm-corner.tr{top:0;right:0;transform:scaleX(-1)}
+.bm-corner.bl{bottom:0;left:0;transform:scaleY(-1)}
+.bm-corner.br{bottom:0;right:0;transform:scale(-1,-1)}
+.bm-seal{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);width:64px;height:auto;
+  pointer-events:none;opacity:.75;z-index:28;filter:drop-shadow(0 3px 6px rgba(0,0,0,.5))}
 #bm-close{position:absolute;top:12px;right:14px;width:30px;height:30px;
   background:transparent url(images/ui/icon-close.png) center/contain no-repeat;
   border:none;color:#5a4530;font-size:22px;line-height:1}
@@ -811,7 +833,13 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   <img class="menu-corner br" src="images/ui/mail-corner.png" alt="">
   <button id="menu-modal-close" data-act="closemenu">&times;</button><div id="menu-modal-body"></div></div>
 
-<div id="building-modal"><div id="bm-sheet">
+<div id="building-modal">
+  <img class="bm-corner tl" src="images/ui/mail-corner.png" alt="">
+  <img class="bm-corner tr" src="images/ui/mail-corner.png" alt="">
+  <img class="bm-corner bl" src="images/ui/mail-corner.png" alt="">
+  <img class="bm-corner br" src="images/ui/mail-corner.png" alt="">
+  <img class="bm-seal" src="images/ui/mail-seal.png" alt="">
+  <div id="bm-sheet">
   <button id="bm-close" data-act="closebuilding"><span>&times;</span></button>
   <div id="bm-body"></div>
 </div></div>
