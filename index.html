@@ -960,15 +960,26 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 "use strict";
 /* =========================================================================
    БЛОК НАСТРОЕК. Всё, что влияет на баланс, собрано здесь.
-   Кривые взяты по форме из Rise of Kingdoms и откалиброваны по проверенным
-   цифрам реального RoK (без ускорителей и помощи альянса, которых тут нет):
-     — Ратуша 1→3 ур. в RoK — реальные, найденные цифры: 2 сек / 5 мин / 20 мин
-       (BUILD_EARLY). Дальше геометрия (BUILD_BASE со 4 уровня, BUILD_GROW)
-       подобрана так, чтобы 1→25 суммарно дали ровно 126 дней 8 часов, как
-       в RoK "в сухую" (уровни 26-30 — наше собственное продолжение сверх RoK).
-       Одной геометрической прогрессией эти цифры не свести — в RoK ранние
-       уровни почти бесплатны, а поздние "звереют" — поэтому первые три
-       уровня зашиты отдельно, а не считаются по общей формуле.
+   Раньше построечная/ресурсная кривая была геометрическим приближением
+   реального RoK (по паре опорных точек) и продолжалась своей же выдумкой
+   на уровни 26-30 сверх настоящего потолка RoK. Оказалось, что эта
+   самопальная добавка была разорительной: 30-й уровень одного здания
+   строился дольше (216 дней), чем весь путь 1→25 вместе взятый (126д8ч), —
+   контент, до которого без ускорителей и помощи альянса (которых тут нет)
+   не доходит вообще никто. Вернулись к настоящему потолку RoK — 25 уровень.
+     — BUILD_TABLE — точная табличка Ратуши с riseofkingdoms.fandom.com
+       (время и цена постройки 1→25, еда=дерево, камень отдельным числом).
+       1 уровень — стартовый, бесплатный (см. newPlayer). Как и раньше, одна
+       и та же кривая используется как курс времени/цены для ЛЮБОГО здания
+       в игре, не только Ратуши — иметь 26 разных кривых было бы точнее, но
+       это отдельная переработка; Ратуша и раньше была эталоном калибровки.
+     — PROD_TABLE — точная табличка Фермы (добыча/ч, 1→25); Лесопилка по
+       вики идентична Ферме. Каменоломня/Золотая шахта используют ту же
+       кривую с постоянным множителем (0.75 и 0.5 — см. production()),
+       это не оценка: множитель РОВНО такой на каждом уровне таблички.
+     — STORE_TABLE — точная табличка защиты Склада от разграбления, 1→25
+       (еда=дерево в источнике на каждом уровне; камень/золото свои, но
+       склад в этой игре защищает все ресурсы одним числом — берём еду).
      — Обучение T4-юнита в RoK = 100 сек за штуку — trainTime откалиброван
        под эту точку, тиры 1-3 и 5 продолжают ту же кривую ×1.9 за тир.
      — Для исследований точных цифр по каждому уровню найти не удалось —
@@ -980,25 +991,52 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    на будущее добавление ускорителей, а без них длительность должна быть
    настоящей роковской, а не сокращённой.
    ========================================================================= */
+// Ратуша 1-25, riseofkingdoms.fandom.com: {t: время постройки в сек, food,
+// wood (=food в источнике на каждом уровне), stone}. Индекс 0 = уровень 1.
+const BUILD_TABLE=[
+  {t:0,        food:0,        wood:0,        stone:0},        // 1  — стартовый, бесплатный
+  {t:2,        food:3500,     wood:3500,     stone:0},        // 2  — 2с
+  {t:300,      food:6500,     wood:6500,     stone:0},        // 3  — 5м
+  {t:1200,     food:11800,    wood:11800,    stone:0},        // 4  — 20м
+  {t:3600,     food:21300,    wood:21300,    stone:0},        // 5  — 1ч
+  {t:7200,     food:36300,    wood:36300,    stone:12000},    // 6  — 2ч
+  {t:18000,    food:54400,    wood:54400,    stone:19200},    // 7  — 5ч
+  {t:36000,    food:81800,    wood:81800,    stone:30800},    // 8  — 10ч
+  {t:54000,    food:122800,   wood:122800,   stone:49200},    // 9  — 15ч
+  {t:79200,    food:184300,   wood:184300,   stone:78700},    // 10 — 22ч
+  {t:108000,   food:277500,   wood:277500,   stone:120000},   // 11 — 1д6ч
+  {t:144000,   food:417500,   wood:417500,   stone:180000},   // 12 — 1д16ч
+  {t:180000,   food:627500,   wood:627500,   stone:270000},   // 13 — 2д2ч
+  {t:216000,   food:942500,   wood:942500,   stone:405000},   // 14 — 2д12ч
+  {t:252000,   food:1400000,  wood:1400000,  stone:607500},   // 15 — 2д22ч
+  {t:345600,   food:2100000,  wood:2100000,  stone:912500},   // 16 — 4д
+  {t:417600,   food:3200000,  wood:3200000,  stone:1400000},  // 17 — 4д20ч
+  {t:504000,   food:4800000,  wood:4800000,  stone:2100000},  // 18 — 5д20ч
+  {t:604800,   food:7200000,  wood:7200000,  stone:3100000},  // 19 — 7д
+  {t:712800,   food:10800000, wood:10800000, stone:4700000},  // 20 — 8д6ч
+  {t:950400,   food:16200000, wood:16200000, stone:7000000},  // 21 — 11д
+  {t:1483200,  food:24300000, wood:24300000, stone:10600000}, // 22 — 17д3ч
+  {t:2070000,  food:36500000, wood:36500000, stone:15900000}, // 23 — 23д23ч
+  {t:3110400,  food:54800000, wood:54800000, stone:24000000}, // 24 — 36д
+  {t:10915200, food:82200000, wood:82200000, stone:36000000}, // 25 — 126д8ч (Master's Blueprint в RoK)
+];
+// Ферма 1-25, добыча/ч. Лесопилка в источнике — та же кривая (еда↔дерево).
+const PROD_TABLE=[400,430,470,520,580,650,730,830,950,1100,1300,1550,1850,2200,2700,
+  3200,3700,4300,5000,5800,6700,7800,9000,10400,20800]; // 25 ур. — вики честно даёт ровно ×2 к 24 ур.
+// Склад 1-25, защита от разграбления (еда=дерево в источнике на каждом уровне).
+const STORE_TABLE=[300000,320000,350000,380000,410000,450000,500000,550000,600000,
+  650000,700000,750000,800000,850000,900000,1000000,1100000,1200000,1300000,1400000,
+  1500000,1600000,1800000,2000000,2500000];
 const CFG = {
   MAP: 100,                 // размер стороны карты
   BOTS: 12,                 // количество ботов
   TIME_COMPRESS: 1,         // во сколько раз быстрее RoK (1 — как в RoK, без сжатия)
-  BUILD_EARLY: [2,300,1200], // сек: 1,2,3 уровень — реальные цифры RoK (2 сек / 5 мин / 20 мин)
-  BUILD_BASE: 2047,         // сек: время постройки 4 уровня, дальше — обычная геометрия
-  BUILD_GROW: 1.42,         // множитель времени за уровень, начиная с 4-го
-  COST_BASE: 9126,          // базовая стоимость 1 уровня (откалибровано под RoK: ратуша 10 ур.=277.5к, 25 ур.=82.2М еды)
-  COST_GROW: 1.4614,
-  PROD_BASE: 966,           // единиц ресурса в час на 1 ур. — калибровано так, чтобы 1 участок на 30 ур.
-                             // давал: ферма/лесопилка 68 000/ч, каменоломня 51 000/ч, золотая шахта 30 000/ч
-  PROD_GROW: 1.1472,
-  CAP_BASE: 4000,           // вместимость склада 1 ур.
-  CAP_GROW: 1.60,
   BOT_THINK: 20*60,         // раз в сколько секунд бот пересматривает планы
   BOT_HANDICAP: 0.80,       // РЕГУЛЯТОР СЛОЖНОСТИ: множитель производства ботов.
                             // 1.0 — боты играют в полную силу и обгонят вас,
                             // 0.8 — вы примерно на равных, 0.6 — заметно легче.
-  MAX_LEVEL: 30,             // 5 эпох по 6 уровней
+  MAX_LEVEL: 25,             // настоящий потолок RoK — 5 эпох (1-6/7-12/13-18/19-24/25,
+                              // последняя — один только венчающий уровень, см. EPOCH_HALL_MIN)
   BATTLE_PACE: 0.45,       // ниже — бои дольше и нагляднее
   RESPAWN_CAMP: 45*60,      // респаун лагеря разбойников
   NODE_RESPAWN: 60*60,
@@ -1423,23 +1461,23 @@ const GENERAL_TREE = {
 
 /* ---- Здания ---- */
 const BUILDINGS = {
-  hall:    {name:"Ратуша",        max:30, req:null,  desc:"Задаёт потолок всех зданий и размер города"},
-  farm:    {name:"Ферма",         max:30, prod:"food", plots:4, desc:"Добывает еду в город"},
-  lumber:  {name:"Лесопилка",     max:30, prod:"wood", plots:4, desc:"Добывает дерево в город"},
-  quarry:  {name:"Каменоломня",   max:30, prod:"stone", plots:4, desc:"Добывает камень в город"},
-  mine:    {name:"Золотая шахта", max:30, prod:"gold", plots:4, desc:"Добывает золото в город"},
-  store:   {name:"Склад",         max:30, desc:"Защищает ресурсы от разграбления при штурме города"},
-  barracks:{name:"Казармы",       max:30, train:"inf", desc:"Обучает пехоту"},
-  range:   {name:"Стрельбище",    max:30, train:"arc", desc:"Обучает лучников"},
-  stable:  {name:"Конюшня",       max:30, train:"cav", desc:"Обучает конницу"},
-  siege:   {name:"Мастерская",    max:30, train:"sie", desc:"Обучает осадные орудия"},
-  hospital:{name:"Госпиталь",     max:30, desc:"Раненые вместо убитых", plots:4},
-  academy: {name:"Академия",      max:30, desc:"Исследования и открытие тиров"},
-  wall:    {name:"Стена",         max:30, desc:"Защита города при обороне"},
-  garrison:{name:"Гарнизон",      max:30, desc:"Доп. защита при осаде и предупреждение о марше врага"},
-  scout:   {name:"Разведка",      max:30, desc:"Раскрывает сведения о войсках противника: чем выше эпоха здания, тем точнее разведданные"},
-  forge:   {name:"Горн",          max:30, desc:"Добыча материалов и ковка снаряжения для полководца"},
-  portal:  {name:"Портал",        max:30, desc:"Пассивно ускоряет марш; с 3 эпохи открывает проход, сокращающий путь отрядов"},
+  hall:    {name:"Ратуша",        max:25, req:null,  desc:"Задаёт потолок всех зданий и размер города"},
+  farm:    {name:"Ферма",         max:25, prod:"food", plots:4, desc:"Добывает еду в город"},
+  lumber:  {name:"Лесопилка",     max:25, prod:"wood", plots:4, desc:"Добывает дерево в город"},
+  quarry:  {name:"Каменоломня",   max:25, prod:"stone", plots:4, desc:"Добывает камень в город"},
+  mine:    {name:"Золотая шахта", max:25, prod:"gold", plots:4, desc:"Добывает золото в город"},
+  store:   {name:"Склад",         max:25, desc:"Защищает ресурсы от разграбления при штурме города"},
+  barracks:{name:"Казармы",       max:25, train:"inf", desc:"Обучает пехоту"},
+  range:   {name:"Стрельбище",    max:25, train:"arc", desc:"Обучает лучников"},
+  stable:  {name:"Конюшня",       max:25, train:"cav", desc:"Обучает конницу"},
+  siege:   {name:"Мастерская",    max:25, train:"sie", desc:"Обучает осадные орудия"},
+  hospital:{name:"Госпиталь",     max:25, desc:"Раненые вместо убитых", plots:4},
+  academy: {name:"Академия",      max:25, desc:"Исследования и открытие тиров"},
+  wall:    {name:"Стена",         max:25, desc:"Защита города при обороне"},
+  garrison:{name:"Гарнизон",      max:25, desc:"Доп. защита при осаде и предупреждение о марше врага"},
+  scout:   {name:"Разведка",      max:25, desc:"Раскрывает сведения о войсках противника: чем выше эпоха здания, тем точнее разведданные"},
+  forge:   {name:"Горн",          max:25, desc:"Добыча материалов и ковка снаряжения для полководца"},
+  portal:  {name:"Портал",        max:25, desc:"Пассивно ускоряет марш; с 3 эпохи открывает проход, сокращающий путь отрядов"},
 };
 const BKEYS = Object.keys(BUILDINGS);
 // Разметка карты города: координаты в % от изображения, bk — ключ здания (null = задел на будущее)
@@ -1461,7 +1499,6 @@ const cityShapeCss = c => c.pill ? "border-radius:50%;" :
 const isMulti = bk => !!BUILDINGS[bk].plots;
 const plotUnlocked = (bk,idx,hall) => !isMulti(bk) || idx===0 || epochOf(hall)>=idx+1;   // участок N — с эпохи N
 const plotCap = lv => lv<=0?0:Math.round(storeCap(lv)*0.25);        // участок — только четверть защиты полноценного склада
-const lateSpeed = lv => Math.max(0, lv-25)*0.01;                    // +1%/уровень с 25 по 30 (макс. +5%)
 // Ратуша поднимается, только когда эти здания догнали её уровень.
 const HALL_REQ = ["wall","store","academy","barracks","hospital"];
 
@@ -1682,15 +1719,15 @@ const ri=(a,b)=>a+Math.floor(RNG()*(b-a+1));
 const pick=a=>a[Math.floor(RNG()*a.length)];
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 
-const buildTime = lv => lv<=3 ? CFG.BUILD_EARLY[lv-1] : CFG.BUILD_BASE*Math.pow(CFG.BUILD_GROW,lv-4);
+const buildTime = lv => BUILD_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1].t;
 const buildCost = (lv,p) => {
-  const base = CFG.COST_BASE*Math.pow(CFG.COST_GROW,lv-1);
+  const row = BUILD_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1];
   const cut = p ? (1-(bonuses(p).buildCostCut||0)) : 1;
-  // в RoK постройки не стоят золота — только еда/дерево/камень, дерево=еда, камень ~0.435 от них
-  return {food:Math.round(base*cut),wood:Math.round(base*cut),stone:Math.round(base*.435*cut),gold:0};
+  // в RoK постройки не стоят золота — только еда/дерево/камень (точные числа из BUILD_TABLE)
+  return {food:Math.round(row.food*cut),wood:Math.round(row.wood*cut),stone:Math.round(row.stone*cut),gold:0};
 };
-const prodRate  = lv => lv<=0?0:CFG.PROD_BASE*Math.pow(CFG.PROD_GROW,lv-1);   // в час
-const storeCap  = lv => Math.round(CFG.CAP_BASE*Math.pow(CFG.CAP_GROW,Math.max(1,lv)-1));
+const prodRate  = lv => lv<=0?0:PROD_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1];   // в час
+const storeCap  = lv => STORE_TABLE[clamp(Math.max(1,lv),1,CFG.MAX_LEVEL)-1];
 const troopStat = (type,tier,stat) => Math.round(TROOP_TYPES[type][stat]*TIER_MULT[tier-1]);
 const TROOP_COST=[
   {food:10, wood:10, stone:0,  gold:0 },
@@ -1716,21 +1753,28 @@ const healUnitTime = (type,tier) => trainTime(type,tier)/2;
 // затем сглажено до монотонности. Суммарно к 60 ур. ≈50.12 млн (табличная цель 50.107 млн).
 const GEN_XP_NEED=[210,210,276,483,846,1482,2594,4541,7950,7950,7950,7950,8449,10471,12978,16084,19935,24707,30621,30621,33942,40093,47360,55943,66083,78060,92207,108919,128659,128659,142186,163193,187303,214974,246734,283186,323079,370524,424937,424937,478776,540017,609091,687001,774876,873992,985786,1111879,1254102,1660595,1909956,2196763,2526638,2906048,3921926,4612964,5425762,6381774,7506234];
 const genXpNeed = lv => GEN_XP_NEED[lv-1]||GEN_XP_NEED[GEN_XP_NEED.length-1];
-const epochOf   = hall => hall>=25?5 : hall>=19?4 : hall>=13?3 : hall>=7?2 : 1;   // 5 эпох × 6 уровней
+// 5 эпох, но не поровну: 1-6/7-12/13-18/19-24 по 6 уровней, 25-я эпоха —
+// один-единственный венчающий уровень (25 = настоящий потолок RoK, см.
+// EPOCH_HALL_MIN ниже) — так же, как в RoK T5/венец открываются РОВНО на
+// последнем уровне Ратуши, а не за несколько уровней до конца.
+const epochOf   = hall => hall>=25?5 : hall>=19?4 : hall>=13?3 : hall>=7?2 : 1;
 // const, не function — сама по себе НЕ становится свойством window (в отличие
 // от var/объявлений function), а 3D-вкладка читает её как window.parent.epochOf
 // (см. rebuildRealIndex в obyom-3d-infinite.html). Экспортируем явно.
 window.epochOf = epochOf;
 const citySize  = hall => Math.min(5, epochOf(hall));         // город растёт 1×1 → 5×5
-const marchSlots= hall => hall>=28?5 : hall>=22?4 : hall>=16?3 : hall>=10?2 : 1;
-// Степенной рост: 300 на 1 ур. плавно до 160 000 на максимуме (30 ур., заданный игроком бюджет).
+// Уровни открытия 2/3/4/5-го отряда — точные цифры из таблички Ратуши RoK
+// (столбец "Открывает": "2-й отряд" на 5 ур., "3-й" на 11, "4-й" на 17,
+// "5-й" на 22 — все укладываются в потолок 25, ничего не остаётся недостижимым).
+const marchSlots= hall => hall>=22?5 : hall>=17?4 : hall>=11?3 : hall>=5?2 : 1;
+// Степенной рост: 300 на 1 ур. плавно до ~114 300 на максимуме (25 ур., заданный игроком бюджет).
 const HOSP_CAP_EXP=1.8462;
 const hospitalCap = lv => lv<=0?0:Math.round(300*Math.pow(lv,HOSP_CAP_EXP));
 const totalHospitalCap = p => p.b.hospital.reduce((s,lv)=>s+hospitalCap(lv),0);
 const hallGateLevel = (p,k) => isMulti(k) ? p.b[k][0] : p.b[k];
 const maxWallHp = lv => 3000+lv*2500;
-const wallDefBonus = lv => lv<=0?0 : lv<=25 ? lv*0.005 : 25*0.005+(lv-25)*0.01;   // 0.5%/ур. до 25, затем 1%/ур.
-const portalMarchBonus = lv => lv<=0?0 : lv<=10 ? lv*0.005 : 10*0.005+(lv-10)*0.01;   // 0.5%/ур. до 10, затем 1%/ур. — макс. +25% на 30 ур.
+const wallDefBonus = lv => lv<=0?0 : lv*0.005;   // 0.5%/ур. — макс. +12.5% на 25 ур.
+const portalMarchBonus = lv => lv<=0?0 : lv<=10 ? lv*0.005 : 10*0.005+(lv-10)*0.01;   // 0.5%/ур. до 10, затем 1%/ур. — макс. +20% на 25 ур.
 const PORTAL_GATE_LV = 13;   // уровень портала на начало 3 эпохи (=EPOCH_HALL_MIN[2]) — с него считаем сокращение марша
 function portalShortcut(p){    // доля (0..0.5), на которую портал укорачивает путь отряда
   if(epochOf(p.b.hall)<3) return 0;
@@ -1799,7 +1843,7 @@ function campRawAt(x,y){
   const taper=clamp(nearestCityDist(x,y)/CAMP_SAFE_RADIUS,0,1);
   const regional=hash2(x,y,W.seed+STRUCT_SALT_CAMP+21);
   const jitter=hash2(x,y,W.seed+STRUCT_SALT_CAMP+22)*8-4;
-  return clamp(Math.round(1+(regional*29+jitter)*taper),1,30);
+  return clamp(Math.round(1+(regional*24+jitter)*taper),1,CFG.MAX_LEVEL);
 }
 
 function newPlayer(id,race,x,y,isBot){
@@ -2380,9 +2424,13 @@ function production(p){ // единиц в час
   const B=bonuses(p), out={};
   const map={food:"farm",wood:"lumber",stone:"quarry",gold:"mine"};
   const handicap = p.isBot ? CFG.BOT_HANDICAP : 1;
+  // PROD_TABLE — точная кривая Фермы. Каменоломня/Золотая шахта в источнике
+  // держат РОВНО постоянное отношение к Ферме на каждом из 25 уровней
+  // (0.75 и 0.5 — не оценка, проверено по всей табличке), поэтому им не
+  // нужна отдельная кривая — та же PROD_TABLE с фиксированным множителем.
   for(const r of RES){
-    let base=0; p.b[map[r]].forEach(lv=>{ if(lv>0) base+=prodRate(lv)*(1+lateSpeed(lv)); });
-    let v=base * ({food:1.25,wood:1.25,stone:0.9375,gold:0.5515}[r]) * handicap;
+    let base=0; p.b[map[r]].forEach(lv=>{ if(lv>0) base+=prodRate(lv); });
+    let v=base * ({food:1,wood:1,stone:0.75,gold:0.5}[r]) * handicap;
     v*=1+B.prodAll;
     v*=1+(r==="food"?B.prodFood:r==="wood"?B.prodWood:r==="stone"?B.prodStone:B.prodGold);
     v*=1+((r==="food"||r==="wood")?B.prodFW:B.prodSG);
@@ -2421,10 +2469,16 @@ const POWER_WEIGHT = {
 // Форма кривой (K) выведена из таблички "Ратуша" реального RoK (ур.17-25,
 // столбец Power): ln(P) = a + K*(ур-1)^2 — вершина параболы сдвинута на
 // ур.1, чтобы кривая не проседала при экстраполяции на низкие уровни.
-// BASE откалиброван отдельно (не как в RoK) под заданный игроком бюджет:
-// сумма мощи ВСЕХ построенных зданий на максимуме (30 ур., с учётом
-// POWER_WEIGHT и количества участков) должна быть 45-50 млн.
-const BUILDING_POWER_BASE=1100, BUILDING_POWER_K=0.00876;
+// K не трогаем — 17-25 те же самые реальные уровни что и раньше. BASE
+// откалиброван отдельно (не как в RoK) под заданный игроком бюджет: сумма
+// мощи ВСЕХ построенных зданий на максимуме (25 ур., с учётом POWER_WEIGHT
+// и количества участков) должна быть 45-50 млн. Раньше BASE=1100 давал
+// эту сумму на 30 ур. — при возврате потолка к 25 (см. правку MAX_LEVEL,
+// уровни 26-30 были собственной выдумкой поверх настоящего RoK) верхушка
+// параболы обрезалась, и та же формула давала на 25 ур. только ~4.6 млн:
+// BASE пересчитан (×10.22), чтобы бюджет 45-50 млн снова сходился на
+// новом, настоящем максимуме.
+const BUILDING_POWER_BASE=11240, BUILDING_POWER_K=0.00876;
 const buildingPower = (bk,lv) => lv<=0 ? 0 : BUILDING_POWER_BASE*(POWER_WEIGHT[bk]||1)*Math.exp(BUILDING_POWER_K*(lv-1)*(lv-1));
 function power(p){
   let v=0; BKEYS.forEach(k=>{
@@ -3143,7 +3197,7 @@ function arriveMarch(m){
     const r=resolveBattle(A,D,{startA:countUnits(m.units)});
     const sp=splitLosses(p,r.lossA,"hospital");   // полевая стычка — потери идут в госпиталь, не насмерть
     if(r.win==="A"){
-      const i=clamp(cell.lv,1,30), xp=BANDIT_XP[i-1];
+      const i=clamp(cell.lv,1,CFG.MAX_LEVEL), xp=BANDIT_XP[i-1];
       addXp(p,xp);
       const drops=bookDrop(cell.lv*100);
       let bookTxt="";
@@ -3182,7 +3236,7 @@ function arriveMarch(m){
 
 // Книги опыта: выпадают с разбойников (сверх опыта за уровень) и тратятся на ручную прокачку
 // генерала. Суммарная ценность книг с одной победы = уровень_лагеря*100 (проверено на примерах
-// игрока: 17 ур. -> 1700 = 1x1000+1x500+2x100; 30 ур. -> 3000 = 3x1000), разбивается жадно
+// игрока: 17 ур. -> 1700 = 1x1000+1x500+2x100; 25 ур. -> 2500 = 2x1000+1x500), разбивается жадно
 // от крупного номинала к мелкому.
 const TOME_VALUES=[20000,10000,5000,1000,500,100];
 const TOME_NAME={100:"Простая книга",500:"Хорошая книга",1000:"Отличная книга",5000:"Золотая книга",10000:"Редкая книга",20000:"Древняя книга"};
@@ -3192,12 +3246,12 @@ function bookDrop(total){
   TOME_VALUES.forEach(v=>{ while(total>=v){ drops[v]=(drops[v]||0)+1; total-=v; } });
   return drops;
 }
-// Точная табличка разбойников (ур.1-30): численность отряда и базовый опыт за победу.
-const BANDIT_TROOPS=[20000,23000,26000,29000,32000,35000,38000,42000,46000,50000,55000,60000,66000,73000,80000,88000,96000,105000,115000,125000,135000,145000,157000,170000,185000,200000,215000,230000,245000,260000];
-const BANDIT_XP=[100,120,140,160,180,200,220,240,260,300,330,360,390,420,450,480,510,540,570,600,640,680,720,760,800,840,880,920,960,1000];
+// Точная табличка разбойников (ур.1-25): численность отряда и базовый опыт за победу.
+const BANDIT_TROOPS=[20000,23000,26000,29000,32000,35000,38000,42000,46000,50000,55000,60000,66000,73000,80000,88000,96000,105000,115000,125000,135000,145000,157000,170000,185000];
+const BANDIT_XP=[100,120,140,160,180,200,220,240,260,300,330,360,390,420,450,480,510,540,570,600,640,680,720,760,800];
 const banditTier = lv => lv<=5?1 : lv<=12?2 : lv<=20?3 : 4;
 function banditArmy(lv){
-  const u=emptyUnits(), i=clamp(lv,1,30);
+  const u=emptyUnits(), i=clamp(lv,1,CFG.MAX_LEVEL);
   const tier=banditTier(i), n=BANDIT_TROOPS[i-1];
   u.inf[tier]=Math.round(n*.45); u.arc[tier]=Math.round(n*.3);
   u.cav[tier]=Math.round(n*.25);
@@ -3612,8 +3666,7 @@ function startBuild(p,bk,plot){
   return {ok:1};
 }
 function trainDuration(p,type,tier,n){
-  const blv=p.b[TRAIN_BLD[type]];
-  return trainTime(type,tier)*n/((1+p.b.hall*0.06)*(1+bonuses(p).trainSpeed)*(1+lateSpeed(blv)));
+  return trainTime(type,tier)*n/((1+p.b.hall*0.06)*(1+bonuses(p).trainSpeed));
 }
 function trainMax(p,type,tier){
   const c=troopCost(type,tier), cap=trainCap(p.b[TRAIN_BLD[type]]);
@@ -3648,8 +3701,7 @@ function healMaxN(p,type,tier){
   return Math.max(0,Math.min(have,cap,afford));
 }
 function healDuration(p,type,tier,n){
-  const blv=Math.max(0,...p.b.hospital);
-  return healUnitTime(type,tier)*n/((1+p.b.hall*0.06)*(1+bonuses(p).healSpeed)*(1+lateSpeed(blv)));
+  return healUnitTime(type,tier)*n/((1+p.b.hall*0.06)*(1+bonuses(p).healSpeed));
 }
 function startHeal(p,type,tier,n){
   if(p.heal) return {err:"Лазарет уже занят лечением"};
@@ -3676,8 +3728,7 @@ function retrainCost(type,fromTier,n){
 }
 function retrainDuration(p,type,fromTier,n){
   const delta=Math.max(1,trainTime(type,fromTier+1)-trainTime(type,fromTier));
-  const blv=p.b[TRAIN_BLD[type]];
-  return delta*n/((1+p.b.hall*0.06)*(1+bonuses(p).trainSpeed)*(1+lateSpeed(blv)));
+  return delta*n/((1+p.b.hall*0.06)*(1+bonuses(p).trainSpeed));
 }
 function retrainMax(p,type,fromTier){
   const have=p.troops[type][fromTier]||0;
@@ -3715,7 +3766,7 @@ function startResearch(p,id){
   const c=researchCost(n.branch,n.wave,lv);
   if(!canPay(p,c)) return {err:"Не хватает ресурсов"};
   pay(p,c);
-  const t=researchTime(n.branch,n.wave,lv)/((1+bonuses(p).researchSpeed)*(1+lateSpeed(p.b.academy)));
+  const t=researchTime(n.branch,n.wave,lv)/(1+bonuses(p).researchSpeed);
   p.rsch={id,lv,t0:W.t,t1:W.t+t};
   schedule(t,"research",{pid:p.id});
   return {ok:1};
@@ -3725,7 +3776,7 @@ function produceMaterial(p,mat){
   const n=3, cost={gold:100};
   if(!canPay(p,cost)) return {err:"Не хватает золота"};
   pay(p,cost);
-  const t=2400/(1+lateSpeed(p.b.forge));    // 40 минут за партию — обычная вещь требует набрать 2 такие
+  const t=2400;    // 40 минут за партию — обычная вещь требует набрать 2 такие
   p.craft={kind:"material",mat,n,t0:W.t,t1:W.t+t};
   schedule(t,"craft",{pid:p.id});
   return {ok:1};
@@ -3746,7 +3797,7 @@ function startCraftItem(p,slot,order,rarity){
   if(!canPay(p,{gold:c.gold,food:c.food,wood:c.wood})) return {err:"Не хватает ресурсов"};
   pay(p,{gold:c.gold,food:c.food,wood:c.wood});
   p.materials[s.mat][tier]-=need;
-  const t=1800*rarity*rarity/(1+lateSpeed(p.b.forge));
+  const t=1800*rarity*rarity;
   p.craft={kind:"item",slot,order,rarity,t0:W.t,t1:W.t+t};
   schedule(t,"craft",{pid:p.id});
   return {ok:1};
@@ -4637,8 +4688,8 @@ function hospitalInfoHtml(p){
 function buildingStatDeltaHtml(bk,lv,nx){
   const B=BUILDINGS[bk];
   if(B.prod){
-    const mult={food:1.25,wood:1.25,stone:0.90,gold:0.50}[B.prod];
-    const cur=Math.round(prodRate(lv)*(1+lateSpeed(lv))*mult), next=Math.round(prodRate(nx)*(1+lateSpeed(nx))*mult);
+    const mult={food:1,wood:1,stone:0.75,gold:0.5}[B.prod];   // см. те же числа в production()
+    const cur=Math.round(prodRate(lv)*mult), next=Math.round(prodRate(nx)*mult);
     return "<table id='bm-stats'><tr><td>Добыча "+RES_NAME[B.prod].toLowerCase()+"/ч</td><td>"+fmt(cur)+" &rarr; "+fmt(next)+"</td></tr></table>";
   }
   if(bk==="store"){
@@ -5916,7 +5967,7 @@ function researchCarouselHtml(){
         "<div class='rnode-eff'>Готово через <em>"+fmtDur(p.rsch.t1-W.t)+"</em></div>"
       : "<button class='rnode-go uc-go' data-act='research' data-id='"+n.id+"' "+(maxed||gated||locked||p.rsch?"disabled":"")+">"+
         (maxed?"Предел":gated?"Нужна академия":locked?lockReason(n,p):p.rsch?"Академия занята":
-          "Исследовать · "+fmtDur(researchTime(n.branch,n.wave,nx)/((1+B.researchSpeed)*(1+lateSpeed(p.b.academy)))))+
+          "Исследовать · "+fmtDur(researchTime(n.branch,n.wave,nx)/(1+B.researchSpeed)))+
         "</button>")+
       "</div>";
   });
