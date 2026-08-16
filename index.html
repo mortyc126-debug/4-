@@ -1184,6 +1184,13 @@ const ACADEMY_TREE = {
     {id:"eco_ggold1", name:"Промывка",   max:5,wave:1,branch:"eco",field:"gatherSG",total:0.15},
     {id:"eco_load1",  name:"Колесо",     max:5,wave:1,branch:"eco",field:"load",total:0.15},
     {id:"eco_cap1",   name:"Многослойная кладка",max:5,wave:1,branch:"eco",field:"cap",total:0.15},
+    // Донатная ветка (Янтарь). В RoK её аналог (Jewelry) — чистый анлок без
+    // своего бонуса, тир 7, требует Multilayer Structure 4; здесь — как и
+    // Горное дело/Промысел (тоже бывшие RoK-анлоки без цифр) — превращён в
+    // узел с небольшим собственным бонусом, а не голый флаг. Сбор янтаря на
+    // карте НЕ гейтится этим узлом (см. обсуждение) — открыт всем с начала
+    // игры; тут только бонус к скорости сбора, как и у остальной тройки.
+    {id:"eco_amber0", name:"Промысел янтаря",max:3,wave:1,branch:"eco",field:"gatherAmber",total:0.05},
     {id:"eco_crown_dwarf", name:"Венец: Родовые копи",  max:5,wave:4,branch:"eco",race:"dwarf",gen:1,
       requires:["eco_stone2","eco_gold2"], effects:[{field:"prodStone",total:0.10},{field:"prodGold",total:0.10}]},
     {id:"eco_crown_human", name:"Венец: Казённый оброк", max:5,wave:4,branch:"eco",race:"human",gen:1,
@@ -1203,7 +1210,14 @@ const ACADEMY_TREE = {
     {id:"eco_ggold2", name:"Шахтное дело",max:10,wave:2,branch:"eco",field:"gatherSG",total:0.35,requires:["eco_ggold1"]},
     {id:"eco_gall2",  name:"Механизация",max:10,wave:2,branch:"eco",field:"gather",total:0.25,requires:["eco_gfood1","eco_gstone1"]},
     {id:"eco_gstone2",name:"Каменная пила",max:10,wave:2,branch:"eco",field:"gatherSG",total:0.35,requires:["eco_gstone1"]},
-    {id:"eco_load2",  name:"Повозка",    max:10,wave:2,branch:"eco",field:"load",total:0.25,requires:["eco_load1","eco_cap1"]},
+    // Была requires:["eco_load1","eco_cap1"] — второй пункт ссылался на чужую
+    // линию (защита склада), нет ни в RoK-цепочке Carriage (там Machinery),
+    // ни в собственном паттерне дерева (везде "2" требует только свою "1").
+    {id:"eco_load2",  name:"Повозка",    max:10,wave:2,branch:"eco",field:"load",total:0.25,requires:["eco_load1"]},
+    // Огранка (Cutting & Polishing, RoK тир 13, тот же тир что и Повозка) —
+    // точный макс. бонус +35%, подтверждён по вики отдельно от таблицы
+    // стоимости/времени тира (та сама по себе не была доступна источнику).
+    {id:"eco_amber1", name:"Огранка",    max:10,wave:2,branch:"eco",field:"gatherAmber",total:0.35,requires:["eco_amber0"]},
   ],
   mil: [
     {id:"mil_atk_inf1",name:"Пехота, атака I",   max:5, wave:1,branch:"mil",
@@ -1253,9 +1267,14 @@ const ACADEMY_TREE = {
     {id:"mil_hp_all2", name:"Здоровье войск II",max:10,wave:3,branch:"mil",field:"hp",total:0.25,requires:["mil_hp_all1"]},
     {id:"mil_trainspd",name:"Дисциплина обучения",max:1,wave:1,branch:"mil",field:"trainSpeed",total:0.20},
     {id:"mil_march1",  name:"Следопытство", max:5,wave:1,branch:"mil",field:"march",kind:"mult",total:0.15},
-    {id:"mil_march2",  name:"Картография",  max:5,wave:1,branch:"mil",field:"march",kind:"mult",total:0.15,requires:["mil_march1"]},
+    // Была wave:1 — единственная "2"-нода во всём военном дереве без обычного
+    // сдвига волны на 1 против своей "1" (везде x1→x2 поднимает волну, здесь
+    // почему-то нет), и по факту это RoK-тир 9 (Cartography) против тира 4
+    // у Следопытства — разрыв не меньше, чем у остальных таких пар.
+    {id:"mil_march2",  name:"Картография",  max:5,wave:2,branch:"mil",field:"march",kind:"mult",total:0.15,requires:["mil_march1"]},
     {id:"mil_scout1",  name:"Слежка",       max:5,wave:1,branch:"mil",field:"scoutBonus",total:5},
-    {id:"mil_scout2",  name:"Маскировка",   max:5,wave:1,branch:"mil",field:"scoutBonus",total:5,requires:["mil_scout1"]},
+    // Та же история: RoK-тир 7 (Camouflage) против тира 4 у Слежки, но была wave:1.
+    {id:"mil_scout2",  name:"Маскировка",   max:5,wave:2,branch:"mil",field:"scoutBonus",total:5,requires:["mil_scout1"]},
     {id:"mil_crown_dwarf", name:"Венец: Секира предков", max:5,wave:4,branch:"mil",race:"dwarf",gen:0,
       requires:["mil_atk_inf2","mil_def_inf2"], effects:[{field:"atkInf",total:0.15},{field:"defInf",total:0.15}]},
     {id:"mil_crown_human", name:"Венец: Королевский указ",max:5,wave:4,branch:"mil",race:"human",gen:0,
@@ -2368,6 +2387,9 @@ function bonuses(p, defending){
   const b={build:1, march:1, heal:1, healSpeed:1,
     atk:0, def:0, hp:0, archer:0, raise:0, gather:0, load:0, hosp:0, cap:0,
     prodFW:0, prodSG:0, bandit:0, mercy:0,
+    gatherAmber:0,   // скорость сбора янтаря (см. eco_amber0/1) — сам ресурс/сбор на карте ещё не заведён,
+                      // поле уже считается наравне с остальными, чтобы не переделывать bonuses() задним числом
+
     prodAll:0, prodFood:0, prodWood:0, prodStone:0, prodGold:0,
     trainSpeed:0, buildCostCut:0, wallBonus:0, counter:0, firstStrike:0,
     researchSpeed:0, scoutBonus:0,
@@ -4458,6 +4480,7 @@ const RESEARCH_FIELD_NAME = {
   prodFood:"добыча еды", prodWood:"добыча дерева", prodStone:"добыча камня", prodGold:"добыча золота",
   build:"скорость стройки", researchSpeed:"скорость исследований",
   gatherFW:"сбор еды/дерева", gatherSG:"сбор камня/золота", gather:"скорость сбора",
+  gatherAmber:"сбор янтаря",
   load:"грузоподъёмность обозов", cap:"защита ресурсов",
   raise:"поднятие из мёртвых", mercy:"милосердие",
   atkInf:"атака пехоты", defInf:"защита пехоты",
