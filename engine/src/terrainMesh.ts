@@ -66,7 +66,16 @@ function normalAt(x: number, y: number): Vec3 {
 
 interface Vert { p: Vec3; c: [number, number, number]; n: Vec3; uv: [number, number]; e: number; water: number }
 
-export function buildTerrainPatch(x0: number, y0: number, x1: number, y1: number, step = 1): MeshData {
+// sink — насколько опустить весь патч по вертикали. Нужен ТОЛЬКО грубому
+// дальнему кольцу: оно теперь местами лежит под детальными ближними чанками
+// (см. updateFarTerrain в main.ts — грубый чанк выбрасывается лишь когда он
+// ЦЕЛИКОМ накрыт детальным слоем, иначе в мире появлялись прорези). Обе сетки
+// читают одну и ту же heightAt, но грубая между своими редкими узлами
+// интерполирует линейно, поэтому её поверхность то чуть выше, то чуть ниже
+// детальной — на совпадающих участках это давало бы z-fighting. Небольшой
+// сдвиг вниз гарантирует, что там, где есть детальный рельеф, виден именно
+// он, а грубый молча остаётся подложкой.
+export function buildTerrainPatch(x0: number, y0: number, x1: number, y1: number, step = 1, sink = 0): MeshData {
   const cols = Math.round((x1 - x0) / step);
   const rows = Math.round((y1 - y0) / step);
   const smooth = step === 1; // см. комментарий в шапке файла
@@ -80,7 +89,7 @@ export function buildTerrainPatch(x0: number, y0: number, x1: number, y1: number
   function vertexAt(x: number, y: number): Vert {
     const e = heightAt(x, y);
     const water = e < SEA;
-    const p: Vec3 = water ? [x, SEA * HMAX, y] : [x, e * HMAX, y];
+    const p: Vec3 = water ? [x, SEA * HMAX - sink, y] : [x, e * HMAX - sink, y];
     const c: [number, number, number] = water ? waterColor((SEA - e) * 3) : [0, 0, 0];
     // вода — плоская подложка (см. выше), нормаль честно "вверх"; на грубых
     // чанках (!smooth) аналитическую нормаль не считаем — face-нормаль
