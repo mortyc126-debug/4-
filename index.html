@@ -218,7 +218,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    элемента, а следствие общей нерастягиваемой шапки). Вынесена в свой
    собственный fixed-угол справа сверху — гарантированно на экране всегда,
    независимо от того, насколько разрастётся #top слева. */
-#amber-badge{position:fixed;top:10px;right:8px;z-index:15;
+#amber-badge{position:fixed;top:3px;right:3px;z-index:15;
   display:flex;align-items:center;gap:6px;
   padding:3px 10px 3px 3px;border-radius:20px;
   background:radial-gradient(circle at 30% 25%,rgba(230,152,42,.28),rgba(20,15,8,.82) 72%);
@@ -880,7 +880,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   #chart{flex:1 1 46%}
   #key{display:none}
   #top{top:8px;left:0}
-  #amber-badge{top:8px}
+  #amber-badge{top:3px;right:3px}
   .coin .rate{display:none}
   #chron{gap:9px;padding-left:8px}
   #chron .stat s{display:none}
@@ -2070,7 +2070,14 @@ const cityShapeCss = c => c.pill ? "border-radius:50%;" :
   (v=>`clip-path:polygon(${v}% 0%,${100-v}% 0%,100% ${v}%,100% ${100-v}%,${100-v}% 100%,${v}% 100%,0% ${100-v}%,0% ${v}%);`)(c.ch||18);
 const isMulti = bk => !!BUILDINGS[bk].plots;
 const plotUnlocked = (bk,idx,hall) => !isMulti(bk) || idx===0 || epochOf(hall)>=idx+1;   // участок N — с эпохи N
-const plotCap = lv => lv<=0?0:Math.round(storeCap(lv)*0.25);        // участок — только четверть защиты полноценного склада
+// Была придумана как 25% защиты Склада — реальный RoK-столбец "Ёмкость"
+// вообще не трогали. По всей табличке (Farm/Lumber/Quarry/Goldmine, 1-25 ур.)
+// защита участка держит РОВНО ×10 от часовой добычи без единого исключения
+// (Farm 1 ур.: 400/ч → 4 000; 25 ур.: 20 800/ч → 208 000 — и так на каждом
+// уровне). Каменоломня/Шахта делят с Фермой ту же кривую (см. production()),
+// поэтому свой множитель ресурса (1/1/0.75/0.5) на неё и накладывается в
+// capacity() — здесь только базовое ×10 от PROD_TABLE.
+const plotCap = lv => lv<=0?0:PROD_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1]*10;
 // Ратуша поднимается, только когда эти здания догнали её уровень.
 const HALL_REQ = ["wall","store","academy","barracks","hospital"];
 
@@ -2348,7 +2355,17 @@ const TRAIN_TIME=[3.6,7.2,12,24,48];     // сек за 1 юнита: T1..T5
 const trainTime = (type,tier) => TRAIN_TIME[tier-1];
 const TRAIN_BLD = {inf:"barracks",arc:"range",cav:"stable",sie:"siege"};
 const BLD_TRAIN = {barracks:"inf",range:"arc",stable:"cav",siege:"sie"};
-const trainCap = lv => 100 + lv*40;                            // максимум за один заказ
+// Точная "Ёмкость тренировки" RoK — Казармы/Стрельбище/Конюшня/Мастерская
+// в источнике дают ОДНУ и ту же последовательность на всех 4 зданиях (не
+// только цена/время у первых трёх совпадали — тут вообще все четыре).
+// Была придумана 100+ур.*40 — на 1 ур. давала 140 вместо настоящих 20,
+// на 25 ур. — 1100 вместо настоящих 2000 (в другую сторону, не завышала
+// везде одинаково). Используется и для лазарета (см. healMaxN/healDuration
+// — "воинов за один заказ" лечения от уровня госпиталя), своей отдельной
+// цифры на этот случай RoK не даёт, оставил ту же табличку, что и раньше.
+const TRAIN_CAP=[20,50,100,150,200,250,300,350,400,450,500,550,600,700,800,
+  900,1000,1100,1200,1300,1400,1500,1600,1700,2000];
+const trainCap = lv => lv<=0?0:TRAIN_CAP[clamp(lv,1,CFG.MAX_LEVEL)-1];
 // Лечение в лазарете стоит вдвое дешевле и вдвое быстрее набора того же юнита с нуля, и никогда не требует золота.
 function healUnitCost(p,type,tier){
   const c=troopCost(type,tier), k=bonuses(p).heal;
@@ -2374,9 +2391,13 @@ const citySize  = hall => Math.min(5, epochOf(hall));         // город ра
 // (столбец "Открывает": "2-й отряд" на 5 ур., "3-й" на 11, "4-й" на 17,
 // "5-й" на 22 — все укладываются в потолок 25, ничего не остаётся недостижимым).
 const marchSlots= hall => hall>=22?5 : hall>=17?4 : hall>=11?3 : hall>=5?2 : 1;
-// Степенной рост: 300 на 1 ур. плавно до ~114 300 на максимуме (25 ур., заданный игроком бюджет).
-const HOSP_CAP_EXP=1.8462;
-const hospitalCap = lv => lv<=0?0:Math.round(300*Math.pow(lv,HOSP_CAP_EXP));
+// Была формула 300*ур^1.8462 (придуманная, никогда не сверялась) — на 1 ур.
+// давала 300 вместо настоящих 7 500 (в 25 раз меньше), на 25 ур. — ~114 300
+// вместо настоящих 75 000. Теперь точная "Ёмкость госпиталя" RoK по уровням.
+const HOSPITAL_CAP_TABLE=[7500,8250,9000,10000,11000,12250,13500,15000,16500,
+  18250,20000,22000,24000,26500,29000,32000,35000,38500,42000,46000,50000,
+  54500,59500,65000,75000];
+const hospitalCap = lv => lv<=0?0:HOSPITAL_CAP_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1];
 const totalHospitalCap = p => p.b.hospital.reduce((s,lv)=>s+hospitalCap(lv),0);
 const hallGateLevel = (p,k) => isMulti(k) ? p.b[k][0] : p.b[k];
 // Была придуманная 3000+ур.*2500 (макс. 65500 на 25 ур.) — теперь настоящая
@@ -3062,18 +3083,39 @@ function production(p){ // единиц в час
   }
   return out;   // Содержания армии нет: войска едят только при обучении и лечении.
 }
-function capacity(p){    // теперь своя вместимость на каждый ресурс — склад + защита самих участков
-  const B=bonuses(p), base=Math.round(storeCap(p.b.store)*(1+B.cap));
+// Сумма "Ёмкости" участков (Ферма/Лесопилка/Каменоломня/Шахта) по ресурсу —
+// в RoK это ДВЕ разные вещи с одним числом в источнике: (1) сколько защищено
+// при разграблении города и (2) сколько может скопиться на самом участке,
+// прежде чем его нужно забрать (тапнуть), иначе добыча дальше не копится.
+// Здесь она используется для обоих механик — см. capacity()/syncRes() ниже.
+function plotFillCap(p){
   const map={food:"farm",wood:"lumber",stone:"quarry",gold:"mine"};
+  const mult={food:1,wood:1,stone:0.75,gold:0.5};   // тот же множитель ресурса, что и в production()
   const out={};
-  RES.forEach(r=>{ let extra=0; p.b[map[r]].forEach(lv=>extra+=plotCap(lv)); out[r]=base+extra; });
+  RES.forEach(r=>{ let extra=0; p.b[map[r]].forEach(lv=>extra+=plotCap(lv)*mult[r]); out[r]=Math.round(extra); });
+  return out;
+}
+function capacity(p){    // своя вместимость на каждый ресурс — склад + защита самих участков (при набеге)
+  const B=bonuses(p), base=Math.round(storeCap(p.b.store)*(1+B.cap));
+  const extra=plotFillCap(p);
+  const out={};
+  RES.forEach(r=>out[r]=base+extra[r]);
   return out;
 }
 function syncRes(p){
   const dt=(W.t-p.resAt)/3600; if(dt<=0){p.resAt=W.t;return}
   const pr=production(p);
-  // склад не ограничивает накопление — он только защищает часть ресурсов при разграблении города (см. battleCity)
-  for(const r of RES) p.res[r]=Math.max(0, p.res[r]+pr[r]*dt);
+  // В RoK участок копит добычу до своей "Ёмкости" и дальше не растёт, пока
+  // игрок его не заберёт тапом. Здесь роль "тапа" играет сам факт присутствия
+  // в игре: пока вы онлайн, синк идёт часто (раз в секунду через renderTop) —
+  // за такой малый dt лимит практически никогда не задевается, всё сразу
+  // уходит в общий запас, как будто собираете постоянно. А вот пока вас нет
+  // (вкладка закрыта/свёрнута надолго), следующий синк случится только когда
+  // вы вернётесь — и тогда всё, что участок произвёл бы сверх своей "Ёмкости"
+  // за это время, пропадает (как несобранное в RoK), а накопление участка
+  // начинается заново с момента возвращения.
+  const cap=plotFillCap(p);
+  for(const r of RES) p.res[r]=Math.max(0, p.res[r]+Math.min(pr[r]*dt, cap[r]));
   p.resAt=W.t;
 }
 function canPay(p,c){ syncRes(p); return RES.every(r=>!c[r]||p.res[r]>=c[r]) }
@@ -4605,10 +4647,19 @@ async function load(){
     // догоняем реальное время, прошедшее с последнего захода
     const away=Math.max(0,(Date.now()-W.savedAt)/1000);
     if(away>60){
+      // Как в RoK: пока игрока нет, добыча копится на участке только до его
+      // "Ёмкости" (см. syncRes/plotFillCap) — дальше просто пропадает, пока
+      // не забрали. Проверяем ДО advanceTo/syncRes, пока p.resAt ещё не
+      // сдвинут — иначе избыток уже молча срежется и предупреждать будет не о чем.
+      const p=me(), pr=production(p), cap=plotFillCap(p), dtH=away/3600;
+      const overflowed=RES.filter(r=>pr[r]*dtH>cap[r]).map(r=>RES_NAME[r]);
       advanceTo(W.t+away);
-      logg("Пока вас не было, прошло "+fmtDur(away)+". Мир жил своей жизнью.","good");
+      const capNote=overflowed.length
+        ?" Участки ("+overflowed.join(", ")+") успели заполниться до предела — часть добычи за это время пропала, дальше не копилась."
+        :"";
+      logg("Пока вас не было, прошло "+fmtDur(away)+". Мир жил своей жизнью."+capNote,"good");
       pushMail({cat:"system",kind:"note",title:"Мир не стоял на месте",
-        body:"Пока вас не было, прошло "+fmtDur(away)+". Мир жил своей жизнью — проверьте отчёты о сражениях."});
+        body:"Пока вас не было, прошло "+fmtDur(away)+". Мир жил своей жизнью — проверьте отчёты о сражениях."+capNote});
     }
     return true;
   }catch(e){ return false }
