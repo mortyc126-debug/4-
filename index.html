@@ -3083,19 +3083,39 @@ function production(p){ // единиц в час
   }
   return out;   // Содержания армии нет: войска едят только при обучении и лечении.
 }
-function capacity(p){    // теперь своя вместимость на каждый ресурс — склад + защита самих участков
-  const B=bonuses(p), base=Math.round(storeCap(p.b.store)*(1+B.cap));
+// Сумма "Ёмкости" участков (Ферма/Лесопилка/Каменоломня/Шахта) по ресурсу —
+// в RoK это ДВЕ разные вещи с одним числом в источнике: (1) сколько защищено
+// при разграблении города и (2) сколько может скопиться на самом участке,
+// прежде чем его нужно забрать (тапнуть), иначе добыча дальше не копится.
+// Здесь она используется для обоих механик — см. capacity()/syncRes() ниже.
+function plotFillCap(p){
   const map={food:"farm",wood:"lumber",stone:"quarry",gold:"mine"};
   const mult={food:1,wood:1,stone:0.75,gold:0.5};   // тот же множитель ресурса, что и в production()
   const out={};
-  RES.forEach(r=>{ let extra=0; p.b[map[r]].forEach(lv=>extra+=plotCap(lv)*mult[r]); out[r]=base+Math.round(extra); });
+  RES.forEach(r=>{ let extra=0; p.b[map[r]].forEach(lv=>extra+=plotCap(lv)*mult[r]); out[r]=Math.round(extra); });
+  return out;
+}
+function capacity(p){    // своя вместимость на каждый ресурс — склад + защита самих участков (при набеге)
+  const B=bonuses(p), base=Math.round(storeCap(p.b.store)*(1+B.cap));
+  const extra=plotFillCap(p);
+  const out={};
+  RES.forEach(r=>out[r]=base+extra[r]);
   return out;
 }
 function syncRes(p){
   const dt=(W.t-p.resAt)/3600; if(dt<=0){p.resAt=W.t;return}
   const pr=production(p);
-  // склад не ограничивает накопление — он только защищает часть ресурсов при разграблении города (см. battleCity)
-  for(const r of RES) p.res[r]=Math.max(0, p.res[r]+pr[r]*dt);
+  // В RoK участок копит добычу до своей "Ёмкости" и дальше не растёт, пока
+  // игрок его не заберёт тапом. Здесь роль "тапа" играет сам факт присутствия
+  // в игре: пока вы онлайн, синк идёт часто (раз в секунду через renderTop) —
+  // за такой малый dt лимит практически никогда не задевается, всё сразу
+  // уходит в общий запас, как будто собираете постоянно. А вот пока вас нет
+  // (вкладка закрыта/свёрнута надолго), следующий синк случится только когда
+  // вы вернётесь — и тогда всё, что участок произвёл бы сверх своей "Ёмкости"
+  // за это время, пропадает (как несобранное в RoK), а накопление участка
+  // начинается заново с момента возвращения.
+  const cap=plotFillCap(p);
+  for(const r of RES) p.res[r]=Math.max(0, p.res[r]+Math.min(pr[r]*dt, cap[r]));
   p.resAt=W.t;
 }
 function canPay(p,c){ syncRes(p); return RES.every(r=>!c[r]||p.res[r]>=c[r]) }
@@ -4627,10 +4647,19 @@ async function load(){
     // догоняем реальное время, прошедшее с последнего захода
     const away=Math.max(0,(Date.now()-W.savedAt)/1000);
     if(away>60){
+      // Как в RoK: пока игрока нет, добыча копится на участке только до его
+      // "Ёмкости" (см. syncRes/plotFillCap) — дальше просто пропадает, пока
+      // не забрали. Проверяем ДО advanceTo/syncRes, пока p.resAt ещё не
+      // сдвинут — иначе избыток уже молча срежется и предупреждать будет не о чем.
+      const p=me(), pr=production(p), cap=plotFillCap(p), dtH=away/3600;
+      const overflowed=RES.filter(r=>pr[r]*dtH>cap[r]).map(r=>RES_NAME[r]);
       advanceTo(W.t+away);
-      logg("Пока вас не было, прошло "+fmtDur(away)+". Мир жил своей жизнью.","good");
+      const capNote=overflowed.length
+        ?" Участки ("+overflowed.join(", ")+") успели заполниться до предела — часть добычи за это время пропала, дальше не копилась."
+        :"";
+      logg("Пока вас не было, прошло "+fmtDur(away)+". Мир жил своей жизнью."+capNote,"good");
       pushMail({cat:"system",kind:"note",title:"Мир не стоял на месте",
-        body:"Пока вас не было, прошло "+fmtDur(away)+". Мир жил своей жизнью — проверьте отчёты о сражениях."});
+        body:"Пока вас не было, прошло "+fmtDur(away)+". Мир жил своей жизнью — проверьте отчёты о сражениях."+capNote});
     }
     return true;
   }catch(e){ return false }
