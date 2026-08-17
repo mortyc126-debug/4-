@@ -1862,7 +1862,10 @@ function buildingName(bk,p){
 /* ---- Войска: 4 рода × 5 тиров ----
    Базовые числа в духе RoK (T4 конница ≈ 220 атк / 212 защ / 216 хп).      */
 const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];     // T1..T5
-const unitPower = tier => tier;                    // мощь одного воина: Т1=1, Т2=2, ... Т5=5
+// Мощь одного воина в RoK: Т1=+1, Т2=+2, Т3=+3, Т4=+4, Т5=+10 (не +5 — на
+// последнем тире прыжок больше, как и почти везде на границе тиров/уровней).
+const UNIT_POWER=[1,2,3,4,10];
+const unitPower = tier => UNIT_POWER[tier-1];
 const TROOP_TYPES = {
   inf: {name:"Пехота",  atk:34, def:46, hp:44, load:6,  speed:1.00, magicAtk:8,  magicDef:18, beats:"arc", losesTo:"cav"},
   arc: {name:"Лучники", atk:50, def:30, hp:36, load:8,  speed:1.10, magicAtk:20, magicDef:8,  beats:"cav", losesTo:"inf"},
@@ -1984,15 +1987,31 @@ const buildCost = (bk,lv,p) => {
 const prodRate  = lv => lv<=0?0:PROD_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1];   // в час
 const storeCap  = lv => STORE_TABLE[clamp(Math.max(1,lv),1,CFG.MAX_LEVEL)-1];
 const troopStat = (type,tier,stat) => Math.round(TROOP_TYPES[type][stat]*TIER_MULT[tier-1]);
-const TROOP_COST=[
+// Точные цифры RoK за 1 воина (riseofkingdoms.fandom.com/gamesguideinfo.com).
+// Раньше одна и та же TROOP_COST обслуживала все 4 рода войск — в реальности
+// осадные набираются по другой цене (без еды вовсе, дерева/камня больше) —
+// с T5 разница ещё и в золоте (350/350/350/80 у боевых, 400/300/80 у осады
+// при 0 еды). Пехота/лучники/конница между собой в RoK стоят одинаково.
+const TROOP_COST_COMBAT=[
   {food:10, wood:10, stone:0,  gold:0 },
-  {food:40, wood:40, stone:10, gold:0 },
-  {food:80, wood:80, stone:25, gold:0 },
-  {food:120,wood:120,stone:40, gold:10},
-  {food:200,wood:200,stone:100,gold:40},
+  {food:40, wood:40, stone:0,  gold:0 },
+  {food:100,wood:100,stone:20, gold:0 },
+  {food:200,wood:200,stone:150,gold:0 },
+  {food:350,wood:350,stone:350,gold:80},
 ];
-const troopCost = (type,tier) => TROOP_COST[tier-1];
-const TRAIN_TIME=[2,30,120,360,720];     // сек за 1 юнита: T1..T5 (заданные игроком базовые тайминги)
+const TROOP_COST_SIEGE=[
+  {food:0, wood:20, stone:0,  gold:0 },
+  {food:0, wood:50, stone:30, gold:0 },
+  {food:0, wood:100,stone:40, gold:0 },
+  {food:0, wood:250,stone:100,gold:0 },
+  {food:0, wood:400,stone:300,gold:80},
+];
+const troopCost = (type,tier) => (type==="sie"?TROOP_COST_SIEGE:TROOP_COST_COMBAT)[tier-1];
+// Базовое время в RoK — 3.6/7.2/12/24/48с за штуку (без бонусов скорости),
+// одинаковое у боевых и осадных на одном тире. Раньше было придумано
+// [2,30,120,360,720] — бросалось в глаза на T2 (30с "заданные игроком"
+// вместо настоящих 7.2с — почти в 4 раза дольше настоящего).
+const TRAIN_TIME=[3.6,7.2,12,24,48];     // сек за 1 юнита: T1..T5
 const trainTime = (type,tier) => TRAIN_TIME[tier-1];
 const TRAIN_BLD = {inf:"barracks",arc:"range",cav:"stable",sie:"siege"};
 const BLD_TRAIN = {barracks:"inf",range:"arc",stable:"cav",siege:"sie"};
@@ -2030,7 +2049,19 @@ const hallGateLevel = (p,k) => isMulti(k) ? p.b[k][0] : p.b[k];
 // Была придуманная 3000+ур.*2500 (макс. 65500 на 25 ур.) — теперь настоящая
 // прочность стены RoK: 15000 на 1 ур. плавно до 40000 на 25 ур. (см. WALL_TABLE).
 const maxWallHp = lv => lv<=0?0:WALL_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1].hp;
-const wallDefBonus = lv => lv<=0?0 : lv*0.005;   // 0.5%/ур. — макс. +12.5% на 25 ур.
+// Была плоская lv*0.005 (0.5%/ур., без всякой связи с настоящими цифрами) —
+// у Стены в RoK вообще нет процента защиты, только HP (см. WALL_TABLE), так
+// что взять готовое число неоткуда. Вместо новой выдумки бонус посчитан
+// ПРОПОРЦИОНАЛЬНО настоящему росту HP Стены (WALL_TABLE) — та же форма
+// кривой, что и в RoK: почти линейно 1-24 ур., и резкий скачок на 25-м
+// (тот самый Master's Blueprint-эффект, что и у всех прочих зданий на
+// последнем уровне). Масштаб (макс. +12.5% на 25 ур.) — прежний, число
+// само по себе не из RoK, взять неоткуда, но теперь хотя бы растёт как она.
+const wallDefBonus = lv => {
+  if(lv<=0) return 0;
+  const hp=WALL_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1].hp, hp1=WALL_TABLE[0].hp, hpMax=WALL_TABLE[24].hp;
+  return 0.125*(hp-hp1)/(hpMax-hp1);
+};
 const portalMarchBonus = lv => lv<=0?0 : lv<=10 ? lv*0.005 : 10*0.005+(lv-10)*0.01;   // 0.5%/ур. до 10, затем 1%/ур. — макс. +20% на 25 ур.
 const PORTAL_GATE_LV = 13;   // уровень портала на начало 3 эпохи (=EPOCH_HALL_MIN[2]) — с него считаем сокращение марша
 function portalShortcut(p){    // доля (0..0.5), на которую портал укорачивает путь отряда
