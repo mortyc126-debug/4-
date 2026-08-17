@@ -201,13 +201,33 @@ async function main() {
     return;
   }
   const format = navigator.gpu.getPreferredCanvasFormat();
+  // Скрытая канва (нулевой размер) НЕ пересчитывается — прежний размер
+  // сохраняется как есть.
+  // Здесь была причина зависаний на 5-10 секунд при частом переключении
+  // Город<->Мир: вкладка "Город" прячет контейнер 3D через display:none
+  // (#app.view-city #chart), у канвы clientWidth/clientHeight обнуляются,
+  // ResizeObserver дёргает resize(), и канва схлопывалась в 1x1. Это не
+  // косметика: смена размера канвы пересобирает swapchain, а ensureDepth()
+  // видит новый размер и УНИЧТОЖАЕТ полноэкранную depth-текстуру, чтобы
+  // создать её заново (renderer.ts). На возврате в "Мир" всё то же самое
+  // происходит обратно — то есть каждое переключение туда-обратно стоило
+  // двух полных перевыделений экранных GPU-текстур. Несколько переключений
+  // подряд — и драйвер уходит в долгую переупаковку памяти, особенно на
+  // телефоне. Игнорируя нулевой размер, мы просто НИЧЕГО не пересоздаём:
+  // канва остаётся ровно той, какой была, и возврат во вкладку бесплатен.
   function resize() {
+    const cw = canvas.clientWidth, ch = canvas.clientHeight;
+    if (cw <= 0 || ch <= 0) return;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const w = Math.max(1, Math.floor(canvas.clientWidth * dpr));
-    const h = Math.max(1, Math.floor(canvas.clientHeight * dpr));
+    const w = Math.max(1, Math.floor(cw * dpr));
+    const h = Math.max(1, Math.floor(ch * dpr));
     if (canvas.width !== w) canvas.width = w;
     if (canvas.height !== h) canvas.height = h;
   }
+  // Скрыта ли канва прямо сейчас (вкладка "Город"). offsetParent===null —
+  // самый дешёвый признак display:none у самого элемента или любого предка,
+  // без чтения стилей и без layout-запроса.
+  const isHidden = () => canvas.offsetParent === null && canvas.clientWidth === 0;
   resize();
   // ResizeObserver, не только window "resize" — тот не срабатывает, если
   // финальный layout канвы устаканивается ПОСЛЕ первого запуска этого
@@ -1186,6 +1206,11 @@ async function main() {
   }
   if (usingReal) {
     setInterval(() => {
+      // Во вкладке "Город" 3D не видно — полный обход сущностей и подгрузка
+      // моделей здесь ни к чему. При возврате всё равно синхронизируемся: в
+      // "Мире" интервал снова начинает срабатывать, а пропущенные появления
+      // и исчезновения — это дискретные события, они подтянутся одним махом.
+      if (isHidden()) return;
       syncLiveEntities().catch((err) => console.error("live sync:", err));
     }, SYNC_INTERVAL_MS);
   }
@@ -1282,6 +1307,13 @@ async function main() {
   }
 
   function draw(tMs: number) {
+    // Пока открыт "Город", 3D целиком скрыт — рисовать нечего и некуда.
+    // Раньше цикл продолжал крутиться и молотить в схлопнутую канву: лишний
+    // GPU-проход, перепроецирование подписей и пересчёт позиций походов
+    // КАЖДЫЙ кадр за спиной у игрока, который смотрит совсем на другой экран.
+    // Просто пропускаем кадр — состояние камеры и сущностей не трогаем, так
+    // что возврат во вкладку продолжает ровно с того же места.
+    if (isHidden()) { requestAnimationFrame(draw); return; }
     if (controls.isAutoOrbiting()) cam.yaw = tMs * 0.00015;
     controls.update(tMs); // WASD/стрелки — панорама, зажатая клавиша даёт непрерывный сдвиг между кадрами
     // marchMarkers() тут же (не ниже, как раньше) — followMarchId должен

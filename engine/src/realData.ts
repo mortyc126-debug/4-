@@ -27,9 +27,9 @@ export interface RealEntity {
   lv: string;
 }
 
-const REAL_RES_MAP: Record<string, string> = { food: "farm", wood: "sawmill", stone: "quarry", gold: "gold-mine" };
+const REAL_RES_MAP: Record<string, string> = { food: "farm", wood: "sawmill", stone: "quarry", gold: "gold-mine", amber: "amber-vein" };
 // Те же подписи типов точек, что и RES_SITE_NAME в index.html (cartouche).
-const RES_SITE_NAME: Record<string, string> = { food: "Пашня", wood: "Лесопилка", stone: "Каменоломня", gold: "Рудник" };
+const RES_SITE_NAME: Record<string, string> = { food: "Пашня", wood: "Лесопилка", stone: "Каменоломня", gold: "Рудник", amber: "Янтарная жила" };
 // Дословно epochOf из index.html — своей копии эпох тут нет, но эта чистая
 // функция от одного числа (уровня ратуши) достаточно стабильна, чтобы не
 // тянуть её через window.parent лишним мостом.

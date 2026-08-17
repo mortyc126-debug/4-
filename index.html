@@ -41,7 +41,10 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 
 #app{position:relative;z-index:1;display:flex;flex-direction:column;height:100%}
 
-#top{position:fixed;top:10px;left:0;z-index:15;display:flex;flex-direction:row;
+/* top:18px, а не 10px — плашка Янтаря прижата вплотную к правому верхнему
+   углу (#amber-badge, top:0), и кошелёк с ресурсами вплотную к ней подходил.
+   Небольшой сдвиг вниз разводит их по вертикали, не трогая саму шапку. */
+#top{position:fixed;top:18px;left:0;z-index:15;display:flex;flex-direction:row;
   align-items:center;gap:8px;max-width:calc(100vw - 6px)}
 
 #crest{display:flex;align-items:center;cursor:pointer;flex:0 0 auto}
@@ -944,7 +947,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
     box-shadow:0 -8px 26px rgba(0,0,0,.55)}
   #chart{flex:1 1 46%}
   #key{display:none}
-  #top{top:8px;left:0}
+  #top{top:14px;left:0}
   #amber-badge{top:0;right:0}
   .coin .rate{display:none}
   #chron{gap:9px;padding-left:8px}
@@ -2337,13 +2340,27 @@ const COUNTER_UP = 1.5, COUNTER_DOWN = 0.7;
 /* ---- Ресурсы ---- */
 const RES = ["food","wood","stone","gold"];
 const RES_NAME = {food:"Еда",wood:"Дерево",stone:"Камень",gold:"Золото"};
+// Янтарь намеренно НЕ в RES_NAME/RES: он не участвует ни в ценах построек,
+// ни в складе, ни в разграблении — только своя жила на карте и счётчик в
+// шапке. Отдельное имя нужно панелям, которые подписывают точку на карте.
+const AMBER_NAME="Янтарь";
+// Имя ресурса точки/добычи с учётом янтаря — RES_NAME его намеренно не
+// содержит (он не из общей четвёрки), а подписывать точки и отчёты о сборе
+// чем-то надо.
+const resName = r => r==="amber" ? AMBER_NAME : RES_NAME[r];
 // Настоящие базовые скорости сбора из RoK на старте партии (1 ур. ратуши,
 // без бонусов) — единиц в час. Раньше все 4 ресурса делили одну общую
 // формулу с произвольным множителем (пользователь сверил с реальной игрой
 // и прислал точные цифры). См. arriveMarch — базовая скорость масштабируется
 // с уровнем ратуши той же кривой, что была и раньше, только теперь
 // откалиброванной так, чтобы на 1 ур. ратуши совпадать ровно с этими числами.
-const GATHER_BASE_RATE = {food:3000, wood:3000, stone:2250, gold:1000};
+// Янтарь добывается ощутимо медленнее золота — он и в жиле лежит малым
+// объёмом (см. AMBER_NODE_SHARE), так что жилу выбирают не «за один заход».
+// Янтарь — 45 в час, то есть ровно 80 секунд на одну единицу на 1 ур. ратуши
+// (множитель (60+hall*22)/82 на первом уровне равен единице, так что базовая
+// ставка тут и есть настоящая скорость старта). Дальше растёт с ратушей и
+// веткой eco_amber, как и всё прочее.
+const GATHER_BASE_RATE = {food:3000, wood:3000, stone:2250, gold:1000, amber:45};
 const RES_DESC = {
   food:"Идёт на стройку и содержание войск. Основной расход эпоху за эпохой.",
   wood:"Идёт на стройку наравне с едой — почти любое здание просит и то, и другое.",
@@ -2805,6 +2822,12 @@ function hashPick(arr,x,y,salt){ return arr[Math.floor(hash2(x,y,salt)*arr.lengt
 // (×0.34) поверх прежних 22/49 и 13/49 (см. thinMapDensity6 ниже для
 // ретроактивного применения к уже сгенерированным чанкам).
 const NODE_CHUNK_CHANCE=22/49*0.34, CAMP_CHUNK_CHANCE=13/49*0.34;
+// Доля точек, которые оказываются Янтарной жилой вместо обычного ресурса.
+// Янтарь — валюта не из общей четвёрки (в запас склада не идёт, в стройку не
+// уходит), поэтому и на карте он должен быть находкой, а не рядовой точкой:
+// одна жила примерно на восемь обычных точек.
+const AMBER_NODE_SHARE=0.12;
+const STRUCT_SALT_AMBER=771;
 function ensureChunkContent(cx,cy){
   const ck=cx+","+cy;
   if(W.genChunks[ck]) return;
@@ -2814,9 +2837,15 @@ function ensureChunkContent(cx,cy){
     const spot=findFreeCellInChunk(cx,cy,STRUCT_SALT_NODE);
     if(spot){
       const lv=nodeLevelAt(spot.x,spot.y);
-      const type=hashPick(RES,spot.x,spot.y,W.seed+STRUCT_SALT_NODE+12);
+      // Тип точки — от координат, как и всё прочее в чанковой генерации:
+      // тот же чанк при повторном заходе даёт ту же жилу, а не новую монетку.
+      const isAmber = hash2(spot.x,spot.y,W.seed+STRUCT_SALT_AMBER) < AMBER_NODE_SHARE;
+      const type = isAmber ? "amber" : hashPick(RES,spot.x,spot.y,W.seed+STRUCT_SALT_NODE+12);
+      // Янтаря в жиле кратно меньше, чем еды в пашне: это премиальный ресурс,
+      // и объём тут не про «сколько увезёшь», а про «сколько вообще есть».
+      const base = isAmber ? 240*Math.pow(1.9,lv-1) : 6000*Math.pow(2.6,lv-1);
       mapSet(spot.x,spot.y,{t:"node",x:spot.x,y:spot.y,res:type,lv,
-        amount:Math.round(6000*Math.pow(2.6,lv-1)), max:Math.round(6000*Math.pow(2.6,lv-1)), busy:null});
+        amount:Math.round(base), max:Math.round(base), busy:null});
     }
   }
   if(structChunkOk(bx,by,STRUCT_SALT_CAMP,CAMP_CHUNK_CHANCE)){
@@ -2836,6 +2865,19 @@ function ensureChunkContent(cx,cy){
 function ensureWorldChunk(cx,cy){
   if(!W) return;
   ensureChunkContent(cx,cy);
+}
+// Засеять дикий контент вокруг точки на радиус в клетках.
+// Раньше единственным, кто вообще запускал генерацию, был 3D-движок — он зовёт
+// ensureWorldChunk для чанков рельефа вокруг КАМЕРЫ. То есть контент появлялся
+// только там, куда смотрел игрок, а вокруг ботов мир оставался буквально
+// пустым: на всей карте набиралось 8 точек и 6 лагерей, и все — возле столицы
+// игрока. Отсюда и «армии ботов стоят на месте»: боту некуда идти собирать и
+// некого бить, findNear не находит ни точки, ни лагеря ни в каком радиусе.
+// Дёшево: ensureChunkContent сразу выходит на уже засеянном чанке (genChunks).
+function ensureChunksAround(x,y,cells){
+  const c0x=Math.floor((x-cells)/STRUCT_CHUNK), c1x=Math.floor((x+cells)/STRUCT_CHUNK);
+  const c0y=Math.floor((y-cells)/STRUCT_CHUNK), c1y=Math.floor((y+cells)/STRUCT_CHUNK);
+  for(let cy=c0y;cy<=c1y;cy++) for(let cx=c0x;cx<=c1x;cx++) ensureChunkContent(cx,cy);
 }
 // Выбрасывает дикий контент далёких чанков вместе с отметкой "чанк уже засеян".
 // Мир бесконечный: W.map/mapChunks/genChunks росли по мере исследования и не
@@ -4276,9 +4318,15 @@ const EV = {
     const m=W.marches.find(m=>m.id===d.mid); if(!m) return;
     const cell=W.map[key(m.tx,m.ty)];
     const p=W.players.find(q=>q.id===m.pid);
-    if(p && !p.isBot && m.carry){
-      const rr=Object.keys(m.carry).find(k=>m.carry[k]>0);
-      if(rr) pushMail({cat:"report",kind:"gather",res:rr,amount:m.carry[rr],coords:{x:m.tx,y:m.ty}});
+    if(p && !p.isBot){
+      // Янтарь везётся отдельным полем (см. EV.home) — отчёт о сборе у него
+      // такой же, просто источник числа другой.
+      if(m.carryAmber>0)
+        pushMail({cat:"report",kind:"gather",res:"amber",amount:m.carryAmber,coords:{x:m.tx,y:m.ty}});
+      else if(m.carry){
+        const rr=Object.keys(m.carry).find(k=>m.carry[k]>0);
+        if(rr) pushMail({cat:"report",kind:"gather",res:rr,amount:m.carry[rr],coords:{x:m.tx,y:m.ty}});
+      }
     }
     if(cell && cell.t==="node" && cell.amount<=0){
       mapDelete(m.tx,m.ty);
@@ -4295,6 +4343,15 @@ const EV = {
         const s=RES.filter(r=>m.carry[r]>0).map(r=>RES_NAME[r]+" "+Math.round(m.carry[r]).toLocaleString("ru")).join(", ");
         if(s) logg("Отряд вернулся с добычей: "+s,"good");
       }
+    }
+    // Янтарь везётся отдельным полем, а не внутри m.carry: он не входит в RES
+    // и потому не проходит ни через gain(), ни через склад, ни через защиту
+    // при набеге. Тащить его в общую четвёрку значило бы протянуть новый
+    // ресурс через всю экономику — цены построек, вместимость, разграбление —
+    // ради того, что пока нигде, кроме счётчика в шапке, не участвует.
+    if(m.carryAmber>0){
+      p.amber=(p.amber||0)+m.carryAmber;
+      if(!p.isBot) logg("Отряд вернулся с янтарём: "+Math.round(m.carryAmber).toLocaleString("ru")+".","good");
     }
     W.marches=W.marches.filter(x=>x.id!==m.id);
   },
@@ -4343,15 +4400,21 @@ function arriveMarch(m){
     // кривая (60+hall*22), что и раньше, только теперь нормированная на
     // hall=1 (60+22=82), чтобы на самом старте партии совпасть с реальными
     // числами ровно, а не расти от произвольной базы.
+    const isAmber = cell.res==="amber";
     let rate=GATHER_BASE_RATE[cell.res]*(60+p.b.hall*22)/82*(1+B.gather);
-    rate*= (cell.res==="food"||cell.res==="wood") ? 1+(B.gatherFW||0) : 1+(B.gatherSG||0);
+    // Янтарь не еда и не камень — общие бонусы на пары ресурсов его не
+    // касаются, у него своя ветка академии (eco_amber0/1 -> B.gatherAmber),
+    // которая до сих пор считалась, но применять её было не к чему.
+    rate*= isAmber ? 1+(B.gatherAmber||0)
+         : (cell.res==="food"||cell.res==="wood") ? 1+(B.gatherFW||0) : 1+(B.gatherSG||0);
     let load=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) load+=m.units[t][i]*TROOP_TYPES[t].load*TIER_MULT[i-1]*troopMod(p.race,t,"load")});
     load=Math.round(load*(1+B.load));
     const take=Math.min(load, cell.amount);
     const secs=take/rate*3600;
     m.state="gather"; m.t0=W.t; m.t1=W.t+secs;
     cell.amount-=take; cell.busy=p.id;
-    m.carry={}; m.carry[cell.res]=take;
+    if(isAmber){ m.carry=null; m.carryAmber=take; }
+    else { m.carry={}; m.carry[cell.res]=take; m.carryAmber=0; }
     // Опустошение (mapDelete) откладываем до события "gathered" (см. EV.gathered
     // ниже) — раньше точка пропадала с карты/из 3D СРАЗУ по прибытии отряда,
     // хотя тот только начал собирать (репорт пользователя: "точки исчезают,
@@ -4653,6 +4716,10 @@ function botAlarm(bot,incoming){
 }
 function botThink(p){
   syncRes(p);
+  // Бот сам засевает свою округу — иначе она так и останется пустой (см.
+  // ensureChunksAround). Радиус чуть шире того, в котором он ищет цели ниже,
+  // чтобы находки не обрывались ровно по краю засеянного пятна.
+  ensureChunksAround(p.x,p.y,36);
   const B=bonuses(p), acts=[];
   const cap=capacity(p);
   const pr=production(p);
@@ -4688,6 +4755,15 @@ function botThink(p){
         if(bk==="hospital") sc += 22*p.ai.caution;
         if(bk==="academy")  sc += 34;
         sc -= cur*0.8;
+        // УЗКОЕ МЕСТО: здание из HALL_REQ, отставшее от ратуши, держит развитие
+        // всего города. Пока оно не догонит, ратуша не растёт — а с ратушей
+        // заперты и все прочие постройки (их нельзя поднять выше неё), и слоты
+        // марша, и тиры войск.
+        // Без этой надбавки бот вставал намертво: госпиталь набирал ~30 очков и
+        // всегда проигрывал обучению войск (~45), так что 12 ботов за 30 дней
+        // поднимали среднюю ратушу с 3.4 до 3.7 и не делали больше ничего —
+        // ни строек, ни исследований, ни походов, только копили войска.
+        if(HALL_REQ.includes(bk) && hallGateLevel(p,bk) < p.b.hall) sc += 70;
         acts.push({sc,run:()=>startBuild(p,bk,isMulti(bk)?pi:undefined)});
       }
     }
@@ -4703,8 +4779,18 @@ function botThink(p){
       // Раньше эту роль случайно играла проверка на еду.
       const reserve=buildCost("hall",p.b.hall+1,p);
       // Если армия просела ниже критической, город бросает стройку и вооружается.
-      const desperate = countUnits(p.troops) < p.b.hall*80;
-      const keep = desperate ? 0 : 0.6;
+      // Минимальный гарнизон, ниже которого город бросает стройку и вооружается.
+      // Было ратуша*80 — на 10 ур. это смешные 800 бойцов, порог не срабатывал
+      // никогда, и при полном резерве (см. keep ниже) бот вообще переставал
+      // тренироваться: за 90 дней армия так и оставалась стартовой.
+      const desperate = countUnits(p.troops) < p.b.hall*900;
+      // Резерв на следующую ратушу — ПОЛНЫЙ, а не 60%. При 0.6 бот вставал в
+      // равновесие ровно на этой отметке: доход шёл, излишек над 60% тут же
+      // уходил в войска, и до 100% он не доходил никогда. Итог — за 90 дней
+      // средняя ратуша ботов не двигалась с 5.3, зато войск набиралось под 90
+      // тысяч: города-пустышки с огромной армией. Полный резерв копит до
+      // конца, а не даёт себя объесть; на войска идёт настоящий излишек.
+      const keep = desperate ? 0 : 1;
       const spare={}; RES.forEach(r=>spare[r]=Math.max(0,p.res[r]-reserve[r]*keep));
       const affordable=Math.min(trainCap(p.b[TRAIN_BLD[t]]), Math.floor(Math.min(...RES.map(r=>c[r]?spare[r]/c[r]:1e9))*0.5));
       if(affordable>=30){
@@ -5356,7 +5442,7 @@ const FONT=getComputedStyle(document.body).fontFamily;   // читаем оди�
 let sel=null;
 // (scoutOpenKey убран вместе с мгновенной выдачей состава войск — разведка
 //  теперь настоящий поход лазутчика, см. sendScout/EV.scouted.)
-const RES_SITE_NAME={food:"Пашня",wood:"Лесопилка",stone:"Каменоломня",gold:"Рудник"};
+const RES_SITE_NAME={food:"Пашня",wood:"Лесопилка",stone:"Каменоломня",gold:"Рудник",amber:"Янтарная жила"};
 let tab="city", tempo=1, lastReal=Date.now(), lastFolio="", lastMenuBody="", academyTab="mil", invTab="res", genTab="overview", genTomesOpen=false;
 
 
@@ -6052,7 +6138,7 @@ function mailRowHtml(m){
   const sub = isBattle ? (m.attacker?"Вы атаковали "+m.oppNick:"Вас атаковал "+m.oppNick)
             : m.kind==="barbarian" ? "Лагерь "+m.lv+" ур. · X:"+m.coords.x+" Y:"+m.coords.y
             : m.kind==="scout" ? m.oppNick+" · X:"+m.oppCoords.x+" Y:"+m.oppCoords.y
-            : m.kind==="gather" ? RES_NAME[m.res]+" "+fmt(m.amount)+" · X:"+m.coords.x+" Y:"+m.coords.y
+            : m.kind==="gather" ? resName(m.res)+" "+fmt(m.amount)+" · X:"+m.coords.x+" Y:"+m.coords.y
             : m.body;
   return "<div class='mail-row"+(m.read?" read":"")+"' data-act='mailopen' data-id='"+m.id+"'>"+
     "<img class='ico "+cls+"' src='"+icon+"' alt=''>"+
@@ -6185,7 +6271,7 @@ function mailDetailHtml(m){
   } else if(m.kind==="scout"){
     h+=scoutReportHtml(m);
   } else if(m.kind==="gather"){
-    h+="<div class='mail-note'>Обоз собрал "+RES_NAME[m.res]+": "+fmt(m.amount)+".<br>"+
+    h+="<div class='mail-note'>Обоз собрал "+resName(m.res)+": "+fmt(m.amount)+".<br>"+
        "Точка сбора: X:"+m.coords.x+" Y:"+m.coords.y+"</div>";
   } else {
     h+="<div class='mail-note'><b>"+m.title+"</b><br>"+m.body+"</div>";
@@ -6604,7 +6690,7 @@ function openLevy(cx,cy){
     const mine=armyPower(u,bonuses(p),p.race);
 
     let head = mode==="gather"?"Сбор припасов":mode==="scout"?"Отправка отряда":"Военный поход";
-    let lede = o.t==="node" ? RES_NAME[o.res]+", жила "+o.lv+" уровня — "+fmt(o.amount)+" осталось"
+    let lede = o.t==="node" ? resName(o.res)+", жила "+o.lv+" уровня — "+fmt(o.amount)+" осталось"
              : o.t==="city" ? "Столица "+(W.players.find(z=>z.id===o.pid)||{name:"?"}).name
              : o.t==="waste" ? "Пустошь — свободные земли"
              : (o.t==="fort"?"Форт":"Лагерь")+" разбойников "+o.lv+" уровня";
