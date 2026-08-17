@@ -645,81 +645,100 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .mail-stamp.win{color:#3f6b3f;border-color:#3f6b3f}
 .mail-stamp.lose{color:#8a2f22;border-color:#8a2f22}
 /* ---- Заведение летописи (первый запуск): раса -> полководец -> имя ----
-   Стол со свечой намеренно НЕ раскладывается элементами вёрстки: игра живёт
-   на телефоне в портрете, и стол с чернильницей, рамка с цепями и четыре герба
-   рядом с четырьмя полями там просто не встанут — получился бы скролл. Вся
-   «сцена» — это фон и уголки, а по центру ровно то, что нужно нажать. На
-   широком экране карточка просто становится шире, композиция не ломается.
-   Палитра и уголки — те же, что у почты: пергамент, тёмным по светлому. */
-#onboard{position:fixed;inset:0;z-index:70;display:none;align-items:center;justify-content:center;
-  padding:16px;background:radial-gradient(ellipse at 50% 30%,rgba(60,40,18,.55),rgba(8,5,2,.94) 70%)}
+   Раньше карточка была маленьким плавающим прямоугольником по центру
+   тёмного радиального фона — на телефоне это оставляло чёрные поля сверху
+   и снизу со сквозящей сквозь них игрой (репорт: "пергамент не на весь
+   экран"). Теперь ровно тот же приём, что и у #building-modal: тёмная
+   подложка на весь вьюпорт, а сама карточка растягивается на всю высоту
+   (align-items:stretch) и всю ширину до разумного предела для читаемости —
+   пергамент всегда покрывает экран целиком, а не плавает островком.
+   Печать (.ob-seal) и уголки — ОТДЕЛЬНЫЕ картинки, зафиксированные к
+   вьюпорту, а не запечённые в текстуру пергамента: та же история, что и в
+   комментарии у #bm-sheet — единая картинка с печатью внутри при cover
+   на разных пропорциях либо обрезает печать текстом сверху, либо
+   растягивает её в овал. Отдельная печать всегда остаётся на своём месте
+   и никогда не перекрывает контент, потому что зона под ней (padding-bottom
+   у #ob-body) заведомо выше её нижнего края. */
+#onboard{position:fixed;inset:0;z-index:70;display:none;align-items:stretch;justify-content:center;
+  padding:0;background:rgba(8,5,2,.86)}
 #onboard.open{display:flex}
-#onboard .ob-card{position:relative;width:100%;max-width:520px;max-height:calc(100vh - 32px);
+#onboard .ob-card{position:relative;width:100%;max-width:720px;
   overflow-y:auto;-webkit-overflow-scrolling:touch;
-  background:url(images/ui/parchment.jpg) center/cover,#e8dcc0;
-  border-radius:4px;box-shadow:0 14px 50px rgba(0,0,0,.75);padding:26px 20px 22px}
-#ob-hd{text-align:center;margin-bottom:4px;font-size:11px;letter-spacing:.14em;
+  background-image:url(images/ui/mail-parchment.jpg);background-size:cover;background-position:center;
+  box-shadow:0 0 60px rgba(0,0,0,.6);
+  display:flex;flex-direction:column}
+.ob-seal{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);width:52px;height:auto;
+  pointer-events:none;opacity:.8;z-index:71;filter:drop-shadow(0 3px 6px rgba(0,0,0,.5))}
+#ob-body{width:100%;max-width:480px;box-sizing:border-box;margin:auto auto;
+  padding:40px 22px 74px;align-self:center}
+#ob-hd{text-align:center;margin-bottom:6px;font-size:11px;letter-spacing:.14em;
   text-transform:uppercase;color:#8a6d2c}
-#ob-title{text-align:center;font-size:20px;line-height:1.25;color:#2c2114;margin-bottom:6px}
-#ob-lede{text-align:center;font-size:12.5px;line-height:1.55;color:#5a4530;margin-bottom:16px}
-/* Гербы рас — сетка 4 в ряд; на узком экране 2×2, чтобы герб не сжимался в точку. */
-.ob-races{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
-@media (max-width:420px){ .ob-races{grid-template-columns:repeat(2,1fr)} }
-.ob-race{display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 4px 7px;
-  border:1px solid rgba(90,69,48,.3);border-radius:5px;background:rgba(255,246,225,.35);
-  cursor:pointer;transition:border-color .15s,box-shadow .15s,background .15s}
-.ob-race img{width:44px;height:66px;object-fit:contain;filter:drop-shadow(0 2px 4px rgba(0,0,0,.35))}
-.ob-race b{font-weight:normal;font-size:12.5px;color:#3a2c1c;letter-spacing:.02em}
+#ob-title{text-align:center;font-size:22px;line-height:1.25;color:#2c2114;margin-bottom:8px}
+#ob-lede{text-align:center;font-size:13px;line-height:1.6;color:#5a4530;margin-bottom:22px}
+/* Гербы рас — сами по себе кнопки: никакой плашки-подложки под ними,
+   выбор читается по свечению герба в цвете расы и подписи под ним. */
+.ob-races{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:18px}
+@media (max-width:420px){ .ob-races{grid-template-columns:repeat(2,1fr);gap:10px 6px} }
+.ob-race{display:flex;flex-direction:column;align-items:center;gap:8px;padding:6px 2px;
+  border:none;background:none;cursor:pointer}
+.ob-race img{width:100%;max-width:88px;height:auto;object-fit:contain;
+  filter:drop-shadow(0 3px 7px rgba(0,0,0,.45));transition:filter .15s,transform .15s}
+.ob-race b{font-weight:normal;font-size:12.5px;color:#5a4530;letter-spacing:.02em;transition:color .15s}
 /* Выбранный герб подсвечивается ЦВЕТОМ СВОЕЙ РАСЫ — он уже задан в RACES[x].color
    и приходит сюда как --rc, отдельную палитру заводить не пришлось. */
-.ob-race.on{border-color:var(--rc);background:rgba(255,246,225,.75);
-  box-shadow:0 0 0 1px var(--rc),0 0 16px -2px var(--rc)}
+.ob-race.on img{transform:translateY(-3px);
+  filter:drop-shadow(0 0 12px var(--rc)) drop-shadow(0 4px 8px rgba(0,0,0,.5))}
+.ob-race.on b{color:var(--rc);font-weight:bold}
 /* Раскрытая карточка выбранного: сильная сторона и честный минус. */
 .ob-detail{border-left:3px solid var(--rc,#8a6d2c);background:rgba(138,109,44,.10);
-  border-radius:0 4px 4px 0;padding:9px 11px;margin-bottom:14px}
-.ob-detail .nm{font-size:14px;color:#2c2114;margin-bottom:3px}
-.ob-detail .ds{font-size:12px;line-height:1.5;color:#3a2c1c;margin-bottom:5px}
-.ob-detail .mn{font-size:11.5px;line-height:1.5;color:#8a3c2c}
+  border-radius:0 4px 4px 0;padding:11px 13px;margin-bottom:18px}
+.ob-detail .nm{font-size:14.5px;color:#2c2114;margin-bottom:4px}
+.ob-detail .ds{font-size:12.5px;line-height:1.55;color:#3a2c1c;margin-bottom:6px}
+.ob-detail .mn{font-size:11.5px;line-height:1.55;color:#8a3c2c}
 .ob-detail .mn b{font-weight:normal;text-transform:uppercase;letter-spacing:.06em;font-size:10px}
-/* Полководцы — две крупные карточки в столбик: их надо читать, а не сравнивать иконки. */
-.ob-gens{display:flex;flex-direction:column;gap:9px;margin-bottom:14px}
-.ob-gen{display:flex;gap:11px;align-items:flex-start;padding:10px;cursor:pointer;
-  border:1px solid rgba(90,69,48,.3);border-radius:5px;background:rgba(255,246,225,.35);
-  transition:border-color .15s,box-shadow .15s,background .15s}
-.ob-gen.on{border-color:var(--rc);background:rgba(255,246,225,.75);
-  box-shadow:0 0 0 1px var(--rc),0 0 16px -2px var(--rc)}
-.ob-gen img{width:58px;height:58px;border-radius:50%;object-fit:cover;flex:0 0 auto;
-  border:2px solid #8a6d2c;box-shadow:0 2px 6px rgba(0,0,0,.35)}
-.ob-gen .nm{font-size:13.5px;color:#2c2114}
-.ob-gen .rl{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:#8a6d2c;margin:1px 0 4px}
-.ob-gen .bn{font-size:11.5px;line-height:1.5;color:#3a2c1c}
+/* Полководцы — крупный портрет и текст в строку, разделены тонкой линией
+   пергамента, а не отдельными плашками: выбранный просто теплеет фоном. */
+.ob-gens{display:flex;flex-direction:column;margin-bottom:18px}
+.ob-gen{display:flex;gap:14px;align-items:center;padding:12px 8px;cursor:pointer;
+  border-bottom:1px solid rgba(90,69,48,.22);border-radius:3px;background:none;
+  transition:background .15s}
+.ob-gen:last-child{border-bottom:none}
+.ob-gen.on{background:rgba(138,109,44,.14)}
+.ob-gen img{width:78px;height:78px;object-fit:contain;flex:0 0 auto;
+  filter:drop-shadow(0 3px 6px rgba(0,0,0,.4));transition:filter .15s}
+.ob-gen.on img{filter:drop-shadow(0 0 10px var(--rc)) drop-shadow(0 3px 6px rgba(0,0,0,.45))}
+.ob-gen .nm{font-size:14.5px;color:#2c2114}
+.ob-gen .rl{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--rc,#8a6d2c);
+  font-weight:bold;margin:2px 0 5px}
+.ob-gen .bn{font-size:12px;line-height:1.55;color:#3a2c1c}
 /* Полоска предпросмотра (только из профиля, см. runOnboarding(demo)). Нарочно
    не в стиле пергамента: она НЕ часть экрана, а рамка вокруг него, и путать
    её с содержимым не надо. */
 .ob-demo{display:flex;align-items:center;justify-content:center;gap:8px;position:relative;
-  margin:-10px -6px 14px;padding:7px 34px 7px 12px;border-radius:4px;
+  margin:0 0 20px;padding:7px 34px 7px 12px;border-radius:4px;
   background:rgba(90,69,48,.16);border:1px dashed rgba(90,69,48,.45);
   font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:#6b5230;text-align:center}
 .ob-x{position:absolute;top:50%;right:6px;transform:translateY(-50%);
   width:24px;height:24px;padding:0;line-height:1;cursor:pointer;
   background:none;border:none;font-size:20px;color:#6b5230}
 .ob-x:active{color:#2c2114}
-/* Итог выбора на последнем шаге — герб и портрет рядом, в цвете своей расы. */
-.ob-sum{display:flex;align-items:center;justify-content:center;gap:11px;margin:0 auto 14px;
-  padding:9px 14px;width:fit-content;max-width:100%;
-  border:1px solid var(--rc,#8a6d2c);border-radius:5px;background:rgba(255,246,225,.5);
-  box-shadow:0 0 14px -4px var(--rc,#8a6d2c)}
-.ob-sum img{width:38px;height:57px;object-fit:contain;flex:0 0 auto}
-.ob-sum img:nth-of-type(2){width:44px;height:44px;border-radius:50%;object-fit:cover;
-  border:2px solid #8a6d2c}
-.ob-sum .nm{font-size:13.5px;color:#2c2114}
-.ob-sum .gn{font-size:11.5px;color:#6b5230;margin-top:1px}
-#ob-name{width:100%;box-sizing:border-box;padding:11px 12px;margin-bottom:6px;
+/* Итог выбора на последнем шаге — герб и портрет рядом, без обрамляющей
+   плашки: просто тонкие линии сверху и снизу, как разделитель в летописи. */
+.ob-sum{display:flex;align-items:center;justify-content:center;gap:18px;margin:0 auto 20px;
+  padding:16px 4px;width:100%;
+  border-top:1px solid rgba(90,69,48,.28);border-bottom:1px solid rgba(90,69,48,.28)}
+.ob-sum img:first-child{width:64px;height:auto;object-fit:contain;flex:0 0 auto;
+  filter:drop-shadow(0 0 10px var(--rc)) drop-shadow(0 3px 6px rgba(0,0,0,.4))}
+.ob-sum img:nth-of-type(2){width:82px;height:82px;object-fit:contain;flex:0 0 auto;
+  filter:drop-shadow(0 0 10px var(--rc)) drop-shadow(0 3px 6px rgba(0,0,0,.4))}
+.ob-sum .nm{font-size:14.5px;color:#2c2114}
+.ob-sum .gn{font-size:12px;color:#6b5230;margin-top:2px}
+#ob-name{width:100%;box-sizing:border-box;padding:12px 12px;margin-bottom:8px;
   font-family:inherit;font-size:15px;color:#2c2114;text-align:center;
   background:rgba(255,250,236,.75);border:1px solid rgba(90,69,48,.4);border-radius:4px}
 #ob-name:focus{outline:none;border-color:#8a6d2c;box-shadow:0 0 0 2px rgba(138,109,44,.2)}
-.ob-note{font-size:11px;line-height:1.5;color:#6b5230;text-align:center;margin-bottom:14px}
-.ob-go{display:block;width:100%;padding:13px;border:none;border-radius:5px;cursor:pointer;
+.ob-note{font-size:11px;line-height:1.5;color:#6b5230;text-align:center;margin-bottom:18px}
+.ob-go{display:block;width:100%;padding:14px;border:none;border-radius:5px;cursor:pointer;
   font-family:inherit;font-size:14.5px;letter-spacing:.08em;text-transform:uppercase;
   color:#f2e2bd;background:linear-gradient(180deg,#7a5e26,#4e3b16);
   box-shadow:0 3px 0 #35270f,0 6px 14px rgba(0,0,0,.4)}
@@ -1118,11 +1137,12 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
      (см. runOnboarding и start() — на загруженном сохранении не появляется
      вовсе). Тело рисуется из JS, здесь только каркас с уголками, как у почты. -->
 <div id="onboard">
+  <img class="menu-corner tl" src="images/ui/mail-corner.png" alt="">
+  <img class="menu-corner tr" src="images/ui/mail-corner.png" alt="">
+  <img class="menu-corner bl" src="images/ui/mail-corner.png" alt="">
+  <img class="menu-corner br" src="images/ui/mail-corner.png" alt="">
+  <img class="ob-seal" src="images/ui/mail-seal.png" alt="">
   <div class="ob-card">
-    <img class="menu-corner tl" src="images/ui/mail-corner.png" alt="">
-    <img class="menu-corner tr" src="images/ui/mail-corner.png" alt="">
-    <img class="menu-corner bl" src="images/ui/mail-corner.png" alt="">
-    <img class="menu-corner br" src="images/ui/mail-corner.png" alt="">
     <div id="ob-body"></div>
   </div>
 </div>
@@ -1646,19 +1666,19 @@ const RACES = {
   human:  { name:"Люди",   color:"#d2b04c",
     minus:{field:"prodGold", kind:"frac", value:-0.15,
       desc:"Расточительность: двор проедает казну — золото добывается на 15% медленнее."},
-    desc:"Без крайностей: экономика и войско растут ровно, эпоха за эпохой." },
+    desc:"Дети компромисса: ни взлётов, ни провалов — ровный, уверенный рост и в хозяйстве, и в войске, эпоха за эпохой." },
   dwarf:  { name:"Гномы",  color:"#c1663a",
     minus:{field:"march", kind:"mult", value:0.90,
       desc:"Тяжёлая поступь: гномы не бегают — марш всех отрядов −10%."},
-    desc:"Копят под горой и держат стены: ресурсы и защита при обороне." },
+    desc:"Порождены горой: копят богатство в чертогах и держат стены насмерть — но на марше неповоротливы, как сама скала." },
   elf:    { name:"Эльфы",  color:"#5a9f72",
     minus:{field:"def", kind:"frac", value:-0.10,
       desc:"Лёгкие доспехи: защита войск −10% — берут скоростью и точностью, не сталью."},
-    desc:"Быстрые меткие лучники в лёгкой броне." },
+    desc:"Дети ветра: разят издалека раньше, чем противник успевает поднять щит — но лёгкие доспехи не прощают ни единой ошибки." },
   undead: { name:"Нежить", color:"#8f63b0",
     minus:{field:"def", kind:"frac", value:-0.10,
       desc:"Хрупкие кости: защита войск −10%."},
-    desc:"Экономики нет вовсе — нежить воюет, чтобы жить, и почти не нуждается в лазарете." },
+    desc:"Забыли, что такое голод: не возделывают землю и не боятся потерь — павшие встают в строй заново, снова и снова." },
 };
 const RACE_KEYS = ["human","dwarf","elf","undead"];
 
@@ -2104,41 +2124,53 @@ function gearBonus(p){       // суммарный бонус всего над�
   return out;
 }
 
-/* ---- Уникальные генералы ---- */
-/* ---- Генералы: два архетипа на расу — углубляющий силу расы, и компенсирующий
-   минус расы взамен на часть другой её силы. Выбор фиксируется раз, при p.gen.id. */
+/* ---- Уникальные генералы ----
+   Два архетипа на расу: один усиливает то, в чём народ и так силён, другой
+   гасит минус расы в ноль ценой части другой её силы. Выбор фиксируется раз,
+   при p.gen.id. Это деление — механика, а не то, что нужно показывать
+   игроку буквально: role — короткий флейвор-титул под именем (то, что
+   реально можно вывести на экран), а не внутренняя пометка вроде
+   "Углубляющий"/"Компенсирующий" — так генералы были размечены только НА
+   ВРЕМЯ баланса, и в релиз эти подписи идти не должны были. bonus — та же
+   механика и те же цифры, что и всегда, просто человеческой фразой вместо
+   сухого "поле +значение%, поле +значение%". */
 const GENERALS = {
   human: [
-    { name:"Король Алдрик", role:"Военный",
-      bonus:"Атака войск +15%, защита войск +8%.",
+    { name:"Король Алдрик", role:"Полководец",
+      bonus:"Ведёт из первых рядов: атака войск +15%, защита войск +8%.",
       apply:b=>{ b.atk+=.15; b.def+=.08; } },
-    { name:"Королева Астрид", role:"Хозяйство",
-      bonus:"Расточительность расы гасится в ноль (золото +15%), все ресурсы дополнительно +5%.",
+    { name:"Королева Астрид", role:"Казначей",
+      bonus:"Твёрдая рука в казне: расточительность двора гасит без остатка (золото +15%) и добавляет +5% ко всем ресурсам.",
       apply:b=>{ b.prodGold+=.15; b.prodAll+=.05; } },
   ],
   dwarf: [
-    { name:"Дорвальд Каменный Трон", role:"Углубляющий",
-      bonus:"Защита войск +8%, эффективность стен при обороне +8%.",
+    { name:"Дорвальд Каменный Трон", role:"Хранитель стен",
+      bonus:"Не отступит ни на шаг: защита войск +8%, эффективность стен при обороне +8%.",
       apply:b=>{ b.def+=.08; b.wallBonus+=.08; } },
-    { name:"Гимрод Быстрая Секира", role:"Компенсирующий",
-      bonus:"Тяжёлая поступь гасится в ноль (марш обычный), но бонус стен при обороне снят целиком.",
+    { name:"Гимрод Быстрая Секира", role:"Скороход",
+      bonus:"Единственный гном, что бегает: тяжёлая поступь гасится в ноль (марш обычный), но за скорость платит — бонус стен при обороне отдаёт целиком.",
       apply:b=>{ b.march+=.10; b.wallBonus=0; } },
   ],
+  /* Ильвен и Тариэль — порядок в массиве совпадает с images/ui/avatar-elfN.png:
+     файл 1 — мужской портрет, файл 2 — женский; раньше массив шёл в другом
+     порядке и на экране Ильвен показывался под именем Тариэль (и наоборот). */
   elf: [
-    { name:"Тариэль Вечная", role:"Углубляющий",
-      bonus:"Атака лучников +15%, марш +5%.",
-      apply:b=>{ b.archer+=.15; b.march+=.05; } },
-    { name:"Ильвен Хрустальный Щит", role:"Компенсирующий",
-      bonus:"Лёгкие доспехи гасятся в ноль (защита обычная), но бонус атаки лучников снят целиком.",
+    { name:"Ильвен Хрустальный Щит", role:"Щитоносец",
+      bonus:"Держит строй там, где остальные эльфы бегут: лёгкие доспехи гасятся в ноль (защита обычная), но взамен отдаёт весь бонус атаки лучников.",
       apply:b=>{ b.def+=.10; b.archer=0; } },
+    { name:"Тариэль Вечная", role:"Лучница",
+      bonus:"Стреляет первой и не останавливается: атака лучников +15%, марш +5%.",
+      apply:b=>{ b.archer+=.15; b.march+=.05; } },
   ],
+  /* Владислав и Кармилла — та же история, что и с эльфами: файл avatar-undead1
+     это мужской портрет (Владислав), avatar-undead2 — женский (Кармилла). */
   undead: [
-    { name:"Кармилла", role:"Углубляющий",
-      bonus:"Восстание из мёртвых +15%, милосердие +5%.",
-      apply:b=>{ b.raise+=.15; b.mercy+=.05; } },
-    { name:"Владислав фон Морвейн", role:"Компенсирующий",
-      bonus:"Хрупкие кости гасятся в ноль (защита обычная), но лечение не ускоряется — обычная скорость.",
+    { name:"Владислав фон Морвейн", role:"Несокрушимый",
+      bonus:"Кости, что не ломаются дважды: хрупкость гасится в ноль (защита обычная), но лазарет не торопится — исцеление обычной скорости.",
       apply:b=>{ b.def+=.10; b.healSpeed=1; } },
+    { name:"Кармилла", role:"Некромантка",
+      bonus:"Поднимает павших раньше, чем остывает кровь: восстание из мёртвых +15%, милосердие +5%.",
+      apply:b=>{ b.raise+=.15; b.mercy+=.05; } },
   ],
 };
 const genOf = p => GENERALS[p.race][p.gen.id||0];
@@ -5573,6 +5605,11 @@ function centerOn(x,y){
 // px), поменялась только реализация внутри.
 const RACE_CREST={human:"Human",dwarf:"Dwarf",elf:"Elf",undead:"Undead"};
 function shieldSvg(race,w){
+  // w опущен — без инлайновых width/height: размер отдаётся целиком CSS
+  // класса-обёртки (нужно там, где герб должен тянуться отзывчиво, например
+  // в сетке рас на экране летописи — фиксированный px там инлайн-стилем
+  // перебил бы любое адаптивное правило).
+  if(w==null) return "<img class='shield' src='images/ui/"+RACE_CREST[race]+".png' alt='"+RACES[race].name+"'>";
   const width=w||13, height=Math.round(width*1.5);
   return "<img class='shield' src='images/ui/"+RACE_CREST[race]+".png' alt='"+RACES[race].name+"' "+
     "style='width:"+width+"px;height:"+height+"px;object-fit:contain'>";
@@ -7688,7 +7725,7 @@ function runOnboarding(demo){
            "венцы в академии и слабость, с которой придётся жить всю партию.</div>";
         h+="<div class='ob-races'>"+RACE_KEYS.map(r=>
           "<div class='ob-race"+(pick.race===r?" on":"")+"' data-ob='race' data-r='"+r+"' "+
-          "style='--rc:"+RACES[r].color+"'>"+shieldSvg(r,42)+"<b>"+RACES[r].name+"</b></div>").join("")+"</div>";
+          "style='--rc:"+RACES[r].color+"'>"+shieldSvg(r)+"<b>"+RACES[r].name+"</b></div>").join("")+"</div>";
         if(pick.race){
           const R=RACES[pick.race];
           h+="<div class='ob-detail' style='--rc:"+R.color+"'>"+
@@ -7700,12 +7737,8 @@ function runOnboarding(demo){
         const R=RACES[pick.race];
         h+="<div id='ob-hd'>"+R.name+"</div>"+
            "<div id='ob-title'>Кто поведёт войско</div>"+
-           // «Обычно» тут не для мягкости, а по факту: у гномов, эльфов и нежити
-           // полководцы так и подписаны — Углубляющий и Компенсирующий, — а у
-           // людей это Военный и Хозяйство. Утверждать правило без оговорки
-           // значило бы спорить с подписями, которые игрок видит тут же рядом.
-           "<div id='ob-lede'>Полководец тоже выбирается один раз. Обычно один усиливает "+
-           "сторону, которой народ и так силён, а другой гасит его слабость — но платит за это.</div>";
+           "<div id='ob-lede'>Полководец тоже выбирается один раз и до конца партии. Один из двух "+
+           "обычно усиливает то, в чём народ и так силён, другой платит своим даром за слабость расы.</div>";
         h+="<div class='ob-gens'>"+GENERALS[pick.race].map((g,i)=>
           "<div class='ob-gen"+(pick.genId===i?" on":"")+"' data-ob='gen' data-i='"+i+"' "+
           "style='--rc:"+R.color+"'>"+
@@ -7720,7 +7753,7 @@ function runOnboarding(demo){
         // портретом, по которым игрок выбирал: последний шаг должен выглядеть
         // подтверждением решения, а не отдельной анкетой, приехавшей ниоткуда.
         h+="<div id='ob-hd'>Летопись нового правителя</div>"+
-           "<div class='ob-sum' style='--rc:"+R.color+"'>"+shieldSvg(pick.race,38)+
+           "<div class='ob-sum' style='--rc:"+R.color+"'>"+shieldSvg(pick.race)+
              "<img src='images/ui/avatar-"+pick.race+(pick.genId+1)+".png' alt='' "+
              "onerror=\"this.style.visibility='hidden'\">"+
              "<div><div class='nm'>"+R.name+"</div><div class='gn'>"+G.name+"</div></div></div>"+
