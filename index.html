@@ -208,6 +208,19 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   display:block;letter-spacing:.02em;text-decoration:none;text-shadow:0 1px 3px rgba(0,0,0,.9)}
 .coin .rate.neg{color:var(--garnet)}
 .coin .disc{filter:drop-shadow(0 1px 3px rgba(0,0,0,.8))}
+/* Янтарь — донатный ресурс, нарочно НЕ в сетке .purse с остальными четырьмя:
+   отдельная светящаяся плашка, как в мобильных играх выделяют премиум-валюту
+   среди обычных. Сама сумма пока просто p.amber (см. renderTop) — экономика
+   (добыча/склад/разграбление) ещё не подключена, это только место в шапке. */
+#amber-badge{display:flex;align-items:center;gap:6px;flex:0 0 auto;
+  padding:3px 10px 3px 3px;border-radius:20px;
+  background:radial-gradient(circle at 30% 25%,rgba(230,152,42,.28),rgba(0,0,0,.3) 72%);
+  border:1px solid rgba(230,152,42,.6);
+  box-shadow:0 0 9px rgba(230,152,42,.4),inset 0 0 6px rgba(255,204,130,.16)}
+#amber-badge .disc{width:22px;height:22px;border-radius:50%;flex:0 0 auto;object-fit:contain;
+  filter:drop-shadow(0 1px 3px rgba(0,0,0,.85))}
+#amber-badge .amt{font-family:var(--data);font-size:13px;font-variant-numeric:tabular-nums;
+  letter-spacing:-.01em;color:var(--gilt-hi);text-shadow:0 1px 3px rgba(0,0,0,.9)}
 .stat-ico{width:14px;height:14px;object-fit:contain;vertical-align:-2px;margin-right:5px}
 
 #chron{margin-left:auto;display:flex;align-items:center;gap:14px;padding-left:14px}
@@ -885,6 +898,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
       </div>
     </div>
     <div class="purse" id="purse"></div>
+    <div id="amber-badge" title="Янтарь"><img class="disc" src="images/ui/res-amber.png" alt=""><span class="amt" id="amber-amt">0</span></div>
     <div id="chron" style="display:none">
       <div class="stat"><b id="daytime">—</b><s>Хроника</s></div>
       <select id="tempo" title="Ускорение времени — только для проверки">
@@ -4469,6 +4483,7 @@ function renderTop(){
       "<span><b class='amt'>"+fmt(p.res[r])+"</b>"+
       "<s class='rate"+(v<0?" neg":"")+"'>"+(v<0?"−":"+")+fmt(Math.abs(v))+"/ч</s></span></div>";
   }).join("");
+  $("#amber-amt").textContent=fmt(p.amber||0);
   $("#crest-name").textContent=p.nick||"Безымянный лорд";
   $("#crest-power").innerHTML="<img class='ico' src='images/ui/icon-power.png' alt=''>"+fmt(power(p));
   const avSrc=playerAvatarSrc(p);
