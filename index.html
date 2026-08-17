@@ -218,6 +218,20 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    элемента, а следствие общей нерастягиваемой шапки). Вынесена в свой
    собственный fixed-угол справа сверху — гарантированно на экране всегда,
    независимо от того, насколько разрастётся #top слева. */
+/* Полоса догона мира после долгого отсутствия — см. catchUpProgress/
+   advanceToAnimated. Поверх всего (z-index выше модалок), потому что пока
+   она висит, играть ещё не во что: мир досчитывается. */
+#catchup{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;
+  background:rgba(10,8,5,.82);backdrop-filter:blur(2px)}
+#catchup .cu-card{display:flex;flex-direction:column;align-items:center;gap:8px;
+  padding:20px 26px;border-radius:8px;background:rgba(20,15,8,.92);
+  border:1px solid var(--gilt-dim);box-shadow:0 8px 30px rgba(0,0,0,.6);max-width:min(88vw,340px)}
+#catchup b{color:var(--gilt-hi);font-size:15px;font-weight:normal}
+#catchup .cu-sub{color:var(--vellum-faint);font-size:12px;text-align:center}
+#catchup .cu-bar{width:100%;height:6px;border-radius:3px;overflow:hidden;
+  background:rgba(0,0,0,.5);border:1px solid var(--rule-soft)}
+#catchup .cu-bar i{display:block;height:100%;width:0;border-radius:3px;
+  background:linear-gradient(90deg,var(--gilt-dim),var(--gilt-hi));transition:width .12s linear}
 #amber-badge{position:fixed;top:3px;right:3px;z-index:15;
   display:flex;align-items:center;gap:6px;
   padding:3px 10px 3px 3px;border-radius:20px;
@@ -2301,6 +2315,73 @@ const ri=(a,b)=>a+Math.floor(RNG()*(b-a+1));
 const pick=a=>a[Math.floor(RNG()*a.length)];
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 
+/* ---- Рельеф. Лежит здесь, в движке, а не в UI-половине, потому что от него
+   зависит САМА ГЕНЕРАЦИЯ мира: findSpot/genWorld/relocate спрашивают
+   isRealWater("тут вода?") до того, как посадить город, лагерь или точку.
+   Раньше весь этот блок стоял ниже, среди интерфейсных функций, и движок
+   тянулся за ним вверх по файлу — из-за таких же обратных связей движок
+   нельзя было запустить отдельно от браузера. Чистая математика, ни одного
+   обращения к DOM. ---- */
+function hash2(x,y,s){ let h=x*374761393+y*668265263+s*1274126177;
+  h=Math.imul(h^(h>>>13),1274126177); return ((h^(h>>>16))>>>0)/4294967296 }
+function noise(x,y,s){
+  const xi=Math.floor(x), yi=Math.floor(y), xf=x-xi, yf=y-yi;
+  const u=xf*xf*(3-2*xf), v=yf*yf*(3-2*yf);
+  const a=hash2(xi,yi,s),b=hash2(xi+1,yi,s),c=hash2(xi,yi+1,s),d=hash2(xi+1,yi+1,s);
+  return (a*(1-u)+b*u)*(1-v)+(c*(1-u)+d*u)*v;
+}
+function ridge(x,y,s){ return 1-Math.abs(2*noise(x,y,s)-1) }   // излом шума даёт хребты
+
+/* ---- Настоящая вода 3D-мира (obyom-3d-infinite.html): её сеет ФИКСИРОВАННЫЙ
+   RW_SEED, один и тот же на любой партии (не W.seed) — рельеф там не зависит
+   от того, чья это карта. Раньше 2D-генератор клеток вообще не знал про
+   рельеф и мог посадить город/лагерь/точку прямо в море: 3D-сторона потом
+   искусственно поднимала landtу ПОД объектом (flattenNear), но саму воду
+   вокруг это не убирало — выглядело как замок в озере. Порт heightAt/isWater
+   сюда даёт 2D-генератору спросить "тут вода?" ДО того, как объект лёг на
+   карту, вместо косметической подчистки постфактум. Формула — дословная
+   копия heightRaw/heightAt из obyom-3d-infinite.html; hash2/noise/ridge выше
+   уже совпадают с тамошними один в один. ---- */
+const RW_SEED=12345, RW_SEA=0.235;
+function rwSstep(a,b,x){ const t=Math.min(1,Math.max(0,(x-a)/(b-a))); return t*t*(3-2*t) }
+function rwRegionKind(x,y){
+  return { mount: rwSstep(0.40,0.72, noise(x/40,y/40,RW_SEED+55)),
+           plat:  rwSstep(0.62,0.84, noise(x/34,y/34,RW_SEED+88)),
+           rough: noise(x/26,y/26,RW_SEED+123) };
+}
+function rwHeightRaw(x,y){
+  const wx=(noise(x/34,y/34,RW_SEED+101)*2-1)*13;
+  const wy=(noise(x/34,y/34,RW_SEED+102)*2-1)*13;
+  const X=x+wx, Y=y+wy;
+  const R=rwRegionKind(x,y);
+  const cont=noise(X/62,Y/62,RW_SEED+201);
+  let e=0.16+cont*0.50;
+  const amp=0.16+0.84*R.mount+0.35*R.rough;
+  e+=(noise(X/27,Y/27,RW_SEED)*0.20+noise(X/13,Y/13,RW_SEED+9)*0.10
+     +noise(X/6,Y/6,RW_SEED+21)*0.045)*amp;
+  e+=ridge(X/17,Y/17,RW_SEED+37)*0.33*R.mount;
+  e+=R.mount*0.10-(1-R.mount)*0.05;
+  if(R.plat>0.02){
+    const terr=Math.round(e*6.0)/6.0;
+    e=e*(1-R.plat*0.80)+terr*(R.plat*0.80);
+  }
+  if(e>=0.42){
+    const k=rwSstep(0.42,0.68,e);
+    e+=(noise(x/2.4,y/2.4,RW_SEED+180)-0.5)*0.075*k
+      +(noise(x/5.5,y/5.5,RW_SEED+181)-0.5)*0.055*k;
+  }
+  return Math.max(0.02,Math.min(1,e));
+}
+function rwHeightAt(x,y){
+  const c=rwHeightRaw(x,y);
+  const s=(rwHeightRaw(x+0.7,y)+rwHeightRaw(x-0.7,y)+rwHeightRaw(x,y+0.7)+rwHeightRaw(x,y-0.7))*0.25;
+  return c*0.55+s*0.45;
+}
+// Клетка (x,y) — центр клетки (+0.5), та же точка, что 3D берёт под объект
+// (см. buildRealCandidate в obyom-3d-infinite.html).
+function isRealWater(x,y){ return rwHeightAt(x+0.5,y+0.5)<RW_SEA }
+
+
 // bk — какое здание (см. BUILDING_TABLE): у Стены/Гарнизона/Разведки своя
 // настоящая кривая RoK, у всех остальных — общая BUILD_TABLE (курс Ратуши),
 // как и раньше. Для мест без здания в контексте (например бот резервирует
@@ -2677,6 +2758,46 @@ function ensureWorldChunk(cx,cy){
   if(!W) return;
   ensureChunkContent(cx,cy);
 }
+// Выбрасывает дикий контент далёких чанков вместе с отметкой "чанк уже засеян".
+// Мир бесконечный: W.map/mapChunks/genChunks росли по мере исследования и не
+// чистились никогда, а весь W уходит в JSON.stringify синхронно каждые 20 секунд
+// и в beforeunload — то есть цена разрастания платится не когда-нибудь, а на
+// каждом сохранении.
+// Выбрасывать безопасно, потому что генерация ЧИСТАЯ: ensureChunkContent зависит
+// только от (cx,cy) и W.seed через structChunkOk/findFreeCellInChunk/hashPick —
+// вернётесь в тот же чанк, и он засеется ровно тем же содержимым. Поэтому здесь
+// снимается и флаг genChunks: без этого чанк остался бы навсегда пустым.
+// Города НЕ трогаем ни при каких условиях — это состояние игроков, из зерна оно
+// не восстанавливается. Занятые объекты (busy — туда идёт или там стоит чей-то
+// отряд) тоже оставляем, иначе поход прибудет в никуда.
+const KEEP_CHUNK_RADIUS=6;   // ~96 клеток от города — заметно больше любого обзора
+function pruneFarChunks(){
+  if(!W||!W.map) return 0;
+  const anchors=[];
+  W.players.forEach(p=>anchors.push([Math.floor(p.x/STRUCT_CHUNK),Math.floor(p.y/STRUCT_CHUNK)]));
+  // у возвращающегося похода цели уже нет — его дом и так среди якорей выше
+  W.marches.forEach(m=>{ if(isFinite(m.tx)&&isFinite(m.ty))
+    anchors.push([Math.floor(m.tx/STRUCT_CHUNK),Math.floor(m.ty/STRUCT_CHUNK)]); });
+  const near=(cx,cy)=>anchors.some(a=>Math.abs(a[0]-cx)<=KEEP_CHUNK_RADIUS&&Math.abs(a[1]-cy)<=KEEP_CHUNK_RADIUS);
+  let dropped=0;
+  for(const ck in W.mapChunks){
+    const [cx,cy]=ck.split(",").map(Number);
+    if(near(cx,cy)) continue;
+    const keys=W.mapChunks[ck]||[];
+    let keptAny=false;
+    for(const k of keys.slice()){
+      const o=W.map[k];
+      if(!o) continue;
+      if(o.t==="city"||o.busy){ keptAny=true; continue }
+      mapDelete(o.x,o.y); dropped++;
+    }
+    // Чанк пересеется при возвращении — но только если снять отметку. Снимаем
+    // лишь тогда, когда вынесли из него всё: иначе к оставшемуся городу
+    // добавился бы второй экземпляр точки/лагеря.
+    if(!keptAny){ delete W.mapChunks[ck]; delete W.genChunks[ck] }
+  }
+  return dropped;
+}
 function genWorld(seed){
   RNG = mulberry(seed);
   W = { seed, t:0, born:Date.now(), map:{}, mapChunks:{}, genChunks:{}, players:[], marches:[], events:[],
@@ -2996,6 +3117,83 @@ function banditPower(lv){
   return armyPower(banditArmy(lv), null);
 }
 
+
+/* ---- Ниже — то, что раньше жило среди интерфейсных функций, хотя зовётся
+   отсюда, из движка: гейты дерева исследований (их спрашивают БОТЫ в
+   startResearch), статы полководца (считаются в КАЖДОМ бою, makeForce) и
+   путь к аватару (уходит в почтовый отчёт о сражении). DOM ни одна из них
+   не трогает — стояли внизу просто потому, что там же рисуются. Из-за таких
+   обратных ссылок движок нельзя было прогнать без браузера. ---- */
+function nodeTitle(n){
+  if(n.unlock) return ({inf:"Пехота",arc:"Лучники",cav:"Кавалерия",sie:"Осада"}[n.unlock.type])+": "+TIER_NAMES[n.unlock.type][n.unlock.tier-1];
+  return n.name;
+}
+function waveLabel(w){ return {1:"Начало",2:"Развитие",3:"Расцвет",4:"Венец"}[w]||("Ступень "+w); }
+function nodeDepth(n,arr,cache){
+  if(cache.has(n.id)) return cache.get(n.id);
+  cache.set(n.id,0); // защита от случайного цикла в данных
+  const reqs=n.requires||[];
+  const d = reqs.length ? 1+Math.max(...reqs.map(id=>{
+    const pn=arr.find(x=>x.id===id); return pn?nodeDepth(pn,arr,cache):0;
+  })) : 0;
+  cache.set(n.id,d);
+  return d;
+}
+const ROW_SIZES=[4,3,4,2];    // рядами по 2-4 для красоты, а не одной длинной стеной
+function computeRows(arr,p){
+  const visible=arr.filter(n=>nodeVisibleFor(n,p));
+  const cache=new Map();
+  const byDepth={};
+  visible.forEach(n=>{ const d=nodeDepth(n,arr,cache); (byDepth[d]=byDepth[d]||[]).push(n); });
+  const depths=Object.keys(byDepth).map(Number).sort((a,b)=>a-b);
+  let sizeIdx=0;
+  const rows=[];
+  depths.forEach(d=>{
+    const unlockNodes=byDepth[d].filter(n=>n.unlock);
+    let list=byDepth[d].filter(n=>!n.unlock);
+    while(list.length){
+      const n=ROW_SIZES[sizeIdx%ROW_SIZES.length]; sizeIdx++;
+      rows.push(list.slice(0,n));
+      list=list.slice(n);
+    }
+    if(unlockNodes.length) rows.push(unlockNodes);   // открытие тира войск — всегда своей строкой целиком, без разбивки
+  });
+  return rows;
+}
+function rowGate(n,p){
+  const rows=computeRows(ACADEMY_TREE[n.branch],p);
+  const idx=rows.findIndex(row=>row.some(x=>x.id===n.id));
+  if(idx<=0) return {locked:false,missing:[]};
+  const missing=rows[idx-1].filter(x=>(p.tech[x.id]||0)<x.max);
+  return {locked:missing.length>0,missing};
+}
+function researchLocked(n,p){
+  if(epochOf(p.b.hall)<n.wave) return true;
+  return rowGate(n,p).locked;
+}
+const EPOCH_HALL_MIN=[1,7,13,19,25];
+function lockReason(n,p){
+  if(epochOf(p.b.hall)<n.wave) return "нужна ратуша "+EPOCH_HALL_MIN[n.wave-1]+" уровня";
+  const missing=rowGate(n,p).missing;
+  if(missing.length) return "нужно закончить: "+missing.map(x=>nodeTitle(x)).join(", ");
+  return "заблокировано";
+}
+
+function genStats(p){
+  // 1 ур. полководца ~= статы юнита Т5 (как в RoK), дальше растёт той же кривой, что и раньше
+  const lv=p.gen.lv, B=bonuses(p), g=Math.pow(lv,1.15);
+  const gear=gearBonus(p);   // теперь проценты — умножаем, а не прибавляем флэтом
+  return {
+    hp:  Math.round((250+30*g)*(1+B.genHpMod)*(1+gear.hp)),
+    atk: Math.round((200+40*g)*(1+B.genAtkMod)*(1+gear.atk)),
+    def: Math.round((170+30*g)*(1+B.genDefMod)*(1+gear.def)),
+  };
+}
+
+function playerAvatarSrc(p){
+  return (p.gen&&p.gen.id!=null) ? "images/ui/avatar-"+p.race+(p.gen.id+1)+".png" : null;
+}
+
 /* ---- Очередь событий ------------------------------------------------- */
 function schedule(dt,type,data){
   const ev={t:W.t+Math.max(0,dt),type,data,id:W.nextId++};
@@ -3102,20 +3300,38 @@ function capacity(p){    // своя вместимость на каждый р
   RES.forEach(r=>out[r]=base+extra[r]);
   return out;
 }
-function syncRes(p){
+// lazy=true — «посчитай, если накопилось хотя бы на секунду мира». Так зовёт
+// только ход времени (advanceTo), где точность до кадра не нужна: экономика тут
+// ленивая, ресурс всё равно досчитается перед первым же чтением. Все места, где
+// цифру реально читают или тратят (canPay/pay/gain/рендер), зовут без флага и
+// получают точное значение на текущий момент.
+// Зачем: advanceTo синкал ВСЕХ игроков каждый кадр, а каждый синк тянет за собой
+// production()->bonuses() — 11 мкс на перебор 63 узлов академии, 15 талантов и
+// эпох расы, с аллокацией объекта на полсотни полей. 13 игроков x 60 fps = 780
+// вызовов в секунду (~9 мс/с на десктопе, на телефоне в 5-10 раз больше) ради
+// приращения за 1/60 секунды. Порог в секунду срезает это в ~60 раз, ничего не
+// меняя в самих числах.
+function syncRes(p, lazy){
+  if(lazy && W.t-p.resAt < 1) return;
   const dt=(W.t-p.resAt)/3600; if(dt<=0){p.resAt=W.t;return}
   const pr=production(p);
   // В RoK участок копит добычу до своей "Ёмкости" и дальше не растёт, пока
-  // игрок его не заберёт тапом. Здесь роль "тапа" играет сам факт присутствия
-  // в игре: пока вы онлайн, синк идёт часто (раз в секунду через renderTop) —
-  // за такой малый dt лимит практически никогда не задевается, всё сразу
-  // уходит в общий запас, как будто собираете постоянно. А вот пока вас нет
+  // игрок его не заберёт тапом. Роль "тапа" здесь играет присутствие в игре:
+  // пока вы в игре, синк идёт часто и лимит просто не успевает набраться —
+  // всё уходит в общий запас, как будто собираете постоянно. А пока вас нет
   // (вкладка закрыта/свёрнута надолго), следующий синк случится только когда
   // вы вернётесь — и тогда всё, что участок произвёл бы сверх своей "Ёмкости"
   // за это время, пропадает (как несобранное в RoK), а накопление участка
   // начинается заново с момента возвращения.
-  const cap=plotFillCap(p);
-  for(const r of RES) p.res[r]=Math.max(0, p.res[r]+Math.min(pr[r]*dt, cap[r]));
+  // Ботов лимит не касается СОЗНАТЕЛЬНО: они не «заходят в игру», они в ней
+  // всегда, тапать им нечего. Заодно это развязывает их экономику с частотой
+  // синка — иначе доход ботов молча зависел бы от того, как часто крутится
+  // цикл, то есть от fps на устройстве игрока.
+  const cap=p.isBot?null:plotFillCap(p);
+  for(const r of RES){
+    const add=cap?Math.min(pr[r]*dt, cap[r]):pr[r]*dt;
+    p.res[r]=Math.max(0, p.res[r]+add);
+  }
   p.resAt=W.t;
 }
 function canPay(p,c){ syncRes(p); return RES.every(r=>!c[r]||p.res[r]>=c[r]) }
@@ -3363,7 +3579,14 @@ function resolveBattle(A,D,ctx){
     if(ra<0.28 && !ctx.toDeath) break;          // атакующий отступает, потеряв 72%
   }
   const aliveA=countUnits(A.units), aliveD=countUnits(D.units);
-  const win = aliveA>0 && aliveD<=0 ? "A" : aliveD>0&&aliveA<=0 ? "D" : (aliveA>aliveD?"A":"D");
+  // Если обе стороны выстояли (упёрлись в 60 раундов или атакующий отступил),
+  // победу считаем по ОСТАВШЕЙСЯ СИЛЕ, а не по числу голов. Раньше стояло
+  // aliveA>aliveD — то есть 250 уцелевших крестьян T1 объявлялись сильнее 249
+  // уцелевших рыцарей T5, хотя те на порядок дороже и вдесятеро мощнее.
+  // Ничью силой (в т.ч. 0:0 — обе армии полегли) отдаём защитнику: он на своей
+  // земле, штурм не удался.
+  const powA=armyPower(A.units,A.B,A.p&&A.p.race), powD=armyPower(D.units,D.B,D.p&&D.p.race);
+  const win = aliveA>0 && aliveD<=0 ? "A" : aliveD>0&&aliveA<=0 ? "D" : (powA>powD?"A":"D");
   return {win, rounds:round, lossA, lossD, lines, aliveA, aliveD};
 }
 function applyDamage(f,dmg,loss){
@@ -4490,16 +4713,56 @@ function dismantleItem(p,slot,order,rarity){
    ХОД ВРЕМЕНИ. Догоняющая симуляция: сколько бы вас не было, движок
    прокручивает очередь событий до текущего момента.
    ========================================================================= */
-function advanceTo(target){
-  let guard=0;
+// Прокручивает очередь, но не дольше budgetMs подряд (0 — без ограничения).
+// Возвращает true, если дошли до target, и false, если бюджет кончился раньше.
+// ВАЖНО: W.t двигаем на время последнего обработанного события, а не на target,
+// когда вышли по бюджету. Раньше здесь стоял аварийный guard>200000 с break, но
+// W.t=target выполнялось В ЛЮБОМ случае — недокрученные события оставались в
+// очереди с t в прошлом, и следующий вызов ставил W.t=ev.t, то есть уводил
+// мировые часы НАЗАД (syncRes при dt<0 просто переставляет метку, и добыча за
+// этот отрезок молча терялась). Теперь незавершённый догон — штатное состояние:
+// часы стоят там, докуда реально досчитали, и следующий заход продолжает с него.
+function advanceChunk(target, budgetMs){
+  const until = budgetMs ? performance.now()+budgetMs : Infinity;
+  let n=0;
   while(W.events.length && W.events[0].t<=target){
-    if(++guard>200000) break;
     const ev=W.events.shift();
     W.t=ev.t;
     const fn=EV[ev.type]; if(fn) fn(ev.data);
+    // время сверяем не каждое событие — performance.now() сам по себе не бесплатен
+    if((++n & 63)===0 && performance.now()>=until) return false;
   }
   W.t=target;
-  W.players.forEach(syncRes);
+  W.players.forEach(p=>syncRes(p,true));   // lazy: не чаще раза на секунду мира, см. syncRes
+  return true;
+}
+function advanceTo(target){ return advanceChunk(target, 0) }
+// Догон за долгое отсутствие одним куском намертво вешал вкладку: замеры на
+// свежем мире дали 0.38с за сутки, 0.96с за неделю, 2.7с за месяц и 15с за
+// полгода — и это на десктопе, телефон в 5-10 раз медленнее. Крутим очередь
+// порциями по кадру, отдавая браузеру управление между ними, и показываем
+// прогресс. Отсчёт ведём по МОДЕЛЬНОМУ времени (сколько секунд мира осталось
+// прокрутить), а не по числу событий: сколько их будет всего, заранее неизвестно.
+// catchingUp — замок на время покадрового догона. Главный цикл frame() крутит
+// время сам, и если бы он продолжал работать параллельно, оба двигали бы W.t и
+// разбирали одну очередь навстречу друг другу. На загрузке гонки нет (frame()
+// стартует только после await load()), а вот возврат на вкладку идёт поверх уже
+// работающего цикла — вот ради этого случая замок и нужен.
+let catchingUp=false;
+function advanceToAnimated(target, onProgress){
+  return new Promise(resolve=>{
+    const t0=W.t, span=Math.max(1,target-t0);
+    catchingUp=true;
+    (function step(){
+      if(advanceChunk(target, 40)){
+        catchingUp=false;
+        if(onProgress) onProgress(1);
+        resolve(); return;
+      }
+      if(onProgress) onProgress(Math.min(0.999,(W.t-t0)/span));
+      requestAnimationFrame(step);
+    })();
+  });
 }
 
 /* =========================================================================
@@ -4572,6 +4835,7 @@ const Store={
 };
 const SAVE_KEY="fourbanners:save1";
 async function save(){
+  pruneFarChunks();          // см. комментарий там: сейв иначе растёт вечно
   W.savedAt=Date.now();
   try{ await Store.set(SAVE_KEY, JSON.stringify(W)) }catch(e){ console.warn("save failed",e) }
 }
@@ -4653,7 +4917,10 @@ async function load(){
       // сдвинут — иначе избыток уже молча срежется и предупреждать будет не о чем.
       const p=me(), pr=production(p), cap=plotFillCap(p), dtH=away/3600;
       const overflowed=RES.filter(r=>pr[r]*dtH>cap[r]).map(r=>RES_NAME[r]);
-      advanceTo(W.t+away);
+      // порциями по кадру, с полосой прогресса — иначе за месяц отсутствия
+      // вкладка молча висит несколько секунд (на телефоне — десятки)
+      await advanceToAnimated(W.t+away, f=>catchUpProgress(f, away));
+      catchUpProgress(null);
       const capNote=overflowed.length
         ?" Участки ("+overflowed.join(", ")+") успели заполниться до предела — часть добычи за это время пропала, дальше не копилась."
         :"";
@@ -4673,6 +4940,23 @@ async function load(){
 const $=s=>document.querySelector(s);
 const me=()=>W.players[0];
 const RU=n=>Math.round(n).toLocaleString("ru-RU");
+// Полоса догона мира после долгого отсутствия (см. advanceToAnimated).
+// Плашку строим на лету: она нужна раз за загрузку и только если игрока
+// не было достаточно долго, держать её в разметке впустую незачем.
+// f===null — убрать плашку.
+function catchUpProgress(f, awaySec){
+  let el=document.getElementById("catchup");
+  if(f===null){ if(el) el.remove(); return }
+  if(!el){
+    el=document.createElement("div"); el.id="catchup";
+    el.innerHTML="<div class='cu-card'><b>Мир жил своей жизнью</b>"+
+      "<span class='cu-sub'>Вас не было "+fmtDur(awaySec||0)+" — досчитываем события</span>"+
+      "<div class='cu-bar'><i></i></div></div>";
+    document.body.appendChild(el);
+  }
+  const bar=el.querySelector(".cu-bar i");
+  if(bar) bar.style.width=Math.round(f*100)+"%";
+}
 function fmt(n){ n=Math.round(n);
   if(Math.abs(n)>=1e9) return (n/1e9).toFixed(2)+" млрд";
   if(Math.abs(n)>=1e6) return (n/1e6).toFixed(2)+" млн";
@@ -4711,64 +4995,6 @@ let scoutOpenKey=null;
 const RES_SITE_NAME={food:"Пашня",wood:"Лесопилка",stone:"Каменоломня",gold:"Рудник"};
 let tab="city", tempo=1, lastReal=Date.now(), lastFolio="", lastMenuBody="", academyTab="mil", invTab="res", genTab="overview", genTomesOpen=false;
 
-function hash2(x,y,s){ let h=x*374761393+y*668265263+s*1274126177;
-  h=Math.imul(h^(h>>>13),1274126177); return ((h^(h>>>16))>>>0)/4294967296 }
-function noise(x,y,s){
-  const xi=Math.floor(x), yi=Math.floor(y), xf=x-xi, yf=y-yi;
-  const u=xf*xf*(3-2*xf), v=yf*yf*(3-2*yf);
-  const a=hash2(xi,yi,s),b=hash2(xi+1,yi,s),c=hash2(xi,yi+1,s),d=hash2(xi+1,yi+1,s);
-  return (a*(1-u)+b*u)*(1-v)+(c*(1-u)+d*u)*v;
-}
-function ridge(x,y,s){ return 1-Math.abs(2*noise(x,y,s)-1) }   // излом шума даёт хребты
-
-/* ---- Настоящая вода 3D-мира (obyom-3d-infinite.html): её сеет ФИКСИРОВАННЫЙ
-   RW_SEED, один и тот же на любой партии (не W.seed) — рельеф там не зависит
-   от того, чья это карта. Раньше 2D-генератор клеток вообще не знал про
-   рельеф и мог посадить город/лагерь/точку прямо в море: 3D-сторона потом
-   искусственно поднимала landtу ПОД объектом (flattenNear), но саму воду
-   вокруг это не убирало — выглядело как замок в озере. Порт heightAt/isWater
-   сюда даёт 2D-генератору спросить "тут вода?" ДО того, как объект лёг на
-   карту, вместо косметической подчистки постфактум. Формула — дословная
-   копия heightRaw/heightAt из obyom-3d-infinite.html; hash2/noise/ridge выше
-   уже совпадают с тамошними один в один. ---- */
-const RW_SEED=12345, RW_SEA=0.235;
-function rwSstep(a,b,x){ const t=Math.min(1,Math.max(0,(x-a)/(b-a))); return t*t*(3-2*t) }
-function rwRegionKind(x,y){
-  return { mount: rwSstep(0.40,0.72, noise(x/40,y/40,RW_SEED+55)),
-           plat:  rwSstep(0.62,0.84, noise(x/34,y/34,RW_SEED+88)),
-           rough: noise(x/26,y/26,RW_SEED+123) };
-}
-function rwHeightRaw(x,y){
-  const wx=(noise(x/34,y/34,RW_SEED+101)*2-1)*13;
-  const wy=(noise(x/34,y/34,RW_SEED+102)*2-1)*13;
-  const X=x+wx, Y=y+wy;
-  const R=rwRegionKind(x,y);
-  const cont=noise(X/62,Y/62,RW_SEED+201);
-  let e=0.16+cont*0.50;
-  const amp=0.16+0.84*R.mount+0.35*R.rough;
-  e+=(noise(X/27,Y/27,RW_SEED)*0.20+noise(X/13,Y/13,RW_SEED+9)*0.10
-     +noise(X/6,Y/6,RW_SEED+21)*0.045)*amp;
-  e+=ridge(X/17,Y/17,RW_SEED+37)*0.33*R.mount;
-  e+=R.mount*0.10-(1-R.mount)*0.05;
-  if(R.plat>0.02){
-    const terr=Math.round(e*6.0)/6.0;
-    e=e*(1-R.plat*0.80)+terr*(R.plat*0.80);
-  }
-  if(e>=0.42){
-    const k=rwSstep(0.42,0.68,e);
-    e+=(noise(x/2.4,y/2.4,RW_SEED+180)-0.5)*0.075*k
-      +(noise(x/5.5,y/5.5,RW_SEED+181)-0.5)*0.055*k;
-  }
-  return Math.max(0.02,Math.min(1,e));
-}
-function rwHeightAt(x,y){
-  const c=rwHeightRaw(x,y);
-  const s=(rwHeightRaw(x+0.7,y)+rwHeightRaw(x-0.7,y)+rwHeightRaw(x,y+0.7)+rwHeightRaw(x,y-0.7))*0.25;
-  return c*0.55+s*0.45;
-}
-// Клетка (x,y) — центр клетки (+0.5), та же точка, что 3D берёт под объект
-// (см. buildRealCandidate в obyom-3d-infinite.html).
-function isRealWater(x,y){ return rwHeightAt(x+0.5,y+0.5)<RW_SEA }
 
 // "Взгляд" теперь всегда 3D-камера — центрируем её на (x,y), а не двигаем
 // координаты давно удалённой 2D-канвы (и, позже, удалённой вслед за ней
@@ -4821,9 +5047,6 @@ function hollow(mark,text){
 }
 
 /* Аватар игрока = аватар выбранного полководца (пока не выбран — герба достаточно) */
-function playerAvatarSrc(p){
-  return (p.gen&&p.gen.id!=null) ? "images/ui/avatar-"+p.race+(p.gen.id+1)+".png" : null;
-}
 
 /* ---- Верхняя строка: кошель и хроника ---- */
 let lastCrestAvatar;
@@ -5153,60 +5376,6 @@ const RESEARCH_FIELD_ICON = {
   atkSie:"class-sie", defSie:"class-sie", matkSie:"class-sie", mdefSie:"class-sie",
   atk:"stat-atk", def:"stat-def", hp:"stat-hp", matk:"stat-matk", mdef:"stat-mdef",
 };
-function nodeTitle(n){
-  if(n.unlock) return ({inf:"Пехота",arc:"Лучники",cav:"Кавалерия",sie:"Осада"}[n.unlock.type])+": "+TIER_NAMES[n.unlock.type][n.unlock.tier-1];
-  return n.name;
-}
-function waveLabel(w){ return {1:"Начало",2:"Развитие",3:"Расцвет",4:"Венец"}[w]||("Ступень "+w); }
-function nodeDepth(n,arr,cache){
-  if(cache.has(n.id)) return cache.get(n.id);
-  cache.set(n.id,0); // защита от случайного цикла в данных
-  const reqs=n.requires||[];
-  const d = reqs.length ? 1+Math.max(...reqs.map(id=>{
-    const pn=arr.find(x=>x.id===id); return pn?nodeDepth(pn,arr,cache):0;
-  })) : 0;
-  cache.set(n.id,d);
-  return d;
-}
-const ROW_SIZES=[4,3,4,2];    // рядами по 2-4 для красоты, а не одной длинной стеной
-function computeRows(arr,p){
-  const visible=arr.filter(n=>nodeVisibleFor(n,p));
-  const cache=new Map();
-  const byDepth={};
-  visible.forEach(n=>{ const d=nodeDepth(n,arr,cache); (byDepth[d]=byDepth[d]||[]).push(n); });
-  const depths=Object.keys(byDepth).map(Number).sort((a,b)=>a-b);
-  let sizeIdx=0;
-  const rows=[];
-  depths.forEach(d=>{
-    const unlockNodes=byDepth[d].filter(n=>n.unlock);
-    let list=byDepth[d].filter(n=>!n.unlock);
-    while(list.length){
-      const n=ROW_SIZES[sizeIdx%ROW_SIZES.length]; sizeIdx++;
-      rows.push(list.slice(0,n));
-      list=list.slice(n);
-    }
-    if(unlockNodes.length) rows.push(unlockNodes);   // открытие тира войск — всегда своей строкой целиком, без разбивки
-  });
-  return rows;
-}
-function rowGate(n,p){
-  const rows=computeRows(ACADEMY_TREE[n.branch],p);
-  const idx=rows.findIndex(row=>row.some(x=>x.id===n.id));
-  if(idx<=0) return {locked:false,missing:[]};
-  const missing=rows[idx-1].filter(x=>(p.tech[x.id]||0)<x.max);
-  return {locked:missing.length>0,missing};
-}
-function researchLocked(n,p){
-  if(epochOf(p.b.hall)<n.wave) return true;
-  return rowGate(n,p).locked;
-}
-const EPOCH_HALL_MIN=[1,7,13,19,25];
-function lockReason(n,p){
-  if(epochOf(p.b.hall)<n.wave) return "нужна ратуша "+EPOCH_HALL_MIN[n.wave-1]+" уровня";
-  const missing=rowGate(n,p).missing;
-  if(missing.length) return "нужно закончить: "+missing.map(x=>nodeTitle(x)).join(", ");
-  return "заблокировано";
-}
 function renderTreeMap(arr,p){
   const rows=computeRows(arr,p);
   let h="<div class='rtree'>";
@@ -5689,16 +5858,6 @@ function findTalentNode(id){
 }
 function statIcon(kind){
   return "<img class='stat-ico' src='images/ui/stat-"+kind+".png' alt='' onerror=\"this.remove()\">";
-}
-function genStats(p){
-  // 1 ур. полководца ~= статы юнита Т5 (как в RoK), дальше растёт той же кривой, что и раньше
-  const lv=p.gen.lv, B=bonuses(p), g=Math.pow(lv,1.15);
-  const gear=gearBonus(p);   // теперь проценты — умножаем, а не прибавляем флэтом
-  return {
-    hp:  Math.round((250+30*g)*(1+B.genHpMod)*(1+gear.hp)),
-    atk: Math.round((200+40*g)*(1+B.genAtkMod)*(1+gear.atk)),
-    def: Math.round((170+30*g)*(1+B.genDefMod)*(1+gear.def)),
-  };
 }
 function genPortraitHtml(race,i){
   return "<img class='gen-portrait' src='images/ui/avatar-"+race+(i+1)+".png' alt='' "+
@@ -6803,6 +6962,11 @@ $("#veil").onclick=e=>{ if(e.target.id==="veil") closeScroll() };
 let sinceSave=0, sinceUi=0;
 function frame(){
   const now=Date.now();
+  // Пока идёт покадровый догон, время двигает он — цикл только ждёт и не
+  // трогает ни W.t, ни очередь (см. catchingUp у advanceToAnimated). lastReal
+  // при этом подтягиваем, чтобы после разблокировки не пришёл гигантский dt
+  // за уже отсчитанный догоном промежуток.
+  if(catchingUp){ lastReal=now; requestAnimationFrame(frame); return }
   let dt=(now-lastReal)/1000; lastReal=now;
   if(dt>0){ advanceTo(W.t+dt*tempo); sinceSave+=Math.min(dt,3600); sinceUi+=dt }
   if(sinceUi>1.0){ sinceUi=0; renderTop(); renderFolio(); renderCartouche(); refreshOpenModal(); renderFieldArmyWorld() }
@@ -6813,10 +6977,18 @@ document.addEventListener("visibilitychange",()=>{
   if(document.hidden){ save(); return }
   // Пока вкладка была свёрнута/экран заблокирован, requestAnimationFrame не тикал —
   // досчитываем реальное время сразу, иначе очереди построек «замирают» до перезагрузки.
+  // Телефон нередко держит вкладку свёрнутой сутками, а это уже секунды счёта:
+  // короткие промежутки догоняем на месте, длинные — порциями по кадру с полосой,
+  // тем же путём, что и загрузка после отсутствия (см. advanceToAnimated).
   const away=Math.max(0,(Date.now()-lastReal)/1000);
+  const after=()=>{ renderTop(); renderFolio(); renderCartouche(); refreshOpenModal() };
   lastReal=Date.now();
+  if(away>3600){
+    advanceToAnimated(W.t+away, f=>catchUpProgress(f,away)).then(()=>{ catchUpProgress(null); after() });
+    return;
+  }
   if(away>0) advanceTo(W.t+away);
-  renderTop(); renderFolio(); renderCartouche(); refreshOpenModal();
+  after();
 });
 window.addEventListener("beforeunload",()=>{
   try{ W.savedAt=Date.now(); localStorage.setItem(SAVE_KEY,JSON.stringify(W)) }catch(e){}
