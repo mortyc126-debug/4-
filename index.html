@@ -1438,40 +1438,13 @@ const HOSPITAL_BUILD_TABLE=[
   {food:31500000,wood:31500000,stone:16000000,t:327600,power:574480},
   {food:47200000,wood:47200000,stone:24000000,t:0,power:881480}
 ];   // не путать с hospitalCap (мест в лазарете)
-// Горн = Кузница (Blacksmith) в RoK — но настоящая Кузница вообще НЕ имеет
-// уровней (разовая постройка за 1000 еды/дерева/камня, 11с) и продолжения
-// на 25 уровней у неё в природе не существует. Взял единственное реальное
-// число как 1 уровень (вместо прежнего 'бесплатно', как у Ратуши — Горн не
-// стартовое здание, строится с нуля, как Каменоломня, и первый ввод в
-// реальном RoK тоже не бесплатный), 2-25 уровни оставлены как было (курс
-// Ратуши по цене/времени + прежняя формула по мощи) — RoK для них ничего
-// не даёт, придумывать заново не стал.
+// Горн = Кузница (Blacksmith) в RoK — а у настоящей Кузницы вообще НЕТ
+// уровней: разовая постройка за 1000 еды/дерева/камня, 11с, и всё —
+// апгрейдов не существует в природе. max:1 у Горна в BUILDINGS (см. выше) —
+// единственная реальная строка данных, продолжения на 25 уровней здесь
+// больше нет (было раньше, ошибочно — см. buildingMax).
 const FORGE_TABLE=[
-  {food:1000,wood:1000,stone:1000,t:11,power:5},
-  {food:3500,wood:3500,t:2,power:11339},
-  {food:6500,wood:6500,t:300,power:11641},
-  {food:11800,wood:11800,t:1200,power:12162},
-  {food:21300,wood:21300,t:3600,power:12931},
-  {food:36300,wood:36300,stone:12000,t:7200,power:13992},
-  {food:54400,wood:54400,stone:19200,t:18000,power:15407},
-  {food:81800,wood:81800,stone:30800,t:36000,power:17266},
-  {food:122800,wood:122800,stone:49200,t:54000,power:19690},
-  {food:184300,wood:184300,stone:78700,t:79200,power:22852},
-  {food:277500,wood:277500,stone:120000,t:108000,power:26990},
-  {food:417500,wood:417500,stone:180000,t:144000,power:32442},
-  {food:627500,wood:627500,stone:270000,t:180000,power:39683},
-  {food:942500,wood:942500,stone:405000,t:216000,power:49398},
-  {food:1400000,wood:1400000,stone:607500,t:252000,power:62580},
-  {food:2100000,wood:2100000,stone:912500,t:345600,power:80679},
-  {food:3200000,wood:3200000,stone:1400000,t:417600,power:105852},
-  {food:4800000,wood:4800000,stone:2100000,t:504000,power:141333},
-  {food:7200000,wood:7200000,stone:3100000,t:604800,power:192043},
-  {food:10800000,wood:10800000,stone:4700000,t:712800,power:265559},
-  {food:16200000,wood:16200000,stone:7000000,t:950400,power:373710},
-  {food:24300000,wood:24300000,stone:10600000,t:1483200,power:535199},
-  {food:36500000,wood:36500000,stone:15900000,t:2070000,power:780019},
-  {food:54800000,wood:54800000,stone:24000000,t:3110400,power:1156923},
-  {food:82200000,wood:82200000,stone:36000000,t:10915200,power:1746273}
+  {food:1000,wood:1000,stone:1000,t:11,power:5}
 ];
 const BUILDING_TABLE={
   hall:HALL_TABLE, farm:FARM_TABLE, lumber:LUMBER_TABLE, quarry:QUARRY_TABLE, mine:MINE_TABLE,
@@ -2073,7 +2046,9 @@ const BUILDINGS = {
   wall:    {name:"Стена",         max:25, desc:"Защита города при обороне"},
   garrison:{name:"Гарнизон",      max:25, desc:"Доп. защита при осаде и предупреждение о марше врага"},
   scout:   {name:"Разведка",      max:25, desc:"Раскрывает сведения о войсках противника: чем выше эпоха здания, тем точнее разведданные"},
-  forge:   {name:"Горн",          max:25, desc:"Добыча материалов и ковка снаряжения для полководца"},
+  // Горн = Кузница в RoK, а она вообще без уровней — разовая постройка,
+  // апгрейдов не бывает (см. buildingMax/FORGE_TABLE). max:1, не 25.
+  forge:   {name:"Горн",          max:1, desc:"Добыча материалов и ковка снаряжения для полководца"},
   portal:  {name:"Портал",        max:25, desc:"Пассивно ускоряет марш; с 3 эпохи открывает проход, сокращающий путь отрядов"},
 };
 const BKEYS = Object.keys(BUILDINGS);
@@ -2324,6 +2299,13 @@ const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 // как и раньше. Для мест без здания в контексте (например бот резервирует
 // стоимость апгрейда самой Ратуши) bk передаётся явно ("hall") — своей
 // таблицы у неё нет, откатывается на общую.
+// Раньше потолок стройки ВЕЗДЕ читался из CFG.MAX_LEVEL напрямую — поле
+// BUILDINGS[bk].max при этом существовало, но нигде не читалось (чисто
+// декоративное, у всех стояло 25). С Горном (Кузница RoK — разовая
+// постройка, апгрейдов не бывает вовсе) понадобился настоящий per-building
+// потолок — buildingMax() берёт .max конкретного здания, но не выше общего
+// CFG.MAX_LEVEL (на случай если у здания вдруг стоит больше общего предела).
+const buildingMax = bk => Math.min(CFG.MAX_LEVEL, (BUILDINGS[bk]&&BUILDINGS[bk].max)||CFG.MAX_LEVEL);
 const buildTime = (bk,lv) => {
   const tbl = BUILDING_TABLE[bk];
   return (tbl ? tbl : BUILD_TABLE)[clamp(lv,1,CFG.MAX_LEVEL)-1].t;
@@ -4092,7 +4074,7 @@ function botThink(p){
         if(isMulti(bk) && !plotUnlocked(bk,pi,p.b.hall)) continue;
         const cur = isMulti(bk) ? p.b[bk][pi] : p.b[bk];
         const lv=cur+1;
-        if(lv>CFG.MAX_LEVEL) continue;
+        if(lv>buildingMax(bk)) continue;
         if(bk!=="hall" && lv>p.b.hall) continue;
         if(bk==="hall" && lv>1){
           if(HALL_REQ.some(k=>hallGateLevel(p,k)<p.b.hall)) continue;   // ратуша ждёт ключевые здания
@@ -4287,7 +4269,7 @@ function startBuild(p,bk,plot){
     return {err:"Эта постройка уже в работе у одной из бригад"};
   const cur = multi ? p.b[bk][plot] : p.b[bk];
   const lv=cur+1;
-  if(lv>CFG.MAX_LEVEL) return {err:"Максимальный уровень"};
+  if(lv>buildingMax(bk)) return {err:"Максимальный уровень"};
   if(bk!=="hall"&&lv>p.b.hall) return {err:"Требуется ратуша "+lv+" уровня"};
   if(bk==="hall"){ const need=HALL_REQ.filter(k=>hallGateLevel(p,k)<p.b.hall);
     if(need.length) return {err:"Сначала до "+p.b.hall+" ур.: "+need.map(k=>buildingName(k,p)).join(", ")} }
@@ -5369,7 +5351,7 @@ function buildingStatDeltaHtml(bk,lv,nx){
 function buildingModalHtml(ci){
   const p=me(), c=CITY_CELLS[ci];
   if(!c||!c.bk) return "";
-  const lv=cityCellLevel(p,c), nx=lv+1, maxed=lv>=CFG.MAX_LEVEL;
+  const lv=cityCellLevel(p,c), nx=lv+1, maxed=lv>=buildingMax(c.bk);
   let gated=c.bk!=="hall"&&nx>p.b.hall, gateTxt=gated?"нужна ратуша "+nx:"";
   if(c.bk==="hall"){ const need=HALL_REQ.filter(k=>hallGateLevel(p,k)<p.b.hall);
     if(need.length){ gated=true; gateTxt="сначала "+need.map(k=>buildingName(k,p).toLowerCase()+" до "+p.b.hall+" ур.").join(", "); } }
