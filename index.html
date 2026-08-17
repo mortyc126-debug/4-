@@ -3006,8 +3006,16 @@ function pruneFarChunks(){
 }
 function genWorld(seed){
   RNG = mulberry(seed);
+  // pendingSetup — «мир создан, но правителя ещё не выбрали». Ставится прямо
+  // здесь, потому что любой новый мир требует выбора народа и полководца, и
+  // забыть про это на каком-нибудь новом пути создания станет невозможно.
+  // Снимается только в claimChronicle, после того как выбор сделан и записан.
+  // Без флага была дыра: сброс мира сохраняется автоматически раз в двадцать
+  // секунд, и перезагрузка страницы посреди экрана летописи оставляла игрока с
+  // готовым сейвом, где раса молча осталась человеческой, а экран больше не
+  // показывался — сейв-то уже есть.
   W = { seed, t:0, born:Date.now(), map:{}, mapChunks:{}, genChunks:{}, players:[], marches:[], events:[],
-        log:[], nextId:1, savedAt:Date.now(), mail:[], mailNextId:1 };
+        log:[], nextId:1, savedAt:Date.now(), mail:[], mailNextId:1, pendingSetup:true };
 
   // Города — первыми и с гарантией места (findSpot ниже всегда что-нибудь
   // найдёт, пусть и с нарушением зазора после 4000 попыток): без города
@@ -7132,11 +7140,17 @@ function handleAct(e){
   else if(a==="save"){ save().then(()=>herald("Летопись записана.")); return }
   else if(a==="reset"){
     if(confirm("Заложить новый мир? Всё нажитое исчезнет.")){
-      Store.del(SAVE_KEY).then(()=>{
+      // Новый мир — это новая партия, а значит и новый выбор народа с
+      // полководцем: раньше здесь звался только genWorld(), то есть сброс
+      // проходил МИМО экрана летописи и молча выдавал очередного человека.
+      // Тот же порядок, что и в start(): мир, потом выбор, потом запись.
+      Store.del(SAVE_KEY).then(async ()=>{
         genWorld(Date.now()&0xffffff);
-        sel=null; centerOn(me().x,me().y);
-        lastFolio=""; renderFolio(); renderCartouche();
-        herald("Новый мир заложен.");
+        const q=await claimChronicle();
+        closeMenuModal();
+        sel={x:q.x,y:q.y}; centerOn(q.x,q.y);
+        lastFolio=""; renderFolio(); renderCartouche(); renderTop();
+        herald("Новая летопись начата.");
       });
     }
     return;
@@ -7706,21 +7720,27 @@ function runOnboarding(){
   });
 }
 
+// Показать экран летописи и записать выбор в мир. Один путь на оба случая —
+// первый запуск и «Новый мир» из вкладки Мир, чтобы они не разъезжались.
+// Мир к этому моменту уже создан: столица на месте, соседи расставлены. Меняем
+// только выбранное — newPlayer расу нигде не запекает (см. его код), она
+// читается по p.race везде, где нужна, так что подмена безопасна.
+async function claimChronicle(){
+  const c=await runOnboarding();
+  const q=me();
+  q.race=c.race; q.gen.id=c.genId; q.nick=c.nick;
+  delete W.pendingSetup;
+  await save();
+  return q;
+}
+
 /* ---- Запуск ---- */
 (async function start(){
   const ok=await load();
-  if(!ok){
-    genWorld(Date.now()&0xffffff);
-    // Мир уже есть — столица стоит на месте, соседи расставлены. Меняем только
-    // то, что выбрал игрок: newPlayer расу нигде не запекает (см. его код),
-    // она читается по p.race везде, где нужна, так что подмена безопасна.
-    // На загруженном сохранении этот блок не выполняется вовсе — старые партии
-    // остаются как были, и их выбор полководца по-прежнему живёт во вкладке.
-    const c=await runOnboarding();
-    const q=me();
-    q.race=c.race; q.gen.id=c.genId; q.nick=c.nick;
-    await save();
-  }
+  if(!ok) genWorld(Date.now()&0xffffff);
+  // Старые сохранения флага не несут вовсе, поэтому у них экран не появится —
+  // они остаются как были, и выбор полководца у них живёт во вкладке «Генерал».
+  if(W.pendingSetup) await claimChronicle();
   const p=me();
   centerOn(p.x,p.y); sel={x:p.x,y:p.y};
   syncRibbons(); renderTop(); renderFolio(); renderCartouche();
