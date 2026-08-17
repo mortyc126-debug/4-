@@ -1027,6 +1027,109 @@ const PROD_TABLE=[400,430,470,520,580,650,730,830,950,1100,1300,1550,1850,2200,2
 const STORE_TABLE=[300000,320000,350000,380000,410000,450000,500000,550000,600000,
   650000,700000,750000,800000,850000,900000,1000000,1100000,1200000,1300000,1400000,
   1500000,1600000,1800000,2000000,2500000];
+
+// Три здания, у которых собственный, отличный от общей BUILD_TABLE, курс
+// цены/времени/мощи в RoK (плюс собственная боевая характеристика) — Стена,
+// Сторожевая башня ("Гарнизон" в игре — комментарий у garrisonVolley уже
+// звал её так) и Лагерь разведки. Портал сюда не входит — своей выдумки,
+// прообраза в RoK нет, использует общую BUILD_TABLE как любое здание без
+// таблицы. Уровень 1 бесплатный у Стены и Башни (стартовые, см. newPlayer),
+// у Разведки — нет (строится позже, начинается с нуля, как Каменоломня).
+// WALL: макс. прочность стены (hp) — заменяет старую формулу 3000+ур.*2500.
+const WALL_TABLE=[
+  {t:0,power:5,hp:15000},
+  {food:2300,wood:2800,t:2,power:15,hp:15500},
+  {food:4300,wood:5000,t:90,power:37,hp:16000},
+  {food:7800,wood:9000,t:600,power:94,hp:16500},
+  {food:14000,wood:16300,t:1800,power:226,hp:17000},
+  {food:18000,wood:21000,stone:25000,t:3500,power:519,hp:17500},
+  {food:27000,wood:32000,stone:40000,t:7020,power:1037,hp:18250},
+  {food:41000,wood:47000,stone:64000,t:13980,power:1965,hp:19000},
+  {food:61000,wood:71000,stone:102400,t:28020,power:3656,hp:19750},
+  {food:92000,wood:106000,stone:164000,t:55980,power:6784,hp:20500},
+  {food:137000,wood:160000,stone:250000,t:67200,power:10816,hp:21250},
+  {food:207000,wood:240000,stone:375000,t:80640,power:16060,hp:22000},
+  {food:310000,wood:360000,stone:565000,t:97200,power:22965,hp:22750},
+  {food:465000,wood:540000,stone:850000,t:115200,power:32169,hp:23500},
+  {food:698000,wood:810000,stone:1300000,t:165600,power:44583,hp:24250},
+  {food:1000000,wood:1200000,stone:1900000,t:165600,power:61540,hp:25000},
+  {food:1600000,wood:1800000,stone:2900000,t:201600,power:84977,hp:26000},
+  {food:2400000,wood:2700000,stone:4400000,t:241200,power:117860,hp:27000},
+  {food:3500000,wood:4100000,stone:6600000,t:288000,power:164369,hp:28000},
+  {food:5300000,wood:6200000,stone:9900000,t:345600,power:230776,hp:29000},
+  {food:8000000,wood:9300000,stone:14800000,t:417600,power:326321,hp:30000},
+  {food:12000000,wood:13900000,stone:22200000,t:540000,power:466309,hp:31000},
+  {food:18000000,wood:20900000,stone:33300000,t:756000,power:674163,hp:32000},
+  {food:27000000,wood:31300000,stone:50000000,t:1134000,power:986224,hp:33000},
+  {food:40500000,wood:47100000,stone:75000000,t:3556800,power:1545374,hp:40000}
+];
+// WATCH_TABLE — Сторожевая башня: атака (см. garrisonVolley) и здоровье
+// (в игре отдельного пула ХП у гарнизона нет — использует общий wallHp
+// города, см. syncWall; hp из таблицы приведён для справки, не подключён).
+const WATCH_TABLE=[
+  {t:0,power:5,atk:1000,hp:1000},
+  {food:800,wood:800,t:30,power:11,atk:1500,hp:1500},
+  {food:1500,wood:1500,t:100,power:21,atk:2000,hp:2000},
+  {food:2800,wood:2800,t:300,power:44,atk:3000,hp:3000},
+  {food:5000,wood:5000,t:900,power:100,atk:4000,hp:4000},
+  {food:8500,wood:8500,stone:1300,t:2100,power:221,atk:5000,hp:5000},
+  {food:12800,wood:12800,stone:2000,t:4200,power:446,atk:6000,hp:6000},
+  {food:19300,wood:19300,stone:3200,t:8400,power:868,atk:16000,hp:8000},
+  {food:29000,wood:29000,stone:5200,t:16800,power:1671,atk:20000,hp:10000},
+  {food:43500,wood:43500,stone:8200,t:33600,power:3213,atk:24000,hp:12000},
+  {food:67500,wood:67500,stone:12500,t:40320,power:5133,atk:28000,hp:14000},
+  {food:102500,wood:102500,stone:20000,t:48360,power:7538,atk:32000,hp:16000},
+  {food:155000,wood:155000,stone:30000,t:58080,power:10570,atk:36000,hp:18000},
+  {food:232500,wood:232500,stone:45000,t:69660,power:14421,atk:40000,hp:20000},
+  {food:350000,wood:350000,stone:67500,t:83580,power:19367,atk:66000,hp:22000},
+  {food:525000,wood:525000,stone:102500,t:100800,power:25787,atk:72000,hp:24000},
+  {food:787500,wood:787500,stone:155000,t:118800,power:34217,atk:78000,hp:26000},
+  {food:1200000,wood:1200000,stone:250000,t:144000,power:45545,atk:84000,hp:28000},
+  {food:1800000,wood:1800000,stone:375000,t:172800,power:60804,atk:90000,hp:30000},
+  {food:2700000,wood:2700000,stone:575000,t:208800,power:81650,atk:96000,hp:32000},
+  {food:4100000,wood:4100000,stone:875000,t:248400,power:110460,atk:136000,hp:34000},
+  {food:6100000,wood:6100000,stone:1300000,t:324000,power:151716,atk:144000,hp:36000},
+  {food:9100000,wood:9100000,stone:2000000,t:453600,power:212389,atk:152000,hp:38000},
+  {food:13800000,wood:13800000,stone:3000000,t:680400,power:303649,atk:160000,hp:40000},
+  {food:20800000,wood:20800000,stone:4500000,t:1234800,power:495562,atk:500000,hp:50000}
+];
+// SCOUT_TABLE — Лагерь разведки: bonus%/radius/scouts — настоящие цифры
+// RoK (радиус обзора и число разведчиков на карте), но в этой игре
+// разведка устроена иначе — не радиус на карте, а глубина разведданных по
+// эпохе здания (см. scoutSnapshot) — другая механика, которую эта правка
+// не трогает. bonus/radius/scouts показаны как есть в подсказке по зданию,
+// но ни на что не влияют — переносить RoK-механику радиуса обзора значило
+// бы городить систему тумана войны с нуля, отдельный разговор.
+// 25 ур.: цена/время не подтверждены источником ("?"), оценены по темпу
+// соседних уровней тира.
+const SCOUT_TABLE=[
+  {food:300,wood:300,t:4,power:5,bonus:5,radius:5,scouts:1},
+  {food:500,wood:500,t:15,power:10,bonus:10,radius:5,scouts:1},
+  {food:1000,wood:1000,t:60,power:16,bonus:15,radius:6,scouts:1},
+  {food:2000,wood:2000,t:210,power:32,bonus:20,radius:6,scouts:1},
+  {food:3800,wood:3800,t:850,power:81,bonus:25,radius:7,scouts:2},
+  {food:6500,wood:6500,t:2100,power:191,bonus:30,radius:7,scouts:2},
+  {food:9800,wood:9800,t:4200,power:398,bonus:35,radius:8,scouts:2},
+  {food:14800,wood:14800,t:7800,power:769,bonus:40,radius:8,scouts:2},
+  {food:22300,wood:22300,t:10380,power:1274,bonus:45,radius:9,scouts:2},
+  {food:31300,wood:31300,t:14280,power:1971,bonus:50,radius:9,scouts:2},
+  {food:42500,wood:42500,t:19380,power:2916,bonus:60,radius:10,scouts:3},
+  {food:52500,wood:52500,t:28980,power:4286,bonus:70,radius:10,scouts:3},
+  {food:60000,wood:60000,t:35760,power:5956,bonus:80,radius:11,scouts:3},
+  {food:67500,wood:67500,t:43560,power:7969,bonus:90,radius:12,scouts:3},
+  {food:75000,wood:75000,t:52020,power:10350,bonus:90,radius:13,scouts:3},
+  {food:82500,wood:82500,t:62760,power:13191,bonus:100,radius:13,scouts:3},
+  {food:92500,wood:92500,t:86400,power:17149,bonus:100,radius:14,scouts:3},
+  {food:102500,wood:102500,t:115200,power:22223,bonus:110,radius:14,scouts:3},
+  {food:115000,wood:115000,t:144000,power:28423,bonus:110,radius:15,scouts:3},
+  {food:127500,wood:127500,t:180000,power:36109,bonus:115,radius:15,scouts:3},
+  {food:142500,wood:142500,t:234000,power:46007,bonus:115,radius:16,scouts:3},
+  {food:157500,wood:157500,t:288000,power:58118,bonus:120,radius:16,scouts:3},
+  {food:250000,wood:250000,t:378000,power:74187,bonus:120,radius:17,scouts:3},
+  {food:500000,wood:500000,t:504000,power:96279,bonus:120,radius:18,scouts:3},
+  {food:650000,wood:650000,t:669600,power:139023,bonus:125,radius:20,scouts:3}
+];
+const BUILDING_TABLE={wall:WALL_TABLE, garrison:WATCH_TABLE, scout:SCOUT_TABLE};
 const CFG = {
   MAP: 100,                 // размер стороны карты
   BOTS: 12,                 // количество ботов
@@ -1862,12 +1965,21 @@ const ri=(a,b)=>a+Math.floor(RNG()*(b-a+1));
 const pick=a=>a[Math.floor(RNG()*a.length)];
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 
-const buildTime = lv => BUILD_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1].t;
-const buildCost = (lv,p) => {
-  const row = BUILD_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1];
+// bk — какое здание (см. BUILDING_TABLE): у Стены/Гарнизона/Разведки своя
+// настоящая кривая RoK, у всех остальных — общая BUILD_TABLE (курс Ратуши),
+// как и раньше. Для мест без здания в контексте (например бот резервирует
+// стоимость апгрейда самой Ратуши) bk передаётся явно ("hall") — своей
+// таблицы у неё нет, откатывается на общую.
+const buildTime = (bk,lv) => {
+  const tbl = BUILDING_TABLE[bk];
+  return (tbl ? tbl : BUILD_TABLE)[clamp(lv,1,CFG.MAX_LEVEL)-1].t;
+};
+const buildCost = (bk,lv,p) => {
+  const tbl = BUILDING_TABLE[bk];
+  const row = (tbl ? tbl : BUILD_TABLE)[clamp(lv,1,CFG.MAX_LEVEL)-1];
   const cut = p ? (1-(bonuses(p).buildCostCut||0)) : 1;
-  // в RoK постройки не стоят золота — только еда/дерево/камень (точные числа из BUILD_TABLE)
-  return {food:Math.round(row.food*cut),wood:Math.round(row.wood*cut),stone:Math.round(row.stone*cut),gold:0};
+  // в RoK постройки не стоят золота — только еда/дерево/камень (точные числа из таблиц)
+  return {food:Math.round((row.food||0)*cut),wood:Math.round((row.wood||0)*cut),stone:Math.round((row.stone||0)*cut),gold:0};
 };
 const prodRate  = lv => lv<=0?0:PROD_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1];   // в час
 const storeCap  = lv => STORE_TABLE[clamp(Math.max(1,lv),1,CFG.MAX_LEVEL)-1];
@@ -1915,7 +2027,9 @@ const HOSP_CAP_EXP=1.8462;
 const hospitalCap = lv => lv<=0?0:Math.round(300*Math.pow(lv,HOSP_CAP_EXP));
 const totalHospitalCap = p => p.b.hospital.reduce((s,lv)=>s+hospitalCap(lv),0);
 const hallGateLevel = (p,k) => isMulti(k) ? p.b[k][0] : p.b[k];
-const maxWallHp = lv => 3000+lv*2500;
+// Была придуманная 3000+ур.*2500 (макс. 65500 на 25 ур.) — теперь настоящая
+// прочность стены RoK: 15000 на 1 ур. плавно до 40000 на 25 ур. (см. WALL_TABLE).
+const maxWallHp = lv => lv<=0?0:WALL_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1].hp;
 const wallDefBonus = lv => lv<=0?0 : lv*0.005;   // 0.5%/ур. — макс. +12.5% на 25 ур.
 const portalMarchBonus = lv => lv<=0?0 : lv<=10 ? lv*0.005 : 10*0.005+(lv-10)*0.01;   // 0.5%/ур. до 10, затем 1%/ур. — макс. +20% на 25 ур.
 const PORTAL_GATE_LV = 13;   // уровень портала на начало 3 эпохи (=EPOCH_HALL_MIN[2]) — с него считаем сокращение марша
@@ -2625,7 +2739,17 @@ const POWER_WEIGHT = {
 // BASE пересчитан (×10.22), чтобы бюджет 45-50 млн снова сходился на
 // новом, настоящем максимуме.
 const BUILDING_POWER_BASE=11240, BUILDING_POWER_K=0.00876;
-const buildingPower = (bk,lv) => lv<=0 ? 0 : BUILDING_POWER_BASE*(POWER_WEIGHT[bk]||1)*Math.exp(BUILDING_POWER_K*(lv-1)*(lv-1));
+// Стена/Гарнизон/Разведка — настоящая мощь RoK по уровню (см. BUILDING_TABLE),
+// не формула-бюджет. Раз мощь этих трёх больше не привязана к общему бюджету
+// (как и мощь исследований, см. RESEARCH_TABLE) — итоговая "мощь" игрока
+// перестаёт быть внутренне однородной величиной с одной шкалой на всё,
+// зато честно совпадает с RoK там, где для этого есть настоящие данные.
+const buildingPower = (bk,lv) => {
+  if(lv<=0) return 0;
+  const tbl = BUILDING_TABLE[bk];
+  if(tbl) return tbl[clamp(lv,1,CFG.MAX_LEVEL)-1].power;
+  return BUILDING_POWER_BASE*(POWER_WEIGHT[bk]||1)*Math.exp(BUILDING_POWER_K*(lv-1)*(lv-1));
+};
 function power(p){
   let v=0; BKEYS.forEach(k=>{
     const lv=p.b[k];
@@ -2754,7 +2878,7 @@ function volleyDamage(att,defS,defWall){
 function garrisonVolley(D,attS){
   // гарнизон — не разведка, а сторожевая башня: сама бьёт атакующих до общей схватки
   const lv = D.p && D.p.b.garrison || 0; if(lv<=0) return null;
-  const dmg = lv*900;
+  const dmg = WATCH_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1].atk;   // была придуманная lv*900 (макс. 22500) — теперь настоящая атака Сторожевой башни RoK (макс. 500000)
   const out={inf:0,arc:0,cav:0,sie:0};
   TKEYS.forEach(dt=>{
     if(attS[dt].n<=0) return;
@@ -3607,7 +3731,7 @@ function botThink(p){
         if(bk==="hall" && lv>1){
           if(HALL_REQ.some(k=>hallGateLevel(p,k)<p.b.hall)) continue;   // ратуша ждёт ключевые здания
         }
-        const c=buildCost(lv,p);
+        const c=buildCost(bk,lv,p);
         if(!RES.every(r=>p.res[r]>=(c[r]||0))) continue;
         let sc=20;
         if(bk==="hall") sc+=45;
@@ -3636,7 +3760,7 @@ function botThink(p){
       const c=troopCost(t,tier);
       // Бот копит на следующую ступень ратуши и тратит на войска только излишек.
       // Раньше эту роль случайно играла проверка на еду.
-      const reserve=buildCost(p.b.hall+1,p);
+      const reserve=buildCost("hall",p.b.hall+1,p);
       // Если армия просела ниже критической, город бросает стройку и вооружается.
       const desperate = countUnits(p.troops) < p.b.hall*80;
       const keep = desperate ? 0 : 0.6;
@@ -3803,10 +3927,10 @@ function startBuild(p,bk,plot){
     if(need.length) return {err:"Сначала до "+p.b.hall+" ур.: "+need.map(k=>buildingName(k,p)).join(", ")} }
   const slot=p.queues.findIndex(q=>!q);
   if(slot<0) return {err:"Обе бригады заняты"};
-  const c=buildCost(lv,p);
+  const c=buildCost(bk,lv,p);
   if(!canPay(p,c)) return {err:"Не хватает ресурсов"};
   pay(p,c);
-  const t=buildTime(lv)/bonuses(p).build;
+  const t=buildTime(bk,lv)/bonuses(p).build;
   p.queues[slot]={b:bk,lv,plot:multi?plot:null,t0:W.t,t1:W.t+t};
   schedule(t,"build",{pid:p.id,slot});
   return {ok:1};
@@ -4858,7 +4982,17 @@ function buildingStatDeltaHtml(bk,lv,nx){
       "<tr><td>Сокращение пути отряда</td><td>"+(gated?"откроется на 3 эпохе":"&minus;"+(sc(lv)*100).toFixed(0)+"% &rarr; &minus;"+(sc(nx)*100).toFixed(0)+"%")+"</td></tr></table>";
   }
   if(bk==="garrison"){
-    return "<table id='bm-stats'><tr><td>Урон залпа гарнизона</td><td>"+fmt(lv*900)+" &rarr; "+fmt(nx*900)+"</td></tr></table>";
+    return "<table id='bm-stats'><tr><td>Урон залпа гарнизона</td><td>"+fmt(WATCH_TABLE[lv-1].atk)+" &rarr; "+fmt(WATCH_TABLE[nx-1].atk)+"</td></tr></table>";
+  }
+  if(bk==="scout"){
+    // bonus/radius/scouts — настоящие цифры RoK, показаны для справки: сама
+    // разведка в этой игре устроена иначе (см. комментарий у SCOUT_TABLE),
+    // эти три числа ни на что в бою/на карте не влияют.
+    const c=SCOUT_TABLE[lv-1], n=SCOUT_TABLE[nx-1];
+    return "<table id='bm-stats'>"+
+      "<tr><td>Бонус скорости разведки (RoK)</td><td>+"+c.bonus+"% &rarr; +"+n.bonus+"%</td></tr>"+
+      "<tr><td>Радиус обзора (RoK)</td><td>"+c.radius+"&times;"+c.radius+" &rarr; "+n.radius+"&times;"+n.radius+"</td></tr>"+
+      "<tr><td>Разведчиков (RoK)</td><td>"+c.scouts+" &rarr; "+n.scouts+"</td></tr></table>";
   }
   if(BLD_TRAIN[bk]){
     return "<table id='bm-stats'><tr><td>Воинов за один заказ</td><td>"+fmt(trainCap(lv))+" &rarr; "+fmt(trainCap(nx))+"</td></tr></table>";
@@ -4876,7 +5010,7 @@ function buildingModalHtml(ci){
   if(locked){ gated=true; gateTxt="откроется на эпохе "+(c.pl+1); }
   const plotKey = c.pl!=null ? c.pl : null;
   const queued = p.queues.find(q=>q && q.b===c.bk && q.plot===plotKey);
-  const cst=buildCost(nx,p), canGo=!maxed&&!gated&&!queued;
+  const cst=buildCost(c.bk,nx,p), canGo=!maxed&&!gated&&!queued;
   const img=cityCellImg(c);
   const desc=(BUILDINGS[c.bk]&&BUILDINGS[c.bk].desc)||"";
   let h="<img id=\'bm-art\' src=\'"+img+"\'>";
@@ -4904,7 +5038,7 @@ function buildingModalHtml(ci){
         "<span class=\'req-name\'>"+RES_NAME[r]+"</span>"+
         "<span class=\'req-amt"+(short?" short":"")+"\'>"+fmt(need)+" / "+fmt(p.res[r])+"</span></div>";
     }).join("")+"</div>";
-    h+="<div id=\'bm-time\'>Время строительства: "+fmtDur(buildTime(nx)/bonuses(p).build)+"</div>";
+    h+="<div id=\'bm-time\'>Время строительства: "+fmtDur(buildTime(c.bk,nx)/bonuses(p).build)+"</div>";
   } else if(queued){
     h+="<div id=\'bm-time\'>Уже строится — готово через "+fmtDur(queued.t1-W.t)+"</div>";
   } else if(gated){
