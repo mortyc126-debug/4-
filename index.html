@@ -626,6 +626,12 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   margin:2px 0 16px;padding:4px;border:3px solid;border-radius:4px;transform:rotate(-3deg)}
 .mail-stamp.win{color:#3f6b3f;border-color:#3f6b3f}
 .mail-stamp.lose{color:#8a2f22;border-color:#8a2f22}
+/* Погода над таблицей потерь. Письмо лежит на пергаменте — палитра тут
+   тёмным по светлому, а не как в остальном интерфейсе. */
+.mail-weather{display:flex;flex-direction:column;gap:2px;margin:0 0 10px;padding:7px 10px;
+  border-left:3px solid #8a6d2c;background:rgba(138,109,44,.10);border-radius:0 4px 4px 0}
+.mail-weather b{font-size:12.5px;font-weight:normal;color:#6b5320;letter-spacing:.02em}
+.mail-weather span{font-size:11.5px;line-height:1.45;color:#5a4530}
 .mail-stats{width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:10px}
 .mail-stats th{text-align:left;font-weight:normal;color:#8a6d2c;font-size:10.5px;
   text-transform:uppercase;letter-spacing:.06em;padding-bottom:5px}
@@ -3513,6 +3519,42 @@ function damageToGeneral(f,enemyS){
   const mitig=1+f.gen.def/70;
   return avgAtk*CFG.BATTLE_PACE*0.4/mitig;
 }
+/* ---- Погода над полем боя ------------------------------------------------
+   До этого бой был выверенной арифметикой без единой случайности: одни и те же
+   армии всегда давали побайтово один и тот же результат. Считать это можно было
+   на калькуляторе, и неожиданностей не случалось никогда.
+   Погода — общая для ОБЕИХ сторон и бьёт по роду войск, а не по стороне: дождь
+   мочит тетивы у всех лучников на поле, распутица вязнет под всей конницей. Из-за
+   этого она не "везение одного из бойцов", а смена условий, при которой выигрывает
+   другой состав армии — то есть работает вместе с треугольником контр, а не
+   поверх него.
+   Ясная погода намеренно вдвое вероятнее всего остального вместе взятого: буря
+   должна быть событием, а не фоном. */
+const BATTLE_WEATHER=[
+  {id:"clear", w:50, name:"Ясно",            desc:"Погода не мешает ни одной стороне.", mod:{}},
+  {id:"rain",  w:11, name:"Проливной дождь", desc:"Тетивы намокли — лучники бьют слабее.",           mod:{arc:0.82}},
+  {id:"mud",   w:11, name:"Распутица",       desc:"Конница вязнет в грязи и теряет разгон.",         mod:{cav:0.82}},
+  {id:"fog",   w:9,  name:"Густой туман",    desc:"Дальний бой почти вслепую: лучники и осадные бьют неточно.", mod:{arc:0.85,sie:0.80}},
+  {id:"wind",  w:8,  name:"Порывистый ветер",desc:"Ветер сносит стрелы и мешает наводить орудия.",   mod:{arc:0.88,sie:0.88}},
+  {id:"heat",  w:7,  name:"Палящий зной",    desc:"Люди и кони изнурены — все бьют вполсилы.",       mod:{inf:0.92,arc:0.92,cav:0.92,sie:0.92}},
+  {id:"storm", w:4,  name:"Гроза",           desc:"В такой свалке исход куда меньше зависит от расчёта.", mod:{arc:0.85}, jitter:0.14},
+];
+// Своя, отдельная от общей RNG случайность: заводится от момента боя и его
+// участников, а не от того, сколько раз кто-то дёргал RNG до этого. Иначе один
+// и тот же бой в один и тот же миг мира давал бы разный исход в зависимости от
+// того, перезагружали страницу перед ним или нет (глобальная RNG пересевается
+// при загрузке) — а движок обещает "то же зерно и то же время = тот же мир".
+function battleRng(A,D){
+  const ai=(A.p&&A.p.id)||0, di=(D.p&&D.p.id)||0;
+  const s=(W.seed ^ Math.imul(Math.floor(W.t),2654435761) ^ Math.imul(ai,40503) ^ Math.imul(di,2246822519))|0;
+  return mulberry(s);
+}
+function pickWeather(rnd){
+  const total=BATTLE_WEATHER.reduce((s,x)=>s+x.w,0);
+  let r=rnd()*total;
+  for(const x of BATTLE_WEATHER){ r-=x.w; if(r<=0) return x }
+  return BATTLE_WEATHER[0];
+}
 function resolveBattle(A,D,ctx){
   ctx=ctx||{};
   const lossA=emptyUnits(), lossD=emptyUnits();
@@ -3520,9 +3562,22 @@ function resolveBattle(A,D,ctx){
   let round=0;
   const wallMul = 1 + wallDefBonus(D.wallDef||0)*(1+(D.B.wallBonus||0));
 
-  // Первый залп лучников (венец эльфов): без ответа, до первого раунда боя
-  const openA=volleyDamage(A,sideStats(D),wallMul); if(openA){ applyDamage(D,openA,lossD); raiseSkeletons(D,lossD); }
-  const openD=volleyDamage(D,sideStats(A),1);        if(openD){ applyDamage(A,openD,lossA); raiseSkeletons(A,lossA); }
+  const rnd=battleRng(A,D);
+  const weather=pickWeather(rnd);
+  const wMod=t=>(weather.mod&&weather.mod[t])||1;
+  if(weather.id!=="clear") lines.push(weather.name+". "+weather.desc);
+  // Разброс на раунд: своим числом для каждой стороны, вокруг единицы. Мелкий —
+  // он не должен решать бой за явно более слабого, только делать одинаковые
+  // схватки неодинаковыми. В грозу разброс шире (см. jitter выше).
+  const jit=weather.jitter||0.05;
+  const roll=()=>1+(rnd()*2-1)*jit;
+
+  // Первый залп лучников (венец эльфов): без ответа, до первого раунда боя.
+  // Погоду он ловит наравне с обычными раундами — залп ведут те же лучники под
+  // тем же дождём, странно было бы мочить тетивы только начиная со второй минуты.
+  const scale=(o,k)=>{ if(o) TKEYS.forEach(t=>o[t]*=k); return o };
+  const openA=scale(volleyDamage(A,sideStats(D),wallMul), wMod("arc")*roll()); if(openA){ applyDamage(D,openA,lossD); raiseSkeletons(D,lossD); }
+  const openD=scale(volleyDamage(D,sideStats(A),1),       wMod("arc")*roll()); if(openD){ applyDamage(A,openD,lossA); raiseSkeletons(A,lossA); }
   // Залп гарнизона защитника — тоже до общей схватки
   const openG=garrisonVolley(D,sideStats(A));        if(openG){ applyDamage(A,openG,lossA); raiseSkeletons(A,lossA); }
   checkDiscipline(A,lossA); checkDiscipline(D,lossD);
@@ -3531,24 +3586,28 @@ function resolveBattle(A,D,ctx){
     const sa=sideStats(A), sd=sideStats(D);
     if(sa.totalN<=0||sd.totalN<=0) break;
     round++;
-    const dmgTo=(att,attS,defS,defWall)=>{
+    const dmgTo=(att,attS,defS,defWall,shake)=>{
       const out={inf:0,arc:0,cav:0,sie:0};
       TKEYS.forEach(dt=>{
         if(defS[dt].n<=0) return;
         let d=0,dm=0;
         TKEYS.forEach(at=>{ if(attS[at].n<=0)return;
           const share=defS[dt].hp/Math.max(1,defS.totalHp);
-          d += attS[at].atk * counterMult(at,dt) * share;
-          dm += attS[at].matk * counterMult(at,dt) * share;
+          // wMod(at) — погода бьёт по роду войск БЬЮЩЕГО (мокрая тетива у
+          // лучника, вязнущий конь у кавалериста), поэтому множитель берётся
+          // по at, а не по dt, и одинаково применяется к обеим сторонам.
+          const w=wMod(at);
+          d += attS[at].atk * counterMult(at,dt) * share * w;
+          dm += attS[at].matk * counterMult(at,dt) * share * w;
         });
         const mitig = 1 + (defS[dt].def/Math.max(1,defS[dt].n))/70 * defWall;
         const mitigM = 1 + (defS[dt].mdef/Math.max(1,defS[dt].n))/70 * defWall;
-        out[dt]=(d/mitig+dm/mitigM)*CFG.BATTLE_PACE;
+        out[dt]=(d/mitig+dm/mitigM)*CFG.BATTLE_PACE*shake;
       });
       return out;
     };
-    const dA = dmgTo(A,sa,sd,wallMul);          // урон, наносимый атакующим
-    const dD = dmgTo(D,sd,sa,1);
+    const dA = dmgTo(A,sa,sd,wallMul,roll());   // урон, наносимый атакующим
+    const dD = dmgTo(D,sd,sa,1,roll());
     applyDamage(D,dA,lossD);
     applyDamage(A,dD,lossA);
     // Полководцы — отдельные бойцы вне треугольника: бьют всех, получают ото всех, но смягчённо
@@ -3587,7 +3646,7 @@ function resolveBattle(A,D,ctx){
   // земле, штурм не удался.
   const powA=armyPower(A.units,A.B,A.p&&A.p.race), powD=armyPower(D.units,D.B,D.p&&D.p.race);
   const win = aliveA>0 && aliveD<=0 ? "A" : aliveD>0&&aliveA<=0 ? "D" : (powA>powD?"A":"D");
-  return {win, rounds:round, lossA, lossD, lines, aliveA, aliveD};
+  return {win, rounds:round, lossA, lossD, lines, aliveA, aliveD, weather};
 }
 function applyDamage(f,dmg,loss){
   const race=f.p&&f.p.race;
@@ -4091,12 +4150,14 @@ function arriveMarch(m){
       mapDelete(m.tx,m.ty);
       schedule(CFG.RESPAWN_CAMP,"respawn",{x:m.tx,y:m.ty});
       if(!p.isBot){
-        logg("Разбитый лагерь ур. "+cell.lv+". Опыт +"+xp+bookTxt+", убито "+sp.dead+
+        const wx=(r.weather&&r.weather.id!=="clear")?" ("+r.weather.name.toLowerCase()+")":"";
+        logg("Разбитый лагерь ур. "+cell.lv+wx+". Опыт +"+xp+bookTxt+", убито "+sp.dead+
           ", ранено "+sp.hurt+".","war");
         // "О варварах" — только обычные лагеря; форты идут под штурмы/осады,
         // которые в этом раунде правок отложены пользователем на потом.
         if(cell.t==="camp") pushMail({cat:"report",kind:"barbarian",lv:cell.lv,coords:{x:m.tx,y:m.ty},
-          xp, dead:sp.dead, hurt:sp.hurt, loot, tomesTxt:bookTxt.replace(/^, /,"")});
+          xp, dead:sp.dead, hurt:sp.hurt, loot, tomesTxt:bookTxt.replace(/^, /,""),
+          weather:(r.weather&&r.weather.id!=="clear")?{name:r.weather.name,desc:r.weather.desc}:null});
       }
     } else {
       if(!p.isBot) logg("Отряд разбит лагерем ур. "+cell.lv+". Убито "+sp.dead+", ранено "+sp.hurt+".","war");
@@ -4204,9 +4265,13 @@ function scoutSnapshot(p,q){
 // что и у существующего logMsg): у атакующего и защитника разные потери и
 // разный исход одного и того же боя, поэтому это не одна запись с двумя
 // углами обзора, а две независимые.
-function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords){
+function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords,weather){
+  // Погода одна на бой и одинаково касается обеих сторон, поэтому в оба отчёта
+  // уходит одна и та же строка (см. BATTLE_WEATHER). Ясную не пишем вовсе —
+  // "погода не мешала" не новость, строка бы просто зашумляла каждый отчёт.
+  const wx = (weather && weather.id!=="clear") ? {name:weather.name, desc:weather.desc} : null;
   if(!att.isBot) pushMail({
-    cat:"report", kind:"battle", win: win==="A",
+    cat:"report", kind:"battle", win: win==="A", weather:wx,
     selfNick:att.nick||"Безымянный лорд", oppNick:def.nick||"Безымянный лорд",
     selfRace:att.race, oppRace:def.race,
     selfCoords:{x:att.x,y:att.y}, oppCoords:{x:def.x,y:def.y}, fightCoords:coords,
@@ -4219,7 +4284,7 @@ function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords){
     attacker:true,
   });
   if(!def.isBot) pushMail({
-    cat:"report", kind:"battle", win: win==="D",
+    cat:"report", kind:"battle", win: win==="D", weather:wx,
     selfNick:def.nick||"Безымянный лорд", oppNick:att.nick||"Безымянный лорд",
     selfRace:def.race, oppRace:att.race,
     selfCoords:{x:def.x,y:def.y}, oppCoords:{x:att.x,y:att.y}, fightCoords:coords,
@@ -4243,6 +4308,8 @@ function battleCity(att,def,m){
   const A=makeForce(m.units,att,{name:att.name});
   const D=makeForce(garrison,def,{wall:def.b.wall+def.b.garrison*0.5,defending:true,name:def.name});
   const r=resolveBattle(A,D,{startA:countUnits(m.units),toDeath:false});
+  // в хронику погода идёт короткой пометкой, подробности — в почтовом отчёте
+  const wx=(r.weather&&r.weather.id!=="clear")?" ("+r.weather.name.toLowerCase()+")":"";
   const la=splitLosses(att,r.lossA,"siege-attack");   // штурмующий теряет войска насмерть, без госпиталя
   const ld=splitLosses(def,r.lossD,"hospital");
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++)def.troops[t][i]=D.units[t][i]});
@@ -4267,13 +4334,13 @@ function battleCity(att,def,m){
         if(!def.isBot) def.shieldUntil=Math.max(def.shieldUntil, W.t+8*3600);
       }
     }
-    logMsg(att,def,"Победа при "+def.name+". Захвачено "+Math.round(sum).toLocaleString("ru")+" ресурсов.",
-                   "Город атакован ("+att.name+"). Потери: "+ld.dead+" убито, "+ld.hurt+" ранено.");
+    logMsg(att,def,"Победа при "+def.name+wx+". Захвачено "+Math.round(sum).toLocaleString("ru")+" ресурсов.",
+                   "Город атакован ("+att.name+")"+wx+". Потери: "+ld.dead+" убито, "+ld.hurt+" ранено.");
   } else {
-    logMsg(att,def,"Штурм "+def.name+" провалился. Убито "+la.dead+", ранено "+la.hurt+".",
-                   "Отражена атака "+att.name+". Убито "+ld.dead+", ранено "+ld.hurt+".");
+    logMsg(att,def,"Штурм "+def.name+wx+" провалился. Убито "+la.dead+", ранено "+la.hurt+".",
+                   "Отражена атака "+att.name+wx+". Убито "+ld.dead+", ранено "+ld.hurt+".");
   }
-  pushBattleReport(att,def,startA,startD,powA,powD,la,ld,r.win,{x:m.tx,y:m.ty});
+  pushBattleReport(att,def,startA,startD,powA,powD,la,ld,r.win,{x:m.tx,y:m.ty},r.weather);
   recallMarch(m);
 }
 function logMsg(att,def,forAtt,forDef){
@@ -5729,6 +5796,10 @@ function mailDetailHtml(m){
          (m.oppGen?"<div class='gen'>"+m.oppGen.name+" (ур. "+m.oppGen.lv+")</div>":"")+
        "</div></div>"+
        "<div class='mail-stamp "+(m.win?"win":"lose")+"'>"+(m.win?"Победа":"Поражение")+"</div>"+
+       // Погода была общей для обеих сторон — в отчёте она стоит НАД таблицей
+       // потерь, потому что объясняет её цифры (см. BATTLE_WEATHER). В ясную
+       // погоду поля weather нет вовсе, и строка не рисуется.
+       (m.weather?"<div class='mail-weather'><b>"+m.weather.name+"</b><span>"+m.weather.desc+"</span></div>":"")+
        "<table class='mail-stats'><tr><th></th><th>"+m.selfNick+"</th><th>"+m.oppNick+"</th></tr>"+
        "<tr><td>Войск</td><td>"+RU(m.selfStart)+"</td><td>"+RU(m.oppStart)+"</td></tr>"+
        "<tr><td>Убито</td><td>"+RU(m.selfDead)+"</td><td>"+RU(m.oppDead)+"</td></tr>"+
@@ -5738,6 +5809,7 @@ function mailDetailHtml(m){
        "<div class='mail-note'>Место боя: X:"+m.fightCoords.x+" Y:"+m.fightCoords.y+"</div>";
   } else if(m.kind==="barbarian"){
     h+="<div class='mail-stamp win'>Победа</div>"+
+       (m.weather?"<div class='mail-weather'><b>"+m.weather.name+"</b><span>"+m.weather.desc+"</span></div>":"")+
        "<div class='mail-note'>Разбит лагерь разбойников "+m.lv+" уровня у X:"+m.coords.x+" Y:"+m.coords.y+".<br>"+
        "Опыт генерала: +"+RU(m.xp)+"<br>"+
        "Потери отряда: убито "+RU(m.dead)+", ранено "+RU(m.hurt)+
