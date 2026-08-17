@@ -197,6 +197,21 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   background-position:47.64% 61.2%;background-repeat:no-repeat;
   border:none;border-radius:50%;color:var(--gilt-hi);overflow:hidden}
 #menu-btn span{display:none;font-size:19px} /* текстовый фолбэк, если картинки нет */
+/* Красная метка "тут появилось новое" — см. menuBadges/renderBadges.
+   Пустая по умолчанию: показывается классом .on, число рисуется через
+   data-n (без числа — просто точка, как у непросмотренного инвентаря).
+   Кнопки-носители получают position:relative ниже. */
+.nbadge{display:none;position:absolute;top:-1px;right:-1px;min-width:16px;height:16px;
+  box-sizing:border-box;padding:0 4px;border-radius:8px;background:#b62a22;
+  border:1.5px solid #1a1208;box-shadow:0 1px 4px rgba(0,0,0,.6);
+  font-family:var(--data);font-size:10px;font-style:normal;line-height:13px;
+  color:#ffe9c9;text-align:center;pointer-events:none;z-index:2}
+.nbadge.on{display:block}
+.nbadge.on::after{content:attr(data-n)}
+/* На гамбургере метка крупнее и отодвинута внутрь — кнопка круглая, в самом
+   углу квадрата точка висела бы в воздухе за пределами круга. */
+#menu-btn{position:fixed}
+#menu-btn .nbadge{top:4px;right:4px;min-width:18px;height:18px;line-height:15px;font-size:11px}
 
 .purse{display:grid;grid-template-columns:repeat(2,auto);grid-auto-rows:auto;
   gap:3px 12px;flex:0 0 auto}
@@ -218,7 +233,21 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    элемента, а следствие общей нерастягиваемой шапки). Вынесена в свой
    собственный fixed-угол справа сверху — гарантированно на экране всегда,
    независимо от того, насколько разрастётся #top слева. */
-#amber-badge{position:fixed;top:3px;right:3px;z-index:15;
+/* Полоса догона мира после долгого отсутствия — см. catchUpProgress/
+   advanceToAnimated. Поверх всего (z-index выше модалок), потому что пока
+   она висит, играть ещё не во что: мир досчитывается. */
+#catchup{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;
+  background:rgba(10,8,5,.82);backdrop-filter:blur(2px)}
+#catchup .cu-card{display:flex;flex-direction:column;align-items:center;gap:8px;
+  padding:20px 26px;border-radius:8px;background:rgba(20,15,8,.92);
+  border:1px solid var(--gilt-dim);box-shadow:0 8px 30px rgba(0,0,0,.6);max-width:min(88vw,340px)}
+#catchup b{color:var(--gilt-hi);font-size:15px;font-weight:normal}
+#catchup .cu-sub{color:var(--vellum-faint);font-size:12px;text-align:center}
+#catchup .cu-bar{width:100%;height:6px;border-radius:3px;overflow:hidden;
+  background:rgba(0,0,0,.5);border:1px solid var(--rule-soft)}
+#catchup .cu-bar i{display:block;height:100%;width:0;border-radius:3px;
+  background:linear-gradient(90deg,var(--gilt-dim),var(--gilt-hi));transition:width .12s linear}
+#amber-badge{position:fixed;top:0;right:0;z-index:15;
   display:flex;align-items:center;gap:6px;
   padding:3px 10px 3px 3px;border-radius:20px;
   background:radial-gradient(circle at 30% 25%,rgba(230,152,42,.28),rgba(20,15,8,.82) 72%);
@@ -372,7 +401,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    только gap (14px->4px) и не учли, что padding:6px даёт ещё +12px —
    реальное сокращение получалось ~38%, а не запрошенные 70%. Целевой
    зазор: (14+6+6)*0.3 ≈ 8px = 4px сверху + 4px снизу при gap:0 (выше). */
-#side-menu button{display:flex;align-items:center;gap:14px;padding:4px 6px;background:transparent;
+#side-menu button{position:relative;display:flex;align-items:center;gap:14px;padding:4px 6px;background:transparent;
   border:none;color:var(--vellum);font-size:33px;font-variant:small-caps;letter-spacing:.06em;
   text-align:left;text-shadow:0 2px 6px rgba(0,0,0,.9),0 0 10px rgba(0,0,0,.85);border-radius:6px}
 #side-menu button:hover{background:rgba(0,0,0,.35);color:var(--gilt-hi)}
@@ -612,6 +641,29 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   margin:2px 0 16px;padding:4px;border:3px solid;border-radius:4px;transform:rotate(-3deg)}
 .mail-stamp.win{color:#3f6b3f;border-color:#3f6b3f}
 .mail-stamp.lose{color:#8a2f22;border-color:#8a2f22}
+/* Хроника боя — лента переломов под таблицей потерь (см. battleLogHtml).
+   Своё и чужое различаются цветом полоски слева, а не текстом: читается
+   с одного взгляда, кто на каком шаге получил своё. */
+.mail-chron{margin-top:14px;border-top:1px solid rgba(90,69,48,.28);padding-top:10px}
+.mail-chron-hd{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;
+  color:#8a6d2c;margin-bottom:7px}
+.chron-row{display:flex;align-items:flex-start;gap:7px;padding:4px 8px;margin-bottom:3px;
+  border-left:3px solid rgba(90,69,48,.3);background:rgba(138,109,44,.06);border-radius:0 3px 3px 0}
+.chron-row.good{border-left-color:#4a7c3f;background:rgba(74,124,63,.10)}
+.chron-row.bad{border-left-color:#a33c2c;background:rgba(163,60,44,.09)}
+.chron-ico{flex:0 0 auto;font-style:normal;font-size:12px;line-height:1.5;color:#8a6d2c;width:14px;text-align:center}
+.chron-tx{font-size:12px;line-height:1.5;color:#3a2c1c}
+/* Итог и бегство — крупнее и заметнее: это финал рассказа, а не рядовой шаг. */
+.chron-row.end{margin-top:6px;padding:6px 8px}
+.chron-row.end .chron-tx,.chron-row.rout .chron-tx{font-size:12.5px;color:#2c2114}
+.chron-row.round{background:transparent;border-left-color:rgba(90,69,48,.18)}
+.chron-row.round .chron-tx{color:#5a4530}
+/* Погода над таблицей потерь. Письмо лежит на пергаменте — палитра тут
+   тёмным по светлому, а не как в остальном интерфейсе. */
+.mail-weather{display:flex;flex-direction:column;gap:2px;margin:0 0 10px;padding:7px 10px;
+  border-left:3px solid #8a6d2c;background:rgba(138,109,44,.10);border-radius:0 4px 4px 0}
+.mail-weather b{font-size:12.5px;font-weight:normal;color:#6b5320;letter-spacing:.02em}
+.mail-weather span{font-size:11.5px;line-height:1.45;color:#5a4530}
 .mail-stats{width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:10px}
 .mail-stats th{text-align:left;font-weight:normal;color:#8a6d2c;font-size:10.5px;
   text-transform:uppercase;letter-spacing:.06em;padding-bottom:5px}
@@ -880,7 +932,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   #chart{flex:1 1 46%}
   #key{display:none}
   #top{top:8px;left:0}
-  #amber-badge{top:3px;right:3px}
+  #amber-badge{top:0;right:0}
   .coin .rate{display:none}
   #chron{gap:9px;padding-left:8px}
   #chron .stat s{display:none}
@@ -948,13 +1000,13 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 </div>
 
 <button id="view-toggle" data-act="toggleview"><img src="images/ui/icon-world.png" alt="Мир"></button>
-<button id="menu-btn" data-act="togglemenu" aria-label="Меню"><span>&#9776;</span></button>
+<button id="menu-btn" data-act="togglemenu" aria-label="Меню"><span>&#9776;</span><i class="nbadge" id="nb-menu"></i></button>
 
 <nav id="side-menu">
-  <button data-menu="mail" aria-label="Почта"><img src="images/ui/icon-mail.png" alt=""><span>Почта</span></button>
-  <button data-menu="army" aria-label="Войско"><img src="images/ui/icon-army.png" alt=""><span>Войско</span></button>
-  <button data-menu="gen" aria-label="Генерал"><img src="images/ui/icon-gen.png" alt=""><span>Генерал</span></button>
-  <button data-menu="inv" aria-label="Инвентарь"><img src="images/ui/icon-inv.png" alt=""><span>Инвентарь</span></button>
+  <button data-menu="mail" aria-label="Почта"><img src="images/ui/icon-mail.png" alt=""><span>Почта</span><i class="nbadge" id="nb-mail"></i></button>
+  <button data-menu="army" aria-label="Войско"><img src="images/ui/icon-army.png" alt=""><span>Войско</span><i class="nbadge" id="nb-army"></i></button>
+  <button data-menu="gen" aria-label="Генерал"><img src="images/ui/icon-gen.png" alt=""><span>Генерал</span><i class="nbadge" id="nb-gen"></i></button>
+  <button data-menu="inv" aria-label="Инвентарь"><img src="images/ui/icon-inv.png" alt=""><span>Инвентарь</span><i class="nbadge" id="nb-inv"></i></button>
 </nav>
 <div id="menu-modal">
   <img class="menu-corner tl" src="images/ui/mail-corner.png" alt="">
@@ -2301,6 +2353,73 @@ const ri=(a,b)=>a+Math.floor(RNG()*(b-a+1));
 const pick=a=>a[Math.floor(RNG()*a.length)];
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 
+/* ---- Рельеф. Лежит здесь, в движке, а не в UI-половине, потому что от него
+   зависит САМА ГЕНЕРАЦИЯ мира: findSpot/genWorld/relocate спрашивают
+   isRealWater("тут вода?") до того, как посадить город, лагерь или точку.
+   Раньше весь этот блок стоял ниже, среди интерфейсных функций, и движок
+   тянулся за ним вверх по файлу — из-за таких же обратных связей движок
+   нельзя было запустить отдельно от браузера. Чистая математика, ни одного
+   обращения к DOM. ---- */
+function hash2(x,y,s){ let h=x*374761393+y*668265263+s*1274126177;
+  h=Math.imul(h^(h>>>13),1274126177); return ((h^(h>>>16))>>>0)/4294967296 }
+function noise(x,y,s){
+  const xi=Math.floor(x), yi=Math.floor(y), xf=x-xi, yf=y-yi;
+  const u=xf*xf*(3-2*xf), v=yf*yf*(3-2*yf);
+  const a=hash2(xi,yi,s),b=hash2(xi+1,yi,s),c=hash2(xi,yi+1,s),d=hash2(xi+1,yi+1,s);
+  return (a*(1-u)+b*u)*(1-v)+(c*(1-u)+d*u)*v;
+}
+function ridge(x,y,s){ return 1-Math.abs(2*noise(x,y,s)-1) }   // излом шума даёт хребты
+
+/* ---- Настоящая вода 3D-мира (obyom-3d-infinite.html): её сеет ФИКСИРОВАННЫЙ
+   RW_SEED, один и тот же на любой партии (не W.seed) — рельеф там не зависит
+   от того, чья это карта. Раньше 2D-генератор клеток вообще не знал про
+   рельеф и мог посадить город/лагерь/точку прямо в море: 3D-сторона потом
+   искусственно поднимала landtу ПОД объектом (flattenNear), но саму воду
+   вокруг это не убирало — выглядело как замок в озере. Порт heightAt/isWater
+   сюда даёт 2D-генератору спросить "тут вода?" ДО того, как объект лёг на
+   карту, вместо косметической подчистки постфактум. Формула — дословная
+   копия heightRaw/heightAt из obyom-3d-infinite.html; hash2/noise/ridge выше
+   уже совпадают с тамошними один в один. ---- */
+const RW_SEED=12345, RW_SEA=0.235;
+function rwSstep(a,b,x){ const t=Math.min(1,Math.max(0,(x-a)/(b-a))); return t*t*(3-2*t) }
+function rwRegionKind(x,y){
+  return { mount: rwSstep(0.40,0.72, noise(x/40,y/40,RW_SEED+55)),
+           plat:  rwSstep(0.62,0.84, noise(x/34,y/34,RW_SEED+88)),
+           rough: noise(x/26,y/26,RW_SEED+123) };
+}
+function rwHeightRaw(x,y){
+  const wx=(noise(x/34,y/34,RW_SEED+101)*2-1)*13;
+  const wy=(noise(x/34,y/34,RW_SEED+102)*2-1)*13;
+  const X=x+wx, Y=y+wy;
+  const R=rwRegionKind(x,y);
+  const cont=noise(X/62,Y/62,RW_SEED+201);
+  let e=0.16+cont*0.50;
+  const amp=0.16+0.84*R.mount+0.35*R.rough;
+  e+=(noise(X/27,Y/27,RW_SEED)*0.20+noise(X/13,Y/13,RW_SEED+9)*0.10
+     +noise(X/6,Y/6,RW_SEED+21)*0.045)*amp;
+  e+=ridge(X/17,Y/17,RW_SEED+37)*0.33*R.mount;
+  e+=R.mount*0.10-(1-R.mount)*0.05;
+  if(R.plat>0.02){
+    const terr=Math.round(e*6.0)/6.0;
+    e=e*(1-R.plat*0.80)+terr*(R.plat*0.80);
+  }
+  if(e>=0.42){
+    const k=rwSstep(0.42,0.68,e);
+    e+=(noise(x/2.4,y/2.4,RW_SEED+180)-0.5)*0.075*k
+      +(noise(x/5.5,y/5.5,RW_SEED+181)-0.5)*0.055*k;
+  }
+  return Math.max(0.02,Math.min(1,e));
+}
+function rwHeightAt(x,y){
+  const c=rwHeightRaw(x,y);
+  const s=(rwHeightRaw(x+0.7,y)+rwHeightRaw(x-0.7,y)+rwHeightRaw(x,y+0.7)+rwHeightRaw(x,y-0.7))*0.25;
+  return c*0.55+s*0.45;
+}
+// Клетка (x,y) — центр клетки (+0.5), та же точка, что 3D берёт под объект
+// (см. buildRealCandidate в obyom-3d-infinite.html).
+function isRealWater(x,y){ return rwHeightAt(x+0.5,y+0.5)<RW_SEA }
+
+
 // bk — какое здание (см. BUILDING_TABLE): у Стены/Гарнизона/Разведки своя
 // настоящая кривая RoK, у всех остальных — общая BUILD_TABLE (курс Ратуши),
 // как и раньше. Для мест без здания в контексте (например бот резервирует
@@ -2411,9 +2530,29 @@ const maxWallHp = lv => lv<=0?0:WALL_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1].hp;
 // (тот самый Master's Blueprint-эффект, что и у всех прочих зданий на
 // последнем уровне). Масштаб (макс. +12.5% на 25 ур.) — прежний, число
 // само по себе не из RoK, взять неоткуда, но теперь хотя бы растёт как она.
+// tableAt — выборка из таблицы по уровню, который МОЖЕТ БЫТЬ ДРОБНЫМ.
+// Здесь был баг, наглухо вешавший игру: battleCity считает "боевой уровень
+// стены" как def.b.wall + def.b.garrison*0.5, и при нечётном гарнизоне это
+// 3.5, 12.5 и т.п. Прямое обращение WALL_TABLE[2.5] даёт undefined, дальше
+// .hp кидает TypeError — прямо внутри обработки события "arrive". Исключение
+// пробивало advanceChunk и вылетало из frame() ДО requestAnimationFrame, то
+// есть главный цикл умирал насовсем. Событие прибытия при этом уже снято с
+// очереди, так что и перезагрузка не спасала: марш навсегда оставался в
+// состоянии "go", а отряд рисовался стоящим у чужого замка (marchPos зажимает
+// долю пути в 1). Ровно то, что видел игрок — армия встала у замка, боя нет,
+// отчётов нет, и дальше не происходит уже ничего.
+// Дробный уровень тут осмысленный (башня добавляет половину своего уровня к
+// стене), поэтому не округляем, а интерполируем между соседними строками —
+// это честнее округления и убирает ступеньку на ровном месте.
+function tableAt(tbl, lv, field){
+  const i=clamp(lv,1,tbl.length)-1;
+  const lo=Math.floor(i), hi=Math.min(tbl.length-1, lo+1), f=i-lo;
+  const a=field?tbl[lo][field]:tbl[lo], b=field?tbl[hi][field]:tbl[hi];
+  return a+(b-a)*f;
+}
 const wallDefBonus = lv => {
   if(lv<=0) return 0;
-  const hp=WALL_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1].hp, hp1=WALL_TABLE[0].hp, hpMax=WALL_TABLE[24].hp;
+  const hp=tableAt(WALL_TABLE,lv,"hp"), hp1=WALL_TABLE[0].hp, hpMax=WALL_TABLE[24].hp;
   return 0.125*(hp-hp1)/(hpMax-hp1);
 };
 const portalMarchBonus = lv => lv<=0?0 : lv<=10 ? lv*0.005 : 10*0.005+(lv-10)*0.01;   // 0.5%/ур. до 10, затем 1%/ур. — макс. +20% на 25 ур.
@@ -2676,6 +2815,46 @@ function ensureChunkContent(cx,cy){
 function ensureWorldChunk(cx,cy){
   if(!W) return;
   ensureChunkContent(cx,cy);
+}
+// Выбрасывает дикий контент далёких чанков вместе с отметкой "чанк уже засеян".
+// Мир бесконечный: W.map/mapChunks/genChunks росли по мере исследования и не
+// чистились никогда, а весь W уходит в JSON.stringify синхронно каждые 20 секунд
+// и в beforeunload — то есть цена разрастания платится не когда-нибудь, а на
+// каждом сохранении.
+// Выбрасывать безопасно, потому что генерация ЧИСТАЯ: ensureChunkContent зависит
+// только от (cx,cy) и W.seed через structChunkOk/findFreeCellInChunk/hashPick —
+// вернётесь в тот же чанк, и он засеется ровно тем же содержимым. Поэтому здесь
+// снимается и флаг genChunks: без этого чанк остался бы навсегда пустым.
+// Города НЕ трогаем ни при каких условиях — это состояние игроков, из зерна оно
+// не восстанавливается. Занятые объекты (busy — туда идёт или там стоит чей-то
+// отряд) тоже оставляем, иначе поход прибудет в никуда.
+const KEEP_CHUNK_RADIUS=6;   // ~96 клеток от города — заметно больше любого обзора
+function pruneFarChunks(){
+  if(!W||!W.map) return 0;
+  const anchors=[];
+  W.players.forEach(p=>anchors.push([Math.floor(p.x/STRUCT_CHUNK),Math.floor(p.y/STRUCT_CHUNK)]));
+  // у возвращающегося похода цели уже нет — его дом и так среди якорей выше
+  W.marches.forEach(m=>{ if(isFinite(m.tx)&&isFinite(m.ty))
+    anchors.push([Math.floor(m.tx/STRUCT_CHUNK),Math.floor(m.ty/STRUCT_CHUNK)]); });
+  const near=(cx,cy)=>anchors.some(a=>Math.abs(a[0]-cx)<=KEEP_CHUNK_RADIUS&&Math.abs(a[1]-cy)<=KEEP_CHUNK_RADIUS);
+  let dropped=0;
+  for(const ck in W.mapChunks){
+    const [cx,cy]=ck.split(",").map(Number);
+    if(near(cx,cy)) continue;
+    const keys=W.mapChunks[ck]||[];
+    let keptAny=false;
+    for(const k of keys.slice()){
+      const o=W.map[k];
+      if(!o) continue;
+      if(o.t==="city"||o.busy){ keptAny=true; continue }
+      mapDelete(o.x,o.y); dropped++;
+    }
+    // Чанк пересеется при возвращении — но только если снять отметку. Снимаем
+    // лишь тогда, когда вынесли из него всё: иначе к оставшемуся городу
+    // добавился бы второй экземпляр точки/лагеря.
+    if(!keptAny){ delete W.mapChunks[ck]; delete W.genChunks[ck] }
+  }
+  return dropped;
 }
 function genWorld(seed){
   RNG = mulberry(seed);
@@ -2996,6 +3175,83 @@ function banditPower(lv){
   return armyPower(banditArmy(lv), null);
 }
 
+
+/* ---- Ниже — то, что раньше жило среди интерфейсных функций, хотя зовётся
+   отсюда, из движка: гейты дерева исследований (их спрашивают БОТЫ в
+   startResearch), статы полководца (считаются в КАЖДОМ бою, makeForce) и
+   путь к аватару (уходит в почтовый отчёт о сражении). DOM ни одна из них
+   не трогает — стояли внизу просто потому, что там же рисуются. Из-за таких
+   обратных ссылок движок нельзя было прогнать без браузера. ---- */
+function nodeTitle(n){
+  if(n.unlock) return ({inf:"Пехота",arc:"Лучники",cav:"Кавалерия",sie:"Осада"}[n.unlock.type])+": "+TIER_NAMES[n.unlock.type][n.unlock.tier-1];
+  return n.name;
+}
+function waveLabel(w){ return {1:"Начало",2:"Развитие",3:"Расцвет",4:"Венец"}[w]||("Ступень "+w); }
+function nodeDepth(n,arr,cache){
+  if(cache.has(n.id)) return cache.get(n.id);
+  cache.set(n.id,0); // защита от случайного цикла в данных
+  const reqs=n.requires||[];
+  const d = reqs.length ? 1+Math.max(...reqs.map(id=>{
+    const pn=arr.find(x=>x.id===id); return pn?nodeDepth(pn,arr,cache):0;
+  })) : 0;
+  cache.set(n.id,d);
+  return d;
+}
+const ROW_SIZES=[4,3,4,2];    // рядами по 2-4 для красоты, а не одной длинной стеной
+function computeRows(arr,p){
+  const visible=arr.filter(n=>nodeVisibleFor(n,p));
+  const cache=new Map();
+  const byDepth={};
+  visible.forEach(n=>{ const d=nodeDepth(n,arr,cache); (byDepth[d]=byDepth[d]||[]).push(n); });
+  const depths=Object.keys(byDepth).map(Number).sort((a,b)=>a-b);
+  let sizeIdx=0;
+  const rows=[];
+  depths.forEach(d=>{
+    const unlockNodes=byDepth[d].filter(n=>n.unlock);
+    let list=byDepth[d].filter(n=>!n.unlock);
+    while(list.length){
+      const n=ROW_SIZES[sizeIdx%ROW_SIZES.length]; sizeIdx++;
+      rows.push(list.slice(0,n));
+      list=list.slice(n);
+    }
+    if(unlockNodes.length) rows.push(unlockNodes);   // открытие тира войск — всегда своей строкой целиком, без разбивки
+  });
+  return rows;
+}
+function rowGate(n,p){
+  const rows=computeRows(ACADEMY_TREE[n.branch],p);
+  const idx=rows.findIndex(row=>row.some(x=>x.id===n.id));
+  if(idx<=0) return {locked:false,missing:[]};
+  const missing=rows[idx-1].filter(x=>(p.tech[x.id]||0)<x.max);
+  return {locked:missing.length>0,missing};
+}
+function researchLocked(n,p){
+  if(epochOf(p.b.hall)<n.wave) return true;
+  return rowGate(n,p).locked;
+}
+const EPOCH_HALL_MIN=[1,7,13,19,25];
+function lockReason(n,p){
+  if(epochOf(p.b.hall)<n.wave) return "нужна ратуша "+EPOCH_HALL_MIN[n.wave-1]+" уровня";
+  const missing=rowGate(n,p).missing;
+  if(missing.length) return "нужно закончить: "+missing.map(x=>nodeTitle(x)).join(", ");
+  return "заблокировано";
+}
+
+function genStats(p){
+  // 1 ур. полководца ~= статы юнита Т5 (как в RoK), дальше растёт той же кривой, что и раньше
+  const lv=p.gen.lv, B=bonuses(p), g=Math.pow(lv,1.15);
+  const gear=gearBonus(p);   // теперь проценты — умножаем, а не прибавляем флэтом
+  return {
+    hp:  Math.round((250+30*g)*(1+B.genHpMod)*(1+gear.hp)),
+    atk: Math.round((200+40*g)*(1+B.genAtkMod)*(1+gear.atk)),
+    def: Math.round((170+30*g)*(1+B.genDefMod)*(1+gear.def)),
+  };
+}
+
+function playerAvatarSrc(p){
+  return (p.gen&&p.gen.id!=null) ? "images/ui/avatar-"+p.race+(p.gen.id+1)+".png" : null;
+}
+
 /* ---- Очередь событий ------------------------------------------------- */
 function schedule(dt,type,data){
   const ev={t:W.t+Math.max(0,dt),type,data,id:W.nextId++};
@@ -3102,20 +3358,38 @@ function capacity(p){    // своя вместимость на каждый р
   RES.forEach(r=>out[r]=base+extra[r]);
   return out;
 }
-function syncRes(p){
+// lazy=true — «посчитай, если накопилось хотя бы на секунду мира». Так зовёт
+// только ход времени (advanceTo), где точность до кадра не нужна: экономика тут
+// ленивая, ресурс всё равно досчитается перед первым же чтением. Все места, где
+// цифру реально читают или тратят (canPay/pay/gain/рендер), зовут без флага и
+// получают точное значение на текущий момент.
+// Зачем: advanceTo синкал ВСЕХ игроков каждый кадр, а каждый синк тянет за собой
+// production()->bonuses() — 11 мкс на перебор 63 узлов академии, 15 талантов и
+// эпох расы, с аллокацией объекта на полсотни полей. 13 игроков x 60 fps = 780
+// вызовов в секунду (~9 мс/с на десктопе, на телефоне в 5-10 раз больше) ради
+// приращения за 1/60 секунды. Порог в секунду срезает это в ~60 раз, ничего не
+// меняя в самих числах.
+function syncRes(p, lazy){
+  if(lazy && W.t-p.resAt < 1) return;
   const dt=(W.t-p.resAt)/3600; if(dt<=0){p.resAt=W.t;return}
   const pr=production(p);
   // В RoK участок копит добычу до своей "Ёмкости" и дальше не растёт, пока
-  // игрок его не заберёт тапом. Здесь роль "тапа" играет сам факт присутствия
-  // в игре: пока вы онлайн, синк идёт часто (раз в секунду через renderTop) —
-  // за такой малый dt лимит практически никогда не задевается, всё сразу
-  // уходит в общий запас, как будто собираете постоянно. А вот пока вас нет
+  // игрок его не заберёт тапом. Роль "тапа" здесь играет присутствие в игре:
+  // пока вы в игре, синк идёт часто и лимит просто не успевает набраться —
+  // всё уходит в общий запас, как будто собираете постоянно. А пока вас нет
   // (вкладка закрыта/свёрнута надолго), следующий синк случится только когда
   // вы вернётесь — и тогда всё, что участок произвёл бы сверх своей "Ёмкости"
   // за это время, пропадает (как несобранное в RoK), а накопление участка
   // начинается заново с момента возвращения.
-  const cap=plotFillCap(p);
-  for(const r of RES) p.res[r]=Math.max(0, p.res[r]+Math.min(pr[r]*dt, cap[r]));
+  // Ботов лимит не касается СОЗНАТЕЛЬНО: они не «заходят в игру», они в ней
+  // всегда, тапать им нечего. Заодно это развязывает их экономику с частотой
+  // синка — иначе доход ботов молча зависел бы от того, как часто крутится
+  // цикл, то есть от fps на устройстве игрока.
+  const cap=p.isBot?null:plotFillCap(p);
+  for(const r of RES){
+    const add=cap?Math.min(pr[r]*dt, cap[r]):pr[r]*dt;
+    p.res[r]=Math.max(0, p.res[r]+add);
+  }
   p.resAt=W.t;
 }
 function canPay(p,c){ syncRes(p); return RES.every(r=>!c[r]||p.res[r]>=c[r]) }
@@ -3297,42 +3571,137 @@ function damageToGeneral(f,enemyS){
   const mitig=1+f.gen.def/70;
   return avgAtk*CFG.BATTLE_PACE*0.4/mitig;
 }
+/* ---- Погода над полем боя ------------------------------------------------
+   До этого бой был выверенной арифметикой без единой случайности: одни и те же
+   армии всегда давали побайтово один и тот же результат. Считать это можно было
+   на калькуляторе, и неожиданностей не случалось никогда.
+   Погода — общая для ОБЕИХ сторон и бьёт по роду войск, а не по стороне: дождь
+   мочит тетивы у всех лучников на поле, распутица вязнет под всей конницей. Из-за
+   этого она не "везение одного из бойцов", а смена условий, при которой выигрывает
+   другой состав армии — то есть работает вместе с треугольником контр, а не
+   поверх него.
+   Ясная погода намеренно вдвое вероятнее всего остального вместе взятого: буря
+   должна быть событием, а не фоном. */
+const BATTLE_WEATHER=[
+  {id:"clear", w:50, name:"Ясно",            desc:"Погода не мешает ни одной стороне.", mod:{}},
+  {id:"rain",  w:11, name:"Проливной дождь", desc:"Тетивы намокли — лучники бьют слабее.",           mod:{arc:0.82}},
+  {id:"mud",   w:11, name:"Распутица",       desc:"Конница вязнет в грязи и теряет разгон.",         mod:{cav:0.82}},
+  {id:"fog",   w:9,  name:"Густой туман",    desc:"Дальний бой почти вслепую: лучники и осадные бьют неточно.", mod:{arc:0.85,sie:0.80}},
+  {id:"wind",  w:8,  name:"Порывистый ветер",desc:"Ветер сносит стрелы и мешает наводить орудия.",   mod:{arc:0.88,sie:0.88}},
+  {id:"heat",  w:7,  name:"Палящий зной",    desc:"Люди и кони изнурены — все бьют вполсилы.",       mod:{inf:0.92,arc:0.92,cav:0.92,sie:0.92}},
+  {id:"storm", w:4,  name:"Гроза",           desc:"В такой свалке исход куда меньше зависит от расчёта.", mod:{arc:0.85}, jitter:0.14},
+];
+// Своя, отдельная от общей RNG случайность: заводится от момента боя и его
+// участников, а не от того, сколько раз кто-то дёргал RNG до этого. Иначе один
+// и тот же бой в один и тот же миг мира давал бы разный исход в зависимости от
+// того, перезагружали страницу перед ним или нет (глобальная RNG пересевается
+// при загрузке) — а движок обещает "то же зерно и то же время = тот же мир".
+// Числа в хронике боя. Своё, а не RU из интерфейса: хроника собирается в
+// движке, и тянуть ради разделителя разрядов функцию из UI-половины — ровно
+// та связь, которую недавно распутывали.
+const RUn = n => Math.round(n).toLocaleString("ru-RU");
+function battleRng(A,D){
+  const ai=(A.p&&A.p.id)||0, di=(D.p&&D.p.id)||0;
+  const s=(W.seed ^ Math.imul(Math.floor(W.t),2654435761) ^ Math.imul(ai,40503) ^ Math.imul(di,2246822519))|0;
+  return mulberry(s);
+}
+function pickWeather(rnd){
+  const total=BATTLE_WEATHER.reduce((s,x)=>s+x.w,0);
+  let r=rnd()*total;
+  for(const x of BATTLE_WEATHER){ r-=x.w; if(r<=0) return x }
+  return BATTLE_WEATHER[0];
+}
 function resolveBattle(A,D,ctx){
   ctx=ctx||{};
   const lossA=emptyUnits(), lossD=emptyUnits();
-  const lines=[];
+  // Хроника боя. Раньше здесь копился массив lines, который НИГДЕ не читался —
+  // весь рассказ о сражении собирался и молча выбрасывался. Теперь это записи
+  // вида {r, kind, side, text}: r — номер раунда (0 — до сшибки), kind нужен
+  // интерфейсу для значка и цвета, side — чья это удача ("A"/"D"/null).
+  // Пишем не каждый раунд подряд, а переломы: залпы, паника, падение
+  // полководца, рубежи потерь, бегство. Ровный поток "раунд 7, раунд 8..."
+  // читать невозможно, а вот "на пятом лучники дрогнули" — это уже история.
+  const log=[];
+  const note=(kind,text,side,r)=>log.push({r:(r===undefined?round:r),kind,text,side:side||null});
   let round=0;
   const wallMul = 1 + wallDefBonus(D.wallDef||0)*(1+(D.B.wallBonus||0));
+  const startNA=countUnits(A.units), startND=countUnits(D.units);
+  // рубежи, о которых сообщаем по одному разу
+  const marks={A:{50:false,25:false},D:{50:false,25:false}};
+  const checkMarks=()=>{
+    [["A",A,startNA],["D",D,startND]].forEach(([k,f,st])=>{
+      if(st<=0) return;
+      const left=countUnits(f.units)/st;
+      [50,25].forEach(pc=>{
+        if(!marks[k][pc] && left<=pc/100){
+          marks[k][pc]=true;
+          note("mark", f.name+": в строю осталась "+(pc===50?"половина":"четверть")+" войска.", k==="A"?"D":"A");
+        }
+      });
+    });
+  };
 
-  // Первый залп лучников (венец эльфов): без ответа, до первого раунда боя
-  const openA=volleyDamage(A,sideStats(D),wallMul); if(openA){ applyDamage(D,openA,lossD); raiseSkeletons(D,lossD); }
-  const openD=volleyDamage(D,sideStats(A),1);        if(openD){ applyDamage(A,openD,lossA); raiseSkeletons(A,lossA); }
+  const rnd=battleRng(A,D);
+  const weather=pickWeather(rnd);
+  const wMod=t=>(weather.mod&&weather.mod[t])||1;
+  if(weather.id!=="clear") note("weather", weather.name+". "+weather.desc, null, 0);
+  // Разброс на раунд: своим числом для каждой стороны, вокруг единицы. Мелкий —
+  // он не должен решать бой за явно более слабого, только делать одинаковые
+  // схватки неодинаковыми. В грозу разброс шире (см. jitter выше).
+  const jit=weather.jitter||0.05;
+  const roll=()=>1+(rnd()*2-1)*jit;
+
+  // Первый залп лучников (венец эльфов): без ответа, до первого раунда боя.
+  // Погоду он ловит наравне с обычными раундами — залп ведут те же лучники под
+  // тем же дождём, странно было бы мочить тетивы только начиная со второй минуты.
+  const scale=(o,k)=>{ if(o) TKEYS.forEach(t=>o[t]*=k); return o };
+  // fell — сколько бойцов реально выбыло за один приём: считаем до и после,
+  // потому что урон в единицах здоровья, а рассказывать надо в людях.
+  const fell=(f,fn)=>{ const b=countUnits(f.units); fn(); return b-countUnits(f.units) };
+  const openA=scale(volleyDamage(A,sideStats(D),wallMul), wMod("arc")*roll());
+  if(openA){ const n=fell(D,()=>{ applyDamage(D,openA,lossD); raiseSkeletons(D,lossD) });
+    note("volley", A.name+": лучники дали залп ещё до сшибки — пало "+RUn(n)+".", "A", 0); }
+  const openD=scale(volleyDamage(D,sideStats(A),1), wMod("arc")*roll());
+  if(openD){ const n=fell(A,()=>{ applyDamage(A,openD,lossA); raiseSkeletons(A,lossA) });
+    note("volley", D.name+": встречный залп лучников — пало "+RUn(n)+".", "D", 0); }
   // Залп гарнизона защитника — тоже до общей схватки
-  const openG=garrisonVolley(D,sideStats(A));        if(openG){ applyDamage(A,openG,lossA); raiseSkeletons(A,lossA); }
-  checkDiscipline(A,lossA); checkDiscipline(D,lossD);
+  const openG=garrisonVolley(D,sideStats(A));
+  if(openG){ const n=fell(A,()=>{ applyDamage(A,openG,lossA); raiseSkeletons(A,lossA) });
+    if(n>0) note("tower", "Сторожевая башня встретила подходящих — пало "+RUn(n)+".", "D", 0); }
+  const brk0A=checkDiscipline(A,lossA), brk0D=checkDiscipline(D,lossD);
+  if(brk0A&&brk0A.length) note("panic", A.name+": "+brk0A.join(", ")+" дрогнули ещё на подходе.", "D", 0);
+  if(brk0D&&brk0D.length) note("panic", D.name+": "+brk0D.join(", ")+" дрогнули ещё на подходе.", "A", 0);
 
   while(round<60){
     const sa=sideStats(A), sd=sideStats(D);
     if(sa.totalN<=0||sd.totalN<=0) break;
     round++;
-    const dmgTo=(att,attS,defS,defWall)=>{
+    const dmgTo=(att,attS,defS,defWall,shake)=>{
       const out={inf:0,arc:0,cav:0,sie:0};
       TKEYS.forEach(dt=>{
         if(defS[dt].n<=0) return;
         let d=0,dm=0;
         TKEYS.forEach(at=>{ if(attS[at].n<=0)return;
           const share=defS[dt].hp/Math.max(1,defS.totalHp);
-          d += attS[at].atk * counterMult(at,dt) * share;
-          dm += attS[at].matk * counterMult(at,dt) * share;
+          // wMod(at) — погода бьёт по роду войск БЬЮЩЕГО (мокрая тетива у
+          // лучника, вязнущий конь у кавалериста), поэтому множитель берётся
+          // по at, а не по dt, и одинаково применяется к обеим сторонам.
+          const w=wMod(at);
+          d += attS[at].atk * counterMult(at,dt) * share * w;
+          dm += attS[at].matk * counterMult(at,dt) * share * w;
         });
         const mitig = 1 + (defS[dt].def/Math.max(1,defS[dt].n))/70 * defWall;
         const mitigM = 1 + (defS[dt].mdef/Math.max(1,defS[dt].n))/70 * defWall;
-        out[dt]=(d/mitig+dm/mitigM)*CFG.BATTLE_PACE;
+        out[dt]=(d/mitig+dm/mitigM)*CFG.BATTLE_PACE*shake;
       });
       return out;
     };
-    const dA = dmgTo(A,sa,sd,wallMul);          // урон, наносимый атакующим
-    const dD = dmgTo(D,sd,sa,1);
+    const beforeA=countUnits(A.units), beforeD=countUnits(D.units);
+    const genAliveA=!!(A.gen&&A.gen.hp>0), genAliveD=!!(D.gen&&D.gen.hp>0);
+    const risenA0=A._raisedCum?countUnits(A._raisedCum):0, risenD0=D._raisedCum?countUnits(D._raisedCum):0;
+
+    const dA = dmgTo(A,sa,sd,wallMul,roll());   // урон, наносимый атакующим
+    const dD = dmgTo(D,sd,sa,1,roll());
     applyDamage(D,dA,lossD);
     applyDamage(A,dD,lossA);
     // Полководцы — отдельные бойцы вне треугольника: бьют всех, получают ото всех, но смягчённо
@@ -3340,31 +3709,71 @@ function resolveBattle(A,D,ctx){
     const genDmgD=generalDamage(D,sa); if(genDmgD) applyDamage(A,genDmgD,lossA);
     if(A.gen) A.gen.hp=Math.max(0,A.gen.hp-damageToGeneral(A,sd));
     if(D.gen) D.gen.hp=Math.max(0,D.gen.hp-damageToGeneral(D,sa));
+    if(genAliveA && A.gen.hp<=0) note("general", A.name+": полководец пал и больше не ведёт войско.", "D");
+    if(genAliveD && D.gen.hp<=0) note("general", D.name+": полководец пал и больше не ведёт войско.", "A");
     // Венец гномов: часть урона атакующего отражается контрударом гарнизона
     if(D.B.counter){
       const totalDA=TKEYS.reduce((s2,t)=>s2+dA[t],0), extra=totalDA*D.B.counter;
       if(extra>0){
         const reflect={inf:0,arc:0,cav:0,sie:0};
         TKEYS.forEach(t=>{ if(sa[t].n>0) reflect[t]=extra*(sa[t].hp/Math.max(1,sa.totalHp)); });
-        applyDamage(A,reflect,lossA);
+        const n=fell(A,()=>applyDamage(A,reflect,lossA));
+        if(n>0) note("counter", D.name+": гарнизон отвечает контрударом — пало "+RUn(n)+".", "D");
       }
     }
     const brokeA=checkDiscipline(A,lossA), brokeD=checkDiscipline(D,lossD);
-    if(brokeA.length) lines.push(A.name+": "+brokeA.join(", ")+" дрогнули — атака и защита −30% до конца боя.");
-    if(brokeD.length) lines.push(D.name+": "+brokeD.join(", ")+" дрогнули — атака и защита −30% до конца боя.");
-    if(round<=3||round%8===0){
-      lines.push("Раунд "+round+": "+A.name+" — "+countUnits(A.units).toLocaleString("ru")+
-                 ", "+D.name+" — "+countUnits(D.units).toLocaleString("ru"));
-    }
+    if(brokeA.length) note("panic", A.name+": "+brokeA.join(", ")+" дрогнули — бьются и держатся хуже до конца боя.", "D");
+    if(brokeD.length) note("panic", D.name+": "+brokeD.join(", ")+" дрогнули — бьются и держатся хуже до конца боя.", "A");
     // Нежить поднимает павших прямо в бою
     raiseSkeletons(A,lossA); raiseSkeletons(D,lossD);
+    const risenA=(A._raisedCum?countUnits(A._raisedCum):0)-risenA0;
+    const risenD=(D._raisedCum?countUnits(D._raisedCum):0)-risenD0;
+    if(risenA>0) note("raise", A.name+": павшие поднимаются и встают обратно в строй — "+RUn(risenA)+".", "A");
+    if(risenD>0) note("raise", D.name+": павшие поднимаются и встают обратно в строй — "+RUn(risenD)+".", "D");
+
+    // Сводка по раунду — не каждый, иначе хроника превращается в столбец цифр.
+    // Первые два (завязка), затем каждый пятый, и обязательно тот, где полегло
+    // особенно много: именно такие раунды и решают бой.
+    const lostA=beforeA-countUnits(A.units), lostD=beforeD-countUnits(D.units);
+    const heavy=(beforeA>0&&lostA/beforeA>=0.2)||(beforeD>0&&lostD/beforeD>=0.2);
+    if(round<=2||round%5===0||heavy){
+      note("round","Схватка "+round+": "+A.name+" теряет "+RUn(lostA)+" (в строю "+RUn(countUnits(A.units))+"), "+
+                   D.name+" теряет "+RUn(lostD)+" (в строю "+RUn(countUnits(D.units))+").", null);
+    }
+    checkMarks();
+
     if(countUnits(A.units)<=0||countUnits(D.units)<=0) break;
     const ra=countUnits(A.units)/Math.max(1,ctx.startA||1);
-    if(ra<0.28 && !ctx.toDeath) break;          // атакующий отступает, потеряв 72%
+    if(ra<0.28 && !ctx.toDeath){          // атакующий отступает, потеряв 72%
+      note("rout", A.name+": потеряно больше двух третей войска — уцелевшие отходят.", "D");
+      break;
+    }
   }
   const aliveA=countUnits(A.units), aliveD=countUnits(D.units);
-  const win = aliveA>0 && aliveD<=0 ? "A" : aliveD>0&&aliveA<=0 ? "D" : (aliveA>aliveD?"A":"D");
-  return {win, rounds:round, lossA, lossD, lines, aliveA, aliveD};
+  // Если обе стороны выстояли (упёрлись в 60 раундов или атакующий отступил),
+  // победу считаем по ОСТАВШЕЙСЯ СИЛЕ, а не по числу голов. Раньше стояло
+  // aliveA>aliveD — то есть 250 уцелевших крестьян T1 объявлялись сильнее 249
+  // уцелевших рыцарей T5, хотя те на порядок дороже и вдесятеро мощнее.
+  // Ничью силой (в т.ч. 0:0 — обе армии полегли) отдаём защитнику: он на своей
+  // земле, штурм не удался.
+  const powA=armyPower(A.units,A.B,A.p&&A.p.race), powD=armyPower(D.units,D.B,D.p&&D.p.race);
+  const win = aliveA>0 && aliveD<=0 ? "A" : aliveD>0&&aliveA<=0 ? "D" : (powA>powD?"A":"D");
+  // Итоговая строка называет ПРИЧИНУ исхода, а не только победителя: полёг ли
+  // противник целиком, отбит ли штурм, или бой выдохся и решался по тому, у
+  // кого осталось больше силы. Ради этого хроника и затевалась — чтобы было
+  // видно не только "поражение", но и почему.
+  // Без имён: имена сторон — это названия городов и отрядов ("Ваш город",
+  // "Разбойники ур. 5"), и в любую падежную форму они встают криво
+  // ("у Ваш город осталось", "Разбойники ур. 5 перебит"). Роли — нападавшие
+  // и оборонявшиеся — склоняются правильно всегда.
+  note("end",
+    aliveD<=0 && aliveA>0 ? "Оборонявшиеся перебиты целиком. Поле осталось за нападавшими." :
+    aliveA<=0 && aliveD>0 ? "Нападавшие перебиты целиком. Штурм отбит." :
+    aliveA<=0 && aliveD<=0 ? "Обе стороны полегли до последнего. Поле осталось за оборонявшимися." :
+    win==="A" ? "Бой выдохся. Нападавшие сохранили больше сил — поле за ними." :
+                "Бой выдохся. Оборонявшиеся сохранили больше сил — штурм не удался.",
+    win);
+  return {win, rounds:round, lossA, lossD, log, aliveA, aliveD, weather};
 }
 function applyDamage(f,dmg,loss){
   const race=f.p&&f.p.race;
@@ -3729,11 +4138,13 @@ const EV = {
     const c=p.craft;
     if(c.kind==="material"){
       p.materials[c.mat][0]=(p.materials[c.mat][0]||0)+c.n;
+      markInvNew(p);
       if(!p.isBot) logg("Добыто: "+MATERIALS[c.mat].name+" ×"+c.n+" ("+RARITY_NAMES[0].toLowerCase()+" качества).","good");
     } else {
       const name=GEAR_NAMES[c.slot][c.order][c.rarity-1];
       if(RNG()<CRAFT_CHANCE[c.rarity-1]){
         p.inventory[c.slot][c.order][c.rarity-1]=(p.inventory[c.slot][c.order][c.rarity-1]||0)+1;
+        markInvNew(p);
         if(!p.isBot) logg("Скован: "+name+" (на складе).","good");
       } else if(!p.isBot) logg("Ковка не удалась: "+name+" испорчена в горне, материал и время утрачены.","war");
     }
@@ -3862,18 +4273,22 @@ function arriveMarch(m){
       const drops=bookDrop(cell.lv*100);
       let bookTxt="";
       for(const v in drops){ p.tomes[v]=(p.tomes[v]||0)+drops[v]; bookTxt+=", "+TOME_NAME[v]+" ×"+drops[v]; }
+      if(Object.keys(drops).length) markInvNew(p);   // книги опыта — тоже пополнение инвентаря
       const loot={}; const lootBase=Math.round(1800*Math.pow(1.28,cell.lv-1));
       RES.forEach(rr=>loot[rr]=Math.round(lootBase*(rr==="gold"?.25:rr==="stone"?.6:1)));
       m.carry=loot;
       mapDelete(m.tx,m.ty);
       schedule(CFG.RESPAWN_CAMP,"respawn",{x:m.tx,y:m.ty});
       if(!p.isBot){
-        logg("Разбитый лагерь ур. "+cell.lv+". Опыт +"+xp+bookTxt+", убито "+sp.dead+
+        const wx=(r.weather&&r.weather.id!=="clear")?" ("+r.weather.name.toLowerCase()+")":"";
+        logg("Разбитый лагерь ур. "+cell.lv+wx+". Опыт +"+xp+bookTxt+", убито "+sp.dead+
           ", ранено "+sp.hurt+".","war");
         // "О варварах" — только обычные лагеря; форты идут под штурмы/осады,
         // которые в этом раунде правок отложены пользователем на потом.
         if(cell.t==="camp") pushMail({cat:"report",kind:"barbarian",lv:cell.lv,coords:{x:m.tx,y:m.ty},
-          xp, dead:sp.dead, hurt:sp.hurt, loot, tomesTxt:bookTxt.replace(/^, /,"")});
+          xp, dead:sp.dead, hurt:sp.hurt, loot, tomesTxt:bookTxt.replace(/^, /,""),
+          weather:(r.weather&&r.weather.id!=="clear")?{name:r.weather.name,desc:r.weather.desc}:null,
+          log:(r.log||[]).filter(e=>e.kind!=="weather"), attacker:true});
       }
     } else {
       if(!p.isBot) logg("Отряд разбит лагерем ур. "+cell.lv+". Убито "+sp.dead+", ранено "+sp.hurt+".","war");
@@ -3957,6 +4372,24 @@ function pushMail(entry){
   W.mail.unshift(entry);
   if(W.mail.length>300) W.mail.length=300;   // не даём расти бесконечно
 }
+/* ---- Красные метки "тут появилось новое" ---------------------------------
+   Одна и та же метка висит и на самом разделе (почта/генерал/инвентарь), и на
+   гамбургере — так игрок видит, что где-то есть непросмотренное, даже когда
+   меню закрыто. Считается из состояния игрока, а не хранится флагом: сколько
+   непрочитанных писем, есть ли нераспределённые очки таланта. Единственное
+   исключение — инвентарь: "предмет добавился" из самих данных не выводится
+   (материалы и снаряжение просто числа), поэтому там честный флаг invNew,
+   который ставится в момент пополнения и гаснет при открытии раздела. */
+function markInvNew(p){ if(p && !p.isBot) p.invNew=true; }
+function menuBadges(){
+  const p=me();
+  return {
+    mail: W.mail.filter(m=>!m.read).length,
+    gen:  (p.gen&&p.gen.pts)||0,
+    inv:  p.invNew?1:0,
+    army: 0,
+  };
+}
 function genInfo(p){
   return (p.gen&&p.gen.id!=null) ? {name:GENERALS[p.race][p.gen.id].name, lv:p.gen.lv} : null;
 }
@@ -3981,9 +4414,19 @@ function scoutSnapshot(p,q){
 // что и у существующего logMsg): у атакующего и защитника разные потери и
 // разный исход одного и того же боя, поэтому это не одна запись с двумя
 // углами обзора, а две независимые.
-function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords){
+function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords,weather,log){
+  // Погода одна на бой и одинаково касается обеих сторон, поэтому в оба отчёта
+  // уходит одна и та же строка (см. BATTLE_WEATHER). Ясную не пишем вовсе —
+  // "погода не мешала" не новость, строка бы просто зашумляла каждый отчёт.
+  const wx = (weather && weather.id!=="clear") ? {name:weather.name, desc:weather.desc} : null;
+  // Хроника — одна и та же для обеих сторон (бой-то один), но side в каждой
+  // записи помечает, чья это была удача, а отчёт у каждого свой: поэтому при
+  // отрисовке "A"/"D" переводится в "моё/чужое" по флагу attacker (см.
+  // battleLogHtml). Погодную строку из хроники убираем — она уже отдельной
+  // плашкой над таблицей, дублировать незачем.
+  const chron = (log||[]).filter(e=>e.kind!=="weather");
   if(!att.isBot) pushMail({
-    cat:"report", kind:"battle", win: win==="A",
+    cat:"report", kind:"battle", win: win==="A", weather:wx, log:chron,
     selfNick:att.nick||"Безымянный лорд", oppNick:def.nick||"Безымянный лорд",
     selfRace:att.race, oppRace:def.race,
     selfCoords:{x:att.x,y:att.y}, oppCoords:{x:def.x,y:def.y}, fightCoords:coords,
@@ -3996,7 +4439,7 @@ function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords){
     attacker:true,
   });
   if(!def.isBot) pushMail({
-    cat:"report", kind:"battle", win: win==="D",
+    cat:"report", kind:"battle", win: win==="D", weather:wx, log:chron,
     selfNick:def.nick||"Безымянный лорд", oppNick:att.nick||"Безымянный лорд",
     selfRace:def.race, oppRace:att.race,
     selfCoords:{x:def.x,y:def.y}, oppCoords:{x:att.x,y:att.y}, fightCoords:coords,
@@ -4020,6 +4463,8 @@ function battleCity(att,def,m){
   const A=makeForce(m.units,att,{name:att.name});
   const D=makeForce(garrison,def,{wall:def.b.wall+def.b.garrison*0.5,defending:true,name:def.name});
   const r=resolveBattle(A,D,{startA:countUnits(m.units),toDeath:false});
+  // в хронику погода идёт короткой пометкой, подробности — в почтовом отчёте
+  const wx=(r.weather&&r.weather.id!=="clear")?" ("+r.weather.name.toLowerCase()+")":"";
   const la=splitLosses(att,r.lossA,"siege-attack");   // штурмующий теряет войска насмерть, без госпиталя
   const ld=splitLosses(def,r.lossD,"hospital");
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++)def.troops[t][i]=D.units[t][i]});
@@ -4044,13 +4489,13 @@ function battleCity(att,def,m){
         if(!def.isBot) def.shieldUntil=Math.max(def.shieldUntil, W.t+8*3600);
       }
     }
-    logMsg(att,def,"Победа при "+def.name+". Захвачено "+Math.round(sum).toLocaleString("ru")+" ресурсов.",
-                   "Город атакован ("+att.name+"). Потери: "+ld.dead+" убито, "+ld.hurt+" ранено.");
+    logMsg(att,def,"Победа при "+def.name+wx+". Захвачено "+Math.round(sum).toLocaleString("ru")+" ресурсов.",
+                   "Город атакован ("+att.name+")"+wx+". Потери: "+ld.dead+" убито, "+ld.hurt+" ранено.");
   } else {
-    logMsg(att,def,"Штурм "+def.name+" провалился. Убито "+la.dead+", ранено "+la.hurt+".",
-                   "Отражена атака "+att.name+". Убито "+ld.dead+", ранено "+ld.hurt+".");
+    logMsg(att,def,"Штурм "+def.name+wx+" провалился. Убито "+la.dead+", ранено "+la.hurt+".",
+                   "Отражена атака "+att.name+wx+". Убито "+ld.dead+", ранено "+ld.hurt+".");
   }
-  pushBattleReport(att,def,startA,startD,powA,powD,la,ld,r.win,{x:m.tx,y:m.ty});
+  pushBattleReport(att,def,startA,startD,powA,powD,la,ld,r.win,{x:m.tx,y:m.ty},r.weather,r.log);
   recallMarch(m);
 }
 function logMsg(att,def,forAtt,forDef){
@@ -4490,16 +4935,70 @@ function dismantleItem(p,slot,order,rarity){
    ХОД ВРЕМЕНИ. Догоняющая симуляция: сколько бы вас не было, движок
    прокручивает очередь событий до текущего момента.
    ========================================================================= */
-function advanceTo(target){
-  let guard=0;
+// Прокручивает очередь, но не дольше budgetMs подряд (0 — без ограничения).
+// Возвращает true, если дошли до target, и false, если бюджет кончился раньше.
+// ВАЖНО: W.t двигаем на время последнего обработанного события, а не на target,
+// когда вышли по бюджету. Раньше здесь стоял аварийный guard>200000 с break, но
+// W.t=target выполнялось В ЛЮБОМ случае — недокрученные события оставались в
+// очереди с t в прошлом, и следующий вызов ставил W.t=ev.t, то есть уводил
+// мировые часы НАЗАД (syncRes при dt<0 просто переставляет метку, и добыча за
+// этот отрезок молча терялась). Теперь незавершённый догон — штатное состояние:
+// часы стоят там, докуда реально досчитали, и следующий заход продолжает с него.
+function advanceChunk(target, budgetMs){
+  const until = budgetMs ? performance.now()+budgetMs : Infinity;
+  let n=0;
   while(W.events.length && W.events[0].t<=target){
-    if(++guard>200000) break;
     const ev=W.events.shift();
     W.t=ev.t;
-    const fn=EV[ev.type]; if(fn) fn(ev.data);
+    // Одно сбойное событие не должно убивать весь мир. Раньше исключение
+    // отсюда пробивало advanceTo и вылетало из frame() ДО вызова
+    // requestAnimationFrame — главный цикл умирал насовсем, а событие уже было
+    // снято с очереди, так что и перезагрузка не помогала (ровно так вешался
+    // штурм города при нечётном уровне гарнизона, см. tableAt). Теперь сбой
+    // локализован: остальные события доигрываются, игрок видит запись в
+    // хронике, а разработчик — стек в консоли.
+    const fn=EV[ev.type];
+    if(fn){
+      try{ fn(ev.data) }
+      catch(err){
+        console.error("Событие "+ev.type+" упало:",err,ev.data);
+        try{ logg("Сбой при обработке события ("+ev.type+"). Мир продолжает идти.","war") }catch(e){}
+      }
+    }
+    // время сверяем не каждое событие — performance.now() сам по себе не бесплатен
+    if((++n & 63)===0 && performance.now()>=until) return false;
   }
   W.t=target;
-  W.players.forEach(syncRes);
+  W.players.forEach(p=>syncRes(p,true));   // lazy: не чаще раза на секунду мира, см. syncRes
+  return true;
+}
+function advanceTo(target){ return advanceChunk(target, 0) }
+// Догон за долгое отсутствие одним куском намертво вешал вкладку: замеры на
+// свежем мире дали 0.38с за сутки, 0.96с за неделю, 2.7с за месяц и 15с за
+// полгода — и это на десктопе, телефон в 5-10 раз медленнее. Крутим очередь
+// порциями по кадру, отдавая браузеру управление между ними, и показываем
+// прогресс. Отсчёт ведём по МОДЕЛЬНОМУ времени (сколько секунд мира осталось
+// прокрутить), а не по числу событий: сколько их будет всего, заранее неизвестно.
+// catchingUp — замок на время покадрового догона. Главный цикл frame() крутит
+// время сам, и если бы он продолжал работать параллельно, оба двигали бы W.t и
+// разбирали одну очередь навстречу друг другу. На загрузке гонки нет (frame()
+// стартует только после await load()), а вот возврат на вкладку идёт поверх уже
+// работающего цикла — вот ради этого случая замок и нужен.
+let catchingUp=false;
+function advanceToAnimated(target, onProgress){
+  return new Promise(resolve=>{
+    const t0=W.t, span=Math.max(1,target-t0);
+    catchingUp=true;
+    (function step(){
+      if(advanceChunk(target, 40)){
+        catchingUp=false;
+        if(onProgress) onProgress(1);
+        resolve(); return;
+      }
+      if(onProgress) onProgress(Math.min(0.999,(W.t-t0)/span));
+      requestAnimationFrame(step);
+    })();
+  });
 }
 
 /* =========================================================================
@@ -4572,6 +5071,7 @@ const Store={
 };
 const SAVE_KEY="fourbanners:save1";
 async function save(){
+  pruneFarChunks();          // см. комментарий там: сейв иначе растёт вечно
   W.savedAt=Date.now();
   try{ await Store.set(SAVE_KEY, JSON.stringify(W)) }catch(e){ console.warn("save failed",e) }
 }
@@ -4653,13 +5153,19 @@ async function load(){
       // сдвинут — иначе избыток уже молча срежется и предупреждать будет не о чем.
       const p=me(), pr=production(p), cap=plotFillCap(p), dtH=away/3600;
       const overflowed=RES.filter(r=>pr[r]*dtH>cap[r]).map(r=>RES_NAME[r]);
-      advanceTo(W.t+away);
+      // порциями по кадру, с полосой прогресса — иначе за месяц отсутствия
+      // вкладка молча висит несколько секунд (на телефоне — десятки)
+      await advanceToAnimated(W.t+away, f=>catchUpProgress(f, away));
+      catchUpProgress(null);
       const capNote=overflowed.length
         ?" Участки ("+overflowed.join(", ")+") успели заполниться до предела — часть добычи за это время пропала, дальше не копилась."
         :"";
+      // Только в хронику. Письма "прошло столько-то, но ничего не случилось"
+      // тут больше нет: почта — для событий, а не для отметок о времени, и
+      // такое письмо приходило КАЖДЫЙ заход, забивая ящик и обесценивая
+      // красную метку непрочитанного. Если за отсутствие правда что-то
+      // произошло, об этом придёт настоящий отчёт — о бое, сборе, разведке.
       logg("Пока вас не было, прошло "+fmtDur(away)+". Мир жил своей жизнью."+capNote,"good");
-      pushMail({cat:"system",kind:"note",title:"Мир не стоял на месте",
-        body:"Пока вас не было, прошло "+fmtDur(away)+". Мир жил своей жизнью — проверьте отчёты о сражениях."+capNote});
     }
     return true;
   }catch(e){ return false }
@@ -4673,6 +5179,23 @@ async function load(){
 const $=s=>document.querySelector(s);
 const me=()=>W.players[0];
 const RU=n=>Math.round(n).toLocaleString("ru-RU");
+// Полоса догона мира после долгого отсутствия (см. advanceToAnimated).
+// Плашку строим на лету: она нужна раз за загрузку и только если игрока
+// не было достаточно долго, держать её в разметке впустую незачем.
+// f===null — убрать плашку.
+function catchUpProgress(f, awaySec){
+  let el=document.getElementById("catchup");
+  if(f===null){ if(el) el.remove(); return }
+  if(!el){
+    el=document.createElement("div"); el.id="catchup";
+    el.innerHTML="<div class='cu-card'><b>Мир жил своей жизнью</b>"+
+      "<span class='cu-sub'>Вас не было "+fmtDur(awaySec||0)+" — досчитываем события</span>"+
+      "<div class='cu-bar'><i></i></div></div>";
+    document.body.appendChild(el);
+  }
+  const bar=el.querySelector(".cu-bar i");
+  if(bar) bar.style.width=Math.round(f*100)+"%";
+}
 function fmt(n){ n=Math.round(n);
   if(Math.abs(n)>=1e9) return (n/1e9).toFixed(2)+" млрд";
   if(Math.abs(n)>=1e6) return (n/1e6).toFixed(2)+" млн";
@@ -4711,64 +5234,6 @@ let scoutOpenKey=null;
 const RES_SITE_NAME={food:"Пашня",wood:"Лесопилка",stone:"Каменоломня",gold:"Рудник"};
 let tab="city", tempo=1, lastReal=Date.now(), lastFolio="", lastMenuBody="", academyTab="mil", invTab="res", genTab="overview", genTomesOpen=false;
 
-function hash2(x,y,s){ let h=x*374761393+y*668265263+s*1274126177;
-  h=Math.imul(h^(h>>>13),1274126177); return ((h^(h>>>16))>>>0)/4294967296 }
-function noise(x,y,s){
-  const xi=Math.floor(x), yi=Math.floor(y), xf=x-xi, yf=y-yi;
-  const u=xf*xf*(3-2*xf), v=yf*yf*(3-2*yf);
-  const a=hash2(xi,yi,s),b=hash2(xi+1,yi,s),c=hash2(xi,yi+1,s),d=hash2(xi+1,yi+1,s);
-  return (a*(1-u)+b*u)*(1-v)+(c*(1-u)+d*u)*v;
-}
-function ridge(x,y,s){ return 1-Math.abs(2*noise(x,y,s)-1) }   // излом шума даёт хребты
-
-/* ---- Настоящая вода 3D-мира (obyom-3d-infinite.html): её сеет ФИКСИРОВАННЫЙ
-   RW_SEED, один и тот же на любой партии (не W.seed) — рельеф там не зависит
-   от того, чья это карта. Раньше 2D-генератор клеток вообще не знал про
-   рельеф и мог посадить город/лагерь/точку прямо в море: 3D-сторона потом
-   искусственно поднимала landtу ПОД объектом (flattenNear), но саму воду
-   вокруг это не убирало — выглядело как замок в озере. Порт heightAt/isWater
-   сюда даёт 2D-генератору спросить "тут вода?" ДО того, как объект лёг на
-   карту, вместо косметической подчистки постфактум. Формула — дословная
-   копия heightRaw/heightAt из obyom-3d-infinite.html; hash2/noise/ridge выше
-   уже совпадают с тамошними один в один. ---- */
-const RW_SEED=12345, RW_SEA=0.235;
-function rwSstep(a,b,x){ const t=Math.min(1,Math.max(0,(x-a)/(b-a))); return t*t*(3-2*t) }
-function rwRegionKind(x,y){
-  return { mount: rwSstep(0.40,0.72, noise(x/40,y/40,RW_SEED+55)),
-           plat:  rwSstep(0.62,0.84, noise(x/34,y/34,RW_SEED+88)),
-           rough: noise(x/26,y/26,RW_SEED+123) };
-}
-function rwHeightRaw(x,y){
-  const wx=(noise(x/34,y/34,RW_SEED+101)*2-1)*13;
-  const wy=(noise(x/34,y/34,RW_SEED+102)*2-1)*13;
-  const X=x+wx, Y=y+wy;
-  const R=rwRegionKind(x,y);
-  const cont=noise(X/62,Y/62,RW_SEED+201);
-  let e=0.16+cont*0.50;
-  const amp=0.16+0.84*R.mount+0.35*R.rough;
-  e+=(noise(X/27,Y/27,RW_SEED)*0.20+noise(X/13,Y/13,RW_SEED+9)*0.10
-     +noise(X/6,Y/6,RW_SEED+21)*0.045)*amp;
-  e+=ridge(X/17,Y/17,RW_SEED+37)*0.33*R.mount;
-  e+=R.mount*0.10-(1-R.mount)*0.05;
-  if(R.plat>0.02){
-    const terr=Math.round(e*6.0)/6.0;
-    e=e*(1-R.plat*0.80)+terr*(R.plat*0.80);
-  }
-  if(e>=0.42){
-    const k=rwSstep(0.42,0.68,e);
-    e+=(noise(x/2.4,y/2.4,RW_SEED+180)-0.5)*0.075*k
-      +(noise(x/5.5,y/5.5,RW_SEED+181)-0.5)*0.055*k;
-  }
-  return Math.max(0.02,Math.min(1,e));
-}
-function rwHeightAt(x,y){
-  const c=rwHeightRaw(x,y);
-  const s=(rwHeightRaw(x+0.7,y)+rwHeightRaw(x-0.7,y)+rwHeightRaw(x,y+0.7)+rwHeightRaw(x,y-0.7))*0.25;
-  return c*0.55+s*0.45;
-}
-// Клетка (x,y) — центр клетки (+0.5), та же точка, что 3D берёт под объект
-// (см. buildRealCandidate в obyom-3d-infinite.html).
-function isRealWater(x,y){ return rwHeightAt(x+0.5,y+0.5)<RW_SEA }
 
 // "Взгляд" теперь всегда 3D-камера — центрируем её на (x,y), а не двигаем
 // координаты давно удалённой 2D-канвы (и, позже, удалённой вслед за ней
@@ -4821,9 +5286,6 @@ function hollow(mark,text){
 }
 
 /* Аватар игрока = аватар выбранного полководца (пока не выбран — герба достаточно) */
-function playerAvatarSrc(p){
-  return (p.gen&&p.gen.id!=null) ? "images/ui/avatar-"+p.race+(p.gen.id+1)+".png" : null;
-}
 
 /* ---- Верхняя строка: кошель и хроника ---- */
 let lastCrestAvatar;
@@ -4838,6 +5300,7 @@ function renderTop(){
       "<s class='rate"+(v<0?" neg":"")+"'>"+(v<0?"−":"+")+fmt(Math.abs(v))+"/ч</s></span></div>";
   }).join("");
   $("#amber-amt").textContent=fmt(p.amber||0);
+  renderBadges();
   $("#crest-name").textContent=p.nick||"Безымянный лорд";
   $("#crest-power").innerHTML="<img class='ico' src='images/ui/icon-power.png' alt=''>"+fmt(power(p));
   const avSrc=playerAvatarSrc(p);
@@ -5153,60 +5616,6 @@ const RESEARCH_FIELD_ICON = {
   atkSie:"class-sie", defSie:"class-sie", matkSie:"class-sie", mdefSie:"class-sie",
   atk:"stat-atk", def:"stat-def", hp:"stat-hp", matk:"stat-matk", mdef:"stat-mdef",
 };
-function nodeTitle(n){
-  if(n.unlock) return ({inf:"Пехота",arc:"Лучники",cav:"Кавалерия",sie:"Осада"}[n.unlock.type])+": "+TIER_NAMES[n.unlock.type][n.unlock.tier-1];
-  return n.name;
-}
-function waveLabel(w){ return {1:"Начало",2:"Развитие",3:"Расцвет",4:"Венец"}[w]||("Ступень "+w); }
-function nodeDepth(n,arr,cache){
-  if(cache.has(n.id)) return cache.get(n.id);
-  cache.set(n.id,0); // защита от случайного цикла в данных
-  const reqs=n.requires||[];
-  const d = reqs.length ? 1+Math.max(...reqs.map(id=>{
-    const pn=arr.find(x=>x.id===id); return pn?nodeDepth(pn,arr,cache):0;
-  })) : 0;
-  cache.set(n.id,d);
-  return d;
-}
-const ROW_SIZES=[4,3,4,2];    // рядами по 2-4 для красоты, а не одной длинной стеной
-function computeRows(arr,p){
-  const visible=arr.filter(n=>nodeVisibleFor(n,p));
-  const cache=new Map();
-  const byDepth={};
-  visible.forEach(n=>{ const d=nodeDepth(n,arr,cache); (byDepth[d]=byDepth[d]||[]).push(n); });
-  const depths=Object.keys(byDepth).map(Number).sort((a,b)=>a-b);
-  let sizeIdx=0;
-  const rows=[];
-  depths.forEach(d=>{
-    const unlockNodes=byDepth[d].filter(n=>n.unlock);
-    let list=byDepth[d].filter(n=>!n.unlock);
-    while(list.length){
-      const n=ROW_SIZES[sizeIdx%ROW_SIZES.length]; sizeIdx++;
-      rows.push(list.slice(0,n));
-      list=list.slice(n);
-    }
-    if(unlockNodes.length) rows.push(unlockNodes);   // открытие тира войск — всегда своей строкой целиком, без разбивки
-  });
-  return rows;
-}
-function rowGate(n,p){
-  const rows=computeRows(ACADEMY_TREE[n.branch],p);
-  const idx=rows.findIndex(row=>row.some(x=>x.id===n.id));
-  if(idx<=0) return {locked:false,missing:[]};
-  const missing=rows[idx-1].filter(x=>(p.tech[x.id]||0)<x.max);
-  return {locked:missing.length>0,missing};
-}
-function researchLocked(n,p){
-  if(epochOf(p.b.hall)<n.wave) return true;
-  return rowGate(n,p).locked;
-}
-const EPOCH_HALL_MIN=[1,7,13,19,25];
-function lockReason(n,p){
-  if(epochOf(p.b.hall)<n.wave) return "нужна ратуша "+EPOCH_HALL_MIN[n.wave-1]+" уровня";
-  const missing=rowGate(n,p).missing;
-  if(missing.length) return "нужно закончить: "+missing.map(x=>nodeTitle(x)).join(", ");
-  return "заблокировано";
-}
 function renderTreeMap(arr,p){
   const rows=computeRows(arr,p);
   let h="<div class='rtree'>";
@@ -5544,6 +5953,27 @@ function mailRowHtml(m){
     "<div class='tx'><div class='tt'>"+title+"</div><div class='sb'>"+sub+"</div></div>"+
     "<div class='tm'>"+mailAgo(m.t)+"</div></div>";
 }
+/* Хроника боя в письме. Записи приходят из движка помеченными "A"/"D" —
+   чья это была удача. Читателю же надо видеть "моя/чужая", а отчёт у каждой
+   стороны свой, поэтому переводим по флагу attacker: для атакующего "A" —
+   своё, для защитника — наоборот. Записи без стороны (сводка по схватке)
+   остаются нейтральными. */
+const BATTLE_LOG_ICON={weather:"&#9730;",volley:"&#10148;",tower:"&#9819;",panic:"&#9888;",
+  counter:"&#8634;",raise:"&#9760;",general:"&#9876;",mark:"&#9873;",round:"&#8226;",
+  rout:"&#8617;",end:"&#9873;"};
+function battleLogHtml(m){
+  const log=m.log||[];
+  if(!log.length) return "";
+  const mine = m.attacker===false ? "D" : "A";
+  let h="<div class='mail-chron'><div class='mail-chron-hd'>Как шёл бой</div>";
+  log.forEach(e=>{
+    const tone = !e.side ? "" : (e.side===mine ? " good" : " bad");
+    h+="<div class='chron-row "+e.kind+tone+"'>"+
+       "<i class='chron-ico'>"+(BATTLE_LOG_ICON[e.kind]||"&#8226;")+"</i>"+
+       "<span class='chron-tx'>"+e.text+"</span></div>";
+  });
+  return h+"</div>";
+}
 function mailDetailHtml(m){
   let h="<div class='mail-back' data-act='mailback'>&#8592; Назад к списку</div>";
   if(m.kind==="battle"){
@@ -5560,20 +5990,27 @@ function mailDetailHtml(m){
          (m.oppGen?"<div class='gen'>"+m.oppGen.name+" (ур. "+m.oppGen.lv+")</div>":"")+
        "</div></div>"+
        "<div class='mail-stamp "+(m.win?"win":"lose")+"'>"+(m.win?"Победа":"Поражение")+"</div>"+
+       // Погода была общей для обеих сторон — в отчёте она стоит НАД таблицей
+       // потерь, потому что объясняет её цифры (см. BATTLE_WEATHER). В ясную
+       // погоду поля weather нет вовсе, и строка не рисуется.
+       (m.weather?"<div class='mail-weather'><b>"+m.weather.name+"</b><span>"+m.weather.desc+"</span></div>":"")+
        "<table class='mail-stats'><tr><th></th><th>"+m.selfNick+"</th><th>"+m.oppNick+"</th></tr>"+
        "<tr><td>Войск</td><td>"+RU(m.selfStart)+"</td><td>"+RU(m.oppStart)+"</td></tr>"+
        "<tr><td>Убито</td><td>"+RU(m.selfDead)+"</td><td>"+RU(m.oppDead)+"</td></tr>"+
        "<tr><td>Ранено</td><td>"+RU(m.selfHurt)+"</td><td>"+RU(m.oppHurt)+"</td></tr>"+
        "<tr><td>Осталось</td><td>"+RU(m.selfRemain)+"</td><td>"+RU(m.oppRemain)+"</td></tr>"+
        "</table>"+
-       "<div class='mail-note'>Место боя: X:"+m.fightCoords.x+" Y:"+m.fightCoords.y+"</div>";
+       "<div class='mail-note'>Место боя: X:"+m.fightCoords.x+" Y:"+m.fightCoords.y+"</div>"+
+       battleLogHtml(m);
   } else if(m.kind==="barbarian"){
     h+="<div class='mail-stamp win'>Победа</div>"+
+       (m.weather?"<div class='mail-weather'><b>"+m.weather.name+"</b><span>"+m.weather.desc+"</span></div>":"")+
        "<div class='mail-note'>Разбит лагерь разбойников "+m.lv+" уровня у X:"+m.coords.x+" Y:"+m.coords.y+".<br>"+
        "Опыт генерала: +"+RU(m.xp)+"<br>"+
        "Потери отряда: убито "+RU(m.dead)+", ранено "+RU(m.hurt)+
        (m.tomesTxt?"<br>Найдены книги опыта: "+m.tomesTxt:"")+
-       "<br>Захвачено: "+RES.filter(rr=>m.loot[rr]>0).map(rr=>RES_NAME[rr]+" "+fmt(m.loot[rr])).join(", ")+"</div>";
+       "<br>Захвачено: "+RES.filter(rr=>m.loot[rr]>0).map(rr=>RES_NAME[rr]+" "+fmt(m.loot[rr])).join(", ")+"</div>"+
+       battleLogHtml(m);
   } else if(m.kind==="scout"){
     const iv=m.intel;
     h+="<div class='mail-vs'><div class='mail-side'>"+mailAvatarHtml(m.oppAvatar,m.oppRace,52)+
@@ -5689,16 +6126,6 @@ function findTalentNode(id){
 }
 function statIcon(kind){
   return "<img class='stat-ico' src='images/ui/stat-"+kind+".png' alt='' onerror=\"this.remove()\">";
-}
-function genStats(p){
-  // 1 ур. полководца ~= статы юнита Т5 (как в RoK), дальше растёт той же кривой, что и раньше
-  const lv=p.gen.lv, B=bonuses(p), g=Math.pow(lv,1.15);
-  const gear=gearBonus(p);   // теперь проценты — умножаем, а не прибавляем флэтом
-  return {
-    hp:  Math.round((250+30*g)*(1+B.genHpMod)*(1+gear.hp)),
-    atk: Math.round((200+40*g)*(1+B.genAtkMod)*(1+gear.atk)),
-    def: Math.round((170+30*g)*(1+B.genDefMod)*(1+gear.def)),
-  };
 }
 function genPortraitHtml(race,i){
   return "<img class='gen-portrait' src='images/ui/avatar-"+race+(i+1)+".png' alt='' "+
@@ -6676,12 +7103,34 @@ function updateTrainSheet(){
   $("#bm-btn").disabled = !!p.train[type] || max<1 || n<=0;
 }
 function openMenuModal(t){
+  // Инвентарь — единственный раздел, где "новое" не выводится из данных
+  // (материалы и снаряжение просто числа), поэтому его флаг гасим здесь, при
+  // открытии. У почты и генерала гасить нечего: метка сама пропадёт, когда
+  // письма прочитаны, а очки таланта вложены.
+  if(t==="inv") me().invNew=false;
   $("#menu-modal").dataset.tab = t;
   const html = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): foInv();
   lastMenuBody = html;
   $("#menu-modal-body").innerHTML = html;
   $("#menu-modal").classList.add("open");
   $("#side-menu").classList.remove("open");
+  renderBadges();
+}
+// Метки перерисовываются в общем такте с шапкой (renderTop раз в секунду) —
+// отдельного таймера им не нужно.
+function renderBadges(){
+  const b=menuBadges();
+  let any=0;
+  for(const k of ["mail","gen","inv","army"]){
+    const el=$("#nb-"+k); if(!el) continue;
+    const n=b[k]||0; any+=n;
+    el.classList.toggle("on", n>0);
+    // Инвентарь помечаем голой точкой: "сколько там нового" мы не считаем,
+    // а рисовать честную единицу было бы враньём про количество.
+    el.setAttribute("data-n", (k==="inv"||n<=0) ? "" : (n>99?"99+":String(n)));
+  }
+  const mb=$("#nb-menu");
+  if(mb){ mb.classList.toggle("on", any>0); mb.setAttribute("data-n",""); }
 }
 function closeMenuModal(){ $("#menu-modal").classList.remove("open"); }
 /* ---- Живое обновление открытых окошек раз в секунду, без переоткрытия ---- */
@@ -6803,6 +7252,11 @@ $("#veil").onclick=e=>{ if(e.target.id==="veil") closeScroll() };
 let sinceSave=0, sinceUi=0;
 function frame(){
   const now=Date.now();
+  // Пока идёт покадровый догон, время двигает он — цикл только ждёт и не
+  // трогает ни W.t, ни очередь (см. catchingUp у advanceToAnimated). lastReal
+  // при этом подтягиваем, чтобы после разблокировки не пришёл гигантский dt
+  // за уже отсчитанный догоном промежуток.
+  if(catchingUp){ lastReal=now; requestAnimationFrame(frame); return }
   let dt=(now-lastReal)/1000; lastReal=now;
   if(dt>0){ advanceTo(W.t+dt*tempo); sinceSave+=Math.min(dt,3600); sinceUi+=dt }
   if(sinceUi>1.0){ sinceUi=0; renderTop(); renderFolio(); renderCartouche(); refreshOpenModal(); renderFieldArmyWorld() }
@@ -6813,10 +7267,18 @@ document.addEventListener("visibilitychange",()=>{
   if(document.hidden){ save(); return }
   // Пока вкладка была свёрнута/экран заблокирован, requestAnimationFrame не тикал —
   // досчитываем реальное время сразу, иначе очереди построек «замирают» до перезагрузки.
+  // Телефон нередко держит вкладку свёрнутой сутками, а это уже секунды счёта:
+  // короткие промежутки догоняем на месте, длинные — порциями по кадру с полосой,
+  // тем же путём, что и загрузка после отсутствия (см. advanceToAnimated).
   const away=Math.max(0,(Date.now()-lastReal)/1000);
+  const after=()=>{ renderTop(); renderFolio(); renderCartouche(); refreshOpenModal() };
   lastReal=Date.now();
+  if(away>3600){
+    advanceToAnimated(W.t+away, f=>catchUpProgress(f,away)).then(()=>{ catchUpProgress(null); after() });
+    return;
+  }
   if(away>0) advanceTo(W.t+away);
-  renderTop(); renderFolio(); renderCartouche(); refreshOpenModal();
+  after();
 });
 window.addEventListener("beforeunload",()=>{
   try{ W.savedAt=Date.now(); localStorage.setItem(SAVE_KEY,JSON.stringify(W)) }catch(e){}
