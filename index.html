@@ -641,6 +641,19 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   margin:2px 0 16px;padding:4px;border:3px solid;border-radius:4px;transform:rotate(-3deg)}
 .mail-stamp.win{color:#3f6b3f;border-color:#3f6b3f}
 .mail-stamp.lose{color:#8a2f22;border-color:#8a2f22}
+/* Донесение разведки — разделами по ступеням (см. scoutReportHtml).
+   Недоступное показано тем же рядом, но приглушённым: видно, что сведения
+   существуют и до какого уровня растить Разведку, чтобы их достать. */
+.sc-block{margin:10px 0;border-top:1px solid rgba(90,69,48,.28);padding-top:8px}
+.sc-hd{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:#8a6d2c;margin-bottom:6px}
+.sc-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+  padding:3px 0;border-bottom:1px solid rgba(90,69,48,.14);font-size:12.5px;color:#3a2c1c}
+.sc-row:last-child{border-bottom:none}
+.sc-row>b{font-weight:normal;font-family:var(--data);text-align:right;color:#2c2114}
+.sc-row.locked{opacity:.5}
+.sc-row.locked>b{font-style:italic;font-family:inherit;font-size:11.5px;color:#6b5230}
+.sc-tiers{display:block;font-style:normal;font-size:10.5px;color:#6b5230;margin-top:1px}
+.sc-note{font-size:11px;line-height:1.5;color:#6b5230;margin-top:8px}
 /* Хроника боя — лента переломов под таблицей потерь (см. battleLogHtml).
    Своё и чужое различаются цветом полоски слева, а не текстом: читается
    с одного взгляда, кто на каком шаге получил своё. */
@@ -2129,7 +2142,7 @@ const plotUnlocked = (bk,idx,hall) => !isMulti(bk) || idx===0 || epochOf(hall)>=
 // уровне). Каменоломня/Шахта делят с Фермой ту же кривую (см. production()),
 // поэтому свой множитель ресурса (1/1/0.75/0.5) на неё и накладывается в
 // capacity() — здесь только базовое ×10 от PROD_TABLE.
-const plotCap = lv => lv<=0?0:PROD_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1]*10;
+const plotCap = lv => lv<=0?0:tblRow(PROD_TABLE,lv)*10;
 // Ратуша поднимается, только когда эти здания догнали её уровень.
 const HALL_REQ = ["wall","store","academy","barracks","hospital"];
 
@@ -2432,19 +2445,27 @@ function isRealWater(x,y){ return rwHeightAt(x+0.5,y+0.5)<RW_SEA }
 // потолок — buildingMax() берёт .max конкретного здания, но не выше общего
 // CFG.MAX_LEVEL (на случай если у здания вдруг стоит больше общего предела).
 const buildingMax = bk => Math.min(CFG.MAX_LEVEL, (BUILDINGS[bk]&&BUILDINGS[bk].max)||CFG.MAX_LEVEL);
-const buildTime = (bk,lv) => {
-  const tbl = BUILDING_TABLE[bk];
-  return (tbl ? tbl : BUILD_TABLE)[clamp(lv,1,CFG.MAX_LEVEL)-1].t;
-};
+// row(tbl,lv) — строка таблицы по уровню, с зажимом по ДЛИНЕ САМОЙ ТАБЛИЦЫ,
+// а не по общему CFG.MAX_LEVEL.
+// Здесь был баг: у Горна таблица из одной строки (настоящая Кузница RoK
+// уровней не имеет), а поиск зажимался в 1..25 — стоило Горну оказаться
+// построенным, и buildCost(bk, lv+1) лез в FORGE_TABLE[1], получал undefined
+// и падал на .food. Карточка здания строится ДО проверки "можно ли улучшать",
+// поэтому Горн просто переставал открываться совсем; а в сохранениях, где он
+// успел подняться выше первого уровня, вместе с ним падала и power(), то есть
+// замирал весь игровой цикл.
+// Общий CFG.MAX_LEVEL для такой выборки в принципе не годится: длина таблицы —
+// это и есть настоящий потолок КОНКРЕТНОГО здания, и мерить надо ею.
+const tblRow = (tbl,lv) => tbl[clamp(Math.round(lv),1,tbl.length)-1];
+const buildTime = (bk,lv) => tblRow(BUILDING_TABLE[bk]||BUILD_TABLE, lv).t;
 const buildCost = (bk,lv,p) => {
-  const tbl = BUILDING_TABLE[bk];
-  const row = (tbl ? tbl : BUILD_TABLE)[clamp(lv,1,CFG.MAX_LEVEL)-1];
+  const r = tblRow(BUILDING_TABLE[bk]||BUILD_TABLE, lv);
   const cut = p ? (1-(bonuses(p).buildCostCut||0)) : 1;
   // в RoK постройки не стоят золота — только еда/дерево/камень (точные числа из таблиц)
-  return {food:Math.round((row.food||0)*cut),wood:Math.round((row.wood||0)*cut),stone:Math.round((row.stone||0)*cut),gold:0};
+  return {food:Math.round((r.food||0)*cut),wood:Math.round((r.wood||0)*cut),stone:Math.round((r.stone||0)*cut),gold:0};
 };
-const prodRate  = lv => lv<=0?0:PROD_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1];   // в час
-const storeCap  = lv => STORE_TABLE[clamp(Math.max(1,lv),1,CFG.MAX_LEVEL)-1];
+const prodRate  = lv => lv<=0?0:tblRow(PROD_TABLE,lv);   // в час
+const storeCap  = lv => tblRow(STORE_TABLE,Math.max(1,lv));
 const troopStat = (type,tier,stat) => Math.round(TROOP_TYPES[type][stat]*TIER_MULT[tier-1]);
 // Точные цифры RoK за 1 воина (riseofkingdoms.fandom.com/gamesguideinfo.com).
 // Раньше одна и та же TROOP_COST обслуживала все 4 рода войск — в реальности
@@ -2484,7 +2505,7 @@ const BLD_TRAIN = {barracks:"inf",range:"arc",stable:"cav",siege:"sie"};
 // цифры на этот случай RoK не даёт, оставил ту же табличку, что и раньше.
 const TRAIN_CAP=[20,50,100,150,200,250,300,350,400,450,500,550,600,700,800,
   900,1000,1100,1200,1300,1400,1500,1600,1700,2000];
-const trainCap = lv => lv<=0?0:TRAIN_CAP[clamp(lv,1,CFG.MAX_LEVEL)-1];
+const trainCap = lv => lv<=0?0:tblRow(TRAIN_CAP,lv);
 // Лечение в лазарете стоит вдвое дешевле и вдвое быстрее набора того же юнита с нуля, и никогда не требует золота.
 function healUnitCost(p,type,tier){
   const c=troopCost(type,tier), k=bonuses(p).heal;
@@ -2516,12 +2537,12 @@ const marchSlots= hall => hall>=22?5 : hall>=17?4 : hall>=11?3 : hall>=5?2 : 1;
 const HOSPITAL_CAP_TABLE=[7500,8250,9000,10000,11000,12250,13500,15000,16500,
   18250,20000,22000,24000,26500,29000,32000,35000,38500,42000,46000,50000,
   54500,59500,65000,75000];
-const hospitalCap = lv => lv<=0?0:HOSPITAL_CAP_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1];
+const hospitalCap = lv => lv<=0?0:tblRow(HOSPITAL_CAP_TABLE,lv);
 const totalHospitalCap = p => p.b.hospital.reduce((s,lv)=>s+hospitalCap(lv),0);
 const hallGateLevel = (p,k) => isMulti(k) ? p.b[k][0] : p.b[k];
 // Была придуманная 3000+ур.*2500 (макс. 65500 на 25 ур.) — теперь настоящая
 // прочность стены RoK: 15000 на 1 ур. плавно до 40000 на 25 ур. (см. WALL_TABLE).
-const maxWallHp = lv => lv<=0?0:WALL_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1].hp;
+const maxWallHp = lv => lv<=0?0:tblRow(WALL_TABLE,lv).hp;
 // Была плоская lv*0.005 (0.5%/ур., без всякой связи с настоящими цифрами) —
 // у Стены в RoK вообще нет процента защиты, только HP (см. WALL_TABLE), так
 // что взять готовое число неоткуда. Вместо новой выдумки бонус посчитан
@@ -3411,7 +3432,7 @@ const BUILDING_POWER_BASE=11240, BUILDING_POWER_K=0.00876;
 const buildingPower = (bk,lv) => {
   if(lv<=0) return 0;
   const tbl = BUILDING_TABLE[bk];
-  if(tbl) return tbl[clamp(lv,1,CFG.MAX_LEVEL)-1].power;
+  if(tbl) return tblRow(tbl,lv).power;
   return BUILDING_POWER_BASE*(POWER_WEIGHT[bk]||1)*Math.exp(BUILDING_POWER_K*(lv-1)*(lv-1));
 };
 function power(p){
@@ -3542,7 +3563,7 @@ function volleyDamage(att,defS,defWall){
 function garrisonVolley(D,attS){
   // гарнизон — не разведка, а сторожевая башня: сама бьёт атакующих до общей схватки
   const lv = D.p && D.p.b.garrison || 0; if(lv<=0) return null;
-  const dmg = WATCH_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1].atk;   // была придуманная lv*900 (макс. 22500) — теперь настоящая атака Сторожевой башни RoK (макс. 500000)
+  const dmg = tblRow(WATCH_TABLE,lv).atk;   // была придуманная lv*900 (макс. 22500) — теперь настоящая атака Сторожевой башни RoK (макс. 500000)
   const out={inf:0,arc:0,cav:0,sie:0};
   TKEYS.forEach(dt=>{
     if(attS[dt].n<=0) return;
@@ -4067,7 +4088,8 @@ function marchSpeed(p,units){
 }
 function sendMarch(p,tx,ty,units,mode){
   const n=countUnits(units); if(n<=0) return {err:"Нет войск"};
-  const busy=W.marches.filter(m=>m.pid===p.id).length;
+  // Лазутчики слот не занимают (см. sendScout) — считаем только боевые/обозные походы.
+  const busy=W.marches.filter(m=>m.pid===p.id&&m.mode!=="scout").length;
   if(busy>=marchSlots(p.b.hall)) return {err:"Все отряды заняты"};
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++){
     if(units[t][i]>p.troops[t][i]) units[t][i]=p.troops[t][i];
@@ -4093,6 +4115,35 @@ function sendMarch(p,tx,ty,units,mode){
     }
   }
   return {ok:m};
+}
+/* Разведка чужого города — настоящая вылазка, а не всезнание.
+   Раньше кнопка "Разведка" мгновенно раскрывала живой состав войск противника
+   прямо в панели: без похода, без времени, без риска, и данные обновлялись сами
+   собой в реальном времени. Против ботов это ещё туда-сюда, но как механика это
+   был чит — знать точный состав чужой армии в момент удара нельзя.
+   Теперь лазутчик реально идёт к городу и присылает СНИМОК на момент прибытия
+   (scoutSnapshot): пока он возвращается, противник успевает и построить, и
+   потратить. Глубина сведений — от уровня Разведки, как и было задумано.
+   Слот марша лазутчик не занимает: в RoK разведка тоже не отнимает отряд, да и
+   счёт слотов ведётся по W.marches, поэтому scout-походы там просто не считаем
+   (см. sendMarch/botThink). Войск с собой не берёт — это один соглядатай. */
+const SCOUT_SPEED_MULT = 2.2;   // налегке и без обоза — заметно быстрее войска
+function sendScout(p,tx,ty){
+  if((p.b.scout||0)<=0) return {err:"Нужна разведка"};
+  const tgt=W.map[key(tx,ty)];
+  if(!tgt||tgt.t!=="city") return {err:"Разведывать можно только город"};
+  if(tgt.pid===p.id) return {err:"Это ваш город"};
+  if(W.marches.some(m=>m.pid===p.id&&m.mode==="scout"&&m.tx===tx&&m.ty===ty))
+    return {err:"Лазутчик уже в пути"};
+  const path=waterPath(p.x,p.y,tx,ty);
+  const d=pathLength(path)*(1-portalShortcut(p));
+  const travel=Math.max(15, d/(marchSpeed(p,emptyUnits())*SCOUT_SPEED_MULT)*60);
+  const m={id:W.nextId++,pid:p.id,mode:"scout",x0:p.x,y0:p.y,tx,ty,units:emptyUnits(),
+    t0:W.t,t1:W.t+travel,state:"go",carry:null,gatherEnd:0};
+  setMarchPath(m,path);
+  W.marches.push(m);
+  schedule(travel,"scouted",{mid:m.id});
+  return {ok:true,eta:travel};
 }
 function recallMarch(m){
   if(m.state==="back") return;
@@ -4199,6 +4250,25 @@ const EV = {
     if(!p.isBot) logg(unitName(H.type,H.tier,p.race)+" вылечено: ×"+n.toLocaleString("ru")+".","good");
   },
   arrive(d){ arriveMarch(W.marches.find(m=>m.id===d.mid)) },
+  // Лазутчик дошёл: снимаем показания и сразу уводим его — обратной дороги ему
+  // не рисуем, он один и налегке, возвращать домой нечего.
+  scouted(d){
+    const m=W.marches.find(x=>x.id===d.mid); if(!m) return;
+    W.marches=W.marches.filter(x=>x.id!==m.id);
+    const p=W.players.find(q=>q.id===m.pid); if(!p) return;
+    const cell=W.map[key(m.tx,m.ty)];
+    const q=cell&&cell.t==="city" ? W.players.find(z=>z.id===cell.pid) : null;
+    if(!q){ if(!p.isBot) logg("Лазутчик не нашёл города на месте — возвращается ни с чем.","war"); return }
+    syncRes(q);
+    if(p.isBot) return;
+    pushMail({cat:"report",kind:"scout",
+      oppNick:q.nick||"Безымянный лорд", oppRace:q.race,
+      oppCoords:{x:q.x,y:q.y}, oppAvatar:playerAvatarSrc(q),
+      hall:q.b.hall, oppPower:power(q),
+      shielded: W.t<q.shieldUntil,
+      intel:scoutSnapshot(p,q)});
+    logg("Лазутчик вернулся с донесением о городе "+(q.nick||q.name)+".","good");
+  },
   // Снос узла (если он опустел) — теперь тут, а не в момент прибытия
   // отряда (см. комментарий у arriveMarch), плюс перестраховка на случай,
   // если cell вдруг уже пропал по другой причине к этому моменту.
@@ -4587,7 +4657,7 @@ function botThink(p){
   const cap=capacity(p);
   const pr=production(p);
   const busyQ=p.queues.filter(Boolean).length;
-  const freeSlots=marchSlots(p.b.hall)-W.marches.filter(m=>m.pid===p.id).length;
+  const freeSlots=marchSlots(p.b.hall)-W.marches.filter(m=>m.pid===p.id&&m.mode!=="scout").length;
 
   /* --- стройка --- */
   if(busyQ<2){
@@ -5136,6 +5206,17 @@ async function load(){
       // повторять при каждой загрузке). Ботам не нужно — им очки уже
       // считает b.gen.pts=b.gen.lv-1 при создании.
       if(!p.isBot && !p.gen.gotStartPts){ p.gen.pts=(p.gen.pts||0)+5; p.gen.gotStartPts=true; }
+      // Потолок здания мог опуститься уже после того, как игрок отстроился выше
+      // (так вышло с Горном: он поднимался до 25, а стал разовой постройкой без
+      // улучшений, как настоящая Кузница RoK). Сам расчёт такие уровни теперь
+      // переживает (см. tblRow), но держать в сохранении уровень, которого у
+      // здания больше не существует, всё равно нечестно: карточка показывала бы
+      // "уровень 4" там, где потолок 1. Приводим к нынешнему потолку.
+      BKEYS.forEach(k=>{
+        const cap=buildingMax(k);
+        if(Array.isArray(p.b[k])) p.b[k]=p.b[k].map(v=>Math.min(v||0,cap));
+        else if(p.b[k]>cap) p.b[k]=cap;
+      });
     });
     // Старые сохранения — до появления почты — не несут W.mail вовсе.
     if(!W.mail) W.mail=[];
@@ -5273,12 +5354,8 @@ const FONT=getComputedStyle(document.body).fontFamily;   // читаем оди�
 // теперь его так же пишет 3D-вкладка (см. renderCartoucheFor, вызывается
 // из obyom-3d-infinite.html при тапе по замку/лагерю/точке).
 let sel=null;
-// "Разведка" в карточке правителя — сворачиваемый блок, не отдельный поход:
-// пассивная разведка уже была всегда (см. renderCartouche), кнопка просто
-// открывает то, что уже посчитано. Ключ, не булев флаг — чтобы открытая
-// разведка сама закрывалась при переключении на другую клетку без лишней
-// проводки через все места, где меняется sel.
-let scoutOpenKey=null;
+// (scoutOpenKey убран вместе с мгновенной выдачей состава войск — разведка
+//  теперь настоящий поход лазутчика, см. sendScout/EV.scouted.)
 const RES_SITE_NAME={food:"Пашня",wood:"Лесопилка",stone:"Каменоломня",gold:"Рудник"};
 let tab="city", tempo=1, lastReal=Date.now(), lastFolio="", lastMenuBody="", academyTab="mil", invTab="res", genTab="overview", genTomesOpen=false;
 
@@ -5464,46 +5541,27 @@ function renderCartouche(){
     const q=W.players.find(z=>z.id===o.pid);
     if(!q){ put(""); return }
     if(q.id===p.id){ put(""); return }   // своя столица — подпись в 3D, панель тут ни к чему
-    const cellKey=o.x+","+o.y, scoutOpen=scoutOpenKey===cellKey;
-    let scout="";
-    if(scoutOpen){
-      const sl=p.b.scout||0;
-      if(sl<=0) scout="<div class='hint'>Постройте "+buildingName("scout",p).toLowerCase()+", чтобы узнать состав войск.</div>";
-      else {
-        const se=epochOf(sl), total=countUnits(q.troops);
-        if(se===1){
-          scout="<div class='co'><span>Войск (примерно)</span><b>~"+fmt(Math.round(total/100)*100)+"</b></div>";
-        } else if(se===2){
-          scout="<div class='co'><span>Войск (точно)</span><b>"+RU(total)+"</b></div>";
-        } else if(se===3){
-          scout=TKEYS.map(t=>{
-            const n=Object.values(q.troops[t]).reduce((a,b)=>a+b,0);
-            return "<div class='co'><span>"+TROOP_TYPES[t].name+"</span><b>"+RU(n)+"</b></div>";
-          }).join("");
-        } else {
-          scout=TKEYS.map(t=>{
-            const parts=[]; for(let i=1;i<=5;i++) if(q.troops[t][i]) parts.push(unitName(t,i,q.race)+" ×"+RU(q.troops[t][i]));
-            return parts.length?"<div class='co' style='display:block'><span>"+TROOP_TYPES[t].name+"</span><b style='display:block;text-align:left;font-size:11px'>"+parts.join(", ")+"</b></div>":"";
-          }).join("");
-          if(se===5){
-            scout+="<div class='co'><span>Полководец</span><b>"+GENERALS[q.race][q.gen.id||0].name+"</b></div>"+
-              "<div class='co'><span>Стена / гарнизон</span><b>"+q.b.wall+" / "+q.b.garrison+"</b></div>";
-          }
-        }
-        // Ресурсы разведанного игрока — с той же ступени, что и точная численность войск.
-        if(se>=2) scout+="<div class='co' style='display:block'><span>Ресурсы</span><b style='display:block;text-align:left'>"+
-          RES.map(rr=>RES_NAME[rr]+" "+fmt(q.res[rr])).join(", ")+"</b></div>";
-      }
-    }
+    // СОСТАВ ВОЙСК ЗДЕСЬ НЕ ПОКАЗЫВАЕТСЯ. Раньше кнопка "Разведка" раскрывала
+    // живую роспись чужой армии прямо в панели — мгновенно, бесплатно и с
+    // обновлением в реальном времени. Это был чит: знать точный состав
+    // обороны в момент удара нельзя. Теперь кнопка отправляет настоящего
+    // лазутчика (sendScout), а донесение приходит письмом — снимком на момент
+    // прибытия, а не живой сводкой. У разбойников прогноз остаётся: там он
+    // уместен и так же устроен в RoK.
+    // Ратуша и мощь — открытые сведения (в RoK они видны у любого правителя),
+    // по ним нельзя восстановить ни состав, ни тиры войск.
+    const scouting=W.marches.some(m=>m.pid===p.id&&m.mode==="scout"&&m.tx===o.x&&m.ty===o.y);
+    const hasScout=(p.b.scout||0)>0;
     const shielded=W.t<q.shieldUntil;
     put("<div class='hd'>"+shieldSvg(q.race,14)+q.nick+" "+coord+"</div>"+
       "<div class='co'><span>Город</span><b>"+q.name+"</b></div>"+
       "<div class='co'><span>Ратуша</span><b>"+q.b.hall+"</b></div>"+
       "<div class='co'><span>Сила</span><b>"+fmt(power(q))+"</b></div>"+
       (shielded?"<div class='co'><span>Статус</span><b style='color:#7ab2e0'>Под щитом мира</b></div>":"")+
-      scout+
+      (scouting?"<div class='hint'>Лазутчик в пути — донесение придёт письмом.</div>"
+       :!hasScout?"<div class='hint'>Постройте "+buildingName("scout",p).toLowerCase()+", чтобы засылать лазутчиков.</div>":"")+
       "<div class='chips' style='margin-top:9px'>"+
-        "<button class='seal' data-act='scouttoggle' data-x='"+o.x+"' data-y='"+o.y+"'>"+(scoutOpen?"Скрыть":"Разведка")+"</button>"+
+        (hasScout&&!scouting?"<button class='seal' data-act='sendscout' data-x='"+o.x+"' data-y='"+o.y+"'>Разведать</button>":"")+
         (shielded?"":"<button class='seal blood' data-act='march' data-x='"+o.x+"' data-y='"+o.y+"'>Атака</button>")+
       "</div>");
   }
@@ -6022,6 +6080,71 @@ function battleLogHtml(m){
   });
   return h+"</div>";
 }
+/* Донесение лазутчика. Раньше это был один абзац сплошным текстом; теперь
+   отчёт устроен по ступеням разведки, как в RoK, и каждая следующая ступень
+   ДОБАВЛЯЕТ раздел, а не подменяет предыдущий:
+     1 — только грубая численность ("около стольки-то");
+     2 — точная численность и запасы в городе;
+     3 — разбивка по родам войск (уже видно, чем обороняются);
+     4 — разбивка по тирам внутри рода (видно, насколько войска сильны);
+     5 — полководец, стена и гарнизон.
+   Чего лазутчик не достал, то честно помечено как недоступное с подсказкой,
+   до какого уровня растить Разведку — иначе непонятно, это у противника пусто
+   или это ты не дотянулся. */
+const SCOUT_TIER_LABEL=["Т1","Т2","Т3","Т4","Т5"];
+function scoutRow(label,value){
+  return "<div class='sc-row'><span>"+label+"</span><b>"+value+"</b></div>";
+}
+function scoutLocked(label,need){
+  return "<div class='sc-row locked'><span>"+label+"</span><b>Разведка "+need+" ур.</b></div>";
+}
+function scoutReportHtml(m){
+  const iv=m.intel||{}, se=iv.se||1;
+  // до каких уровней Разведки открываются ступени (эпоха -> уровень ратуши/здания)
+  const NEED=[1,7,13,19,25];
+  let h="<div class='mail-vs'><div class='mail-side'>"+mailAvatarHtml(m.oppAvatar,m.oppRace,52)+
+    "<div class='nm'>"+m.oppNick+"</div><div class='co'>X:"+m.oppCoords.x+" Y:"+m.oppCoords.y+"</div>"+
+    "<div class='pw'>Ратуша "+m.hall+" · мощь "+RU(m.oppPower)+"</div></div></div>";
+  if(m.shielded) h+="<div class='mail-weather'><b>Город под щитом мира</b>"+
+    "<span>Пока щит держится, напасть нельзя.</span></div>";
+
+  h+="<div class='sc-block'><div class='sc-hd'>Гарнизон</div>";
+  h+= se>=2 ? scoutRow("Войск всего", RU(iv.total))
+            : scoutRow("Войск (на глаз)", "около "+fmt(Math.round(iv.total/100)*100));
+  if(se>=3 && iv.byType && iv.byType.length){
+    iv.byType.forEach(x=>{
+      // на 4-й ступени рядом с родом войск показываем и раскладку по тирам
+      const tiers = se>=4 && iv.byTier ? (iv.byTier.find(y=>y.t===x.t)||{}).parts : null;
+      h+=scoutRow(TROOP_TYPES[x.t].name, RU(x.n)+
+        (tiers&&tiers.length?"<em class='sc-tiers'>"+tiers.map(pp=>SCOUT_TIER_LABEL[pp.i-1]+" "+RU(pp.n)).join(" · ")+"</em>":""));
+    });
+  } else {
+    h+=scoutLocked("По родам войск", NEED[2]);
+  }
+  if(se<4) h+=scoutLocked("По тирам", NEED[3]);
+  h+="</div>";
+
+  h+="<div class='sc-block'><div class='sc-hd'>Город</div>";
+  if(se>=5){
+    h+=scoutRow("Полководец", iv.gen||"не выбран");
+    h+=scoutRow("Стена", iv.wall+" ур.");
+    h+=scoutRow("Гарнизон (башня)", iv.garrison+" ур.");
+  } else {
+    h+=scoutLocked("Полководец, стена, башня", NEED[4]);
+  }
+  h+="</div>";
+
+  h+="<div class='sc-block'><div class='sc-hd'>Запасы</div>";
+  if(iv.res){
+    RES.forEach(rr=>h+=scoutRow(RES_NAME[rr], fmt(iv.res[rr])));
+    h+="<div class='sc-note'>Часть запасов защищена складом и при набеге не достанется.</div>";
+  } else h+=scoutLocked("Запасы города", NEED[1]);
+  h+="</div>";
+
+  h+="<div class='sc-note'>Донесение — снимок на момент, когда лазутчик добрался до города. "+
+     "К вашему подходу состав обороны может измениться.</div>";
+  return h;
+}
 function mailDetailHtml(m){
   let h="<div class='mail-back' data-act='mailback'>&#8592; Назад к списку</div>";
   if(m.kind==="battle"){
@@ -6060,19 +6183,7 @@ function mailDetailHtml(m){
        "<br>Захвачено: "+RES.filter(rr=>m.loot[rr]>0).map(rr=>RES_NAME[rr]+" "+fmt(m.loot[rr])).join(", ")+"</div>"+
        battleLogHtml(m);
   } else if(m.kind==="scout"){
-    const iv=m.intel;
-    h+="<div class='mail-vs'><div class='mail-side'>"+mailAvatarHtml(m.oppAvatar,m.oppRace,52)+
-       "<div class='nm'>"+m.oppNick+"</div><div class='co'>X:"+m.oppCoords.x+" Y:"+m.oppCoords.y+"</div>"+
-       "<div class='pw'>Ратуша "+m.hall+" · мощь "+RU(m.oppPower)+"</div></div></div>"+
-       "<div class='mail-note'>"+
-       (iv.se>=4 ? iv.byTier.map(x=>TROOP_TYPES[x.t].name+": "+x.parts.map(pp=>"T"+pp.i+" ×"+RU(pp.n)).join(", ")).join("<br>")
-        : iv.se>=3 ? iv.byType.map(x=>TROOP_TYPES[x.t].name+": "+RU(x.n)).join("<br>")
-        : iv.se>=2 ? "Войск (точно): "+RU(iv.total)
-        : "Войск (примерно): ~"+fmt(Math.round(iv.total/100)*100))+
-       (iv.res?"<br>Ресурсы: "+RES.map(rr=>RES_NAME[rr]+" "+fmt(iv.res[rr])).join(", "):"")+
-       (iv.gen?"<br>Полководец: "+iv.gen:"")+
-       (iv.wall!=null?"<br>Стена / гарнизон: "+iv.wall+" / "+iv.garrison:"")+
-       "</div>";
+    h+=scoutReportHtml(m);
   } else if(m.kind==="gather"){
     h+="<div class='mail-note'>Обоз собрал "+RES_NAME[m.res]+": "+fmt(m.amount)+".<br>"+
        "Точка сбора: X:"+m.coords.x+" Y:"+m.coords.y+"</div>";
@@ -6150,7 +6261,7 @@ function foArmy(){
       (B.heal<1?" · нежить поднимает своих втрое дешевле":"")+"</div></div></div>";
   }
 
-  h+=rubric("Отряды в поле",W.marches.filter(m=>m.pid===p.id).length+" из "+marchSlots(p.b.hall));
+  h+=rubric("Отряды в поле",W.marches.filter(m=>m.pid===p.id&&m.mode!=="scout").length+" из "+marchSlots(p.b.hall));
   const mine=W.marches.filter(m=>m.pid===p.id);
   if(!mine.length) h+=hollow("&#9906;","Все войска дома. Выберите цель на чертеже.");
   mine.forEach(m=>{
@@ -6470,7 +6581,7 @@ function openLevy(cx,cy){
     o={t:"waste",x:cx,y:cy};
   }
   if(o.t==="city"&&o.pid===p.id) return herald("Это ваша столица.");
-  if(W.marches.filter(m=>m.pid===p.id).length>=marchSlots(p.b.hall))
+  if(W.marches.filter(m=>m.pid===p.id&&m.mode!=="scout").length>=marchSlots(p.b.hall))
     return herald("Свободных отрядов нет. Отзовите марш или поднимите ратушу.");
   if(o.t==="city"){
     const q=W.players.find(z=>z.id===o.pid);
@@ -6822,20 +6933,12 @@ function handleAct(e){
   }
   else if(a==="recall"){ const m=W.marches.find(x=>x.id==b.dataset.m);
     if(m){ recallMarch(m); renderCartouche(); herald("Отряд поворачивает домой.") } }
-  else if(a==="scouttoggle"){
-    const x=+b.dataset.x, y=+b.dataset.y, k=x+","+y, opening=scoutOpenKey!==k;
-    scoutOpenKey = opening ? k : null;
+  // Была мгновенная выдача состава войск прямо в панель (см. renderCartouche) —
+  // теперь отправка настоящего лазутчика, донесение приходит письмом.
+  else if(a==="sendscout"){
+    const r=sendScout(me(), +b.dataset.x, +b.dataset.y);
+    herald(r.err || ("Лазутчик выслан — вернётся через "+fmtDur(r.eta)+"."));
     renderCartouche();
-    if(opening){
-      const p=me(), sl=p.b.scout||0, cell=W.map[key(x,y)];
-      if(sl>0 && cell && cell.t==="city"){
-        const q=W.players.find(z=>z.id===cell.pid);
-        if(q && q.id!==p.id) pushMail({cat:"report",kind:"scout",
-          oppNick:q.nick||"Безымянный лорд", oppRace:q.race, oppCoords:{x:q.x,y:q.y},
-          oppAvatar:playerAvatarSrc(q), hall:q.b.hall, oppPower:power(q),
-          intel:scoutSnapshot(p,q)});
-      }
-    }
     return;
   }
   else if(a==="shield"){
