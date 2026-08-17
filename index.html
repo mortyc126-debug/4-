@@ -218,7 +218,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    элемента, а следствие общей нерастягиваемой шапки). Вынесена в свой
    собственный fixed-угол справа сверху — гарантированно на экране всегда,
    независимо от того, насколько разрастётся #top слева. */
-#amber-badge{position:fixed;top:10px;right:8px;z-index:15;
+#amber-badge{position:fixed;top:3px;right:3px;z-index:15;
   display:flex;align-items:center;gap:6px;
   padding:3px 10px 3px 3px;border-radius:20px;
   background:radial-gradient(circle at 30% 25%,rgba(230,152,42,.28),rgba(20,15,8,.82) 72%);
@@ -880,7 +880,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   #chart{flex:1 1 46%}
   #key{display:none}
   #top{top:8px;left:0}
-  #amber-badge{top:8px}
+  #amber-badge{top:3px;right:3px}
   .coin .rate{display:none}
   #chron{gap:9px;padding-left:8px}
   #chron .stat s{display:none}
@@ -2070,7 +2070,14 @@ const cityShapeCss = c => c.pill ? "border-radius:50%;" :
   (v=>`clip-path:polygon(${v}% 0%,${100-v}% 0%,100% ${v}%,100% ${100-v}%,${100-v}% 100%,${v}% 100%,0% ${100-v}%,0% ${v}%);`)(c.ch||18);
 const isMulti = bk => !!BUILDINGS[bk].plots;
 const plotUnlocked = (bk,idx,hall) => !isMulti(bk) || idx===0 || epochOf(hall)>=idx+1;   // участок N — с эпохи N
-const plotCap = lv => lv<=0?0:Math.round(storeCap(lv)*0.25);        // участок — только четверть защиты полноценного склада
+// Была придумана как 25% защиты Склада — реальный RoK-столбец "Ёмкость"
+// вообще не трогали. По всей табличке (Farm/Lumber/Quarry/Goldmine, 1-25 ур.)
+// защита участка держит РОВНО ×10 от часовой добычи без единого исключения
+// (Farm 1 ур.: 400/ч → 4 000; 25 ур.: 20 800/ч → 208 000 — и так на каждом
+// уровне). Каменоломня/Шахта делят с Фермой ту же кривую (см. production()),
+// поэтому свой множитель ресурса (1/1/0.75/0.5) на неё и накладывается в
+// capacity() — здесь только базовое ×10 от PROD_TABLE.
+const plotCap = lv => lv<=0?0:PROD_TABLE[clamp(lv,1,CFG.MAX_LEVEL)-1]*10;
 // Ратуша поднимается, только когда эти здания догнали её уровень.
 const HALL_REQ = ["wall","store","academy","barracks","hospital"];
 
@@ -3079,8 +3086,9 @@ function production(p){ // единиц в час
 function capacity(p){    // теперь своя вместимость на каждый ресурс — склад + защита самих участков
   const B=bonuses(p), base=Math.round(storeCap(p.b.store)*(1+B.cap));
   const map={food:"farm",wood:"lumber",stone:"quarry",gold:"mine"};
+  const mult={food:1,wood:1,stone:0.75,gold:0.5};   // тот же множитель ресурса, что и в production()
   const out={};
-  RES.forEach(r=>{ let extra=0; p.b[map[r]].forEach(lv=>extra+=plotCap(lv)); out[r]=base+extra; });
+  RES.forEach(r=>{ let extra=0; p.b[map[r]].forEach(lv=>extra+=plotCap(lv)*mult[r]); out[r]=base+Math.round(extra); });
   return out;
 }
 function syncRes(p){
