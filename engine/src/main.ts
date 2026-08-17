@@ -589,7 +589,27 @@ async function main() {
   // буферной UNLOAD-зоне (48..80/113) — приемлемая цена, там ближний слой
   // почти всегда уже загружен и рисуется первым (см. порядок вставки в Map
   // в renderer.ts), так что визуально обычно не проваливается наружу.
-  const NEAR_CLEAR_RADIUS = LOAD_RADIUS * CHUNK_SIZE;
+  // ПРОРЕЗИ В МИРЕ. Раньше грубый чанк выбрасывался, если его ЦЕНТР ближе
+  // NEAR_CLEAR_RADIUS (=LOAD_RADIUS*CHUNK_SIZE=48 клеток) к камере. Но грубый
+  // чанк — квадрат в 64 клетки, он торчит на 32 клетки за собственный центр,
+  // а детальное покрытие — не круг радиуса 48, а КВАДРАТ 7×7 ближних чанков.
+  // Чанк с центром в 47 клетках выбрасывался целиком, вместе с той своей
+  // частью, что уходила на 79 клеток — куда детальный слой уже не дотягивался.
+  // Между границей ближнего квадрата и краем выброшенного грубого чанка
+  // оставалась клиновидная дыра без рельефа вовсе: те самые «прорези в мире»,
+  // о которых сообщил игрок (на скриншоте — серый клин у горизонта).
+  // Теперь условие честное: выбрасываем грубый чанк, только если он ЦЕЛИКОМ
+  // лежит внутри квадрата, гарантированно накрытого детальными чанками.
+  // Границы сеток кратны (FAR_CHUNK_SIZE = 4×CHUNK_SIZE), так что попадание
+  // проверяется точно, без запасов «на глаз».
+  const FAR_SINK = 0.35;   // см. buildTerrainPatch(sink) — против мерцания в зоне нахлёста
+  function farChunkFullyNear(cx: number, cz: number, centerX: number, centerZ: number): boolean {
+    const ncx = Math.floor(centerX / CHUNK_SIZE), ncz = Math.floor(centerZ / CHUNK_SIZE);
+    const minX = (ncx - LOAD_RADIUS) * CHUNK_SIZE, maxX = (ncx + LOAD_RADIUS + 1) * CHUNK_SIZE;
+    const minZ = (ncz - LOAD_RADIUS) * CHUNK_SIZE, maxZ = (ncz + LOAD_RADIUS + 1) * CHUNK_SIZE;
+    const x0 = cx * FAR_CHUNK_SIZE, z0 = cz * FAR_CHUNK_SIZE;
+    return x0 >= minX && x0 + FAR_CHUNK_SIZE <= maxX && z0 >= minZ && z0 + FAR_CHUNK_SIZE <= maxZ;
+  }
   const loadedFarChunks = new Set<string>();
   // Та же отложенная стройка, что и у ближних чанков выше (см. комментарий
   // там) — дальнее кольцо само по себе дешевле (грубая сетка), но на старте
@@ -611,8 +631,7 @@ async function main() {
         const cx = ccx + dx, cz = ccz + dz;
         const rkey = "far:" + cx + "," + cz;
         if (loadedFarChunks.has(rkey) || queuedFarKeys.has(rkey)) continue;
-        const fcx = cx * FAR_CHUNK_SIZE + FAR_CHUNK_SIZE / 2, fcz = cz * FAR_CHUNK_SIZE + FAR_CHUNK_SIZE / 2;
-        if (Math.hypot(fcx - centerX, fcz - centerZ) < NEAR_CLEAR_RADIUS) continue;
+        if (farChunkFullyNear(cx, cz, centerX, centerZ)) continue;
         queuedFarKeys.add(rkey);
         pendingFar.push({ cx, cz, rkey });
         queueChanged = true;
@@ -620,9 +639,8 @@ async function main() {
     }
     for (const rkey of Array.from(loadedFarChunks)) {
       const [kx, kz] = rkey.slice(4).split(",").map(Number);
-      const fcx = kx * FAR_CHUNK_SIZE + FAR_CHUNK_SIZE / 2, fcz = kz * FAR_CHUNK_SIZE + FAR_CHUNK_SIZE / 2;
       const tooFar = Math.max(Math.abs(kx - ccx), Math.abs(kz - ccz)) > FAR_UNLOAD_RADIUS;
-      const tooClose = Math.hypot(fcx - centerX, fcz - centerZ) < NEAR_CLEAR_RADIUS;
+      const tooClose = farChunkFullyNear(kx, kz, centerX, centerZ);
       if (tooFar || tooClose) {
         renderer.removeTerrainChunk(rkey);
         loadedFarChunks.delete(rkey);
@@ -651,7 +669,7 @@ async function main() {
       if (!queuedFarKeys.has(rkey)) continue;
       queuedFarKeys.delete(rkey);
       const x0 = cx * FAR_CHUNK_SIZE, z0 = cz * FAR_CHUNK_SIZE;
-      const mesh = buildTerrainPatch(x0, z0, x0 + FAR_CHUNK_SIZE, z0 + FAR_CHUNK_SIZE, FAR_STEP);
+      const mesh = buildTerrainPatch(x0, z0, x0 + FAR_CHUNK_SIZE, z0 + FAR_CHUNK_SIZE, FAR_STEP, FAR_SINK);
       renderer.setTerrainChunk(rkey, mesh);
       loadedFarChunks.add(rkey);
       // Дальнее кольцо — только видимость, не задел под дикий контент:
