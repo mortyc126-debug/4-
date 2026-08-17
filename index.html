@@ -644,6 +644,68 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   margin:2px 0 16px;padding:4px;border:3px solid;border-radius:4px;transform:rotate(-3deg)}
 .mail-stamp.win{color:#3f6b3f;border-color:#3f6b3f}
 .mail-stamp.lose{color:#8a2f22;border-color:#8a2f22}
+/* ---- Заведение летописи (первый запуск): раса -> полководец -> имя ----
+   Стол со свечой намеренно НЕ раскладывается элементами вёрстки: игра живёт
+   на телефоне в портрете, и стол с чернильницей, рамка с цепями и четыре герба
+   рядом с четырьмя полями там просто не встанут — получился бы скролл. Вся
+   «сцена» — это фон и уголки, а по центру ровно то, что нужно нажать. На
+   широком экране карточка просто становится шире, композиция не ломается.
+   Палитра и уголки — те же, что у почты: пергамент, тёмным по светлому. */
+#onboard{position:fixed;inset:0;z-index:70;display:none;align-items:center;justify-content:center;
+  padding:16px;background:radial-gradient(ellipse at 50% 30%,rgba(60,40,18,.55),rgba(8,5,2,.94) 70%)}
+#onboard.open{display:flex}
+#onboard .ob-card{position:relative;width:100%;max-width:520px;max-height:calc(100vh - 32px);
+  overflow-y:auto;-webkit-overflow-scrolling:touch;
+  background:url(images/ui/parchment.jpg) center/cover,#e8dcc0;
+  border-radius:4px;box-shadow:0 14px 50px rgba(0,0,0,.75);padding:26px 20px 22px}
+#ob-hd{text-align:center;margin-bottom:4px;font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:#8a6d2c}
+#ob-title{text-align:center;font-size:20px;line-height:1.25;color:#2c2114;margin-bottom:6px}
+#ob-lede{text-align:center;font-size:12.5px;line-height:1.55;color:#5a4530;margin-bottom:16px}
+/* Гербы рас — сетка 4 в ряд; на узком экране 2×2, чтобы герб не сжимался в точку. */
+.ob-races{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+@media (max-width:420px){ .ob-races{grid-template-columns:repeat(2,1fr)} }
+.ob-race{display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 4px 7px;
+  border:1px solid rgba(90,69,48,.3);border-radius:5px;background:rgba(255,246,225,.35);
+  cursor:pointer;transition:border-color .15s,box-shadow .15s,background .15s}
+.ob-race img{width:44px;height:66px;object-fit:contain;filter:drop-shadow(0 2px 4px rgba(0,0,0,.35))}
+.ob-race b{font-weight:normal;font-size:12.5px;color:#3a2c1c;letter-spacing:.02em}
+/* Выбранный герб подсвечивается ЦВЕТОМ СВОЕЙ РАСЫ — он уже задан в RACES[x].color
+   и приходит сюда как --rc, отдельную палитру заводить не пришлось. */
+.ob-race.on{border-color:var(--rc);background:rgba(255,246,225,.75);
+  box-shadow:0 0 0 1px var(--rc),0 0 16px -2px var(--rc)}
+/* Раскрытая карточка выбранного: сильная сторона и честный минус. */
+.ob-detail{border-left:3px solid var(--rc,#8a6d2c);background:rgba(138,109,44,.10);
+  border-radius:0 4px 4px 0;padding:9px 11px;margin-bottom:14px}
+.ob-detail .nm{font-size:14px;color:#2c2114;margin-bottom:3px}
+.ob-detail .ds{font-size:12px;line-height:1.5;color:#3a2c1c;margin-bottom:5px}
+.ob-detail .mn{font-size:11.5px;line-height:1.5;color:#8a3c2c}
+.ob-detail .mn b{font-weight:normal;text-transform:uppercase;letter-spacing:.06em;font-size:10px}
+/* Полководцы — две крупные карточки в столбик: их надо читать, а не сравнивать иконки. */
+.ob-gens{display:flex;flex-direction:column;gap:9px;margin-bottom:14px}
+.ob-gen{display:flex;gap:11px;align-items:flex-start;padding:10px;cursor:pointer;
+  border:1px solid rgba(90,69,48,.3);border-radius:5px;background:rgba(255,246,225,.35);
+  transition:border-color .15s,box-shadow .15s,background .15s}
+.ob-gen.on{border-color:var(--rc);background:rgba(255,246,225,.75);
+  box-shadow:0 0 0 1px var(--rc),0 0 16px -2px var(--rc)}
+.ob-gen img{width:58px;height:58px;border-radius:50%;object-fit:cover;flex:0 0 auto;
+  border:2px solid #8a6d2c;box-shadow:0 2px 6px rgba(0,0,0,.35)}
+.ob-gen .nm{font-size:13.5px;color:#2c2114}
+.ob-gen .rl{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:#8a6d2c;margin:1px 0 4px}
+.ob-gen .bn{font-size:11.5px;line-height:1.5;color:#3a2c1c}
+#ob-name{width:100%;box-sizing:border-box;padding:11px 12px;margin-bottom:6px;
+  font-family:inherit;font-size:15px;color:#2c2114;text-align:center;
+  background:rgba(255,250,236,.75);border:1px solid rgba(90,69,48,.4);border-radius:4px}
+#ob-name:focus{outline:none;border-color:#8a6d2c;box-shadow:0 0 0 2px rgba(138,109,44,.2)}
+.ob-note{font-size:11px;line-height:1.5;color:#6b5230;text-align:center;margin-bottom:14px}
+.ob-go{display:block;width:100%;padding:13px;border:none;border-radius:5px;cursor:pointer;
+  font-family:inherit;font-size:14.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:#f2e2bd;background:linear-gradient(180deg,#7a5e26,#4e3b16);
+  box-shadow:0 3px 0 #35270f,0 6px 14px rgba(0,0,0,.4)}
+.ob-go:disabled{opacity:.4;cursor:default;box-shadow:0 3px 0 #35270f}
+.ob-go:not(:disabled):active{transform:translateY(2px);box-shadow:0 1px 0 #35270f}
+.ob-back{display:block;margin:10px auto 0;background:none;border:none;cursor:pointer;
+  font-family:inherit;font-size:12px;color:#6b5230;text-decoration:underline}
 /* Донесение разведки — разделами по ступеням (см. scoutReportHtml).
    Недоступное показано тем же рядом, но приглушённым: видно, что сведения
    существуют и до какого уровня растить Разведку, чтобы их достать. */
@@ -1030,6 +1092,19 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   <img class="menu-corner bl" src="images/ui/mail-corner.png" alt="">
   <img class="menu-corner br" src="images/ui/mail-corner.png" alt="">
   <button id="menu-modal-close" data-act="closemenu">&times;</button><div id="menu-modal-body"></div></div>
+
+<!-- Заведение летописи: показывается ОДИН раз, только при самой первой партии
+     (см. runOnboarding и start() — на загруженном сохранении не появляется
+     вовсе). Тело рисуется из JS, здесь только каркас с уголками, как у почты. -->
+<div id="onboard">
+  <div class="ob-card">
+    <img class="menu-corner tl" src="images/ui/mail-corner.png" alt="">
+    <img class="menu-corner tr" src="images/ui/mail-corner.png" alt="">
+    <img class="menu-corner bl" src="images/ui/mail-corner.png" alt="">
+    <img class="menu-corner br" src="images/ui/mail-corner.png" alt="">
+    <div id="ob-body"></div>
+  </div>
+</div>
 
 <div id="building-modal">
   <img class="bm-corner tl" src="images/ui/mail-corner.png" alt="">
@@ -7521,10 +7596,110 @@ window.addEventListener("beforeunload",()=>{
   try{ W.savedAt=Date.now(); localStorage.setItem(SAVE_KEY,JSON.stringify(W)) }catch(e){}
 });
 
+/* =========================================================================
+   ЗАВЕДЕНИЕ ЛЕТОПИСИ — первый запуск: раса, полководец, имя.
+   Раса игрока до сих пор была ЗАШИТА людьми (genWorld создавал столицу как
+   "human"), хотя весь механизм рас давно готов и работает — но только у
+   ботов: у каждой расы свой минус, свои венцы в академии, свои названия
+   войск, гербы и модификаторы боя. Три расы из четырёх существовали в игре
+   только как противники. Этот экран их и открывает.
+   Полководец выбирается тут же, следом за расой: выбор всё равно разовый и
+   необратимый, и правильнее показать его на входе, чем прятать во вкладке,
+   где игрок наткнётся на него посреди партии (а до тех пор будет играть с
+   genOf() по умолчанию, даже не зная, что решение не принято).
+   Почты и пароля здесь намеренно нет: сейв работает по device_id, а на ВК и
+   в Телеграме личность даёт сама платформа — форма регистрации там лишняя.
+   Привязка аккаунта, когда понадобится, встанет отдельным шагом в профиле,
+   уже после того как игроку будет что терять.
+   ========================================================================= */
+function runOnboarding(){
+  return new Promise(resolve=>{
+    const wrap=$("#onboard"), body=$("#ob-body");
+    const pick={race:null, genId:null, nick:""};
+    let step=1;
+    const raceColor=r=>r?RACES[r].color:"#8a6d2c";
+
+    function render(){
+      let h="";
+      if(step===1){
+        h+="<div id='ob-hd'>Летопись нового правителя</div>"+
+           "<div id='ob-title'>Выберите народ</div>"+
+           "<div id='ob-lede'>Решение окончательное: народ определяет войска, "+
+           "венцы в академии и слабость, с которой придётся жить всю партию.</div>";
+        h+="<div class='ob-races'>"+RACE_KEYS.map(r=>
+          "<div class='ob-race"+(pick.race===r?" on":"")+"' data-ob='race' data-r='"+r+"' "+
+          "style='--rc:"+RACES[r].color+"'>"+shieldSvg(r,42)+"<b>"+RACES[r].name+"</b></div>").join("")+"</div>";
+        if(pick.race){
+          const R=RACES[pick.race];
+          h+="<div class='ob-detail' style='--rc:"+R.color+"'>"+
+             "<div class='nm'>"+R.name+"</div><div class='ds'>"+R.desc+"</div>"+
+             "<div class='mn'><b>Слабость</b><br>"+R.minus.desc+"</div></div>";
+        }
+        h+="<button class='ob-go' data-ob='next'"+(pick.race?"":" disabled")+">Далее</button>";
+      } else if(step===2){
+        const R=RACES[pick.race];
+        h+="<div id='ob-hd'>"+R.name+"</div>"+
+           "<div id='ob-title'>Кто поведёт войско</div>"+
+           "<div id='ob-lede'>Полководец тоже выбирается один раз. Один углубляет "+
+           "сильную сторону народа, другой гасит его слабость — но платит за это.</div>";
+        h+="<div class='ob-gens'>"+GENERALS[pick.race].map((g,i)=>
+          "<div class='ob-gen"+(pick.genId===i?" on":"")+"' data-ob='gen' data-i='"+i+"' "+
+          "style='--rc:"+R.color+"'>"+
+          "<img src='images/ui/avatar-"+pick.race+(i+1)+".png' alt='' onerror=\"this.style.visibility='hidden'\">"+
+          "<div><div class='nm'>"+g.name+"</div><div class='rl'>"+g.role+"</div>"+
+          "<div class='bn'>"+g.bonus+"</div></div></div>").join("")+"</div>";
+        h+="<button class='ob-go' data-ob='next'"+(pick.genId!=null?"":" disabled")+">Далее</button>"+
+           "<button class='ob-back' data-ob='back'>Назад к выбору народа</button>";
+      } else {
+        const R=RACES[pick.race], G=GENERALS[pick.race][pick.genId];
+        h+="<div id='ob-hd'>"+R.name+" · "+G.name+"</div>"+
+           "<div id='ob-title'>Внесите своё имя</div>"+
+           "<div id='ob-lede'>Под этим именем вас запомнят соседи.</div>"+
+           "<input id='ob-name' maxlength='24' placeholder='Имя правителя' autocomplete='off'>"+
+           "<div class='ob-note'>Имя можно будет сменить позже в профиле. Народ и полководец — нет.</div>"+
+           "<button class='ob-go' data-ob='done'>Начать летопись</button>"+
+           "<button class='ob-back' data-ob='back'>Назад к полководцу</button>";
+      }
+      body.innerHTML=h;
+      const inp=$("#ob-name");
+      if(inp){ inp.value=pick.nick; inp.focus(); }
+    }
+
+    body.onclick=e=>{
+      const el=e.target.closest("[data-ob]"); if(!el) return;
+      const a=el.dataset.ob;
+      if(a==="race"){ pick.race=el.dataset.r; pick.genId=null; render(); }
+      else if(a==="gen"){ pick.genId=+el.dataset.i; render(); }
+      else if(a==="next"){ if(step===1&&pick.race) step=2; else if(step===2&&pick.genId!=null) step=3; render(); }
+      else if(a==="back"){ const inp=$("#ob-name"); if(inp) pick.nick=inp.value; step--; render(); }
+      else if(a==="done"){
+        const inp=$("#ob-name");
+        pick.nick=((inp&&inp.value)||"").trim().slice(0,24)||"Безымянный лорд";
+        wrap.classList.remove("open");
+        body.onclick=null;
+        resolve(pick);
+      }
+    };
+    wrap.classList.add("open");
+    render();
+  });
+}
+
 /* ---- Запуск ---- */
 (async function start(){
   const ok=await load();
-  if(!ok) genWorld(Date.now()&0xffffff);
+  if(!ok){
+    genWorld(Date.now()&0xffffff);
+    // Мир уже есть — столица стоит на месте, соседи расставлены. Меняем только
+    // то, что выбрал игрок: newPlayer расу нигде не запекает (см. его код),
+    // она читается по p.race везде, где нужна, так что подмена безопасна.
+    // На загруженном сохранении этот блок не выполняется вовсе — старые партии
+    // остаются как были, и их выбор полководца по-прежнему живёт во вкладке.
+    const c=await runOnboarding();
+    const q=me();
+    q.race=c.race; q.gen.id=c.genId; q.nick=c.nick;
+    await save();
+  }
   const p=me();
   centerOn(p.x,p.y); sel={x:p.x,y:p.y};
   syncRibbons(); renderTop(); renderFolio(); renderCartouche();
