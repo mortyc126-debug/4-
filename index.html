@@ -638,8 +638,18 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .mail-note{font-size:13.5px;line-height:1.6;color:#2c2114;padding:6px 2px}
 .mail-vs{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:14px}
 .mail-side{flex:1;min-width:0;text-align:center}
-.mail-side img.av{width:52px;height:52px;border-radius:50%;object-fit:cover;border:2px solid #8a6d2c;
-  box-shadow:0 2px 6px rgba(0,0,0,.35)}
+/* object-fit:cover+border-radius:50%+CSS-border тут раньше кроило и
+   обрамляло портрет заново — а файлы avatar-*.png УЖЕ сами по себе круглые
+   медальоны с собственным золотым ободом, отрисованным художником прямо в
+   PNG (проверено — открыл файлы; так же их показывают #crest .avatar и
+   .gen-portrait, оба object-fit:contain, без CSS-ободка). cover впихивал
+   квадрат 52×52 в изображение, обрезая где попало относительно уже готового
+   обода — с реального скрина ("аватарка съезжает") видно было именно двойное
+   кольцо и смещённый портрет. contain показывает картинку целиком, как и
+   везде в игре — тень через drop-shadow (следует силуэту), а не box-shadow
+   (тот был бы прямоугольным вокруг круглой картинки). */
+.mail-side img.av{width:52px;height:52px;object-fit:contain;
+  filter:drop-shadow(0 2px 6px rgba(0,0,0,.35))}
 .mail-side .nm{font-size:13px;color:#2c2114;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mail-side .co{font-size:10.5px;color:#8a6d2c;font-family:var(--data)}
 .mail-side .pw{font-size:11px;color:#5a4530;margin-top:2px}
@@ -1684,6 +1694,12 @@ const CFG = {
   BATTLE_PACE: 0.45,       // ниже — бои дольше и нагляднее
   RESPAWN_CAMP: 45*60,      // респаун лагеря разбойников
   NODE_RESPAWN: 60*60,
+  // Раньше опустевшая жила пропадала с карты В ТОТ ЖЕ МИГ, как последний
+  // обоз её выгреб (EV.gathered) — репорт пользователя: "если захочу
+  // вернуться, её уже нет". Держим пустой узел на месте ещё пару минут
+  // (видно, что там 0, но он ещё физически там), и только потом сносим и
+  // ставим счётчик до нового появления (см. EV.nodegone/nodeback).
+  NODE_GONE_GRACE: 2*60,
   SHIELD_COST: [ [8*3600,1200], [24*3600,3000], [3*86400,7500] ], // длительность, цена в золоте
   TELEPORT_BASE: 5000,      // цена телепорта, растёт с эпохой
 };
@@ -3005,7 +3021,13 @@ const BOT_NICKS = {
 // всегда мало (игрок + до CFG.BOTS ботов), полный перебор дешёв и не имеет
 // слепых зон на границах чанков.
 const CITY_STRUCT_GAP=12;
-const MIN_STRUCT_GAP=6, STRUCT_TRIES=150, STRUCT_CHUNK=16, STRUCT_CHUNK_CHANCE=0.5;
+// Было 6 — репорт пользователя: точки всё ещё стоят "почти вплотную" друг к
+// другу. Сами модели точки/лагеря/форта в 3D — радиус порядка 2.5-3.25 (см.
+// комментарий у CITY_STRUCT_GAP: 5/6.5 "поперёк"), то есть при зазоре РОВНО
+// 6 (по центрам) между двумя точками оставался жалкий ~1 юнит просвета между
+// их же краями — визуально и правда впритык. 9 — уже настоящий видимый
+// промежуток (~3-4 юнита между краями), а не просто "центры не совпадают".
+const MIN_STRUCT_GAP=9, STRUCT_TRIES=150, STRUCT_CHUNK=16, STRUCT_CHUNK_CHANCE=0.5;
 const STRUCT_SALT_NODE=501, STRUCT_SALT_CAMP=502;
 function structChunkOk(x,y,salt,chance){
   const cx=Math.floor(x/STRUCT_CHUNK), cy=Math.floor(y/STRUCT_CHUNK);
@@ -3430,6 +3452,36 @@ function thinMapDensity6(){
   for(const o of drop) delete W.map[key(o.x,o.y)];
   W.densityMigrated6=true;
   if(drop.length) logg("Плотность точек/лагерей сокращена ещё раз: убрано "+drop.length+".","good");
+}
+// Седьмая волна: MIN_STRUCT_GAP поднят с 6 до 9 (см. комментарий у константы
+// выше — репорт пользователя "точки стоят почти вплотную"). Новый порог сам
+// по себе действует только для НОВЫХ точек (findFreeCellInChunk) — уже
+// расставленные слишком тесные пары так и остались бы тесными навсегда,
+// поэтому разово раздвигаем и старые: у кого от соседа (не города) меньше
+// MIN_STRUCT_GAP — младший из пары убирается (respawn/nodeback штатно найдёт
+// ему новое, уже проверенное на зазор место), тем же приоритетом, что и в
+// thinMapDensity5 (лагерь/форт "старше" простой точки ресурса). При равном
+// приоритете (точка vs точка, лагерь vs лагерь) выбор не по порядку W.map
+// (не гарантирован) — сортируем по координатам, детерминированно.
+function thinMapDensity7(){
+  if(W.densityMigrated7) return;
+  const items=[];
+  for(const k in W.map){ const o=W.map[k]; if(o.t==="node"||o.t==="camp"||o.t==="fort") items.push(o); }
+  items.sort((a,b)=>a.x-b.x||a.y-b.y);
+  const rank=o=>o.t==="node"?0:1;
+  const drop=new Set();
+  for(let i=0;i<items.length;i++){
+    if(drop.has(items[i])) continue;
+    for(let j=i+1;j<items.length;j++){
+      if(drop.has(items[j])) continue;
+      if(items[j].x-items[i].x>=MIN_STRUCT_GAP) break;   // отсортировано по x — дальше уже точно не ближе
+      if(Math.hypot(items[i].x-items[j].x,items[i].y-items[j].y)>=MIN_STRUCT_GAP) continue;
+      drop.add(rank(items[i])<rank(items[j]) ? items[i] : items[j]);
+    }
+  }
+  for(const o of drop) delete W.map[key(o.x,o.y)];
+  W.densityMigrated7=true;
+  if(drop.size) logg("Слишком тесные точки/лагеря раздвинуты: убрано "+drop.size+".","good");
 }
 // Шестая волна: старые сохранения несут в себе уровни, посчитанные ещё по
 // originDist от фиксированной точки {50,50} — за пределами исходного
@@ -4730,8 +4782,11 @@ const EV = {
       }
     }
     if(cell && cell.t==="node" && cell.amount<=0){
-      mapDelete(m.tx,m.ty);
-      schedule(CFG.NODE_RESPAWN,"nodeback",{x:m.tx,y:m.ty});
+      // Не сносим сразу — см. CFG.NODE_GONE_GRACE: пусть повисит пустым ещё
+      // немного, а физическое удаление и отсчёт до нового появления — уже в
+      // EV.nodegone ниже.
+      cell.busy=null;
+      schedule(CFG.NODE_GONE_GRACE,"nodegone",{x:m.tx,y:m.ty});
     }
     recallMarch(m);
   },
@@ -4767,6 +4822,17 @@ const EV = {
     const {x,y}=spot;
     const lv=campRawAt(x,y);
     mapSet(x,y,{t:lv>15?"fort":"camp",x,y,lv,power:banditPower(lv),busy:null});
+  },
+  // Физический снос опустевшей жилы — отложен от момента опустошения на
+  // CFG.NODE_GONE_GRACE (см. EV.gathered). Перепроверяем cell на месте: за
+  // эти пару минут туда мог, например, прилететь новый узел другой природы
+  // (крайне маловероятно, но мир общий и детерминированность не гарантирует
+  // отсутствие гонок) — сносим только если это всё ещё та самая пустая жила.
+  nodegone(d){
+    const cell=W.map[key(d.x,d.y)];
+    if(!cell || cell.t!=="node" || cell.amount>0) return;
+    mapDelete(d.x,d.y);
+    schedule(CFG.NODE_RESPAWN,"nodeback",{x:d.x,y:d.y});
   },
   nodeback(d){
     if(W.map[key(d.x,d.y)]) return;
@@ -5422,6 +5488,32 @@ function pickArmy(p,frac){
   }
   return u;
 }
+// Автоподбор отряда под СБОР: в RoK клик "собрать" сам набирает осадные —
+// у них грузоподъёмность на бойца (TROOP_TYPES.sie.load=30) на порядок выше
+// пехоты/лучников/конницы (6/8/5), они и задуманы как "обоз" — незачем
+// тащить половину армии, если десяток осадных увезёт всё не хуже. Берём
+// столько, сколько реально нужно донести (amount на жиле), беря типы по
+// убыванию их грузоподъёмности (осадные первыми), и только если своих
+// осадных не хватает — добираем следующим по грузоподъёмности типом, а не
+// первым попавшимся (как делал общий pickArmy, который шёл по TKEYS-порядку
+// пехота→лучники→конница→осадные, то есть ровно НАОБОРОТ нужному).
+function pickGatherArmy(p,amount){
+  const B=bonuses(p), cap=marchCapacity(p), u=emptyUnits();
+  let room=cap, need=amount;
+  const order=[...TKEYS].sort((a,b)=>TROOP_TYPES[b].load-TROOP_TYPES[a].load);
+  order.forEach(t=>{
+    for(let i=5;i>=1;i--){
+      if(need<=0||room<=0) return;
+      const have=p.troops[t][i]; if(!have) continue;
+      const w=TIER_MULT[i-1];
+      const unitLoad=TROOP_TYPES[t].load*w*troopMod(p.race,t,"load")*(1+B.load);
+      if(unitLoad<=0) continue;
+      const n=Math.min(have, Math.ceil(need/unitLoad), Math.floor(room/w));
+      if(n>0){ u[t][i]=n; room-=n*w; need-=n*unitLoad; }
+    }
+  });
+  return u;
+}
 
 /* --- действия, общие для игрока и ботов --- */
 function startBuild(p,bk,plot){
@@ -5821,6 +5913,7 @@ async function load(){
     thinMapDensity4();
     thinMapDensity5();
     thinMapDensity6();
+    thinMapDensity7();
     migrateInfiniteWorld();
     migrateStructLevels();
     // Старые походы в старом сохранении не несут m.path (маршрут в обход
@@ -7293,7 +7386,16 @@ function openLevy(cx,cy){
   const st={};
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++) st[t+i]=0});
   const auto=f=>{ const u=pickArmy(p,f); TKEYS.forEach(t=>{for(let i=1;i<=5;i++) st[t+i]=u[t][i]}) };
-  auto(1);
+  // Сбор — по умолчанию не "вся армия", а именно то, что реально довезёт
+  // жилу (см. pickGatherArmy): осадные в первую очередь, ровно по надобности.
+  // "Четверть"/"Половина"/"Всё войско" ниже (data-a=f25/f50/f100) — это уже
+  // ручная правка человеком, там общий pickArmy() к месту, его не трогаем.
+  if(mode==="gather"){
+    const u=pickGatherArmy(p,o.amount);
+    TKEYS.forEach(t=>{for(let i=1;i<=5;i++) st[t+i]=u[t][i]});
+  } else {
+    auto(1);
+  }
 
   function paint(){
     let weight=0,n=0;
