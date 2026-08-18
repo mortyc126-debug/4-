@@ -8698,10 +8698,15 @@ async function claimChronicle(){
    ========================================================================= */
 let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"" };
 let mpPollTimer = null;
-// Ровно эти 4 здания перенесены на сервер (mp-build) — разблокируют
-// mp-train. Остальные постройки (ратуша, стена, ферма и т.д.) — следующие
-// шаги, каждое отдельным переносом (см. supabase/README.md).
-const BUILD_MP_BLDS = ["barracks","range","stable","siege"];
+// Ровно эти 9 зданий перенесены на сервер (mp-build): 4 разблокируют
+// mp-train (barracks/range/stable/siege), ещё 5 — это HALL_REQ плюс сама
+// ратуша (wall/store/academy/hospital + hall), без которых ратуша не растёт
+// выше 1 уровня. Порядок в списке — тот, в котором они реально нужны игроку
+// (сначала HALL_REQ-здания, потом ратуша, потом казармы и мастерские).
+// Остальные постройки (ферма/лесопилка/каменоломня/шахта/дозор/разведка/
+// горн) — следующие шаги, каждое отдельным переносом (см. supabase/README.md).
+const BUILD_MP_BLDS = ["wall","store","academy","hospital","hall","barracks","range","stable","siege"];
+const BUILD_MP_MULTI = new Set(["hospital"]); // hospital — единственное multi среди перенесённых (plots:4), см. mpBuildLv в foMultiplayer
 
 async function mpEnsureAuth(){
   // Переиспользуем уже сохранённую supabase-клиентом anon-сессию, если она
@@ -8783,9 +8788,9 @@ function foMultiplayer(){
   let h=rubric("Общий мир","бета");
   h+="<div class='entry'><div class='line'><div class='fill'>"+
      "<div class='note'>Один настоящий мир на всех, кто сюда заходит — не отдельная копия для "+
-     "каждого браузера. Пока перенесены казармы/стрельбище/конюшня/мастерская и набор войск "+
-     "(тир 1); остальные постройки, исследования, походы и бой всё ещё считаются локально в "+
-     "одиночной игре — это следующие шаги.</div>"+
+     "каждого браузера. Пока перенесены ратуша, стена, склад, академия, госпиталь (участок 1), "+
+     "казармы/стрельбище/конюшня/мастерская и набор войск (тир 1); остальные постройки, "+
+     "исследования, походы и бой всё ещё считаются локально в одиночной игре — это следующие шаги.</div>"+
      "</div></div></div>";
 
   if(!mpState.joined){
@@ -8809,10 +8814,17 @@ function foMultiplayer(){
      "<div class='note'>Пока не восполняются сами — производство ещё не перенесено на сервер.</div>"+
      "</div></div></div>";
 
-  const hallLv=st.b.hall||0;
-  h+=rubric("Постройки","казармы и мастерские");
+  // hospital — единственное multi-здание среди перенесённых (BUILDINGS.
+  // hospital.plots=4, index.html:2425); показываем/строим только участок 0
+  // (он один разблокирован всегда — см. plotUnlocked — и это ровно тот,
+  // что нужен HALL_REQ). Старые записи могли завести его скаляром (баг
+  // mp-join, уже починен) — mpBuildLv читает защитно, не падая на этом.
+  const mpBuildLv=(bld)=>{ const raw=st.b[bld]; return BUILD_MP_MULTI.has(bld)?((Array.isArray(raw)?raw[0]:raw)||0):(raw||0) };
+  const hallLv=mpBuildLv("hall");
+  h+=rubric("Постройки","ратуша и хозяйство");
   BUILD_MP_BLDS.forEach(bld=>{
-    const lv=st.b[bld]||0, nextLv=lv+1, queued=st.queues.find(q=>q&&q.b===bld);
+    const lv=mpBuildLv(bld), nextLv=lv+1, plotKey=BUILD_MP_MULTI.has(bld)?0:null;
+    const queued=st.queues.find(q=>q&&q.b===bld&&q.plot===plotKey);
     h+="<div class='entry'><div class='line'><div class='fill'>"+
        "<div class='title'>"+buildingName(bld,pShim)+" — уровень "+lv+"</div>";
     if(queued){
@@ -8820,8 +8832,19 @@ function foMultiplayer(){
       h+="<div class='note'>Строится до "+nextLv+" ур., осталось "+fmtDur(left)+"</div>";
     } else if(nextLv>25){
       h+="<div class='note'>Максимальный уровень.</div>";
+    } else if(bld==="hall"){
+      const need=HALL_REQ.filter(k=>mpBuildLv(k)<hallLv);
+      if(need.length){
+        h+="<div class='note'>Сначала до "+hallLv+" ур.: "+need.map(k=>buildingName(k,pShim)).join(", ")+"</div>";
+      } else {
+        const c=buildCost(bld,nextLv), t=buildTime(bld,nextLv);
+        h+="<div class='note'>До "+nextLv+" ур.: "+
+           (RES.some(r=>c[r])?RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", "):"бесплатно")+
+           " · "+fmtDur(t)+"</div>"+
+           "<button class='seal' data-mp='build' data-bk='"+bld+"'"+(mpState.loading?" disabled":"")+">Улучшить</button>";
+      }
     } else if(nextLv>hallLv){
-      h+="<div class='note'>Требуется ратуша "+nextLv+" уровня (сейчас "+hallLv+") — постройка ратуши в общем мире появится на следующем шаге переноса.</div>";
+      h+="<div class='note'>Требуется ратуша "+nextLv+" уровня (сейчас "+hallLv+").</div>";
     } else {
       const c=buildCost(bld,nextLv), t=buildTime(bld,nextLv);
       h+="<div class='note'>До "+nextLv+" ур.: "+

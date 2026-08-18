@@ -67,13 +67,14 @@ export function trainDuration(hallLv, type, tier, n, trainSpeedBonus = 0) {
 }
 
 // =============================================================================
-// Постройки — Фаза 5, первый кусочек: ТОЛЬКО казармы/стрельбище/конюшня/
-// мастерская (barracks/range/stable/siege), то есть ровно те 4 здания, что
-// разблокируют набор войск (mp-train) — раньше их приходилось поднимать
-// вручную через SQL. Остальные 11 построек (ратуша, стена, ферма и т.д.) —
-// следующие шаги, каждое отдельным переносом, тот же принцип, что и раньше
-// (см. README). Таблицы — буквальная копия BARRACKS_TABLE/SIEGE_TABLE из
-// index.html (строки 1609/1636 на момент переноса).
+// Постройки — Фаза 5. Первый кусочек (казармы/стрельбище/конюшня/мастерская)
+// уже был; этот довешивает ратушу и все 5 зданий из HALL_REQ (index.html:2463
+// — wall/store/academy/barracks/hospital), без которых ратуша НЕ поднимается
+// выше 1 уровня (см. hallRequire ниже) — а без ратуши все остальные здания
+// сами упираются в потолок "требуется ратуша N уровня". Оставшиеся постройки
+// (ферма/лесопилка/каменоломня/шахта/дозор/разведка/горн) — следующие шаги,
+// каждая отдельным переносом, тот же принцип.
+// Таблицы — буквальная копия из index.html (строки на момент переноса).
 export const BARRACKS_TABLE = [
   { t: 0, power: 5 },
   { food: 500, wood: 800, t: 20, power: 10 },
@@ -128,8 +129,169 @@ export const SIEGE_TABLE = [
   { food: 13800000, wood: 17800000, stone: 12000000, t: 892800, power: 442817 },
   { food: 20700000, wood: 26824600, stone: 17916000, t: 2946240, power: 716764 },
 ];
-export const BUILD_BLD_TABLE = { barracks: BARRACKS_TABLE, range: BARRACKS_TABLE, stable: BARRACKS_TABLE, siege: SIEGE_TABLE };
-export const BUILD_MAX_LV = 25; // buildingMax(bk) для этих 4 зданий — CFG.MAX_LEVEL, см. index.html
+// index.html:1415 HALL_TABLE
+export const HALL_TABLE = [
+  { t: 0, power: 7 },
+  { food: 3500, wood: 3500, t: 2, power: 21 },
+  { food: 6500, wood: 6500, t: 300, power: 59 },
+  { food: 11800, wood: 11800, t: 1200, power: 154 },
+  { food: 21300, wood: 21300, t: 3600, power: 383 },
+  { food: 36300, wood: 36300, stone: 12000, t: 7200, power: 852 },
+  { food: 54400, wood: 54400, stone: 19200, t: 18000, power: 1847 },
+  { food: 81800, wood: 81800, stone: 30800, t: 36000, power: 3706 },
+  { food: 122800, wood: 122800, stone: 49200, t: 54000, power: 6504 },
+  { food: 184300, wood: 184300, stone: 78700, t: 79200, power: 10933 },
+  { food: 277500, wood: 277500, stone: 120000, t: 108000, power: 16723 },
+  { food: 417500, wood: 417500, stone: 180000, t: 144000, power: 24693 },
+  { food: 627500, wood: 627500, stone: 270000, t: 180000, power: 35213 },
+  { food: 942500, wood: 942500, stone: 405000, t: 216000, power: 48838 },
+  { food: 1400000, wood: 1400000, stone: 607500, t: 252000, power: 66400 },
+  { food: 2100000, wood: 2100000, stone: 912500, t: 345600, power: 91451 },
+  { food: 3200000, wood: 3200000, stone: 1400000, t: 417600, power: 125005 },
+  { food: 4800000, wood: 4800000, stone: 2100000, t: 504000, power: 170590 },
+  { food: 7200000, wood: 7200000, stone: 3100000, t: 604800, power: 232957 },
+  { food: 10800000, wood: 10800000, stone: 4700000, t: 712800, power: 318769 },
+  { food: 16200000, wood: 16200000, stone: 7000000, t: 950400, power: 442735 },
+  { food: 24300000, wood: 24300000, stone: 10600000, t: 1479600, power: 630860 },
+  { food: 36500000, wood: 36500000, stone: 15900000, t: 2070000, power: 907085 },
+  { food: 54800000, wood: 54800000, stone: 24000000, t: 3110400, power: 1322485 },
+  { food: 82200000, wood: 82200000, stone: 36000000, t: 10915200, power: 2195458 },
+];
+// index.html:1305 WALL_TABLE
+export const WALL_TABLE = [
+  { t: 0, power: 5, hp: 15000 },
+  { food: 2300, wood: 2800, t: 2, power: 15, hp: 15500 },
+  { food: 4300, wood: 5000, t: 90, power: 37, hp: 16000 },
+  { food: 7800, wood: 9000, t: 600, power: 94, hp: 16500 },
+  { food: 14000, wood: 16300, t: 1800, power: 226, hp: 17000 },
+  { food: 18000, wood: 21000, stone: 25000, t: 3500, power: 519, hp: 17500 },
+  { food: 27000, wood: 32000, stone: 40000, t: 7020, power: 1037, hp: 18250 },
+  { food: 41000, wood: 47000, stone: 64000, t: 13980, power: 1965, hp: 19000 },
+  { food: 61000, wood: 71000, stone: 102400, t: 28020, power: 3656, hp: 19750 },
+  { food: 92000, wood: 106000, stone: 164000, t: 55980, power: 6784, hp: 20500 },
+  { food: 137000, wood: 160000, stone: 250000, t: 67200, power: 10816, hp: 21250 },
+  { food: 207000, wood: 240000, stone: 375000, t: 80640, power: 16060, hp: 22000 },
+  { food: 310000, wood: 360000, stone: 565000, t: 97200, power: 22965, hp: 22750 },
+  { food: 465000, wood: 540000, stone: 850000, t: 115200, power: 32169, hp: 23500 },
+  { food: 698000, wood: 810000, stone: 1300000, t: 165600, power: 44583, hp: 24250 },
+  { food: 1000000, wood: 1200000, stone: 1900000, t: 165600, power: 61540, hp: 25000 },
+  { food: 1600000, wood: 1800000, stone: 2900000, t: 201600, power: 84977, hp: 26000 },
+  { food: 2400000, wood: 2700000, stone: 4400000, t: 241200, power: 117860, hp: 27000 },
+  { food: 3500000, wood: 4100000, stone: 6600000, t: 288000, power: 164369, hp: 28000 },
+  { food: 5300000, wood: 6200000, stone: 9900000, t: 345600, power: 230776, hp: 29000 },
+  { food: 8000000, wood: 9300000, stone: 14800000, t: 417600, power: 326321, hp: 30000 },
+  { food: 12000000, wood: 13900000, stone: 22200000, t: 540000, power: 466309, hp: 31000 },
+  { food: 18000000, wood: 20900000, stone: 33300000, t: 756000, power: 674163, hp: 32000 },
+  { food: 27000000, wood: 31300000, stone: 50000000, t: 1134000, power: 986224, hp: 33000 },
+  { food: 40500000, wood: 47100000, stone: 75000000, t: 3556800, power: 1545374, hp: 40000 },
+];
+// index.html:1552 ACADEMY_BUILD_TABLE (не путать с ACADEMY_TREE — исследования)
+export const ACADEMY_BUILD_TABLE = [
+  { food: 500, wood: 800, t: 6, power: 5 },
+  { food: 1000, wood: 1500, t: 40, power: 11 },
+  { food: 2000, wood: 2800, t: 160, power: 27 },
+  { food: 3800, wood: 5000, stone: 800, t: 360, power: 61 },
+  { food: 6800, wood: 9000, stone: 1500, t: 1200, power: 145 },
+  { food: 11500, wood: 15500, stone: 3200, t: 3200, power: 336 },
+  { food: 17300, wood: 23300, stone: 5000, t: 6420, power: 688 },
+  { food: 26000, wood: 35000, stone: 8000, t: 12780, power: 1346 },
+  { food: 39000, wood: 52500, stone: 12800, t: 25620, power: 2591 },
+  { food: 58500, wood: 78800, stone: 20500, t: 51180, power: 4975 },
+  { food: 90000, wood: 120000, stone: 32500, t: 61440, power: 7970 },
+  { food: 135000, wood: 180000, stone: 50000, t: 73740, power: 11679 },
+  { food: 202500, wood: 270000, stone: 75000, t: 90000, power: 16387 },
+  { food: 305000, wood: 405000, stone: 112500, t: 104400, power: 22391 },
+  { food: 457500, wood: 607500, stone: 170000, t: 126000, power: 30127 },
+  { food: 687500, wood: 912500, stone: 255000, t: 151200, power: 40207 },
+  { food: 1000000, wood: 1400000, stone: 382500, t: 183600, power: 53497 },
+  { food: 1600000, wood: 2100000, stone: 575000, t: 219600, power: 71227 },
+  { food: 2300000, wood: 3100000, stone: 875000, t: 262800, power: 95369 },
+  { food: 3500000, wood: 4700000, stone: 1300000, t: 316800, power: 128424 },
+  { food: 5250000, wood: 7050000, stone: 2000000, t: 536400, power: 174240 },
+  { food: 7900000, wood: 10600000, stone: 3000000, t: 493200, power: 239921 },
+  { food: 11800000, wood: 15900000, stone: 4500000, t: 691200, power: 336515 },
+  { food: 17800000, wood: 24000000, stone: 6800000, t: 1036800, power: 481806 },
+  { food: 26800000, wood: 36000000, stone: 10200000, t: 1209600, power: 783449 },
+];
+// index.html:1579 STORE_BUILD_TABLE (не путать со STORE_TABLE — защита склада)
+export const STORE_BUILD_TABLE = [
+  { t: 0, power: 5 },
+  { food: 500, wood: 500, t: 18, power: 10 },
+  { food: 1000, wood: 1000, t: 80, power: 17 },
+  { food: 2000, wood: 2000, t: 400, power: 41 },
+  { food: 3800, wood: 3800, t: 900, power: 92 },
+  { food: 6500, wood: 6500, stone: 3800, t: 1800, power: 201 },
+  { food: 9800, wood: 9800, stone: 6000, t: 3600, power: 402 },
+  { food: 14800, wood: 14800, stone: 9600, t: 7200, power: 778 },
+  { food: 22300, wood: 22300, stone: 15400, t: 14400, power: 1489 },
+  { food: 33500, wood: 33500, stone: 24600, t: 28800, power: 2848 },
+  { food: 52500, wood: 52500, stone: 37500, t: 34560, power: 4552 },
+  { food: 80000, wood: 80000, stone: 57500, t: 41460, power: 6703 },
+  { food: 120000, wood: 120000, stone: 87500, t: 49740, power: 9436 },
+  { food: 180000, wood: 180000, stone: 132500, t: 59700, power: 12942 },
+  { food: 270000, wood: 270000, stone: 200000, t: 71640, power: 17488 },
+  { food: 405000, wood: 405000, stone: 300000, t: 85980, power: 23447 },
+  { food: 607500, wood: 607500, stone: 450000, t: 104400, power: 31354 },
+  { food: 925000, wood: 925000, stone: 675000, t: 122400, power: 42032 },
+  { food: 1400000, wood: 1400000, stone: 1000000, t: 147600, power: 56560 },
+  { food: 2100000, wood: 2100000, stone: 1600000, t: 176400, power: 76832 },
+  { food: 3200000, wood: 3200000, stone: 2300000, t: 212400, power: 104966 },
+  { food: 4700000, wood: 4700000, stone: 3500000, t: 277200, power: 145492 },
+  { food: 7100000, wood: 7100000, stone: 5300000, t: 388800, power: 205219 },
+  { food: 10800000, wood: 10800000, stone: 8000000, t: 583200, power: 295585 },
+  { food: 16200000, wood: 16200000, stone: 12000000, t: 0, power: 478367 },
+];
+// index.html:1663 HOSPITAL_BUILD_TABLE (не путать с hospitalCap — мест в лазарете)
+export const HOSPITAL_BUILD_TABLE = [
+  { t: 0, power: 5 },
+  { food: 2000, wood: 2000, t: 24, power: 13 },
+  { food: 3800, wood: 3800, t: 100, power: 32 },
+  { food: 3800, wood: 3800, t: 150, power: 65 },
+  { food: 12300, wood: 12300, t: 1200, power: 162 },
+  { food: 21000, wood: 21000, stone: 8200, t: 2400, power: 366 },
+  { food: 31500, wood: 31500, stone: 13000, t: 4800, power: 723 },
+  { food: 47300, wood: 47300, stone: 20800, t: 7200, power: 1262 },
+  { food: 71000, wood: 71000, stone: 33300, t: 10800, power: 2077 },
+  { food: 106500, wood: 106500, stone: 53300, t: 16200, power: 3310 },
+  { food: 160000, wood: 160000, stone: 80000, t: 19440, power: 4967 },
+  { food: 240000, wood: 240000, stone: 120000, t: 23340, power: 7220 },
+  { food: 360000, wood: 360000, stone: 180000, t: 28020, power: 10319 },
+  { food: 540000, wood: 540000, stone: 270000, t: 33540, power: 14632 },
+  { food: 810000, wood: 810000, stone: 405000, t: 40320, power: 20699 },
+  { food: 1200000, wood: 1200000, stone: 607500, t: 48360, power: 29316 },
+  { food: 1800000, wood: 1800000, stone: 912500, t: 58020, power: 41665 },
+  { food: 2800000, wood: 2800000, stone: 1400000, t: 69660, power: 59576 },
+  { food: 4100000, wood: 4100000, stone: 2100000, t: 83580, power: 85644 },
+  { food: 6200000, wood: 6200000, stone: 3100000, t: 100800, power: 123830 },
+  { food: 9300000, wood: 9300000, stone: 4700000, t: 118800, power: 179944 },
+  { food: 14000000, wood: 14000000, stone: 7100000, t: 154800, power: 263152 },
+  { food: 20900000, wood: 20900000, stone: 10600000, t: 219600, power: 387338 },
+  { food: 31500000, wood: 31500000, stone: 16000000, t: 327600, power: 574480 },
+  { food: 47200000, wood: 47200000, stone: 24000000, t: 0, power: 881480 },
+];
+
+export const BUILD_BLD_TABLE = {
+  barracks: BARRACKS_TABLE, range: BARRACKS_TABLE, stable: BARRACKS_TABLE, siege: SIEGE_TABLE,
+  hall: HALL_TABLE, wall: WALL_TABLE, store: STORE_BUILD_TABLE, academy: ACADEMY_BUILD_TABLE,
+  hospital: HOSPITAL_BUILD_TABLE,
+};
+export const BUILD_MAX_LV = 25; // buildingMax(bk) для всех этих зданий — CFG.MAX_LEVEL, см. index.html
+// index.html:2425 BUILDINGS.hospital.plots — единственное multi-здание среди
+// перенесённых (остальные — barracks/range/stable/siege/hall/wall/store/
+// academy — не multi). Портирован только участок 0 (index плота 0 у
+// isMulti-зданий ВСЕГДА разблокирован — см. plotUnlocked в index.html — и
+// это ровно тот участок, что нужен HALL_REQ ниже); участки 1-3 (доп. вместимость
+// лазарета) — следующий шаг, если понадобится отдельно от разблокировки ратуши.
+export const BUILD_MULTI = new Set(["hospital"]);
+// index.html:2463 HALL_REQ / index.html:2872 hallGateLevel — чтобы поднять
+// ратушу с уровня L на L+1, все 5 зданий должны быть НЕ НИЖЕ текущего L.
+export const HALL_REQ = ["wall", "store", "academy", "barracks", "hospital"];
+export const BUILD_BLD_RU_NAME = {
+  wall: "Стена", store: "Склад", academy: "Академия", barracks: "Казармы", hospital: "Госпиталь",
+}; // упрощённые названия для текста ошибки HALL_REQ — buildingName() в index.html
+   // ещё и красит их по расе/эпохе (BUILDING_TIER_NAMES), сюда эта косметика
+   // не перенесена, там, где она реально нужна (клиентский предпросмотр во
+   // вкладке "Общий мир"), используется настоящий buildingName() из index.html.
 
 // index.html: buildTime/buildCost. bonuses(p).build/buildCostCut ЗАВИСЯТ от
 // рас/генералов/талантов/академии — та же временная заглушка (=1/=0), что и
@@ -141,4 +303,10 @@ export function buildCost(bk, lv, buildCostCut = 0) {
   const r = tblRow(BUILD_BLD_TABLE[bk], lv);
   const cut = 1 - buildCostCut;
   return { food: Math.round((r.food || 0) * cut), wood: Math.round((r.wood || 0) * cut), stone: Math.round((r.stone || 0) * cut), gold: 0 };
+}
+// index.html:2872 hallGateLevel — уровень здания для сравнения с HALL_REQ;
+// multi-здание (hospital) сравнивается по участку 0.
+export function buildLv(p, bk) {
+  const raw = p.b[bk];
+  return BUILD_MULTI.has(bk) ? ((Array.isArray(raw) ? raw[0] : raw) || 0) : (raw || 0);
 }

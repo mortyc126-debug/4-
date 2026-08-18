@@ -102,8 +102,9 @@ async function applyTrain(admin, ev) {
   if (updErr) throw updErr;
 }
 
-// Зеркало EV.build(d) из index.html:4814-4819. plot всегда null у зданий,
-// перенесённых в mp-build (barracks/range/stable/siege — ни одно не multi).
+// Зеркало EV.build(d) из index.html:4814-4819. plot!=null у hospital
+// (единственное multi-здание среди перенесённых — см. mp-build), null у
+// остальных 8 (barracks/range/stable/siege/hall/wall/store/academy).
 async function applyBuild(admin, ev) {
   const playerId = ev.data && ev.data.player_id;
   const slot = ev.data && ev.data.slot;
@@ -114,7 +115,14 @@ async function applyBuild(admin, ev) {
   const p = row.state;
   const q = p.queues[slot];
   if (!q) return; // уже разобрано/отменено
-  if (q.plot != null) p.b[q.b][q.plot] = q.lv; else p.b[q.b] = q.lv;
+  if (q.plot != null) {
+    // Самоисцеление той же старой формы, что и в mp-build (см. комментарий
+    // там) — на случай, если запись когда-то попала в очередь до починки.
+    if (!Array.isArray(p.b[q.b])) p.b[q.b] = [p.b[q.b] || 0, 0, 0, 0];
+    p.b[q.b][q.plot] = q.lv;
+  } else {
+    p.b[q.b] = q.lv;
+  }
   p.queues[slot] = null;
   const { error: updErr } = await admin
     .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
