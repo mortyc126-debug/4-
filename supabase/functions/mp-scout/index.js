@@ -314,7 +314,7 @@ function bonuses(p, defending = false) {
   };
   const mn = RACES_MINUS[p.race];
   if (mn.kind === "mult") b[mn.field] *= mn.value; else b[mn.field] = (b[mn.field] || 0) + mn.value;
-  const epoch = epochOf(p.b.hall), track = RACE_EPOCHS[p.race];
+  const epoch = epochOf(p.b && p.b.hall), track = RACE_EPOCHS[p.race];
   for (let i = 0; i < epoch; i++) {
     (track[i].mods || []).forEach((m) => {
       if (m.kind === "mult") b[m.field] *= m.value; else b[m.field] = m.value;
@@ -326,7 +326,7 @@ function bonuses(p, defending = false) {
     });
   }
   GENERALS_DEFAULT[p.race].apply(b);
-  b.march *= 1 + portalMarchBonus(p.b.portal || 0);
+  b.march *= 1 + portalMarchBonus((p.b && p.b.portal) || 0);
   const tech = p.tech || {};
   const multAcc = {};
   [ACADEMY_TREE.eco, ACADEMY_TREE.mil].forEach((arr) => arr.forEach((n) => {
