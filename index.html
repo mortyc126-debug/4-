@@ -8696,7 +8696,7 @@ async function claimChronicle(){
    восполняются со временem — серверное производство ещё не перенесено,
    стартовых 100000 хватает на несколько заказов набора для проверки.
    ========================================================================= */
-let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"" };
+let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[] };
 let mpPollTimer = null;
 // Ровно эти 9 зданий перенесены на сервер (mp-build): 4 разблокируют
 // mp-train (barracks/range/stable/siege), ещё 5 — это HALL_REQ плюс сама
@@ -8741,12 +8741,24 @@ function mpRerender(){
     $("#menu-modal-body").innerHTML = lastMenuBody;
   }
 }
-function mpStartPolling(){ mpStopPolling(); mpPollTimer=setInterval(mpRefreshPlayer,5000); }
+function mpStartPolling(){ mpStopPolling(); mpPollTimer=setInterval(mpPollTick,5000); }
 function mpStopPolling(){ if(mpPollTimer){ clearInterval(mpPollTimer); mpPollTimer=null; } }
+async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); }
 async function mpRefreshPlayer(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("players").select("*").eq("id",mpState.player.id).maybeSingle();
   if(!error && data){ mpState.player=data; mpRerender(); }
+}
+// Фаза 3 — общая видимость: остальные игроки того же мира читаются напрямую
+// клиентом (RLS players_select_world из миграции 0001 уже разрешает SELECT
+// всем — новая Edge Function не нужна). Берём только нечувствительные
+// колонки (ник/раса/координаты) — полное состояние (ресурсы/войска) в
+// список соседей нарочно не тянем, хотя RLS формально это тоже позволяет.
+async function mpRefreshNeighbors(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("players").select("id,nick,race,x,y,is_bot")
+    .eq("world_id", mpState.player.world_id).neq("id", mpState.player.id).order("id");
+  if(!error && data){ mpState.neighbors=data; mpRerender(); }
 }
 // Открытие вкладки: если этот anon-uid уже заходил в общий мир раньше
 // (сессия сохранена в localStorage), mp-join без указания расы вернёт уже
@@ -8756,7 +8768,7 @@ async function mpOpen(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{});
-    mpState.joined=true; mpState.player=j.player; mpStartPolling();
+    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors();
   }catch(e){ mpState.joined=false; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -8765,7 +8777,7 @@ async function mpDoJoin(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{race:mpState.race,nick:mpState.nick||""});
-    mpState.joined=true; mpState.player=j.player; mpStartPolling();
+    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors();
   }catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -8834,6 +8846,25 @@ function foMultiplayer(){
   h+="<div class='entry hot'><div class='line'><div class='fill'>"+
      "<div class='title'>"+(p.nick||"Безымянный лорд")+" · "+RACES[p.race].name+"</div>"+
      "<div class='note'>Координаты в общем мире: "+p.x+", "+p.y+"</div></div></div></div>";
+
+  // Фаза 3, первый кусочек — общая видимость: список соседей вместо самой
+  // 3D-карты (та рассчитана на локальных ботов одного браузера — встроить
+  // туда настоящих других игроков отдельная большая задача, следующий шаг
+  // после этого). Отсортировано по расстоянию — ближайшие сверху.
+  h+=rubric("Соседи","общий мир");
+  if(!mpState.neighbors.length){
+    h+="<div class='entry'><div class='line'><div class='fill'><div class='note'>"+
+       "Пока никого рядом — позовите друга, он увидит вас здесь же, как только зайдёт.</div></div></div></div>";
+  } else {
+    const sorted=[...mpState.neighbors].sort((a,b)=>Math.hypot(a.x-p.x,a.y-p.y)-Math.hypot(b.x-p.x,b.y-p.y));
+    sorted.forEach(n=>{
+      const dist=Math.round(Math.hypot(n.x-p.x,n.y-p.y));
+      h+="<div class='entry'><div class='line'>"+shieldSvg(n.race,28)+"<div class='fill'>"+
+         "<div class='title'>"+(n.nick||"Безымянный лорд")+(n.is_bot?" <span class='note'>(бот)</span>":"")+"</div>"+
+         "<div class='note'>"+RACES[n.race].name+" · "+n.x+", "+n.y+" · "+dist+" клет."+"</div>"+
+         "</div></div></div>";
+    });
+  }
 
   const perHour=mpProdPerHour(st);
   h+="<div class='entry'><div class='line'><div class='fill'><div class='title'>Ресурсы</div>"+
