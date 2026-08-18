@@ -240,15 +240,11 @@ const ACADEMY_TREE = {
 //   2. Расовые эпохальные способности (RACE_EPOCHS, index.html:1767-1832) —
 //      по числу открытых эпох (epochOf(p.b.hall)), плюс defMods 5-й эпохи
 //      ТОЛЬКО при обороне (defending=true).
-//   3. Бонус "генерала по умолчанию" — genOf(p)=GENERALS[p.race][p.gen.id||0]
-//      (index.html:2345): т.к. в общем мире игрок физически не может выбрать
-//      другого генерала (p.gen.id всегда null, mp-join не заводит выбор), это
-//      ВСЕГДА индекс 0 — тот же дефолт, что и у игрока одиночной игры,
-//      который просто ещё не открывал вкладку "Генерал". GENERALS_DEFAULT
-//      ниже — только эти 4 записи (index 0 на расу), не вся таблица GENERALS
-//      (второй генерал каждой расы здесь физически недостижим, выбирать
-//      нечем — переносить его было бы "то, чего ещё нет", см. правило
-//      пользователя из более ранней переписки).
+//   3. Бонус выбранного генерала — genOf(p)=GENERALS[p.race][p.gen.id||0]
+//      (index.html:2345). Фаза 7: выбор генерала подключён по-настоящему
+//      (mp-pickgen) — p.gen.id больше не всегда null, GENERALS ниже несёт
+//      ОБЕ записи на расу (не только index 0), apply() читается по
+//      реальному p.gen.id||0, как в клиенте.
 //   4. portalMarchBonus(p.b.portal) — Портал не входит в постройки общего
 //      мира (нет в BUILD_MP_BLDS/BKEYS этого модуля), поэтому p.b.portal
 //      всегда отсутствует — передаётся 0 явно (portalMarchBonus(0)=0), это
@@ -267,11 +263,25 @@ const ACADEMY_TREE = {
 //     значило бы скопировать код, который на сервере гарантированно не
 //     умеет посчитать ничего, кроме нуля. Поэтому они просто опущены, а не
 //     скопированы ради видимости полноты.
-const GENERALS_DEFAULT = {
-  human:  { apply: (b) => { b.atk += .15; b.def += .08; } },                 // Король Алдрик
-  dwarf:  { apply: (b) => { b.def += .08; b.wallBonus += .08; } },           // Дорвальд Каменный Трон
-  elf:    { apply: (b) => { b.def += .10; b.archer = 0; } },                 // Ильвен Хрустальный Щит
-  undead: { apply: (b) => { b.def += .10; b.healSpeed = 1; } },              // Владислав фон Морвейн — обнуляет расовую скидку лазарета (см. RACE_EPOCHS.undead[1])
+// index.html:2283-2344 GENERALS — оба генерала на расу (name — только для
+// mp-pickgen'а ответа/сверки, косметика apply не нужна серверу).
+const GENERALS = {
+  human: [
+    { name: "Король Алдрик", apply: (b) => { b.atk += .15; b.def += .08; } },
+    { name: "Королева Астрид", apply: (b) => { b.prodGold += .15; b.prodAll += .05; } },
+  ],
+  dwarf: [
+    { name: "Дорвальд Каменный Трон", apply: (b) => { b.def += .08; b.wallBonus += .08; } },
+    { name: "Гимрод Быстрая Секира", apply: (b) => { b.march += .10; b.wallBonus = 0; } },
+  ],
+  elf: [
+    { name: "Ильвен Хрустальный Щит", apply: (b) => { b.def += .10; b.archer = 0; } },
+    { name: "Тариэль Вечная", apply: (b) => { b.archer += .15; b.march += .05; } },
+  ],
+  undead: [
+    { name: "Владислав фон Морвейн", apply: (b) => { b.def += .10; b.healSpeed = 1; } }, // обнуляет расовую скидку лазарета (RACE_EPOCHS.undead[1])
+    { name: "Кармилла", apply: (b) => { b.raise += .15; b.mercy += .05; } },
+  ],
 };
 // index.html:1736-1759 RACES[*].minus (без name/color/desc — косметика клиента).
 const RACES_MINUS = {
@@ -342,7 +352,7 @@ function bonuses(p, defending = false) {
       if (m.kind === "abs") b[m.field] = m.value; else b[m.field] = (b[m.field] || 0) + m.value;
     });
   }
-  GENERALS_DEFAULT[p.race].apply(b);
+  GENERALS[p.race][(p.gen && p.gen.id) || 0].apply(b);
   b.march *= 1 + portalMarchBonus((p.b && p.b.portal) || 0);
   const tech = p.tech || {};
   const multAcc = {};

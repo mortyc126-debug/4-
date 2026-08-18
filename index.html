@@ -8488,6 +8488,8 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(rschTabBtn){ mpState.rschTab=rschTabBtn.dataset.t; mpRerender(); return; }
   const researchBtn=e.target.closest("[data-mp='research']");
   if(researchBtn){ mpDoResearch(researchBtn.dataset.id); return; }
+  const pickgenBtn=e.target.closest("[data-mp='pickgen']");
+  if(pickgenBtn){ mpDoPickGen(+pickgenBtn.dataset.id); return; }
 });
 
 // Двойной тап по чужой клетке в 3D сразу открывал лист похода (openLevy) —
@@ -8879,6 +8881,13 @@ async function mpDoResearch(id){
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
+// Фаза 7 — выбор полководца (mp-pickgen). См. рубрику «Полководец» в foMultiplayer.
+async function mpDoPickGen(id){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-pickgen",{id}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
 // Фаза 4, второй кусочек — собственные марши (RLS marches_select_all из
 // миграции 0001 уже разрешает читать их напрямую, как и mail/players).
 async function mpRefreshMarches(){
@@ -9214,6 +9223,33 @@ function foMultiplayer(){
       }
       h+="</div></div></div>";
     });
+  }
+
+  // Фаза 7 — выбор полководца (mp-pickgen), зеркало foGen()'s "Выбор
+  // полководца" (index.html:7414-7426) и клика (index.html:7951-7953).
+  // Честно переиспользует ту же самую глобальную таблицу GENERALS, что и
+  // одиночная игра — один файл, отдельной копии не заводим. Одноразово,
+  // бесплатно, необратимо: как только st.gen.id не null, кнопка выбора
+  // больше не показывается вообще (переиграть нельзя, ровно как в клиенте).
+  // Уровни/опыт/очки таланта генерала (p.gen.lv/xp/pts/tal) НЕ перенесены —
+  // общий мир не начисляет генералу опыт нигде (ни один mp-* эндпоинт не
+  // трогает p.gen.xp), поэтому дальше плоского apply() выбранного генерала
+  // здесь пока нечему появиться; см. supabase/README.md.
+  h+=rubric("Полководец","решение окончательное");
+  if(!st.gen||st.gen.id==null){
+    GENERALS[p.race].forEach((g,i)=>{
+      h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
+        genPortraitHtml(p.race,i)+shieldSvg(p.race,26)+"</div><div class='fill'>"+
+        "<div class='title'>"+g.name+"<span class='tag gilt'>"+g.role+"</span></div>"+
+        "<div class='note'>"+g.flavor+"<span class='gen-stat'>"+g.stat+"</span></div></div></div>"+
+        "<button class='seal' data-mp='pickgen' data-id='"+i+"'"+(mpState.loading?" disabled":"")+">Выбрать</button></div>";
+    });
+  } else {
+    const g=GENERALS[p.race][st.gen.id];
+    h+="<div class='entry'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
+      genPortraitHtml(p.race,st.gen.id)+shieldSvg(p.race,26)+"</div><div class='fill'>"+
+      "<div class='title'>"+g.name+"<span class='tag gilt'>"+g.role+"</span></div>"+
+      "<div class='note'>"+g.flavor+"<span class='gen-stat'>"+g.stat+"</span></div></div></div></div>";
   }
 
   // Фаза 5, Академия — дерево исследований (ACADEMY_TREE, зеркало
