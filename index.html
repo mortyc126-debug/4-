@@ -8502,6 +8502,8 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(researchBtn){ mpDoResearch(researchBtn.dataset.id); return; }
   const pickgenBtn=e.target.closest("[data-mp='pickgen']");
   if(pickgenBtn){ mpDoPickGen(+pickgenBtn.dataset.id); return; }
+  const talentBtn=e.target.closest("[data-mp='talent']");
+  if(talentBtn){ mpDoTalent(talentBtn.dataset.id); return; }
 });
 
 // Двойной тап по чужой клетке в 3D сразу открывал лист похода (openLevy) —
@@ -8921,6 +8923,13 @@ async function mpDoResearch(id){
 async function mpDoPickGen(id){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-pickgen",{id}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+// Фаза 10, кусочек 2 — трата очка таланта (mp-talent).
+async function mpDoTalent(id){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-talent",{id}); await mpRefreshPlayer(); }
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -9420,7 +9429,30 @@ function foMultiplayer(){
       "<div class='title'>"+g.name+"<span class='tag gilt'>"+g.role+"</span> · "+lv+" ур."+"</div>"+
       "<div class='note'>"+g.flavor+"<span class='gen-stat'>"+g.stat+"</span></div>"+
       "<div class='note'>Опыт: "+RU(xp)+" / "+RU(need)+(lv>=lvCap?" · потолок эпохи":"")+
-      (pts>0?" · очков таланта: "+pts+" (тратить пока негде)":"")+"</div></div></div></div>";
+      (pts>0?" · очков таланта: "+pts:"")+"</div></div></div></div>";
+  }
+
+  // Фаза 10, кусочек 2 — трата очков таланта (mp-talent). Честно
+  // переиспользует TALENT_BRANCHES/TALENTS/GENERAL_TREE одиночной игры
+  // (тот же файл, как и GENERALS выше) — пять веток (Город/Армия/Война/
+  // Развитие/Сбор), максимум узла — n.max у GENERAL_TREE, ||5 у голых
+  // TALENTS (там своего max нет, тот же приём, что findTalentNode в
+  // index.html:7935). Сам ЭФФЕКТ вложенных очков в bonuses() ещё не
+  // подключён (см. supabase/README.md) — здесь только распределение.
+  if(st.gen && st.gen.id!=null){
+    h+=rubric("Таланты",(st.gen.pts||0)+" очков свободно");
+    TALENT_BRANCHES.forEach(([key,br])=>{
+      let spent=0; br.nodes.forEach(n=>spent+=((st.gen.tal&&st.gen.tal[n.id])||0));
+      h+="<div class='entry'><div class='line'><div class='fill'><div class='title'>"+br.name+"</div></div></div>";
+      br.nodes.forEach(n=>{
+        const max=n.max||5, lv2=(st.gen.tal&&st.gen.tal[n.id])||0, full=lv2>=max;
+        h+="<div class='line' style='margin-top:4px'><div class='fill'>"+
+           "<div class='note'>"+n.name+" — "+n.txt+" <span class='tag"+(full?" gilt":"")+"'>"+lv2+"/"+max+"</span></div></div>"+
+           "<button class='seal' data-mp='talent' data-id='"+n.id+"'"+
+           ((st.gen.pts||0)<=0||full||mpState.loading?" disabled":"")+">Вложить</button></div>";
+      });
+      h+="</div>";
+    });
   }
 
   // Фаза 5, Академия — дерево исследований (ACADEMY_TREE, зеркало
