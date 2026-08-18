@@ -194,15 +194,10 @@ Deno.serve(async (req) => {
     if (allPlayers.error) return jsonResponse({ err: allPlayers.error.message }, 500);
     const { x, y } = pickSpawn(allPlayers.data || []);
 
-    // Три дня "щита новичка" (index.html:3299 — me.shieldUntil=3*86400) —
-    // раньше здесь ничего не ставилось (players.shield_until по умолчанию
-    // 0), новый игрок оказывался беззащитен с самой первой секунды. Тот же
-    // столбец потом продлевает mp-shield (Фаза 4, десятый кусочек).
-    const NEWBIE_SHIELD_SEC = 3 * 86400;
     const ins = await admin.from("players").insert({
       world_id: world.id, auth_uid: user.id, is_bot: false, race,
       nick: typeof body.nick === "string" ? body.nick.slice(0, 40) : "",
-      x, y, state: newPlayerState(race, nowSec), shield_until: nowSec + NEWBIE_SHIELD_SEC,
+      x, y, state: newPlayerState(race, nowSec),
     }).select().single();
     if (ins.error) return jsonResponse({ err: ins.error.message }, 500);
 
