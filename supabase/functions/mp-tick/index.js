@@ -81,6 +81,8 @@ Deno.serve(async (req) => {
         else if (ev.type === "scout_arrive") await applyScoutArrive(admin, ev);
         else if (ev.type === "research") await applyResearch(admin, ev);
         else if (ev.type === "gathered") await applyGathered(admin, ev);
+        else if (ev.type === "node_respawn") await applyNodeRespawn(admin, ev);
+        else if (ev.type === "camp_respawn") await applyCampRespawn(admin, ev);
         // else: неизвестный/ещё не перенесённый тип — оставляем как есть,
         // не помечаем processed, чтобы не потерять событие молча; заберётся
         // следующим тиком после того, как для него появится case.
@@ -286,6 +288,45 @@ async function applyBuild(admin, ev) {
 // оттуда, самодостаточная копия (см. пояснение о Dashboard-редакторе выше).
 const TKEYS = ["inf", "arc", "cav", "sie"];
 const RES = ["food", "wood", "stone", "gold"]; // Фаза 8, кусочек 1 — applyMarchHome зачисляет добычу сбора
+// Фаза 8, кусочек 3 — респаун истощённой точки/разгромленного лагеря.
+// Те же задержки, что CFG.NODE_RESPAWN/CFG.RESPAWN_CAMP в index.html:
+// 1717-1718 (45мин/1ч). Новое место — небольшое смещение от старого
+// (не полноценный findFreeCellInChunk с перебором чанка, как в index.html
+// — тот же честный уровень упрощения, что и у seedNodesAround/
+// seedCampsAround в mp-join): upsert с ignoreDuplicates молча пропускает
+// редкую коллизию координат, следующий respawn всё равно рано или поздно
+// найдёт свободное место где-то ещё.
+const NODE_RESPAWN_SEC = 3600, CAMP_RESPAWN_SEC = 2700;
+const RESPAWN_MIN_R = 3, RESPAWN_MAX_R = 12;
+function respawnOffset(ox, oy) {
+  const ang = Math.random() * Math.PI * 2;
+  const r = RESPAWN_MIN_R + Math.random() * (RESPAWN_MAX_R - RESPAWN_MIN_R);
+  return { x: Math.round(ox + Math.cos(ang) * r), y: Math.round(oy + Math.sin(ang) * r) };
+}
+async function applyNodeRespawn(admin, ev) {
+  const ox = ev.data && ev.data.x, oy = ev.data && ev.data.y;
+  if (ox == null || oy == null) return;
+  const { x, y } = respawnOffset(ox, oy);
+  const lv = 1 + Math.floor(Math.random() * 3); // тот же диапазон, что seedNodesAround в mp-join
+  const amount = Math.round(6000 * Math.pow(2.6, lv - 1));
+  const res = RES[Math.floor(Math.random() * RES.length)];
+  const { error } = await admin.from("map_cells").upsert(
+    { world_id: ev.world_id, x, y, t: "node", data: { res, lv, amount, max: amount } },
+    { onConflict: "world_id,x,y", ignoreDuplicates: true },
+  );
+  if (error) throw error;
+}
+async function applyCampRespawn(admin, ev) {
+  const ox = ev.data && ev.data.x, oy = ev.data && ev.data.y;
+  if (ox == null || oy == null) return;
+  const { x, y } = respawnOffset(ox, oy);
+  const lv = 1 + Math.floor(Math.random() * 5); // тот же диапазон, что seedCampsAround в mp-join
+  const { error } = await admin.from("map_cells").upsert(
+    { world_id: ev.world_id, x, y, t: "camp", data: { lv } },
+    { onConflict: "world_id,x,y", ignoreDuplicates: true },
+  );
+  if (error) throw error;
+}
 const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];
 const TROOP_TYPES = {
   inf: { atk: 34, def: 46, hp: 44, speed: 1.00, magicAtk: 8, magicDef: 18, beats: "arc", losesTo: "cav" },
@@ -1019,6 +1060,24 @@ async function applyGathered(admin, ev) {
     type: "march_home", data: { march_id: m.id },
   });
   if (evErr) throw evErr;
+
+  // Фаза 8, кусочек 3 — точка истощена (amount уже списан до нуля в
+  // mp-gather на отправке) — сносим клетку и заводим respawn, зеркало
+  // mapDelete+schedule(CFG.NODE_RESPAWN,"nodeback",...) из index.html
+  // (EV.gathered, index.html:4993-4997). Раньше (кусочек 1) пустая точка
+  // просто оставалась на карте навсегда — честный пробел, закрытый здесь.
+  const cellX = m.data && m.data.cell_x, cellY = m.data && m.data.cell_y;
+  if (cellX != null && cellY != null) {
+    const { data: cell } = await admin.from("map_cells")
+      .select("data").eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY).maybeSingle();
+    if (cell && (cell.data && cell.data.amount) <= 0) {
+      await admin.from("map_cells").delete().eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY);
+      await admin.from("events").insert({
+        world_id: m.world_id, fire_at: new Date((nowSec + NODE_RESPAWN_SEC) * 1000).toISOString(),
+        type: "node_respawn", data: { x: cellX, y: cellY },
+      });
+    }
+  }
 }
 
 
@@ -1065,6 +1124,14 @@ async function applyRaidArrive(admin, m) {
     if (result.winner === "att") {
       carry = banditLoot(campLv);
       await admin.from("map_cells").delete().eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY);
+      // Фаза 8, кусочек 3 — зеркало mapDelete+schedule(CFG.RESPAWN_CAMP,
+      // "respawn",...) из index.html (arriveMarch, camp/fort-ветка,
+      // index.html:5151-5152). Раньше (кусочек 2) разгромленный лагерь
+      // просто исчезал навсегда — честный пробел, закрытый здесь.
+      await admin.from("events").insert({
+        world_id: m.world_id, fire_at: new Date((nowSec + CAMP_RESPAWN_SEC) * 1000).toISOString(),
+        type: "camp_respawn", data: { x: cellX, y: cellY },
+      });
     }
 
     const { error: mailErr } = await admin.from("mail").insert({
