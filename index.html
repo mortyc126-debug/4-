@@ -8470,6 +8470,8 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(joinBtn){ const nickInp=$("#mp-nick"); mpState.nick=nickInp?nickInp.value:""; mpDoJoin(); return; }
   const trainBtn=e.target.closest("[data-mp='train']");
   if(trainBtn){ mpDoTrain(trainBtn.dataset.t); return; }
+  const healBtn=e.target.closest("[data-mp='heal']");
+  if(healBtn){ mpDoHeal(healBtn.dataset.t); return; }
   const buildBtn=e.target.closest("[data-mp='build']");
   if(buildBtn){ mpDoBuild(buildBtn.dataset.bk, buildBtn.dataset.plot==null?null:+buildBtn.dataset.plot); return; }
   const attackPickBtn=e.target.closest("[data-mp='attackpick']");
@@ -8478,6 +8480,14 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(attackCancelBtn){ mpState.attackTarget=null; mpRerender(); return; }
   const attackBtn=e.target.closest("[data-mp='attack']");
   if(attackBtn){ mpDoAttack(+attackBtn.dataset.id); return; }
+  const scoutBtn=e.target.closest("[data-mp='scout']");
+  if(scoutBtn){ mpDoScout(+scoutBtn.dataset.id); return; }
+  const recallBtn=e.target.closest("[data-mp='recall']");
+  if(recallBtn){ mpDoRecall(+recallBtn.dataset.id); return; }
+  const rschTabBtn=e.target.closest("[data-mp='rschtab']");
+  if(rschTabBtn){ mpState.rschTab=rschTabBtn.dataset.t; mpRerender(); return; }
+  const researchBtn=e.target.closest("[data-mp='research']");
+  if(researchBtn){ mpDoResearch(researchBtn.dataset.id); return; }
 });
 
 // Двойной тап по чужой клетке в 3D сразу открывал лист похода (openLevy) —
@@ -8702,7 +8712,7 @@ async function claimChronicle(){
    восполняются со временem — серверное производство ещё не перенесено,
    стартовых 100000 хватает на несколько заказов набора для проверки.
    ========================================================================= */
-let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[] };
+let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco" };
 let mpPollTimer = null;
 // Все 15 зданий (кроме Горна — max:1, без реальной механики крафта в общем
 // мире) перенесены на сервер (mp-build): 4 разблокируют mp-train (barracks/
@@ -8710,11 +8720,11 @@ let mpPollTimer = null;
 // academy/hospital + hall), без которых ратуша не растёт выше 1 уровня,
 // farm/lumber/quarry/mine дают реальную добычу по времени (production(),
 // см. mpProdPerHour ниже), garrison бьёт настоящим залпом в бою (Фаза 4,
-// пятый кусочек), у scout сама механика разведки (снимок вражеского
-// состава) на сервер ещё не перенесена — постройка и уровень честные,
-// считаются в мощь как и остальные. Порядок в списке — тот, в котором
-// здания реально нужны игроку (сначала HALL_REQ, потом ратуша, потом
-// казармы/мастерские/хозяйство).
+// пятый кусочек), scout разведывает соседей (mp-scout, Фаза 4, восьмой
+// кусочек — глубина донесения от исследований, se всегда 0, см. заголовок
+// mp-scout). Порядок в списке — тот, в котором здания реально нужны
+// игроку (сначала HALL_REQ, потом ратуша, потом казармы/мастерские/
+// хозяйство).
 const BUILD_MP_BLDS = ["wall","store","academy","hospital","hall","barracks","range","stable","siege","farm","lumber","quarry","mine","garrison","scout"];
 // hospital/farm/lumber/quarry/mine — multi-здания (plots:4 у каждого), все
 // 4 участка (0-3) строятся отдельно — см. renderPlotRow/mpBuildLvAt в
@@ -8751,7 +8761,7 @@ function mpRerender(){
 }
 function mpStartPolling(){ mpStopPolling(); mpPollTimer=setInterval(mpPollTick,5000); }
 function mpStopPolling(){ if(mpPollTimer){ clearInterval(mpPollTimer); mpPollTimer=null; } }
-async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); }
+async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); }
 async function mpRefreshPlayer(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("players").select("*").eq("id",mpState.player.id).maybeSingle();
@@ -8776,6 +8786,15 @@ async function mpRefreshMail(){
     .eq("kind","battle").order("created_at",{ascending:false}).limit(10);
   if(!error && data){ mpState.mail=data; mpRerender(); }
 }
+// Фаза 4, восьмой кусочек — донесения разведки (mail, kind:"scout"), тем
+// же путём, что и боевые письма (mail_select_own уже ограничивает выборку
+// своими же письмами).
+async function mpRefreshScoutMail(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
+    .eq("kind","scout").order("created_at",{ascending:false}).limit(10);
+  if(!error && data){ mpState.scoutMail=data; mpRerender(); }
+}
 // Открытие вкладки: если этот anon-uid уже заходил в общий мир раньше
 // (сессия сохранена в localStorage), mp-join без указания расы вернёт уже
 // существующего игрока — сразу дашборд, без анкеты. Если нет — тихо ловим
@@ -8784,7 +8803,7 @@ async function mpOpen(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{});
-    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming();
+    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail();
   }catch(e){ mpState.joined=false; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -8793,7 +8812,7 @@ async function mpDoJoin(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{race:mpState.race,nick:mpState.nick||""});
-    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming();
+    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail();
   }catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -8812,6 +8831,20 @@ async function mpDoBuild(bk,plot){
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
+// Фаза 4, седьмой кусочек — лечение раненых (mp-heal), см. рубрику
+// «Лазарет» в foMultiplayer.
+async function mpDoHeal(type){
+  const st=mpState.player.state;
+  const hospLv=Array.isArray(st.b.hospital)?Math.max(0,...st.b.hospital):(st.b.hospital||0);
+  const wounded=(st.wounded&&st.wounded[type]&&st.wounded[type][1])||0;
+  const cap=Math.min(wounded,trainCap(hospLv));
+  const inp=$("#mp-heal-n-"+type);
+  const n=Math.max(1,Math.min(cap,+((inp&&inp.value)||1)));
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-heal",{type,tier:1,n}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
 async function mpDoAttack(defenderId){
   const units={};
   TKEYS.forEach(t=>{ const inp=$("#mp-atk-"+t); units[t]={1:Math.max(0,Math.round(+((inp&&inp.value)||0)))}; });
@@ -8821,6 +8854,29 @@ async function mpDoAttack(defenderId){
     mpState.attackTarget=null;
     await mpRefreshPlayer(); await mpRefreshMarches();
   }catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+// Фаза 4, восьмой кусочек — разведка (mp-scout): один клик, без формы —
+// лазутчик один и без войск, выбирать нечего.
+async function mpDoScout(defenderId){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-scout",{defender_id:defenderId}); await mpRefreshScoutMail(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+// Фаза 4, девятый кусочек — отзыв похода на полпути (mp-recall).
+async function mpDoRecall(marchId){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-recall",{march_id:marchId}); await mpRefreshMarches(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+// Фаза 5, Академия — дерево исследований (mp-research). См. рубрику
+// «Академия» в foMultiplayer.
+async function mpDoResearch(id){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-research",{id}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
 // Фаза 4, второй кусочек — собственные марши (RLS marches_select_all из
@@ -8844,20 +8900,26 @@ async function mpRefreshIncoming(){
     .eq("data->>defender_id", String(mpState.player.id)).eq("state","go").order("t1");
   if(!error && data){ mpState.incoming=data; mpRerender(); }
 }
-// Превью добычи/час для панели — НЕ настоящий клиентский production() (тот
-// зовёт bonuses(p), которая ждёт полный игровой объект — gen.tal/tech/race
-// и т.д., а тут только урезанный снимок из players.state); используем
-// уже глобальный prodRate (та же PROD_TABLE, без всяких бонусов — ровно то
-// же приближение, что и сервер, см. supabase/functions/_shared/rules.js).
-const MP_PROD_BLD={food:"farm",wood:"lumber",stone:"quarry",gold:"mine"};
-const MP_PROD_MULT={food:1,wood:1,stone:.75,gold:.5};
-function mpProdPerHour(st){
-  const out={};
-  RES.forEach(r=>{
-    const plots=st.b[MP_PROD_BLD[r]];
-    let base=0; (Array.isArray(plots)?plots:[plots||0]).forEach(lv=>{ if(lv>0) base+=prodRate(lv) });
-    out[r]=Math.round(base*MP_PROD_MULT[r]);
-  });
+// Превью добычи/час для панели — Фаза 6: теперь зовёт НАСТОЯЩИЙ клиентский
+// production(p) (тот самый, единый файл, никакой копии) через тот же приём
+// pShim, что и у Академии ниже (pShim2) — {race,b,gen,tech}. p.gen.tal у
+// игрока общего мира всегда {} (система вложения очков таланта в MP не
+// заведена), поэтому талантовые и GENERAL_TREE-слагаемые bonuses() дают
+// ровно 0 вклада — то же самое честное подмножество, что и на сервере
+// (_shared/rules.js, Фаза 6), просто получено настоящей функцией, а не
+// её портированной копией: числа гарантированно совпадают 1-в-1.
+// race — из САМОЙ строки игрока (p.race), а не st.race: st (players.state)
+// у записей ДО Фазы 6 могло не нести race вовсе (сервер сам самоисцеляется
+// при следующем действии, но эта функция получает состояние "как есть" в
+// текущем сеансе клиента).
+function mpProdPerHour(p){
+  // portal:0 — Портал не входит в постройки общего мира (см. заголовок
+  // bonuses() в _shared/rules.js); без явного 0 portalMarchBonus(undefined)
+  // внутри настоящего bonuses() уходит в NaN (не влияет на саму добычу,
+  // production() не читает B.march, но лучше не оставлять NaN в объекте).
+  const pShim={race:p.race, b:Object.assign({portal:0},p.state.b), gen:p.state.gen, tech:p.state.tech};
+  const pr=production(pShim), out={};
+  RES.forEach(r=>{ out[r]=Math.round(pr[r]); });
   return out;
 }
 // index.html:2863 marchSlots — сколько отрядов можно держать в поле разом.
@@ -8871,14 +8933,13 @@ function foMultiplayer(){
   let h=rubric("Общий мир","бета");
   h+="<div class='entry'><div class='line'><div class='fill'>"+
      "<div class='note'>Один настоящий мир на всех, кто сюда заходит — не отдельная копия для "+
-     "каждого браузера. Все постройки, кроме Горна, набор войск (тир 1) и атака с настоящим маршем "+
-     "уже здесь, честно упрощённые (см. подсказки на месте и supabase/README.md); исследования и "+
-     "полный многораундовый бой из одиночной игры — следующие шаги.</div></div></div></div>"+
-     "<div class='entry'><div class='line'><div class='fill'>"+
-     "<div class='note'>Ферму/лесопилку/каменоломню/шахту уже можно строить, но добыча ресурсов "+
-     "от их уровня в общем мире пока не идёт сама по себе (приток по времени ещё не перенесён на "+
-     "сервер) — начальных ресурсов при входе хватит на первые постройки/наборы, а не бесконечно.</div>"+
-     "</div></div></div>";
+     "каждого браузера. Все постройки (кроме Горна), набор войск (тир 1), добыча ресурсов по "+
+     "времени, атака с настоящим маршем и боем (стена/башня/лазарет уже настоящие), лечение "+
+     "раненых, разведка и дерево исследований Академии — всё уже здесь, честно упрощённое (см. "+
+     "подсказки на месте и supabase/README.md); раса/эпоха расы/дефолтный генерал/дерево "+
+     "исследований теперь реально влияют на добычу, набор, стройку и лазарет — но полный "+
+     "многораундовый бой (полководцы, погода) и вложение очков таланта генерала из одиночной "+
+     "игры — следующие шаги.</div></div></div></div>";
 
   if(!mpState.joined){
     h+="<div class='entry'><div class='line'><div class='fill'>"+
@@ -8917,6 +8978,10 @@ function foMultiplayer(){
     h+="<div class='entry'><div class='line'><div class='fill'><div class='note'>"+
        "Пока никого рядом — позовите друга, он увидит вас здесь же, как только зайдёт.</div></div></div></div>";
   } else {
+    // Фаза 4, восьмой кусочек — разведка: кнопка видна только если "Разведка"
+    // уже построена (scoutLv>0), ровно как в клиенте (sendScout проверяет
+    // p.b.scout сам, но в UI незачем предлагать заведомо провальное действие).
+    const scoutLv=st.b.scout||0;
     const sorted=[...mpState.neighbors].sort((a,b)=>Math.hypot(a.x-p.x,a.y-p.y)-Math.hypot(b.x-p.x,b.y-p.y));
     sorted.forEach(n=>{
       const dist=Math.round(Math.hypot(n.x-p.x,n.y-p.y));
@@ -8935,7 +9000,8 @@ function foMultiplayer(){
         h+="<button class='seal' data-mp='attack' data-id='"+n.id+"'"+(mpState.loading?" disabled":"")+">В поход</button> "+
            "<button class='seal' data-mp='attackcancel'>Отмена</button>";
       } else {
-        h+="<button class='seal' data-mp='attackpick' data-id='"+n.id+"'>Атаковать</button>";
+        h+="<button class='seal' data-mp='attackpick' data-id='"+n.id+"'>Атаковать</button> ";
+        if(scoutLv>0) h+="<button class='seal' data-mp='scout' data-id='"+n.id+"'"+(mpState.loading?" disabled":"")+">Разведать</button>";
       }
       h+="</div></div></div>";
     });
@@ -8949,8 +9015,13 @@ function foMultiplayer(){
       const opp=mpState.neighbors.find(n=>n.id===(m.data&&m.data.defender_id));
       h+="<div class='entry'><div class='line'><div class='fill'>"+
          "<div class='title'>"+(going?"Идёт к ":"Возвращается от ")+(opp?opp.nick||"Безымянный лорд":m.tx+", "+m.ty)+"</div>"+
-         "<div class='note'>Осталось: "+fmtDur(left)+"</div>"+
-         "</div></div></div>";
+         "<div class='note'>Осталось: "+fmtDur(left)+"</div>";
+      // Фаза 4, девятый кусочек — отзыв похода на полпути (mp-recall):
+      // разворачивает отряд ОТ ТЕКУЩЕЙ ТОЧКИ, а не мгновенно из дома — чем
+      // дальше он уже прошёл, тем дольше идти назад. Только для ещё идущих
+      // (state:"go") — уже возвращающихся отзывать нечего.
+      if(going) h+="<button class='seal' data-mp='recall' data-id='"+m.id+"'"+(mpState.loading?" disabled":"")+">Отозвать</button>";
+      h+="</div></div></div>";
     });
   }
 
@@ -8978,7 +9049,30 @@ function foMultiplayer(){
     });
   }
 
-  const perHour=mpProdPerHour(st);
+  // Фаза 4, восьмой кусочек — донесения разведки. se (глубина донесения,
+  // от p.tech.mil_scout2) всегда 0 — исследования ещё не перенесены на
+  // сервер (см. заголовок mp-scout), поэтому донесение честно несёт только
+  // общее число войск цели — ни родов войск, ни тиров, ни запасов, ни
+  // стены, ни полководца: всё это появляется лишь с очками в "Маскировку".
+  if(mpState.scoutMail.length){
+    h+=rubric("Разведка","донесения лазутчиков");
+    mpState.scoutMail.forEach(m=>{
+      const d=m.data;
+      h+="<div class='entry'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+(d.found?(d.opponent_nick||"Безымянный лорд"):"Донесение")+"</div>";
+      if(!d.found){
+        h+="<div class='note'>Лазутчик не нашёл цель на месте — она пропала между отправкой и прибытием.</div>";
+      } else {
+        h+="<div class='note'>Ратуша "+d.hall+" ур. · войск: "+RU(d.total)+
+           (d.shielded?" · под щитом мира":"")+"</div>"+
+           "<div class='note'>Без очков в «Маскировку» (исследования ещё не перенесены) видно только общее "+
+           "число — не роды войск и не тиры.</div>";
+      }
+      h+="</div></div></div>";
+    });
+  }
+
+  const perHour=mpProdPerHour(p);
   h+="<div class='entry'><div class='line'><div class='fill'><div class='title'>Ресурсы</div>"+
      "<div class='note'>"+RES.map(r=>RES_NAME[r]+": "+RU(st.res[r])).join(" · ")+"</div>"+
      "<div class='note'>Добыча/час: "+RES.map(r=>RES_NAME[r]+" "+RU(perHour[r])).join(" · ")+
@@ -9059,6 +9153,100 @@ function foMultiplayer(){
     }
     h+="</div></div></div>";
   });
+
+  // Фаза 4, седьмой кусочек — лазарет: тяжелораненые (Фаза 4, шестой
+  // кусочек) больше не застревают в p.wounded навсегда, их можно вылечить
+  // обратно в строй. Как и "Добыча/час" выше, здесь НЕ вызывается настоящий
+  // healUnitCost(p,type,tier)/healDuration(p,...) из одиночной игры — те
+  // читают bonuses(p), а pShim не полноценный игрок; вместо них — та же
+  // лёгкая переформулировка без bonuses (стоимость/время ровно с
+  // healBonus=1/healSpeedBonus=1, см. _shared/rules.js), что и на сервере
+  // в mp-heal. Только тир 1 — в общем мире набор войск (Фаза 2/5) тоже
+  // только тира 1, других тиров тут взяться неоткуда.
+  const mpHospLv=Array.isArray(st.b.hospital)?Math.max(0,...st.b.hospital):(st.b.hospital||0);
+  const mpHealCap=trainCap(mpHospLv);
+  const healing=st.heal;
+  const anyWounded=TKEYS.some(t=>(st.wounded&&st.wounded[t]&&st.wounded[t][1])||0);
+  if(anyWounded||healing){
+    h+=rubric("Лазарет","лечение раненых, тир 1");
+    TKEYS.forEach(t=>{
+      const wounded=(st.wounded&&st.wounded[t]&&st.wounded[t][1])||0;
+      const healingThis=healing&&healing.type===t&&healing.tier===1;
+      if(!wounded && !healingThis) return;
+      h+="<div class='entry'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+unitName(t,1,p.race)+" — ранено "+RU(wounded)+"</div>";
+      if(healingThis){
+        const left=Math.max(0,healing.t1-Date.now()/1000);
+        h+="<div class='note'>Лечится: ×"+RU(healing.n)+", осталось "+fmtDur(left)+"</div>";
+      } else if(healing){
+        h+="<div class='note'>Лазарет занят лечением другого рода войск.</div>";
+      } else if(mpHealCap<=0){
+        h+="<div class='note'>Нужен построенный госпиталь.</div>";
+      } else {
+        const tc=troopCost(t,1);
+        const c={food:Math.round((tc.food||0)/2),wood:Math.round((tc.wood||0)/2),stone:Math.round((tc.stone||0)/2),gold:0};
+        const maxN=Math.min(wounded,mpHealCap);
+        h+="<div class='note'>Цена за штуку: "+(RES.some(r=>c[r])?RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", "):"бесплатно")+
+           " · вдвое дешевле и быстрее набора · максимум за раз: "+mpHealCap+"</div>"+
+           "<input id='mp-heal-n-"+t+"' type='number' min='1' max='"+maxN+"' value='"+Math.min(maxN,10)+"'> "+
+           "<button class='seal' data-mp='heal' data-t='"+t+"'"+(mpState.loading?" disabled":"")+">Лечить</button>";
+      }
+      h+="</div></div></div>";
+    });
+  }
+
+  // Фаза 5, Академия — дерево исследований (ACADEMY_TREE, зеркало
+  // startResearch(p,id) из index.html:5848-5863, см. mp-research). Честно
+  // переиспользует те же самые глобальные ACADEMY_TREE/researchLocked/
+  // lockReason/nodeVisibleFor/findNode/nodeTitle/researchCost/researchTime,
+  // что и одиночная игра — это ОДИН И ТОТ ЖЕ файл, отдельной копии не
+  // заводим (как buildCost/buildTime/troopCost выше в этой же панели).
+  // pShim2 (в отличие от pShim выше) уже несёт race/b/gen/tech — этого
+  // достаточно nodeVisibleFor/researchLocked/rowGate, но НЕ полноценный
+  // игрок для bonuses(p) — как и everywhere else в общем мире,
+  // bonuses(p).researchSpeed здесь не подключена: researchTime(n,lv)
+  // показывается как есть, без деления, та же честная заглушка, что и на
+  // сервере (см. supabase/README.md). Сами ЭФФЕКТЫ исследований (надбавки
+  // к добыче/бою через bonuses()) тоже не подключены — только сама
+  // механика набора уровней, p.tech заполняется настоящими значениями.
+  const academyLv=st.b.academy||0;
+  if(academyLv>0){
+    h+=rubric("Академия","дерево исследований");
+    const pShim2={race:p.race,b:st.b,gen:st.gen||{id:null},tech:st.tech||{}};
+    const rsch=st.rsch;
+    if(rsch){
+      const rn=findNode(rsch.id);
+      const left=Math.max(0,rsch.t1-Date.now()/1000);
+      h+="<div class='entry hot'><div class='line'><div class='fill'>"+
+         "<div class='title'>Исследуется: "+(rn?nodeTitle(rn):rsch.id)+" ур. "+rsch.lv+"</div>"+
+         "<div class='note'>Осталось: "+fmtDur(left)+"</div></div></div></div>";
+    }
+    h+="<div class='entry'><div class='line'><div class='fill'><div id='ac-tabs'>"+
+       "<button class='"+(mpState.rschTab==="mil"?"on":"")+"' data-mp='rschtab' data-t='mil'>Военные</button>"+
+       "<button class='"+(mpState.rschTab!=="mil"?"on":"")+"' data-mp='rschtab' data-t='eco'>Экономические</button>"+
+       "</div></div></div></div>";
+    const branch=mpState.rschTab==="mil"?"mil":"eco";
+    ACADEMY_TREE[branch].filter(n=>nodeVisibleFor(n,pShim2)).forEach(n=>{
+      const lv=(st.tech&&st.tech[n.id])||0, maxed=lv>=n.max;
+      h+="<div class='entry'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+nodeTitle(n)+" — "+lv+"/"+n.max+"</div>";
+      if(maxed){
+        h+="<div class='note'>Максимальный уровень.</div>";
+      } else if(researchLocked(n,pShim2)){
+        h+="<div class='note'>"+lockReason(n,pShim2)+"</div>";
+      } else if(rsch){
+        h+="<div class='note'>Академия уже занята другим исследованием.</div>";
+      } else {
+        const nlv=lv+1, c=researchCost(n,nlv), t=researchTime(n,nlv);
+        h+="<div class='note'>До "+nlv+" ур.: "+
+           (RES.some(r=>c[r])?RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", "):"бесплатно")+
+           " · "+fmtDur(t)+"</div>"+
+           "<button class='seal' data-mp='research' data-id='"+n.id+"'"+(mpState.loading?" disabled":"")+">Исследовать</button>";
+      }
+      h+="</div></div></div>";
+    });
+  }
+
   if(mpState.err) h+="<div class='entry'><div class='line'><div class='fill'><div class='note' style='color:#e08'>"+mpState.err+"</div></div></div></div>";
   return h;
 }

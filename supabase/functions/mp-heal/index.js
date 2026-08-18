@@ -1,22 +1,25 @@
 // =============================================================================
-// mp-join — Фаза 2. Заводит (или возвращает уже существующего) игрока в
-// ОБЩЕМ мире по его anon-uid (Supabase Auth). Единственный способ создать
-// строку в players — RLS на этой таблице (см. миграцию 0001) намеренно не
-// даёт INSERT никому, кроме service-role, которым обладает только эта
-// функция (Deno-рантайм Edge Function, ключ не попадает в браузер).
+// mp-heal — Фаза 4, седьмой кусочек: лечение раненых в лазарете. Прямое
+// продолжение прошлого шага (лазарет защитника в бою, см. mp-tick) — там
+// тяжелораненые начали копиться в p.wounded, но забрать их обратно было
+// неоткуда. Зеркало startHeal(p,type,tier,n) из index.html:5795-5809 — та
+// же проверка порядка (одна очередь лечения на игрока, p.heal, отдельная
+// от очереди набора p.train[type]), тот же canPay/pay/healDuration.
+// Разница, как и у mp-train: пишем не в объект в памяти браузера, а в
+// players.state (JSONB) через service-role, и вместо schedule(t,"heal",
+// {pid}) — INSERT в events, которую потом разберёт mp-tick (applyHeal).
 //
-// Вызывается один раз при входе игрока в общий мир (кнопка "Общий мир" в
-// будущем UI, ещё не подключена в index.html — это отдельный следующий шаг,
-// сама функция уже рабочая и её можно проверить curl'ом/Postman уже сейчас).
+// bonuses(p).heal/healSpeed — Фаза 6 подключила настоящий подсчёт (раса/
+// эпоха рас/дефолтный генерал; недвижимая нежить раньше лечила вдвое дешевле
+// и быстрее — теперь это тоже настоящее число, см. заголовок bonuses() ниже).
 //
-// Тело запроса: { race: "human"|"dwarf"|"elf"|"undead", nick?: string }
-// Ответ: { ok:true, world_id, player: {...строка players...} } либо {err}.
+// Тело запроса: { type:"inf"|"arc"|"cav"|"sie", tier:1..5, n:number }
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// Вставлено буквально из ../_shared/cors.js — Dashboard-редактор Edge
-// Functions не подтягивает относительные импорты на общую папку, поэтому
-// здесь код самодостаточен (копия, а не импорт). При деплое через Supabase
-// CLI можно вернуть `import ... from "../_shared/cors.js"` как в репозитории.
+// Вставлено буквально из ../_shared/cors.js и ../_shared/rules.js —
+// Dashboard-редактор Edge Functions не подтягивает относительные импорты на
+// общую папку, поэтому здесь код самодостаточен (копия, а не импорт). При
+// деплое через Supabase CLI можно вернуть импорты как в репозитории.
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -33,25 +36,58 @@ function handleOptions(req) {
   return null;
 }
 
-const RACES = ["human", "dwarf", "elf", "undead"];
-
-// Вставлено буквально из ../_shared/rules.js — добыча ресурсов по времени
-// (index.html:3790 production / index.html:3813 plotFillCap / index.html:3838
-// syncRes). Нужна здесь, чтобы возвращать уже актуальные ресурсы при
-// повторном join (вкладка "Общий мир" опрашивает mp-join раз в 5с, см.
-// index.html) — та же "ленивая экономика", что в одиночной игре: не тикает
-// сама по себе, досчитывается при каждом обращении.
+const RES = ["food", "wood", "stone", "gold"];
+const TKEYS = ["inf", "arc", "cav", "sie"];
+const TROOP_COST_COMBAT = [
+  { food: 10, wood: 10, stone: 0, gold: 0 },
+  { food: 40, wood: 40, stone: 0, gold: 0 },
+  { food: 100, wood: 100, stone: 20, gold: 0 },
+  { food: 200, wood: 200, stone: 150, gold: 0 },
+  { food: 350, wood: 350, stone: 350, gold: 80 },
+];
+const TROOP_COST_SIEGE = [
+  { food: 0, wood: 20, stone: 0, gold: 0 },
+  { food: 0, wood: 50, stone: 30, gold: 0 },
+  { food: 0, wood: 100, stone: 40, gold: 0 },
+  { food: 0, wood: 250, stone: 100, gold: 0 },
+  { food: 0, wood: 400, stone: 300, gold: 80 },
+];
+const troopCost = (type, tier) => (type === "sie" ? TROOP_COST_SIEGE : TROOP_COST_COMBAT)[tier - 1];
+const TRAIN_TIME = [3.6, 7.2, 12, 24, 48];
+const TRAIN_CAP = [
+  20, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 550, 600, 700, 800,
+  900, 1000, 1100, 1200, 1300, 1400, 1500, 1600, 1700, 2000,
+];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const tblRow = (tbl, lv) => tbl[clamp(Math.round(lv), 1, tbl.length) - 1];
+const trainCap = (lv) => (lv <= 0 ? 0 : tblRow(TRAIN_CAP, lv));
+const canPay = (res, c) => RES.every((r) => !c[r] || res[r] >= c[r]);
+const pay = (res, c) => RES.forEach((r) => { if (c[r]) res[r] -= c[r]; });
+// index.html:2840/2844/5778 — см. подробный комментарий в _shared/rules.js.
+function healUnitCost(type, tier, healBonus = 1) {
+  const c = troopCost(type, tier);
+  return {
+    food: Math.round(((c.food || 0) / 2) * healBonus),
+    wood: Math.round(((c.wood || 0) / 2) * healBonus),
+    stone: Math.round(((c.stone || 0) / 2) * healBonus),
+    gold: 0,
+  };
+}
+const healUnitTime = (type, tier) => TRAIN_TIME[tier - 1] / 2;
+function healDuration(hallLv, type, tier, n, healSpeedBonus = 1) {
+  return (healUnitTime(type, tier) * n * healSpeedBonus) / (1 + hallLv * 0.06);
+}
+// Добыча ресурсов по времени (index.html:3790/3813/3838, см. _shared/
+// rules.js) — дергаем перед canPay/pay, чтобы цена лечения списывалась с
+// актуального баланса, а не с того, что был на момент последнего действия.
 const PROD_TABLE = [
   400, 430, 470, 520, 580, 650, 730, 830, 950, 1100, 1300, 1550, 1850, 2200, 2700,
   3200, 3700, 4300, 5000, 5800, 6700, 7800, 9000, 10400, 20800,
 ];
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const tblRow = (tbl, lv) => tbl[clamp(Math.round(lv), 1, tbl.length) - 1];
 const prodRate = (lv) => (lv <= 0 ? 0 : tblRow(PROD_TABLE, lv));
 const plotCap = (lv) => (lv <= 0 ? 0 : tblRow(PROD_TABLE, lv) * 10);
 const PROD_BLD = { food: "farm", wood: "lumber", stone: "quarry", gold: "mine" };
 const PROD_MULT = { food: 1, wood: 1, stone: 0.75, gold: 0.5 };
-const RES = ["food", "wood", "stone", "gold"];
 // index.html:2854 epochOf — эпоха ратуши (1..5), нужна для bonuses() ниже
 // (расовые эпохальные способности).
 const epochOf = (hall) => (hall >= 25 ? 5 : hall >= 19 ? 4 : hall >= 13 ? 3 : hall >= 7 ? 2 : 1);
@@ -362,68 +398,6 @@ function syncRes(p, nowSec) {
   p.resAt = nowSec;
 }
 
-// Тот же снимок полей, что newPlayer() в index.html (см. index.html:2968) —
-// специально в той же форме, чтобы Фаза 5 (перенос остальных действий) не
-// переписывала форму состояния заново. ai/pts=5/gear/inventory и т.д. —
-// как у только что созданного игрока-человека там же (isBot=false: gen.id
-// всегда null, ai не используется).
-function newPlayerState(race, nowSec) {
-  const BKEYS = ["hall", "wall", "farm", "lumber", "quarry", "mine", "academy",
-    "store", "barracks", "range", "stable", "siege", "hospital", "scout", "garrison"];
-  // Столько же участков, сколько BUILDINGS[k].plots в index.html: farm/
-  // lumber/quarry/mine/hospital — все 4 (index.html:2416-2425). Раньше
-  // hospital/quarry/mine сюда забыты не были включены — заводились
-  // скаляром 0 вместо [0,0,0,0], что ломало mp-build при попытке поднять
-  // такое здание (см. самоисцеление в mp-build/mp-tick).
-  const MULTI = { farm: 4, lumber: 4, quarry: 4, mine: 4, hospital: 4 };
-  const b = {};
-  BKEYS.forEach((k) => { b[k] = MULTI[k] ? new Array(MULTI[k]).fill(0) : 0; });
-  b.hall = 1; b.wall = 1; b.farm[0] = 1; b.lumber[0] = 1; b.store = 1;
-  const troops = {}, wounded = {};
-  ["inf", "arc", "cav", "sie"].forEach((t) => {
-    troops[t] = {}; wounded[t] = {};
-    for (let i = 1; i <= 5; i++) { troops[t][i] = 0; wounded[t][i] = 0; }
-  });
-  troops.inf[1] = 200; troops.arc[1] = 150;
-  return {
-    // resAt = момент создания, не 0 — иначе первый же syncRes() увидел бы
-    // "прошли миллиарды секунд с эпохи Unix" и начислил бы участку добычу
-    // сразу под завязку его plotFillCap.
-    res: { food: 100000, wood: 100000, stone: 100000, gold: 100000 }, resAt: nowSec,
-    // race — Фаза 6: раса дублируется и сюда, в state (JSONB), не только в
-    // одноимённую колонку players.race — bonuses()/nodeVisibleFor() читают
-    // ОДИН объединённый объект "p" (как и в одиночной игре, где race — поле
-    // самого объекта игрока), а не state+row по отдельности. Колонка
-    // players.race остаётся как есть (по ней идут другие запросы — mp-attack/
-    // mp-tick и т.д. уже читают её напрямую с row), это не замена, а
-    // дублирование ради единообразного p.race внутри bonuses().
-    race,
-    b, queues: [null, null], train: { inf: null, arc: null, cav: null, sie: null },
-    troops, wounded, heal: null,
-    gen: { lv: 1, xp: 0, pts: 5, tal: {}, id: null, away: null },
-    gear: {}, tech: {}, rsch: null,
-    inventory: {}, materials: { ore: [0, 0, 0, 0, 0], leather: [0, 0, 0, 0, 0], bone: [0, 0, 0, 0, 0], ebony: [0, 0, 0, 0, 0] },
-    craft: null, tomes: {}, lostTo: null,
-  };
-}
-
-// Простой поиск свободного места на условной решётке мира — не копия
-// findFreeCellInChunk/MIN_STRUCT_GAP из index.html (та логика заточена под
-// плотную карту узлов/лагерей одного браузера), здесь городов в общем мире
-// будет заведомо меньше и достаточно грубой проверки минимального
-// расстояния между СТОЛИЦАМИ, чтобы новый игрок не встал вплотную к чужой.
-const MIN_CITY_GAP = 40;
-function pickSpawn(existing) {
-  for (let attempt = 0; attempt < 200; attempt++) {
-    const ring = 50 + Math.floor(attempt / 10) * 30;
-    const x = Math.round((Math.random() * 2 - 1) * ring);
-    const y = Math.round((Math.random() * 2 - 1) * ring);
-    const ok = existing.every((p) => Math.hypot(p.x - x, p.y - y) >= MIN_CITY_GAP);
-    if (ok) return { x, y };
-  }
-  return { x: Math.round(Math.random() * 400 - 200), y: Math.round(Math.random() * 400 - 200) };
-}
-
 Deno.serve(async (req) => {
   const pre = handleOptions(req);
   if (pre) return pre;
@@ -437,61 +411,70 @@ Deno.serve(async (req) => {
       global: { headers: { Authorization: authHeader } },
     });
     const { data: { user }, error: userErr } = await callerClient.auth.getUser();
-    if (userErr || !user) return jsonResponse({ err: "Не авторизован — нужен anon-вход Supabase Auth" }, 401);
+    if (userErr || !user) return jsonResponse({ err: "Не авторизован" }, 401);
 
     let body = {};
-    try { body = await req.json(); } catch (_) { /* пустое тело — ок для повторного join */ }
-    const race = RACES.includes(body.race) ? body.race : null;
+    try { body = await req.json(); } catch (_) { /* noop */ }
+    const type = body.type;
+    const tier = Math.round(body.tier);
+    let n = Math.round(Number(body.n));
+    if (!TKEYS.includes(type)) return jsonResponse({ err: "Неизвестный тип войск" }, 400);
+    if (!(tier >= 1 && tier <= 5)) return jsonResponse({ err: "Неверный тир (1..5)" }, 400);
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
-    // Один общий мир на всё время (см. миграцию 0001) — берём самый старый,
-    // а если ни одного ещё нет, заводим первый.
-    let { data: world, error: wErr } = await admin
-      .from("worlds").select("*").order("created_at", { ascending: true }).limit(1).maybeSingle();
-    if (wErr) return jsonResponse({ err: wErr.message }, 500);
-    if (!world) {
-      const seed = Math.floor(Math.random() * 2 ** 31);
-      const ins = await admin.from("worlds").insert({ seed }).select().single();
-      if (ins.error) return jsonResponse({ err: ins.error.message }, 500);
-      world = ins.data;
-    }
+    const { data: world, error: wErr } = await admin
+      .from("worlds").select("id").order("created_at", { ascending: true }).limit(1).maybeSingle();
+    if (wErr || !world) return jsonResponse({ err: "Мир ещё не создан — сначала mp-join" }, 400);
 
-    const nowSec = Date.now() / 1000;
-
-    // Уже есть игрок этого uid в этом мире — вернуть его (идемпотентный
-    // join), но сперва досчитать добычу ресурсов по прошедшему времени —
-    // mp-join это ещё и опрос вкладки "Общий мир" раз в 5с, ресурсы должны
-    // быть свежими на каждый такой вызов, а не только на настоящих действиях.
-    const existing = await admin
+    const { data: row, error: pErr } = await admin
       .from("players").select("*").eq("world_id", world.id).eq("auth_uid", user.id).maybeSingle();
-    if (existing.error) return jsonResponse({ err: existing.error.message }, 500);
-    if (existing.data) {
-      const st = existing.data.state;
-      // Самоисцеление легаси-записей, заведённых до Фазы 6 (race тогда не
-      // дублировалась в state) — см. комментарий в newPlayerState выше.
-      st.race = st.race || existing.data.race;
-      syncRes(st, nowSec);
-      const upd = await admin.from("players").update({ state: st, updated_at: new Date().toISOString() })
-        .eq("id", existing.data.id).select().single();
-      if (upd.error) return jsonResponse({ err: upd.error.message }, 500);
-      return jsonResponse({ ok: true, world_id: world.id, player: upd.data });
-    }
+    if (pErr) return jsonResponse({ err: pErr.message }, 500);
+    if (!row) return jsonResponse({ err: "Игрок не найден — сначала mp-join" }, 400);
 
-    if (!race) return jsonResponse({ err: "Нужна раса: human|dwarf|elf|undead" }, 400);
+    const p = row.state;
+    // Самоисцеление легаси-записей — см. тот же комментарий в mp-train/mp-build.
+    p.race = p.race || row.race;
+    const now = Date.now() / 1000;
+    syncRes(p, now);
 
-    const allPlayers = await admin.from("players").select("x,y").eq("world_id", world.id);
-    if (allPlayers.error) return jsonResponse({ err: allPlayers.error.message }, 500);
-    const { x, y } = pickSpawn(allPlayers.data || []);
+    // Самоисцеление на случай очень старой записи без p.wounded (поле есть
+    // в схеме с самого начала общего мира, но защищаемся так же, как и от
+    // прочих легаси-форм state в этом файле).
+    if (!p.wounded) p.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
+    if (!p.wounded[type]) p.wounded[type] = {};
+    if (!p.troops[type]) p.troops[type] = {};
 
-    const ins = await admin.from("players").insert({
-      world_id: world.id, auth_uid: user.id, is_bot: false, race,
-      nick: typeof body.nick === "string" ? body.nick.slice(0, 40) : "",
-      x, y, state: newPlayerState(race, nowSec),
-    }).select().single();
-    if (ins.error) return jsonResponse({ err: ins.error.message }, 500);
+    // Дословно startHeal(p,type,tier,n) из index.html:5795-5809.
+    if (p.heal) return jsonResponse({ err: "Лазарет уже занят лечением" }, 400);
+    if (n < 1) return jsonResponse({ err: "Выберите хотя бы одного раненого" }, 400);
+    const have = p.wounded[type][tier] || 0;
+    if (n > have) return jsonResponse({ err: "Столько раненых нет" }, 400);
+    const hospLv = Array.isArray(p.b.hospital) ? Math.max(0, ...p.b.hospital) : (p.b.hospital || 0);
+    const cap = trainCap(hospLv);
+    if (n > cap) return jsonResponse({ err: "За раз можно лечить не больше " + cap }, 400);
+    const B = bonuses(p);
+    const c = healUnitCost(type, tier, B.heal), tot = {};
+    RES.forEach((r) => { tot[r] = Math.round((c[r] || 0) * n); });
+    if (!canPay(p.res, tot)) return jsonResponse({ err: "Не хватает ресурсов" }, 400);
+    pay(p.res, tot);
 
-    return jsonResponse({ ok: true, world_id: world.id, player: ins.data });
+    const hallLv = Array.isArray(p.b.hall) ? Math.max(0, ...p.b.hall) : p.b.hall;
+    const t = healDuration(hallLv, type, tier, n, B.healSpeed);
+    p.heal = { type, tier, n, t0: now, t1: now + t };
+
+    const { error: updErr } = await admin
+      .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
+    if (updErr) return jsonResponse({ err: updErr.message }, 500);
+
+    const fireAt = new Date(Date.now() + t * 1000).toISOString();
+    const { error: evErr } = await admin.from("events").insert({
+      world_id: world.id, fire_at: fireAt, type: "heal",
+      data: { player_id: row.id },
+    });
+    if (evErr) return jsonResponse({ err: evErr.message }, 500);
+
+    return jsonResponse({ ok: true, eta: t, fire_at: fireAt });
   } catch (e) {
     return jsonResponse({ err: String(e && e.message || e) }, 500);
   }

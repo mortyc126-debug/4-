@@ -1,22 +1,42 @@
 // =============================================================================
-// mp-join — Фаза 2. Заводит (или возвращает уже существующего) игрока в
-// ОБЩЕМ мире по его anon-uid (Supabase Auth). Единственный способ создать
-// строку в players — RLS на этой таблице (см. миграцию 0001) намеренно не
-// даёт INSERT никому, кроме service-role, которым обладает только эта
-// функция (Deno-рантайм Edge Function, ключ не попадает в браузер).
+// mp-scout — Фаза 4, восьмой кусочек: разведка чужого города. До сих пор
+// здание «Разведка» (`p.b.scout`) уже строилось и считалось в мощь (Фаза 5,
+// четвёртый кусочек), но сама механика разведки не существовала — нападать
+// приходилось вслепую, не зная даже, есть ли у цели вообще войска. Зеркало
+// sendScout(p,tx,ty)/EV.scouted из index.html:4704-4730/4877-4893 — тот же
+// лазутчик, что и в одиночной игре: не занимает слот похода (свой отдельный
+// лимит SCOUT_TABLE.scouts, 1 на уровнях 1-4, 2 на 5-10, 3 на 11+ — как в
+// клиенте), бежит быстрее армии (SCOUT_SPEED_MULT=2.2, плюс SCOUT_TABLE.bonus
+// от прокачки самого здания), без войск с собой, без боя, без обратной
+// дороги — снимает показания на месте и тут же гасит марш.
 //
-// Вызывается один раз при входе игрока в общий мир (кнопка "Общий мир" в
-// будущем UI, ещё не подключена в index.html — это отдельный следующий шаг,
-// сама функция уже рабочая и её можно проверить curl'ом/Postman уже сейчас).
+// Честные упрощения, в дополнение к общим для всех маршей (index.html:
+// waterPath -> прямая; bonuses(p).march теперь настоящий, Фаза 6):
+// 1. Цель — игрок по id (defender_id), а не клетка (tx,ty) — то же самое
+//    упрощение, что и у mp-attack, по той же причине (map_cells не
+//    сгенерированы в общем мире).
+// 2. Глубина донесения (scoutSnapshot, index.html:5237-5282) зависит от
+//    технологии "Маскировка" (p.tech.mil_scout2) — ЦЕЛОГО дерева
+//    исследований, которое на сервер ещё не перенесено вообще (Фаза 5,
+//    самая большая оставшаяся задача). Честная заглушка — se=0 всегда,
+//    то есть донесение несёт РОВНО то, что даёт se=0 в реальной формуле:
+//    только общее число войск цели (без разбивки по родам/тирам, без
+//    запасов, без стены, без полководца, без академии/гарнизона/талантов/
+//    снаряжения — все они появляются лишь с se>=1). Это не "притворная"
+//    урезанная версия — это ТА ЖЕ формула на минимальном тире, какой она
+//    была бы у игрока без единого очка в "Маскировку".
+// 3. `power(q)` (общая мощь цели, index.html) не перенесена (зависит от
+//    построек/войск/академии/генерала/снаряжения разом) — вместо неё в
+//    донесении просто уровень ратуши цели, как самостоятельный, честный
+//    показатель силы, который уже есть на сервере.
 //
-// Тело запроса: { race: "human"|"dwarf"|"elf"|"undead", nick?: string }
-// Ответ: { ok:true, world_id, player: {...строка players...} } либо {err}.
+// Тело запроса: { defender_id: number }
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // Вставлено буквально из ../_shared/cors.js — Dashboard-редактор Edge
 // Functions не подтягивает относительные импорты на общую папку, поэтому
 // здесь код самодостаточен (копия, а не импорт). При деплое через Supabase
-// CLI можно вернуть `import ... from "../_shared/cors.js"` как в репозитории.
+// CLI можно вернуть импорт как в репозитории.
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -33,25 +53,25 @@ function handleOptions(req) {
   return null;
 }
 
-const RACES = ["human", "dwarf", "elf", "undead"];
-
-// Вставлено буквально из ../_shared/rules.js — добыча ресурсов по времени
-// (index.html:3790 production / index.html:3813 plotFillCap / index.html:3838
-// syncRes). Нужна здесь, чтобы возвращать уже актуальные ресурсы при
-// повторном join (вкладка "Общий мир" опрашивает mp-join раз в 5с, см.
-// index.html) — та же "ленивая экономика", что в одиночной игре: не тикает
-// сама по себе, досчитывается при каждом обращении.
-const PROD_TABLE = [
-  400, 430, 470, 520, 580, 650, 730, 830, 950, 1100, 1300, 1550, 1850, 2200, 2700,
-  3200, 3700, 4300, 5000, 5800, 6700, 7800, 9000, 10400, 20800,
-];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const tblRow = (tbl, lv) => tbl[clamp(Math.round(lv), 1, tbl.length) - 1];
-const prodRate = (lv) => (lv <= 0 ? 0 : tblRow(PROD_TABLE, lv));
-const plotCap = (lv) => (lv <= 0 ? 0 : tblRow(PROD_TABLE, lv) * 10);
-const PROD_BLD = { food: "farm", wood: "lumber", stone: "quarry", gold: "mine" };
-const PROD_MULT = { food: 1, wood: 1, stone: 0.75, gold: 0.5 };
-const RES = ["food", "wood", "stone", "gold"];
+// index.html:1376 SCOUT_TABLE — bonus (надбавка к скорости лазутчика от
+// уровня здания) и scouts (сколько лазутчиков разом можно держать в пути).
+const SCOUT_TABLE = [
+  { bonus: 5, scouts: 1 }, { bonus: 10, scouts: 1 }, { bonus: 15, scouts: 1 }, { bonus: 20, scouts: 1 },
+  { bonus: 25, scouts: 2 }, { bonus: 30, scouts: 2 }, { bonus: 35, scouts: 2 }, { bonus: 40, scouts: 2 },
+  { bonus: 45, scouts: 2 }, { bonus: 50, scouts: 2 }, { bonus: 60, scouts: 3 }, { bonus: 70, scouts: 3 },
+  { bonus: 80, scouts: 3 }, { bonus: 90, scouts: 3 }, { bonus: 90, scouts: 3 }, { bonus: 100, scouts: 3 },
+  { bonus: 100, scouts: 3 }, { bonus: 110, scouts: 3 }, { bonus: 110, scouts: 3 }, { bonus: 115, scouts: 3 },
+  { bonus: 115, scouts: 3 }, { bonus: 120, scouts: 3 }, { bonus: 120, scouts: 3 }, { bonus: 120, scouts: 3 },
+  { bonus: 125, scouts: 3 },
+];
+// index.html:4696 SCOUT_SPEED_MULT — налегке и без обоза, заметно быстрее
+// войска независимо от уровня здания; MARCH_SPEED_SCALE — общий масштаб
+// всех маршей (см. mp-attack).
+const SCOUT_SPEED_MULT = 2.2;
+const MARCH_SPEED_SCALE = 32;
+
 // index.html:2854 epochOf — эпоха ратуши (1..5), нужна для bonuses() ниже
 // (расовые эпохальные способности).
 const epochOf = (hall) => (hall >= 25 ? 5 : hall >= 19 ? 4 : hall >= 13 ? 3 : hall >= 7 ? 2 : 1);
@@ -190,7 +210,6 @@ const ACADEMY_TREE = {
     }))),
   ],
 };
-// =============================================================================
 // bonuses(p, defending) — Фаза 6. Честная (не упрощённая) часть центрального
 // агрегатора бонусов клиента (index.html:3731-3789). Порядок и формулы —
 // дословно оттуда, но перенесена НЕ вся функция целиком: часть слагаемых
@@ -341,88 +360,6 @@ function production(p) {
   });
   return out;
 }
-function plotFillCap(p) {
-  const out = {};
-  RES.forEach((r) => {
-    const plots = p.b[PROD_BLD[r]];
-    let extra = 0;
-    (Array.isArray(plots) ? plots : [plots || 0]).forEach((lv) => { extra += plotCap(lv) * PROD_MULT[r]; });
-    out[r] = Math.round(extra);
-  });
-  return out;
-}
-function syncRes(p, nowSec) {
-  const dt = (nowSec - (p.resAt || 0)) / 3600;
-  if (dt <= 0) { p.resAt = nowSec; return; }
-  const pr = production(p), cap = plotFillCap(p);
-  RES.forEach((r) => {
-    const add = Math.min(pr[r] * dt, cap[r]);
-    p.res[r] = Math.max(0, p.res[r] + add);
-  });
-  p.resAt = nowSec;
-}
-
-// Тот же снимок полей, что newPlayer() в index.html (см. index.html:2968) —
-// специально в той же форме, чтобы Фаза 5 (перенос остальных действий) не
-// переписывала форму состояния заново. ai/pts=5/gear/inventory и т.д. —
-// как у только что созданного игрока-человека там же (isBot=false: gen.id
-// всегда null, ai не используется).
-function newPlayerState(race, nowSec) {
-  const BKEYS = ["hall", "wall", "farm", "lumber", "quarry", "mine", "academy",
-    "store", "barracks", "range", "stable", "siege", "hospital", "scout", "garrison"];
-  // Столько же участков, сколько BUILDINGS[k].plots в index.html: farm/
-  // lumber/quarry/mine/hospital — все 4 (index.html:2416-2425). Раньше
-  // hospital/quarry/mine сюда забыты не были включены — заводились
-  // скаляром 0 вместо [0,0,0,0], что ломало mp-build при попытке поднять
-  // такое здание (см. самоисцеление в mp-build/mp-tick).
-  const MULTI = { farm: 4, lumber: 4, quarry: 4, mine: 4, hospital: 4 };
-  const b = {};
-  BKEYS.forEach((k) => { b[k] = MULTI[k] ? new Array(MULTI[k]).fill(0) : 0; });
-  b.hall = 1; b.wall = 1; b.farm[0] = 1; b.lumber[0] = 1; b.store = 1;
-  const troops = {}, wounded = {};
-  ["inf", "arc", "cav", "sie"].forEach((t) => {
-    troops[t] = {}; wounded[t] = {};
-    for (let i = 1; i <= 5; i++) { troops[t][i] = 0; wounded[t][i] = 0; }
-  });
-  troops.inf[1] = 200; troops.arc[1] = 150;
-  return {
-    // resAt = момент создания, не 0 — иначе первый же syncRes() увидел бы
-    // "прошли миллиарды секунд с эпохи Unix" и начислил бы участку добычу
-    // сразу под завязку его plotFillCap.
-    res: { food: 100000, wood: 100000, stone: 100000, gold: 100000 }, resAt: nowSec,
-    // race — Фаза 6: раса дублируется и сюда, в state (JSONB), не только в
-    // одноимённую колонку players.race — bonuses()/nodeVisibleFor() читают
-    // ОДИН объединённый объект "p" (как и в одиночной игре, где race — поле
-    // самого объекта игрока), а не state+row по отдельности. Колонка
-    // players.race остаётся как есть (по ней идут другие запросы — mp-attack/
-    // mp-tick и т.д. уже читают её напрямую с row), это не замена, а
-    // дублирование ради единообразного p.race внутри bonuses().
-    race,
-    b, queues: [null, null], train: { inf: null, arc: null, cav: null, sie: null },
-    troops, wounded, heal: null,
-    gen: { lv: 1, xp: 0, pts: 5, tal: {}, id: null, away: null },
-    gear: {}, tech: {}, rsch: null,
-    inventory: {}, materials: { ore: [0, 0, 0, 0, 0], leather: [0, 0, 0, 0, 0], bone: [0, 0, 0, 0, 0], ebony: [0, 0, 0, 0, 0] },
-    craft: null, tomes: {}, lostTo: null,
-  };
-}
-
-// Простой поиск свободного места на условной решётке мира — не копия
-// findFreeCellInChunk/MIN_STRUCT_GAP из index.html (та логика заточена под
-// плотную карту узлов/лагерей одного браузера), здесь городов в общем мире
-// будет заведомо меньше и достаточно грубой проверки минимального
-// расстояния между СТОЛИЦАМИ, чтобы новый игрок не встал вплотную к чужой.
-const MIN_CITY_GAP = 40;
-function pickSpawn(existing) {
-  for (let attempt = 0; attempt < 200; attempt++) {
-    const ring = 50 + Math.floor(attempt / 10) * 30;
-    const x = Math.round((Math.random() * 2 - 1) * ring);
-    const y = Math.round((Math.random() * 2 - 1) * ring);
-    const ok = existing.every((p) => Math.hypot(p.x - x, p.y - y) >= MIN_CITY_GAP);
-    if (ok) return { x, y };
-  }
-  return { x: Math.round(Math.random() * 400 - 200), y: Math.round(Math.random() * 400 - 200) };
-}
 
 Deno.serve(async (req) => {
   const pre = handleOptions(req);
@@ -437,61 +374,76 @@ Deno.serve(async (req) => {
       global: { headers: { Authorization: authHeader } },
     });
     const { data: { user }, error: userErr } = await callerClient.auth.getUser();
-    if (userErr || !user) return jsonResponse({ err: "Не авторизован — нужен anon-вход Supabase Auth" }, 401);
+    if (userErr || !user) return jsonResponse({ err: "Не авторизован" }, 401);
 
     let body = {};
-    try { body = await req.json(); } catch (_) { /* пустое тело — ок для повторного join */ }
-    const race = RACES.includes(body.race) ? body.race : null;
+    try { body = await req.json(); } catch (_) { /* noop */ }
+    const defenderId = Number(body.defender_id);
+    if (!Number.isFinite(defenderId)) return jsonResponse({ err: "Не указана цель" }, 400);
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
-    // Один общий мир на всё время (см. миграцию 0001) — берём самый старый,
-    // а если ни одного ещё нет, заводим первый.
-    let { data: world, error: wErr } = await admin
-      .from("worlds").select("*").order("created_at", { ascending: true }).limit(1).maybeSingle();
-    if (wErr) return jsonResponse({ err: wErr.message }, 500);
-    if (!world) {
-      const seed = Math.floor(Math.random() * 2 ** 31);
-      const ins = await admin.from("worlds").insert({ seed }).select().single();
-      if (ins.error) return jsonResponse({ err: ins.error.message }, 500);
-      world = ins.data;
-    }
+    const { data: world, error: wErr } = await admin
+      .from("worlds").select("id").order("created_at", { ascending: true }).limit(1).maybeSingle();
+    if (wErr || !world) return jsonResponse({ err: "Мир ещё не создан — сначала mp-join" }, 400);
+
+    const { data: attRow, error: aErr } = await admin
+      .from("players").select("*").eq("world_id", world.id).eq("auth_uid", user.id).maybeSingle();
+    if (aErr) return jsonResponse({ err: aErr.message }, 500);
+    if (!attRow) return jsonResponse({ err: "Игрок не найден — сначала mp-join" }, 400);
+    if (defenderId === attRow.id) return jsonResponse({ err: "Это ваш город" }, 400);
+
+    const { data: defRow, error: dErr } = await admin
+      .from("players").select("id,x,y").eq("world_id", world.id).eq("id", defenderId).maybeSingle();
+    if (dErr) return jsonResponse({ err: dErr.message }, 500);
+    if (!defRow) return jsonResponse({ err: "Цель не найдена" }, 400);
+
+    const attP = attRow.state;
+    attP.race = attP.race || attRow.race; // самоисцеление легаси-записей, см. mp-attack/mp-train
+    // Дословно sendScout(p,tx,ty) из index.html:4704-4730.
+    const scoutLv = Array.isArray(attP.b.scout) ? Math.max(0, ...attP.b.scout) : (attP.b.scout || 0);
+    if (scoutLv <= 0) return jsonResponse({ err: "Нужна разведка" }, 400);
+
+    const { data: dupes, error: dupErr } = await admin
+      .from("marches").select("id")
+      .eq("world_id", world.id).eq("player_id", attRow.id).eq("mode", "scout")
+      .eq("data->>defender_id", String(defRow.id));
+    if (dupErr) return jsonResponse({ err: dupErr.message }, 500);
+    if (dupes && dupes.length) return jsonResponse({ err: "Лазутчик уже в пути" }, 400);
+
+    const { count: outNow, error: outErr } = await admin
+      .from("marches").select("id", { count: "exact", head: true })
+      .eq("world_id", world.id).eq("player_id", attRow.id).eq("mode", "scout");
+    if (outErr) return jsonResponse({ err: outErr.message }, 500);
+    const maxScouts = tblRow(SCOUT_TABLE, scoutLv).scouts;
+    if ((outNow || 0) >= maxScouts) return jsonResponse({ err: "Все лазутчики уже в пути (" + maxScouts + ")" }, 400);
 
     const nowSec = Date.now() / 1000;
+    const dist = Math.hypot(defRow.x - attRow.x, defRow.y - attRow.y);
+    // marchSpeed(p,emptyUnits()) в клиенте — без единого юниата всегда
+    // падает на запасной случай s=1 (MARCH_SPEED_SCALE*bonuses(p).march),
+    // лазутчик налегке без расовых модификаторов скорости конкретных родов
+    // войск, но общий bonuses(p).march (раса/эпоха/дефолтный генерал/
+    // mil_march1/mil_march2) — Фаза 6, настоящий подсчёт.
+    const B = bonuses(attP);
+    const speedMult = SCOUT_SPEED_MULT * (1 + tblRow(SCOUT_TABLE, scoutLv).bonus / 100);
+    const baseSpeed = MARCH_SPEED_SCALE * B.march; // marchSpeed(emptyUnits) = 1 * 32 * bonuses(p).march
+    const travel = Math.max(15, (dist / (baseSpeed * speedMult)) * 60);
 
-    // Уже есть игрок этого uid в этом мире — вернуть его (идемпотентный
-    // join), но сперва досчитать добычу ресурсов по прошедшему времени —
-    // mp-join это ещё и опрос вкладки "Общий мир" раз в 5с, ресурсы должны
-    // быть свежими на каждый такой вызов, а не только на настоящих действиях.
-    const existing = await admin
-      .from("players").select("*").eq("world_id", world.id).eq("auth_uid", user.id).maybeSingle();
-    if (existing.error) return jsonResponse({ err: existing.error.message }, 500);
-    if (existing.data) {
-      const st = existing.data.state;
-      // Самоисцеление легаси-записей, заведённых до Фазы 6 (race тогда не
-      // дублировалась в state) — см. комментарий в newPlayerState выше.
-      st.race = st.race || existing.data.race;
-      syncRes(st, nowSec);
-      const upd = await admin.from("players").update({ state: st, updated_at: new Date().toISOString() })
-        .eq("id", existing.data.id).select().single();
-      if (upd.error) return jsonResponse({ err: upd.error.message }, 500);
-      return jsonResponse({ ok: true, world_id: world.id, player: upd.data });
-    }
-
-    if (!race) return jsonResponse({ err: "Нужна раса: human|dwarf|elf|undead" }, 400);
-
-    const allPlayers = await admin.from("players").select("x,y").eq("world_id", world.id);
-    if (allPlayers.error) return jsonResponse({ err: allPlayers.error.message }, 500);
-    const { x, y } = pickSpawn(allPlayers.data || []);
-
-    const ins = await admin.from("players").insert({
-      world_id: world.id, auth_uid: user.id, is_bot: false, race,
-      nick: typeof body.nick === "string" ? body.nick.slice(0, 40) : "",
-      x, y, state: newPlayerState(race, nowSec),
+    const { data: march, error: mErr } = await admin.from("marches").insert({
+      world_id: world.id, player_id: attRow.id, mode: "scout", state: "go",
+      tx: defRow.x, ty: defRow.y, t0: nowSec, t1: nowSec + travel,
+      units: { inf: {}, arc: {}, cav: {}, sie: {} }, data: { defender_id: defRow.id },
     }).select().single();
-    if (ins.error) return jsonResponse({ err: ins.error.message }, 500);
+    if (mErr) return jsonResponse({ err: mErr.message }, 500);
 
-    return jsonResponse({ ok: true, world_id: world.id, player: ins.data });
+    const { error: evErr } = await admin.from("events").insert({
+      world_id: world.id, fire_at: new Date((nowSec + travel) * 1000).toISOString(),
+      type: "scout_arrive", data: { march_id: march.id },
+    });
+    if (evErr) return jsonResponse({ err: evErr.message }, 500);
+
+    return jsonResponse({ ok: true, march_id: march.id, eta: travel });
   } catch (e) {
     return jsonResponse({ err: String(e && e.message || e) }, 500);
   }
