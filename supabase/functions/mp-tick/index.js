@@ -801,22 +801,51 @@ function applyLosses(units, dmgByType, race, hpBonus = 0) {
   });
   return { units: lost, hpLost };
 }
+// index.html:4129 resolveBattle — Фаза 9, кусочек 1: настоящий раундовый
+// бой (до ROUND_CAP схваток подряд, войска тают постепенно) вместо
+// единственного обмена ударами, которым эта функция была с Фазы 4.
+// Честно ЕЩЁ НЕ входит (см. supabase/README.md, каждое — отдельный
+// следующий кусочек): погода (pickWeather/wMod/jitter), слом дисциплины
+// (checkDiscipline), урон по/от полководцам в бою (generalDamage/
+// damageToGeneral), поднятие нежити прямо в бою (raiseSkeletons — раз в
+// момент прибытия оно уже применяется отдельно, здесь речь о ПОРАУНДОВОМ
+// подъёме), контрудар гарнизона (dwarf B.counter), первый залп лучников
+// без ответа (elf firstStrike, index.html:4176-4181 — сейчас есть только
+// залп СТОРОЖЕВОЙ БАШНИ защитника, он был и раньше), досрочное отступление
+// атакующего при 72% потерь (rout), ничья по armyPower при исчерпании
+// ROUND_CAP раундов (сейчас ничья — по остатку totalHp, как и раньше).
 // Фаза 6: attP/defP теперь полные объекты игрока (race+b+gen+tech), не
 // голые строки расы — нужны для bonuses(attP)/bonuses(defP,true) (defP
 // считается С defending=true — 5-я эпоха, defMods). См. подробный
 // комментарий в _shared/rules.js.
+const ROUND_CAP = 60; // index.html:4190 while(round<60) — то же число
 function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv = 0) {
   const attB = bonuses(attP), defB = bonuses(defP, true);
-  const attS = sideStats(attUnits, attP.race, attB), defS = sideStats(defUnits, defP.race, defB);
-  const dmgToDef = dmgTo(attS, defS, defWallLv, defB.wallBonus), dmgToAtt = dmgTo(defS, attS);
-  const openG = garrisonVolley(defGarrisonLv, attS);
-  if (openG) TKEYS.forEach((t) => { dmgToAtt[t] = (dmgToAtt[t] || 0) + (openG[t] || 0); });
-  const defLoss = applyLosses(defUnits, dmgToDef, defP.race, defB.hp);
-  const attLoss = applyLosses(attUnits, dmgToAtt, attP.race, attB.hp);
-  const defHpLeft = Math.max(0, defS.totalHp - defLoss.hpLost);
-  const attHpLeft = Math.max(0, attS.totalHp - attLoss.hpLost);
+  let attU = attUnits, defU = defUnits;
+  let attLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} }, defLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} };
+  // Залп Сторожевой башни защитника — до общей схватки (Фаза 4, шестой
+  // кусочек), теперь перед раундовым циклом, а не влит в единственный обмен.
+  const openG = garrisonVolley(defGarrisonLv, sideStats(attU, attP.race, attB));
+  if (openG) {
+    const l = applyLosses(attU, openG, attP.race, attB.hp);
+    attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
+  }
+  let round = 0;
+  while (round < ROUND_CAP) {
+    const attS = sideStats(attU, attP.race, attB), defS = sideStats(defU, defP.race, defB);
+    if (attS.totalN <= 0 || defS.totalN <= 0) break;
+    round++;
+    const dmgToDef = dmgTo(attS, defS, defWallLv, defB.wallBonus);
+    const dmgToAtt = dmgTo(defS, attS);
+    const defLoss = applyLosses(defU, dmgToDef, defP.race, defB.hp);
+    const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp);
+    defU = unitsSub(defU, defLoss.units); defLossTotal = unitsAdd(defLossTotal, defLoss.units);
+    attU = unitsSub(attU, attLoss.units); attLossTotal = unitsAdd(attLossTotal, attLoss.units);
+  }
+  const attHpLeft = sideStats(attU, attP.race, attB).totalHp;
+  const defHpLeft = sideStats(defU, defP.race, defB).totalHp;
   const winner = defHpLeft <= 0 && attHpLeft > 0 ? "att" : attHpLeft <= 0 && defHpLeft > 0 ? "def" : (attHpLeft > defHpLeft ? "att" : "def");
-  return { attLoss: attLoss.units, defLoss: defLoss.units, attHpLeft, defHpLeft, winner };
+  return { attLoss: attLossTotal, defLoss: defLossTotal, attHpLeft, defHpLeft, winner, rounds: round };
 }
 // index.html:2867 HOSPITAL_CAP_TABLE / hospitalCap / totalHospitalCap —
 // сколько раненых вмещает лазарет (сумма по всем 4 построенным участкам,
@@ -935,17 +964,29 @@ const BANDIT_B = { atk: 0, def: 0, hp: 0, matk: 0, mdef: 0, archer: 0 };
 // resolvePvp выше), а тот же однообменный resolvePvp, что и у PvP —
 // честная общая упрощённая боевая модель общего мира, не два разных стиля
 // боя под одной крышей.
+// Фаза 9, кусочек 1 — тот же переход на раундовый цикл, что и у resolvePvp
+// выше (см. её заголовок насчёт честных пробелов, здесь те же самые: без
+// погоды/дисциплины/полководцев-в-бою/контрудара/первого залпа — у
+// разбойников и так нет ни стены, ни башни, ни первого залпа лучников).
 function resolveBanditRaid(attUnits, attP, campLv) {
   const attB = bonuses(attP);
-  const bandUnits = banditArmy(campLv);
-  const attS = sideStats(attUnits, attP.race, attB), bandS = sideStats(bandUnits, null, BANDIT_B);
-  const dmgToBand = dmgTo(attS, bandS), dmgToAtt = dmgTo(bandS, attS); // лагерь без стены/башни — defWallLv/wallBonus по умолчанию 0
-  const bandLoss = applyLosses(bandUnits, dmgToBand, null, 0);
-  const attLoss = applyLosses(attUnits, dmgToAtt, attP.race, attB.hp);
-  const bandHpLeft = Math.max(0, bandS.totalHp - bandLoss.hpLost);
-  const attHpLeft = Math.max(0, attS.totalHp - attLoss.hpLost);
+  let attU = attUnits, bandU = banditArmy(campLv);
+  let attLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} };
+  let round = 0;
+  while (round < ROUND_CAP) {
+    const attS = sideStats(attU, attP.race, attB), bandS = sideStats(bandU, null, BANDIT_B);
+    if (attS.totalN <= 0 || bandS.totalN <= 0) break;
+    round++;
+    const dmgToBand = dmgTo(attS, bandS), dmgToAtt = dmgTo(bandS, attS); // лагерь без стены/башни
+    const bandLoss = applyLosses(bandU, dmgToBand, null, 0);
+    const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp);
+    bandU = unitsSub(bandU, bandLoss.units);
+    attU = unitsSub(attU, attLoss.units); attLossTotal = unitsAdd(attLossTotal, attLoss.units);
+  }
+  const attHpLeft = sideStats(attU, attP.race, attB).totalHp;
+  const bandHpLeft = sideStats(bandU, null, BANDIT_B).totalHp;
   const winner = bandHpLeft <= 0 && attHpLeft > 0 ? "att" : attHpLeft <= 0 && bandHpLeft > 0 ? "band" : (attHpLeft > bandHpLeft ? "att" : "band");
-  return { attLoss: attLoss.units, winner };
+  return { attLoss: attLossTotal, winner, rounds: round };
 }
 // index.html:5148-5150 — та же добыча с разгромленного лагеря, что и в
 // одиночной игре (книги опыта генерала — bookDrop — не перенесены по той
@@ -1032,6 +1073,7 @@ async function applyMarchArrive(admin, ev) {
       winner: result.winner, sent: m.units, attLoss: result.attLoss, defLoss: result.defLoss,
       attHpLeft: Math.round(result.attHpLeft), defHpLeft: Math.round(result.defHpLeft),
       defDead: hs.dead, defHurt: hs.hurt, defSlight: hs.slight,
+      rounds: result.rounds, // Фаза 9, кусочек 1 — теперь бой честно может занять не один обмен
     };
     const mailRows = [
       { world_id: m.world_id, player_id: attRow.id, kind: "battle", data: { role: "attacker", opponent_id: defRow.id, opponent_nick: defRow.nick, ...summary } },
@@ -1204,7 +1246,7 @@ async function applyRaidArrive(admin, m) {
 
     const { error: mailErr } = await admin.from("mail").insert({
       world_id: m.world_id, player_id: attRow.id, kind: "raid",
-      data: { camp_lv: campLv, win: result.winner === "att", loot: carry, attLoss: result.attLoss, dead: hs.dead, hurt: hs.hurt, slight: hs.slight },
+      data: { camp_lv: campLv, win: result.winner === "att", loot: carry, attLoss: result.attLoss, dead: hs.dead, hurt: hs.hurt, slight: hs.slight, rounds: result.rounds },
     });
     if (mailErr) throw mailErr;
   }
