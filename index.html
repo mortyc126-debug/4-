@@ -3771,6 +3771,11 @@ function makeForce(units,p,opts){
            start:JSON.parse(JSON.stringify(units)), broken:emptyUnits(),
            gen: (p&&p.gen&&p.gen.id!=null) ? genStats(p) : null,
            wallDef:(opts&&opts.wall)||0, bandit:(opts&&opts.bandit)||false,
+           // mode — тот же режим, что потом пойдёт в splitLosses() для ЭТОЙ
+           // стороны после боя ("siege-attack"/"hospital"): raiseSkeletons()
+           // должен считать "настоящих" мертвецов той же меркой, что и
+           // итоговый разбор потерь, иначе они разойдутся (см. raiseSkeletons).
+           mode:(opts&&opts.mode)||"hospital",
            name:(opts&&opts.name)||(p?p.name:"Разбойники")};
   return f;
 }
@@ -4129,21 +4134,10 @@ function checkDiscipline(f,loss){
   });
   return broke;
 }
-function raiseSkeletons(f,loss){
-  const rate=f.B.raise||0; if(rate<=0) return;
-  if(!f._raisedCum) f._raisedCum=emptyUnits();
-  TKEYS.forEach(t=>{
-    for(let i=1;i<=5;i++){
-      const dead=loss[t][i]||0; if(!dead)continue;
-      const should=Math.floor(dead*rate), already=f._raisedCum[t][i]||0;
-      if(should>already){ f.risen[t][i]=(f.risen[t][i]||0)+(should-already); f._raisedCum[t][i]=should; }
-    }
-  });
-}
-/* Раненые вместо убитых — механика RoK: гибель насмерть только у атакующего при штурме
-   чужого города (mode="siege-attack"), без формул и госпиталя. Во всех прочих случаях
-   (оборона города, полевые стычки с разбойниками) потери сперва целиком идут в госпиталь
-   и гибнут только сверх его вместимости. */
+// Раненые вместо убитых — механика RoK: гибель насмерть только у атакующего при штурме
+// чужого города (mode="siege-attack"), без формул и госпиталя. Во всех прочих случаях
+// (оборона города, полевые стычки с разбойниками) потери сперва целиком идут в госпиталь
+// и гибнут только сверх его вместимости.
 // Доля потерь, что отделывается лёгким испугом и сама возвращается в
 // строй тут же, лазарет им не нужен вовсе — третья корзина отчёта о бое
 // (RoK: Remaining/Slightly Wounded/Severely Wounded/Dead, у нас раньше
@@ -4152,32 +4146,78 @@ function raiseSkeletons(f,loss){
 // категорий, не проценты) — 12% подобрано на глаз как заметная, но не
 // доминирующая доля: не обесценивает лазарет как механику, но и не ноль.
 const SLIGHT_WOUND_FRAC = 0.12;
-function splitLosses(p,loss,mode){
+// Чистое ядро госпитального разбора — БЕЗ побочных эффектов (не пишет в
+// p.wounded). Раньше эта арифметика жила только внутри splitLosses() и
+// вызывалась ОДИН раз, целиком, уже после конца боя — а raiseSkeletons()
+// поднимала скелетов от СЫРОГО loss (кто просто выбыл из боя), а не от
+// того, кто по итогу окажется настоящим трупом: при обороне города/стычке
+// в поле бо́льшая часть выбывших едет в лазарет и остаётся жива, значит
+// скелет вставал из тела бойца, который "на самом деле" не умирал —
+// найдено в разборе с пользователем боевого отчёта. Теперь и итоговый
+// splitLosses(), и raiseSkeletons() зовут ЭТУ функцию — гарантированно
+// одна и та же арифметика, посчитанная дважды не разойдётся.
+function hospitalSplit(p,loss,mode){
   if(mode==="siege-attack"){
     // Штурм чужого города/лагеря/крепости — потери насмерть без исключений,
     // ни лазарета, ни "легкого испуга": в RoK это тоже единственный случай
     // безвозвратной гибели войск (см. комментарий выше у mode).
-    let dead=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) dead+=loss[t][i]||0});
-    return {dead,hurt:0,slight:0,slightUnits:emptyUnits()};
+    const deadUnits=emptyUnits(); let dead=0;
+    TKEYS.forEach(t=>{for(let i=1;i<=5;i++){ const n=loss[t][i]||0; deadUnits[t][i]=n; dead+=n; }});
+    return {dead,hurt:0,slight:0,slightUnits:emptyUnits(),deadUnits,hurtUnits:emptyUnits()};
   }
   const B=bonuses(p);
   const cap=Math.round(totalHospitalCap(p)*(1+B.hosp+B.mercy));
   let inHosp=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) inHosp+=p.wounded[t][i]});
   let dead=0, hurt=0, slight=0;
-  const slightUnits=emptyUnits();
+  const slightUnits=emptyUnits(), deadUnits=emptyUnits(), hurtUnits=emptyUnits();
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++){
     let n=loss[t][i]; if(!n)continue;
     const sl=Math.round(n*SLIGHT_WOUND_FRAC);
     if(sl>0){ slightUnits[t][i]=sl; slight+=sl; n-=sl; }
     const room=Math.max(0,cap-inHosp);
     const w=Math.min(n,room); inHosp+=w;
-    p.wounded[t][i]+=w; hurt+=w; dead+=n-w;
+    hurtUnits[t][i]=w; hurt+=w;
+    const d=n-w; deadUnits[t][i]=d; dead+=d;
   }});
-  // slightUnits НЕ добавлен в p.troops/p.wounded здесь — вызывающий код сам
-  // решает, куда именно вернуть этих бойцов (в живой поход, что ещё идёт
-  // домой, или в гарнизон, который вот-вот перезапишется post-боем), см.
-  // battleCity/arriveMarch и addUnitsInto выше.
-  return {dead,hurt,slight,slightUnits};
+  return {dead,hurt,slight,slightUnits,deadUnits,hurtUnits};
+}
+// Настоящий, безвозвратный подъём скелетов: цепляется не за "кто вообще
+// выбыл из боя в этом раунде", а за hospitalSplit(...).deadUnits — то, что
+// НА ЭТОТ МОМЕНТ боя уже не влезло бы в госпиталь и умерло по-настоящему.
+// loss, который сюда приходит (см. вызовы в resolveBattle), — накопленный
+// с начала боя итог, не дельта за раунд: hospitalSplit каждый раз пересчитывает
+// его заново от реальной (фиксированной на начало боя) занятости лазарета —
+// значит по ходу боя, по мере роста накопленных потерь, доля "настоящих"
+// мертвецов в них растёт сама, без отдельного счётчика заполнения госпиталя.
+// При штурме (mode="siege-attack") deadUnits==loss целиком — там для
+// атакующего ничего не меняется, поднимает как и раньше, от каждого павшего.
+// f.p может быть пуст (разбойничий гарнизон) — тогда госпиталю просто
+// неоткуда взяться, считаем всех выбывших мёртвыми (как и раньше; на деле
+// не важно — у разбойников raise всегда 0).
+function raiseSkeletons(f,loss){
+  const rate=f.B.raise||0; if(rate<=0) return;
+  if(!f._raisedCum) f._raisedCum=emptyUnits();
+  const dead=f.p ? hospitalSplit(f.p,loss,f.mode).deadUnits : loss;
+  TKEYS.forEach(t=>{
+    for(let i=1;i<=5;i++){
+      const d=dead[t][i]||0; if(!d)continue;
+      const should=Math.floor(d*rate), already=f._raisedCum[t][i]||0;
+      if(should>already){ f.risen[t][i]=(f.risen[t][i]||0)+(should-already); f._raisedCum[t][i]=should; }
+    }
+  });
+}
+function splitLosses(p,loss,mode){
+  const r=hospitalSplit(p,loss,mode);
+  if(mode!=="siege-attack"){
+    // slightUnits/deadUnits НЕ добавлены в p.troops здесь — вызывающий код
+    // сам решает, куда именно вернуть легкораненых (в живой поход, что ещё
+    // идёт домой, или в гарнизон, который вот-вот перезапишется post-боем),
+    // см. battleCity/arriveMarch и addUnitsInto выше. А вот в госпиталь
+    // тяжелораненые едут отсюда же — конкурирующей перезаписи p.wounded
+    // нигде нет, в отличие от p.troops.
+    TKEYS.forEach(t=>{for(let i=1;i<=5;i++){ const w=r.hurtUnits[t][i]||0; if(w) p.wounded[t][i]+=w; }});
+  }
+  return {dead:r.dead,hurt:r.hurt,slight:r.slight,slightUnits:r.slightUnits};
 }
 
 /* =========================================================================
@@ -4715,7 +4755,7 @@ function arriveMarch(m){
 
   if(cell.t==="camp"||cell.t==="fort"){
     const B=bonuses(p);
-    const A=makeForce(m.units,p,{name:atkName(p)});
+    const A=makeForce(m.units,p,{name:atkName(p),mode:"hospital"});
     const bandUnits=banditArmy(cell.lv);
     const D=makeForce(bandUnits,null,{bandit:true,name:"Разбойники ур. "+cell.lv});
     D.B={atk:0,def:0,hp:0,matk:0,mdef:0,archer:0,raise:0};
@@ -4995,8 +5035,8 @@ function battleCity(att,def,m){
   const startA=countUnits(m.units), startD=countUnits(def.troops);
   const garrison=emptyUnits();
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++)garrison[t][i]=def.troops[t][i]});
-  const A=makeForce(m.units,att,{name:atkName(att)});
-  const D=makeForce(garrison,def,{wall:def.b.wall+def.b.garrison*0.5,defending:true,name:def.name});
+  const A=makeForce(m.units,att,{name:atkName(att),mode:"siege-attack"});
+  const D=makeForce(garrison,def,{wall:def.b.wall+def.b.garrison*0.5,defending:true,name:def.name,mode:"hospital"});
   const r=resolveBattle(A,D,{startA:countUnits(m.units),toDeath:false});
   // в хронику погода идёт короткой пометкой, подробности — в почтовом отчёте
   const wx=(r.weather&&r.weather.id!=="clear")?" ("+r.weather.name.toLowerCase()+")":"";
