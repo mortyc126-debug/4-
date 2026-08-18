@@ -8702,7 +8702,7 @@ async function claimChronicle(){
    восполняются со временem — серверное производство ещё не перенесено,
    стартовых 100000 хватает на несколько заказов набора для проверки.
    ========================================================================= */
-let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[] };
+let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[] };
 let mpPollTimer = null;
 // Ровно эти 9 зданий перенесены на сервер (mp-build): 4 разблокируют
 // mp-train (barracks/range/stable/siege), ещё 5 — это HALL_REQ плюс сама
@@ -8751,7 +8751,7 @@ function mpRerender(){
 }
 function mpStartPolling(){ mpStopPolling(); mpPollTimer=setInterval(mpPollTick,5000); }
 function mpStopPolling(){ if(mpPollTimer){ clearInterval(mpPollTimer); mpPollTimer=null; } }
-async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); }
+async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); }
 async function mpRefreshPlayer(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("players").select("*").eq("id",mpState.player.id).maybeSingle();
@@ -8784,7 +8784,7 @@ async function mpOpen(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{});
-    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches();
+    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming();
   }catch(e){ mpState.joined=false; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -8793,7 +8793,7 @@ async function mpDoJoin(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{race:mpState.race,nick:mpState.nick||""});
-    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches();
+    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming();
   }catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -8830,6 +8830,19 @@ async function mpRefreshMarches(){
   const { data, error } = await sb.from("marches").select("*")
     .eq("player_id",mpState.player.id).eq("mode","attack").order("t1");
   if(!error && data){ mpState.marches=data; mpRerender(); }
+}
+// Входящие атаки — раньше защитник вообще не мог узнать, что на него идёт
+// поход, пока бой не разрешится сам (см. историю коммитов). data->>defender_id
+// — фильтр по JSONB-полю через PostgREST (->> достаёт значение как текст),
+// marches_select_all уже разрешает читать чужие марши, свежий Edge Function
+// не нужен. Состав отряда нарочно не показываем — только сам факт и время
+// до подхода: разведки войск противника (Разведка/scoutSnapshot) в общем
+// мире всё ещё нет, а RoK тоже не раскрывает состав без неё.
+async function mpRefreshIncoming(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("marches").select("id,player_id,t0,t1")
+    .eq("data->>defender_id", String(mpState.player.id)).eq("state","go").order("t1");
+  if(!error && data){ mpState.incoming=data; mpRerender(); }
 }
 // Превью добычи/час для панели — НЕ настоящий клиентский production() (тот
 // зовёт bonuses(p), которая ждёт полный игровой объект — gen.tal/tech/race
@@ -8882,6 +8895,18 @@ function foMultiplayer(){
   h+="<div class='entry hot'><div class='line'><div class='fill'>"+
      "<div class='title'>"+(p.nick||"Безымянный лорд")+" · "+RACES[p.race].name+"</div>"+
      "<div class='note'>Координаты в общем мире: "+p.x+", "+p.y+"</div></div></div></div>";
+
+  if(mpState.incoming.length){
+    h+=rubric("Входящие атаки","тревога");
+    mpState.incoming.forEach(m=>{
+      const left=Math.max(0,m.t1-Date.now()/1000);
+      const att=mpState.neighbors.find(n=>n.id===m.player_id);
+      h+="<div class='entry war'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+(att?att.nick||"Безымянный лорд":"Неизвестный")+" идёт на вас</div>"+
+         "<div class='note'>Подход через "+fmtDur(left)+" — состав отряда неизвестен без разведки.</div>"+
+         "</div></div></div>";
+    });
+  }
 
   // Фаза 3, первый кусочек — общая видимость: список соседей вместо самой
   // 3D-карты (та рассчитана на локальных ботов одного браузера — встроить
