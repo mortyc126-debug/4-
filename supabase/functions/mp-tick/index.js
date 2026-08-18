@@ -810,6 +810,54 @@ function unitsTotal(units) {
   return TKEYS.reduce((s, t) => s + [1, 2, 3, 4, 5].reduce((s2, i) => s2 + ((units[t] && units[t][i]) || 0), 0), 0);
 }
 
+// Фаза 8, кусочек 2 — лагеря варваров. BANDIT_TROOPS/banditTier/banditArmy
+// дословно из index.html:3187-3195 — тот же гарнизон, что и в одиночной
+// игре, для того же уровня лагеря. BANDIT_XP не перенесён: в общем мире
+// нет ни одного источника опыта генерала вообще (Фаза 7 — "5 очков висят
+// неистраченными"), начислять его неоткуда и незачем, честный пробел, а
+// не забывчивость.
+const BANDIT_TROOPS = [20000,23000,26000,29000,32000,35000,38000,42000,46000,50000,55000,60000,66000,73000,80000,88000,96000,105000,115000,125000,135000,145000,157000,170000,185000,200000,215000,230000,245000,260000];
+const banditTier = (lv) => (lv <= 5 ? 1 : lv <= 12 ? 2 : lv <= 20 ? 3 : 4);
+function banditArmy(lv) {
+  const u = { inf: {}, arc: {}, cav: {}, sie: {} };
+  TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) u[t][i] = 0; });
+  const i = Math.max(1, Math.min(30, Math.round(lv)));
+  const tier = banditTier(i), n = BANDIT_TROOPS[i - 1];
+  u.inf[tier] = Math.round(n * 0.45); u.arc[tier] = Math.round(n * 0.30); u.cav[tier] = Math.round(n * 0.25);
+  return u;
+}
+// Разбойники не имеют ни расы, ни бонусов вообще — тот же явный ноль, что
+// D.B={atk:0,def:0,hp:0,matk:0,mdef:0,archer:0,raise:0} в index.html:5139
+// (arriveMarch, ветка camp/fort). Явные нули, не пустой объект — sideStats
+// делает "(1+B.atk)" без страховки ||0, пустой объект дал бы NaN.
+const BANDIT_B = { atk: 0, def: 0, hp: 0, matk: 0, mdef: 0, archer: 0 };
+// Зеркало ветки camp/fort в arriveMarch (index.html:5133-5158) — но не
+// resolveBattle() целиком (раундовый бой с погодой и т.д., см. заголовок
+// resolvePvp выше), а тот же однообменный resolvePvp, что и у PvP —
+// честная общая упрощённая боевая модель общего мира, не два разных стиля
+// боя под одной крышей.
+function resolveBanditRaid(attUnits, attP, campLv) {
+  const attB = bonuses(attP);
+  const bandUnits = banditArmy(campLv);
+  const attS = sideStats(attUnits, attP.race, attB), bandS = sideStats(bandUnits, null, BANDIT_B);
+  const dmgToBand = dmgTo(attS, bandS), dmgToAtt = dmgTo(bandS, attS); // лагерь без стены/башни — defWallLv/wallBonus по умолчанию 0
+  const bandLoss = applyLosses(bandUnits, dmgToBand, null, 0);
+  const attLoss = applyLosses(attUnits, dmgToAtt, attP.race, attB.hp);
+  const bandHpLeft = Math.max(0, bandS.totalHp - bandLoss.hpLost);
+  const attHpLeft = Math.max(0, attS.totalHp - attLoss.hpLost);
+  const winner = bandHpLeft <= 0 && attHpLeft > 0 ? "att" : attHpLeft <= 0 && bandHpLeft > 0 ? "band" : (attHpLeft > bandHpLeft ? "att" : "band");
+  return { attLoss: attLoss.units, winner };
+}
+// index.html:5148-5150 — та же добыча с разгромленного лагеря, что и в
+// одиночной игре (книги опыта генерала — bookDrop — не перенесены по той
+// же причине, что и BANDIT_XP выше).
+function banditLoot(campLv) {
+  const base = Math.round(1800 * Math.pow(1.28, campLv - 1));
+  const loot = {};
+  RES.forEach((r) => { loot[r] = Math.round(base * (r === "gold" ? 0.25 : r === "stone" ? 0.6 : 1)); });
+  return loot;
+}
+
 // Зеркало arriveMarch->battleCity (index.html:5018/5363) для mode:"attack" —
 // бой при подходе, затем зеркало recallMarch (index.html:4770) — обратная
 // дорога с выжившими. gather/camp/fort/scout — не перенесены, mp-attack
@@ -828,6 +876,10 @@ async function applyMarchArrive(admin, ev) {
   // gather-марш прошёл бы через неё как "бой без защитника" и вернулся бы
   // домой пустым, ничего не собрав.
   if (m.mode === "gather") { await applyGatherStart(admin, m); return; }
+  // Фаза 8, кусочек 2 — поход на лагерь варваров: бой с готовым уровнем
+  // лагеря (m.data.camp_lv, снят на отправке в mp-raid), не с игроком —
+  // отдельная функция ниже, та же причина отдельной ветки, что у gather.
+  if (m.mode === "raid") { await applyRaidArrive(admin, m); return; }
 
   const { data: attRow, error: aErr } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
   if (aErr) throw aErr;
@@ -961,6 +1013,75 @@ async function applyGathered(admin, ev) {
   const carry = {}; if (m.data && m.data.res) carry[m.data.res] = m.data.take || 0;
   const { error: updM } = await admin.from("marches")
     .update({ state: "back", t0: nowSec, t1: nowSec + travelBack, data: { ...m.data, carry } }).eq("id", m.id);
+  if (updM) throw updM;
+  const { error: evErr } = await admin.from("events").insert({
+    world_id: m.world_id, fire_at: new Date((nowSec + travelBack) * 1000).toISOString(),
+    type: "march_home", data: { march_id: m.id },
+  });
+  if (evErr) throw evErr;
+}
+
+
+// Фаза 8, кусочек 2 — отряд дошёл до лагеря варваров: бой разрешается
+// сразу (resolveBanditRaid, однообменный — см. заголовок функции выше),
+// результат зачисляется игроку НЕМЕДЛЕННО (не ждёт возвращения марша
+// домой — тот же принцип "текущее состояние, не снимок", что и у обороны
+// города): лёгкие потери (hospitalSplit, mode:"hospital" — НЕ
+// "siege-attack", лагерь не чужой город) сразу возвращаются в строй/
+// лазарет, а домой физически марширует остаток, который вообще не
+// пострадал (unitsSub(m.units, attLoss) — attLoss уже разложен
+// hospitalSplit'ом на "лёгкие"/"лазарет"/"насмерть", сумма которых и есть
+// attLoss, так что вычесть его целиком из отправленных войск и добавить
+// "лёгких" назад отдельно — не двойной счёт, а то же число, разложенное на
+// "уже дома" и "ещё в пути").
+async function applyRaidArrive(admin, m) {
+  const { data: attRow, error: aErr } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
+  if (aErr) throw aErr;
+  if (!attRow) { await admin.from("marches").delete().eq("id", m.id); return; }
+
+  const attP = attRow.state;
+  attP.race = attP.race || attRow.race;
+  if (!attP.wounded) attP.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
+  TKEYS.forEach((t) => { if (!attP.wounded[t]) attP.wounded[t] = {}; });
+
+  const cellX = m.data && m.data.cell_x, cellY = m.data && m.data.cell_y;
+  const { data: cell, error: cErr } = await admin.from("map_cells")
+    .select("*").eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY).maybeSingle();
+  if (cErr) throw cErr;
+
+  const nowSec = Date.now() / 1000;
+  let survivors = m.units, carry = {};
+  // Лагерь уже разгромлен кем-то другим, пока отряд шёл — бой не
+  // случается, отряд просто разворачивается пустым (как gather на
+  // истощённую точку, как attack на пропавшего защитника).
+  if (cell && (cell.t === "camp" || cell.t === "fort")) {
+    const campLv = (m.data && m.data.camp_lv) || 1;
+    const result = resolveBanditRaid(m.units, attP, campLv);
+    const hs = hospitalSplit(attP, result.attLoss, "hospital");
+    attP.troops = unitsAdd(attP.troops, hs.slightUnits);
+    attP.wounded = unitsAdd(attP.wounded, hs.hurtUnits);
+    survivors = unitsSub(m.units, result.attLoss);
+
+    if (result.winner === "att") {
+      carry = banditLoot(campLv);
+      await admin.from("map_cells").delete().eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY);
+    }
+
+    const { error: mailErr } = await admin.from("mail").insert({
+      world_id: m.world_id, player_id: attRow.id, kind: "raid",
+      data: { camp_lv: campLv, win: result.winner === "att", loot: carry, attLoss: result.attLoss, dead: hs.dead, hurt: hs.hurt, slight: hs.slight },
+    });
+    if (mailErr) throw mailErr;
+  }
+
+  const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
+  if (updA) throw updA;
+
+  if (unitsTotal(survivors) <= 0) { await admin.from("marches").delete().eq("id", m.id); return; }
+  const dist = (m.data && m.data.dist) || 0, spd = (m.data && m.data.spd) || 1;
+  const travelBack = Math.max(15, (dist / spd) * 60);
+  const { error: updM } = await admin.from("marches")
+    .update({ state: "back", t0: nowSec, t1: nowSec + travelBack, units: survivors, data: { ...m.data, carry } }).eq("id", m.id);
   if (updM) throw updM;
   const { error: evErr } = await admin.from("events").insert({
     world_id: m.world_id, fire_at: new Date((nowSec + travelBack) * 1000).toISOString(),

@@ -463,6 +463,28 @@ async function seedNodesAround(admin, worldId, cx, cy) {
   if (error) throw error; // не критично для самого mp-join, но лучше видеть в логах, если формат данных разъехался
 }
 
+// Фаза 8, кусочек 2 — лагеря варваров (map_cells, t:"camp"). Тот же приём,
+// что и seedNodesAround, отдельным кольцом — лагерей на карте одиночной
+// игры заметно меньше, чем точек сбора (NODE_CHUNK_CHANCE/CAMP_CHUNK_CHANCE
+// = 22/13, index.html:3156), тот же порядок и здесь (5 узлов / 3 лагеря).
+// Уровень 1..5 (не 1..3, как у узлов) — новичку нужно во что расти, но
+// campRawAt-хэш-плотность (index.html:2974) с самой первой минуты партии
+// заточена под уже освоенную карту, а не под спавн, поэтому тот же честный
+// разброс "случайный уровень в разумных пределах", что и у узлов.
+const CAMP_SEED_COUNT = 3, CAMP_SEED_MIN_R = 8, CAMP_SEED_MAX_R = 25;
+async function seedCampsAround(admin, worldId, cx, cy) {
+  const rows = [];
+  for (let i = 0; i < CAMP_SEED_COUNT; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = CAMP_SEED_MIN_R + Math.random() * (CAMP_SEED_MAX_R - CAMP_SEED_MIN_R);
+    const x = Math.round(cx + Math.cos(ang) * r), y = Math.round(cy + Math.sin(ang) * r);
+    const lv = 1 + Math.floor(Math.random() * 5); // 1..5 — уровни 15+ (форт) новичку рядом не нужны
+    rows.push({ world_id: worldId, x, y, t: "camp", data: { lv } });
+  }
+  const { error } = await admin.from("map_cells").upsert(rows, { onConflict: "world_id,x,y", ignoreDuplicates: true });
+  if (error) throw error;
+}
+
 Deno.serve(async (req) => {
   const pre = handleOptions(req);
   if (pre) return pre;
@@ -535,6 +557,7 @@ Deno.serve(async (req) => {
     // должна ронять сам вход игрока — он уже создан, точки сбора можно
     // досеять и позже, поэтому не return jsonResponse на исключении.
     try { await seedNodesAround(admin, world.id, x, y); } catch (_) { /* см. комментарий */ }
+    try { await seedCampsAround(admin, world.id, x, y); } catch (_) { /* см. тот же комментарий */ }
 
     return jsonResponse({ ok: true, world_id: world.id, player: ins.data });
   } catch (e) {

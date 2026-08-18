@@ -180,7 +180,7 @@ Deno.serve(async (req) => {
     // разведку отдельно). Считаем оба режима вместе.
     const { count: busy, error: busyErr } = await admin
       .from("marches").select("id", { count: "exact", head: true })
-      .eq("world_id", world.id).eq("player_id", attRow.id).in("mode", ["attack", "gather"]);
+      .eq("world_id", world.id).eq("player_id", attRow.id).in("mode", ["attack", "gather", "raid"]);
     if (busyErr) return jsonResponse({ err: busyErr.message }, 500);
     if ((busy || 0) >= marchSlots(hallLv)) return jsonResponse({ err: "Все отряды заняты" }, 400);
 
