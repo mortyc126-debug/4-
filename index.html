@@ -9201,18 +9201,18 @@ function foMultiplayer(){
   // lockReason/nodeVisibleFor/findNode/nodeTitle/researchCost/researchTime,
   // что и одиночная игра — это ОДИН И ТОТ ЖЕ файл, отдельной копии не
   // заводим (как buildCost/buildTime/troopCost выше в этой же панели).
-  // pShim2 (в отличие от pShim выше) уже несёт race/b/gen/tech — этого
-  // достаточно nodeVisibleFor/researchLocked/rowGate, но НЕ полноценный
-  // игрок для bonuses(p) — как и everywhere else в общем мире,
-  // bonuses(p).researchSpeed здесь не подключена: researchTime(n,lv)
-  // показывается как есть, без деления, та же честная заглушка, что и на
-  // сервере (см. supabase/README.md). Сами ЭФФЕКТЫ исследований (надбавки
-  // к добыче/бою через bonuses()) тоже не подключены — только сама
-  // механика набора уровней, p.tech заполняется настоящими значениями.
+  // pShim2 несёт race/b/gen/tech — этого достаточно ДЛЯ ВСЕГО, что здесь
+  // нужно, включая настоящий bonuses(pShim2) (Фаза 6): предпросмотр времени
+  // исследования теперь совпадает с тем, что реально спишет сервер
+  // (researchTime(n,lv)/(1+B.researchSpeed), см. mp-research).
   const academyLv=st.b.academy||0;
   if(academyLv>0){
     h+=rubric("Академия","дерево исследований");
-    const pShim2={race:p.race,b:st.b,gen:st.gen||{id:null},tech:st.tech||{}};
+    // portal:0 — см. тот же приём в mpProdPerHour выше (Портал не входит в
+    // постройки общего мира, без явного 0 portalMarchBonus(undefined) внутри
+    // bonuses() уходит в NaN — не влияет на B.researchSpeed, но так чище).
+    const pShim2={race:p.race,b:Object.assign({portal:0},st.b),gen:st.gen||{id:null},tech:st.tech||{}};
+    const rschB=bonuses(pShim2);
     const rsch=st.rsch;
     if(rsch){
       const rn=findNode(rsch.id);
@@ -9237,7 +9237,7 @@ function foMultiplayer(){
       } else if(rsch){
         h+="<div class='note'>Академия уже занята другим исследованием.</div>";
       } else {
-        const nlv=lv+1, c=researchCost(n,nlv), t=researchTime(n,nlv);
+        const nlv=lv+1, c=researchCost(n,nlv), t=researchTime(n,nlv)/(1+rschB.researchSpeed);
         h+="<div class='note'>До "+nlv+" ур.: "+
            (RES.some(r=>c[r])?RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", "):"бесплатно")+
            " · "+fmtDur(t)+"</div>"+

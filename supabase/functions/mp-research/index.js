@@ -17,16 +17,14 @@
 // это ни казалось на первый взгляд.
 //
 // Честно НЕ входит в этот шаг:
-// 1. bonuses(p).researchSpeed (влияет на длительность через researchTime(n,
-//    lv)/(1+B.researchSpeed), index.html:5859) — временно = 0, та же
-//    заглушка, что и everywhere else в общем мире.
-// 2. Сами ЭФФЕКТЫ исследований (n.field/n.effects — надбавки к добыче/бою/
-//    etc через bonuses()) — bonuses() как таковая ещё не перенесена на
-//    сервер вообще. Здесь переносится МЕХАНИКА исследования (набрать очки,
-//    продвинуться по дереву — p.tech заполняется настоящими уровнями), а
-//    подключение самих бонусов в production()/dmgTo()/marchSpeed() и т.д.
-//    этого файла — отдельный следующий шаг.
-// 3. gen-гейтед "венцы" (eco_crown_*/mil_crown_* с полем gen:0|1) — раньше
+// 1. Сами ЭФФЕКТЫ уже исследованных узлов (n.field/n.effects — надбавки к
+//    добыче/бою/etc) — с Фазы 6 bonuses() перенесена и реально применяет их
+//    в production()/mp-train/mp-heal/mp-build/mp-tick (см. _shared/rules.js).
+//    bonuses(p).researchSpeed ТОЖЕ теперь настоящая (влияет на длительность
+//    БУДУЩИХ исследований через researchTime(n,lv)/(1+B.researchSpeed),
+//    index.html:5859) — раньше здесь стояла заглушка =0, дальше в этом файле
+//    её больше нет.
+// 2. gen-гейтед "венцы" (eco_crown_*/mil_crown_* с полем gen:0|1) — раньше
 //    здесь стояло неверное заявление, что ВСЕ 8 недостижимы без генералов.
 //    На деле p.gen.id всегда null (генералы не перенесены) -> p.gen.id||0
 //    всегда 0. У eco_crown_* gen:1 (0!==1 -> невидим, действительно
@@ -496,6 +494,138 @@ function lockReason(n,p){
   return "заблокировано";
 }
 
+// bonuses(p, defending) — Фаза 6. Честная (не упрощённая) часть центрального
+// агрегатора бонусов клиента (index.html:3731-3789). Порядок и формулы —
+// дословно оттуда, но перенесена НЕ вся функция целиком: часть слагаемых
+// зависит от системы генералов, которая на сервер физически не может дать
+// иного значения, кроме нейтрального (см. по пунктам ниже) — портить эти
+// куски НЕЧЕГО, у них нет отдельных настоящих чисел, которые здесь
+// проверялись бы отдельно.
+//
+// Что реально считается (все данные — дословная копия из index.html):
+//   1. Расовый "минус" (RACES[race].minus, index.html:1743-1759).
+//   2. Расовые эпохальные способности (RACE_EPOCHS, index.html:1767-1832) —
+//      по числу открытых эпох (epochOf(p.b.hall)), плюс defMods 5-й эпохи
+//      ТОЛЬКО при обороне (defending=true).
+//   3. Бонус "генерала по умолчанию" — genOf(p)=GENERALS[p.race][p.gen.id||0]
+//      (index.html:2345): т.к. в общем мире игрок физически не может выбрать
+//      другого генерала (p.gen.id всегда null, mp-join не заводит выбор), это
+//      ВСЕГДА индекс 0 — тот же дефолт, что и у игрока одиночной игры,
+//      который просто ещё не открывал вкладку "Генерал". GENERALS_DEFAULT
+//      ниже — только эти 4 записи (index 0 на расу), не вся таблица GENERALS
+//      (второй генерал каждой расы здесь физически недостижим, выбирать
+//      нечем — переносить его было бы "то, чего ещё нет", см. правило
+//      пользователя из более ранней переписки).
+//   4. portalMarchBonus(p.b.portal) — Портал не входит в постройки общего
+//      мира (нет в BUILD_MP_BLDS/BKEYS этого модуля), поэтому p.b.portal
+//      всегда отсутствует — передаётся 0 явно (portalMarchBonus(0)=0), это
+//      не заглушка отдельного бонуса, а честный факт "здания ещё нет".
+//   5. Бонусы дерева исследований (ACADEMY_TREE[*].field/effects, по
+//      p.tech) — уже перенесено в Фазе 5, здесь наконец подключается.
+//
+// Что НЕ считается, и почему это математически, а не по недосмотру, ноль:
+//   - Талантовые бонусы генерала (w1-w5/d1-d5/g1-g3/g4-g5, index.html:
+//     3760-3767) и GENERAL_TREE (город/армия, index.html:3780-3787) — оба
+//     читают ТОЛЬКО p.gen.tal. В общем мире система вложения очков таланта
+//     не заведена вообще: p.gen.tal у каждого игрока всегда {} (mp-join),
+//     очков взять неоткуда. T[id]||0 для любого id из пустого объекта — это
+//     буквально 0, то есть эти два блока клиента при p.gen.tal={} дают
+//     нулевой вклад АБСОЛЮТНО ТОЧНО, не приближённо — переносить их сюда
+//     значило бы скопировать код, который на сервере гарантированно не
+//     умеет посчитать ничего, кроме нуля. Поэтому они просто опущены, а не
+//     скопированы ради видимости полноты.
+const GENERALS_DEFAULT = {
+  human:  { apply: (b) => { b.atk += .15; b.def += .08; } },                 // Король Алдрик
+  dwarf:  { apply: (b) => { b.def += .08; b.wallBonus += .08; } },           // Дорвальд Каменный Трон
+  elf:    { apply: (b) => { b.def += .10; b.archer = 0; } },                 // Ильвен Хрустальный Щит
+  undead: { apply: (b) => { b.def += .10; b.healSpeed = 1; } },              // Владислав фон Морвейн — обнуляет расовую скидку лазарета (см. RACE_EPOCHS.undead[1])
+};
+// index.html:1736-1759 RACES[*].minus (без name/color/desc — косметика клиента).
+const RACES_MINUS = {
+  human:  { field: "prodGold", kind: "frac", value: -0.15 },
+  dwarf:  { field: "march",    kind: "mult", value: 0.90 },
+  elf:    { field: "def",      kind: "frac", value: -0.10 },
+  undead: { field: "def",      kind: "frac", value: -0.10 },
+};
+// index.html:1767-1832 RACE_EPOCHS — mods (действуют всегда, как только
+// открыта эпоха), defMods (только у 5-й эпохи, только при обороне).
+const RACE_EPOCHS = {
+  human: [
+    { mods: [{ field: "build", kind: "mult", value: 1.05 }] },
+    { mods: [{ field: "prodAll", kind: "frac", value: 0.05 }] },
+    { mods: [{ field: "trainSpeed", kind: "frac", value: 0.10 }] },
+    { mods: [{ field: "buildCostCut", kind: "frac", value: 0.10 }] },
+    { mods: [{ field: "atk", kind: "frac", value: 0.08 }, { field: "def", kind: "frac", value: 0.08 }] },
+  ],
+  dwarf: [
+    { mods: [{ field: "prodStone", kind: "frac", value: 0.10 }] },
+    { mods: [{ field: "prodGold", kind: "frac", value: 0.10 }] },
+    { mods: [{ field: "def", kind: "frac", value: 0.10 }] },
+    { mods: [{ field: "wallBonus", kind: "frac", value: 0.10 }] },
+    { mods: [], defMods: [{ field: "def", kind: "add", value: 0.20 }, { field: "counter", kind: "add", value: 0.15 }] },
+  ],
+  elf: [
+    { mods: [{ field: "prodFood", kind: "frac", value: 0.10 }] },
+    { mods: [{ field: "prodWood", kind: "frac", value: 0.10 }] },
+    { mods: [{ field: "march", kind: "mult", value: 1.10 }] },
+    { mods: [{ field: "archer", kind: "frac", value: 0.15 }] },
+    { mods: [{ field: "firstStrike", kind: "frac", value: 1 }] },
+  ],
+  undead: [
+    { mods: [{ field: "raise", kind: "frac", value: 0.10 }] },
+    { mods: [{ field: "heal", kind: "mult", value: 0.70 }, { field: "healSpeed", kind: "mult", value: 0.5 }] },
+    { mods: [{ field: "mercy", kind: "frac", value: 0.10 }] },
+    { mods: [{ field: "raise", kind: "frac", value: 0.25 }] },
+    { mods: [], defMods: [{ field: "raiseHurt", kind: "abs", value: 0.40 }] },
+  ],
+};
+// index.html:2909 portalMarchBonus.
+const portalMarchBonus = (lv) => (lv <= 0 ? 0 : lv <= 10 ? lv * 0.005 : 10 * 0.005 + (lv - 10) * 0.01);
+
+function bonuses(p, defending = false) {
+  const b = {
+    build: 1, march: 1, heal: 1, healSpeed: 1,
+    atk: 0, def: 0, hp: 0, archer: 0, raise: 0, raiseHurt: 0, gather: 0, load: 0, hosp: 0, cap: 0,
+    prodFW: 0, prodSG: 0, bandit: 0, mercy: 0,
+    gatherAmber: 0,
+    prodAll: 0, prodFood: 0, prodWood: 0, prodStone: 0, prodGold: 0,
+    trainSpeed: 0, buildCostCut: 0, wallBonus: 0, counter: 0, firstStrike: 0,
+    researchSpeed: 0, scoutBonus: 0,
+    atkInf: 0, atkArc: 0, atkCav: 0, atkSie: 0, defInf: 0, defArc: 0, defCav: 0, defSie: 0,
+    matkInf: 0, matkArc: 0, matkCav: 0, matkSie: 0, mdefInf: 0, mdefArc: 0, mdefCav: 0, mdefSie: 0,
+    matk: 0, mdef: 0,
+    genAtkMod: 0, genDefMod: 0, genHpMod: 0,
+  };
+  const mn = RACES_MINUS[p.race];
+  if (mn.kind === "mult") b[mn.field] *= mn.value; else b[mn.field] = (b[mn.field] || 0) + mn.value;
+  const epoch = epochOf(p.b && p.b.hall), track = RACE_EPOCHS[p.race];
+  for (let i = 0; i < epoch; i++) {
+    (track[i].mods || []).forEach((m) => {
+      if (m.kind === "mult") b[m.field] *= m.value; else b[m.field] = m.value;
+    });
+  }
+  if (defending && epoch >= 5 && track[4].defMods) {
+    track[4].defMods.forEach((m) => {
+      if (m.kind === "abs") b[m.field] = m.value; else b[m.field] = (b[m.field] || 0) + m.value;
+    });
+  }
+  GENERALS_DEFAULT[p.race].apply(b);
+  b.march *= 1 + portalMarchBonus((p.b && p.b.portal) || 0);
+  const tech = p.tech || {};
+  const multAcc = {};
+  [ACADEMY_TREE.eco, ACADEMY_TREE.mil].forEach((arr) => arr.forEach((n) => {
+    const lv = tech[n.id] || 0; if (!lv || n.unlock) return;
+    const list = n.effects || [{ field: n.field, total: n.total, kind: n.kind }];
+    list.forEach((e) => {
+      const inc = e.total * (lv / n.max);
+      if (e.kind === "mult") multAcc[e.field] = (multAcc[e.field] || 0) + inc;
+      else b[e.field] = (b[e.field] || 0) + inc;
+    });
+  }));
+  Object.keys(multAcc).forEach((f) => b[f] *= (1 + multAcc[f]));
+  return b;
+}
+
 Deno.serve(async (req) => {
   const pre = handleOptions(req);
   if (pre) return pre;
@@ -564,10 +694,13 @@ Deno.serve(async (req) => {
     const c = researchCost(n, lv);
     if (!canPay(p.res, c)) return jsonResponse({ err: "Не хватает ресурсов" }, 400);
     pay(p.res, c);
-    // bonuses(p).researchSpeed = 0 (заглушка, см. заголовок файла) — значит
-    // /(1+0) из index.html:5859 не меняет длительность, поэтому здесь просто
-    // researchTime(n,lv) без деления.
-    const t = researchTime(n, lv);
+    // bonuses(p).researchSpeed — настоящий подсчёт (раса/эпоха/дефолтный
+    // генерал/дерево исследований eco_rsch1/eco_rsch2 — да, влияет сама на
+    // себя рекурсивно не может: researchSpeed воздействует на ДЛИТЕЛЬНОСТЬ
+    // будущих исследований, не на уже идущее), index.html:5859 делит
+    // researchTime(n,lv) на (1+B.researchSpeed).
+    const B = bonuses(p);
+    const t = researchTime(n, lv) / (1 + B.researchSpeed);
     p.rsch = { id, lv, t0: now, t1: now + t };
 
     const { error: updErr } = await admin
