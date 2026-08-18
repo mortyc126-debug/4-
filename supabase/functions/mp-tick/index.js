@@ -12,7 +12,26 @@
 // добавляться сюда по одному по мере переноса самих действий (Фаза 5),
 // каждый — отдельным case, по образцу ниже.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { jsonResponse, handleOptions } from "../_shared/cors.js";
+
+// Вставлено буквально из ../_shared/cors.js — Dashboard-редактор Edge
+// Functions не подтягивает относительные импорты на общую папку, поэтому
+// здесь код самодостаточен (копия, а не импорт). При деплое через Supabase
+// CLI можно вернуть импорт как в репозитории.
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+function jsonResponse(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+  });
+}
+function handleOptions(req) {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS_HEADERS });
+  return null;
+}
 
 const BATCH = 200;
 
