@@ -1032,6 +1032,15 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .hollow{text-align:center;padding:34px 18px;color:var(--vellum-faint);font-style:italic;font-size:13px}
 .hollow .big{display:block;font-size:26px;color:var(--rule);margin-bottom:8px;font-style:normal}
 
+/* Свиток отправки войск (openLevy) — "взять полководца в этот поход":
+   отдельная строка-чекбокс, не влита в .levy (та — только про юниты). */
+.gen-take{display:flex;align-items:center;gap:8px;padding:8px 0 10px;
+  border-bottom:1px dotted var(--rule-soft);margin-bottom:4px;
+  font-size:13px;color:var(--vellum-dim);cursor:pointer}
+.gen-take.disabled{opacity:.5;cursor:not-allowed}
+.gen-take input{flex:0 0 auto;width:15px;height:15px}
+.gen-take em{font-style:normal;font-size:11px;color:var(--vellum-faint);margin-left:auto;text-align:right}
+
 /* Гербовый щит в списках */
 .shield{width:13px;height:16px;flex:0 0 auto;filter:drop-shadow(0 1px 1px rgba(0,0,0,.6))}
 
@@ -2966,7 +2975,14 @@ function newPlayer(id,race,x,y,isBot){
     // "чтобы у каждого было хоть что-то, чтобы начать вкладываться"), не
     // ноль, как раньше. Ботов это не задевает — их pts тут же
     // перезаписываются отдельно (b.gen.pts=b.gen.lv-1, см. ниже по файлу).
-    gen:{lv:1,xp:0,pts:5,tal:{},id:isBot?(aggr>0.5?0:1):null}, gear:{}, tech:{}, rsch:null,
+    // away — id похода, что сейчас несёт полководца (null = дома). Раньше
+    // генерал участвовал сразу везде разом — во всех одновременных походах
+    // И в обороне города — что при пяти маршах разом означало "первый же
+    // отправленный поход как бы забирал генерала" не по-настоящему, а
+    // просто путало игрока: генерал незримо был "и там, и там". Теперь он
+    // ровно один и физически в одном месте — см. openLevy (выбор похода) и
+    // makeForce/EV.home (кто на самом деле его несёт и когда возвращается).
+    gen:{lv:1,xp:0,pts:5,tal:{},id:isBot?(aggr>0.5?0:1):null,away:null}, gear:{}, tech:{}, rsch:null,
     inventory:Object.fromEntries(GEAR_SLOTS.map(s=>[s.id,{bastion:[0,0,0,0,0],storm:[0,0,0,0,0]}])),
     materials:{ore:[0,0,0,0,0],leather:[0,0,0,0,0],bone:[0,0,0,0,0],ebony:[0,0,0,0,0]}, craft:null,
     tomes:{},
@@ -3021,13 +3037,13 @@ const BOT_NICKS = {
 // всегда мало (игрок + до CFG.BOTS ботов), полный перебор дешёв и не имеет
 // слепых зон на границах чанков.
 const CITY_STRUCT_GAP=12;
-// Было 6 — репорт пользователя: точки всё ещё стоят "почти вплотную" друг к
-// другу. Сами модели точки/лагеря/форта в 3D — радиус порядка 2.5-3.25 (см.
-// комментарий у CITY_STRUCT_GAP: 5/6.5 "поперёк"), то есть при зазоре РОВНО
-// 6 (по центрам) между двумя точками оставался жалкий ~1 юнит просвета между
-// их же краями — визуально и правда впритык. 9 — уже настоящий видимый
-// промежуток (~3-4 юнита между краями), а не просто "центры не совпадают".
-const MIN_STRUCT_GAP=9, STRUCT_TRIES=150, STRUCT_CHUNK=16, STRUCT_CHUNK_CHANCE=0.5;
+// Было 6, потом 9 — по прямому запросу пользователя ("в масштабе карты и 9
+// мало") поднято до 20: заметный, недвусмысленный промежуток между точками,
+// а не просто "центры не совпадают". Значение больше не заведомо меньше
+// половины чанка (16/2=8) — окрестность соседних чанков в
+// findFreeCellInChunk теперь считается ОТ ЭТОЙ константы (см. там), иначе
+// сам зазор бы тихо не соблюдался на границах чанков.
+const MIN_STRUCT_GAP=20, STRUCT_TRIES=150, STRUCT_CHUNK=16, STRUCT_CHUNK_CHANCE=0.5;
 const STRUCT_SALT_NODE=501, STRUCT_SALT_CAMP=502;
 function structChunkOk(x,y,salt,chance){
   const cx=Math.floor(x/STRUCT_CHUNK), cy=Math.floor(y/STRUCT_CHUNK);
@@ -3058,9 +3074,14 @@ function mapDelete(x,y){
 }
 // Замена findFreeCell — тот же смысл (свободная непроходная клетка с
 // зазором от соседей), но ищет ТОЛЬКО внутри одного чанка 16×16, а зазор
-// проверяет по соседям из W.mapChunks в чанке и его 3×3-окрестности, а не
-// по всему W.map: MIN_STRUCT_GAP=6 заведомо меньше половины стороны чанка
-// (16), так что ничего снаружи соседства 3×3 повлиять не может. Кандидаты
+// проверяет по соседям из W.mapChunks в чанке и его окрестности, а не по
+// всему W.map. Раньше окрестность была жёстко 3×3 (±1 чанк) — годилось,
+// пока MIN_STRUCT_GAP=6 был заведомо меньше половины стороны чанка (16).
+// MIN_STRUCT_GAP с тех пор вырос (см. константу) — радиус окрестности
+// теперь считается ОТ НЕГО (ceil(gap/STRUCT_CHUNK) чанков в каждую сторону),
+// иначе структура из чанка чуть дальше 3×3 могла бы оказаться ближе гэпа к
+// кандидату, а функция её просто не увидела бы — тихий возврат старого бага
+// "зазор не соблюдается" при следующем же увеличении константы. Кандидаты
 // перебираются детерминированно через hash2(cx,cy,seed+salt+t*2[+1]), а не
 // ri()/RNG() — вызов должен быть идемпотентным и не зависеть от того, когда
 // именно и в каком порядке чанки открываются игроком (см. ensureChunkContent
@@ -3068,8 +3089,9 @@ function mapDelete(x,y){
 // RNG(), общему с ботами/маршами.
 function findFreeCellInChunk(cx,cy,salt){
   const x0=cx*STRUCT_CHUNK, y0=cy*STRUCT_CHUNK;
+  const r=Math.ceil(MIN_STRUCT_GAP/STRUCT_CHUNK);
   const neighborKeys=[];
-  for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+  for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
     const arr=W.mapChunks[(cx+dx)+","+(cy+dy)];
     if(arr) for(const k of arr) neighborKeys.push(k);
   }
@@ -3308,7 +3330,7 @@ function genWorld(seed){
 
   // Свежий мир уже построен через ensureChunkContent (зазор + вода +
   // "монетка" на чанк) — всем миграциям ниже тут нечего делать.
-  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.densityMigrated5=true; W.densityMigrated6=true; W.infiniteWorldMigrated=true; W.levelMigrated=true; W.marchRescueMigrated=true; W.marchSpeedMigrated=true;
+  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.densityMigrated5=true; W.densityMigrated6=true; W.densityMigrated7=true; W.densityMigrated8=true; W.infiniteWorldMigrated=true; W.levelMigrated=true; W.marchRescueMigrated=true; W.marchSpeedMigrated=true;
   logg("Мир создан. Зерно "+seed+". Городов: "+W.players.length+".", "good");
   return W;
 }
@@ -3453,16 +3475,24 @@ function thinMapDensity6(){
   W.densityMigrated6=true;
   if(drop.length) logg("Плотность точек/лагерей сокращена ещё раз: убрано "+drop.length+".","good");
 }
-// Седьмая волна: MIN_STRUCT_GAP поднят с 6 до 9 (см. комментарий у константы
-// выше — репорт пользователя "точки стоят почти вплотную"). Новый порог сам
-// по себе действует только для НОВЫХ точек (findFreeCellInChunk) — уже
-// расставленные слишком тесные пары так и остались бы тесными навсегда,
-// поэтому разово раздвигаем и старые: у кого от соседа (не города) меньше
-// MIN_STRUCT_GAP — младший из пары убирается (respawn/nodeback штатно найдёт
-// ему новое, уже проверенное на зазор место), тем же приоритетом, что и в
-// thinMapDensity5 (лагерь/форт "старше" простой точки ресурса). При равном
-// приоритете (точка vs точка, лагерь vs лагерь) выбор не по порядку W.map
-// (не гарантирован) — сортируем по координатам, детерминированно.
+// Седьмая волна: MIN_STRUCT_GAP поднят с 6 до 9 (репорт пользователя "точки
+// стоят почти вплотную"). Новый порог сам по себе действует только для
+// НОВЫХ точек (findFreeCellInChunk) — уже расставленные слишком тесные пары
+// так и остались бы тесными навсегда, поэтому разово раздвигаем и старые: у
+// кого от соседа (не города) меньше MIN_STRUCT_GAP — младший из пары
+// убирается (respawn/nodeback штатно найдёт ему новое, уже проверенное на
+// зазор место), тем же приоритетом, что и в thinMapDensity5 (лагерь/форт
+// "старше" простой точки ресурса). При равном приоритете (точка vs точка,
+// лагерь vs лагерь) выбор не по порядку W.map (не гарантирован) — сортируем
+// по координатам, детерминированно.
+// ВАЖНО: тело намеренно читает MIN_STRUCT_GAP как ЖИВУЮ внешнюю константу, а
+// не замораживает своё число (в отличие от thinMapDensity() выше, которая
+// умышленно держит свою локальную копию) — поэтому когда константу подняли
+// СНОВА (9→20, см. thinMapDensity8 ниже), эта функция и без правки кода уже
+// "хотела" бы честно применить новое число. Не помогает: densityMigrated7
+// уже мог сработать (и сохраниться) на проде под старым значением 9 у
+// игроков, что успели загрузиться между релизами — гвоздь не в теле функции,
+// а в разовом флаге, который не перезапускает уже отработавшую волну.
 function thinMapDensity7(){
   if(W.densityMigrated7) return;
   const items=[];
@@ -3482,6 +3512,31 @@ function thinMapDensity7(){
   for(const o of drop) delete W.map[key(o.x,o.y)];
   W.densityMigrated7=true;
   if(drop.size) logg("Слишком тесные точки/лагеря раздвинуты: убрано "+drop.size+".","good");
+}
+// Восьмая волна: MIN_STRUCT_GAP поднят ЕЩЁ раз, 9→20 (прямой запрос
+// пользователя — "в масштабе карты и 9 мало"). Дословно та же чистка, что и
+// в thinMapDensity7 (см. её комментарий про "живую" константу выше) — просто
+// под собственным флагом, раз thinMapDensity7 у части игроков уже успела
+// отработать и молчаливо разойтись под старым порогом (9), а не новым (20).
+function thinMapDensity8(){
+  if(W.densityMigrated8) return;
+  const items=[];
+  for(const k in W.map){ const o=W.map[k]; if(o.t==="node"||o.t==="camp"||o.t==="fort") items.push(o); }
+  items.sort((a,b)=>a.x-b.x||a.y-b.y);
+  const rank=o=>o.t==="node"?0:1;
+  const drop=new Set();
+  for(let i=0;i<items.length;i++){
+    if(drop.has(items[i])) continue;
+    for(let j=i+1;j<items.length;j++){
+      if(drop.has(items[j])) continue;
+      if(items[j].x-items[i].x>=MIN_STRUCT_GAP) break;
+      if(Math.hypot(items[i].x-items[j].x,items[i].y-items[j].y)>=MIN_STRUCT_GAP) continue;
+      drop.add(rank(items[i])<rank(items[j]) ? items[i] : items[j]);
+    }
+  }
+  for(const o of drop) delete W.map[key(o.x,o.y)];
+  W.densityMigrated8=true;
+  if(drop.size) logg("Точки/лагеря раздвинуты ещё раз: убрано "+drop.size+".","good");
 }
 // Шестая волна: старые сохранения несут в себе уровни, посчитанные ещё по
 // originDist от фиксированной точки {50,50} — за пределами исходного
@@ -3884,9 +3939,16 @@ function atkName(p){ return p.isBot ? p.name : "Ваши войска"; }
 function makeForce(units,p,opts){
   const defending=!!(opts&&opts.defending);
   const B=p?bonuses(p,defending):{atk:0,def:0,hp:0,matk:0,mdef:0,archer:0,raise:0,bandit:0,mercy:0,counter:0,firstStrike:0};
+  // withGen — сторона решает САМА, была ли эта конкретная сила с генералом
+  // (см. вызовы makeForce): поход — если игрок явно взял его в этот поход
+  // (m.hasGen), город — если генерал сейчас дома, а не уехал с другим
+  // походом (p.gen.away==null). Раньше genStats(p) цеплялся молча за один
+  // только факт "генерал вообще выбран", то есть участвовал сразу везде
+  // одновременно — и в марше, и дома — что и было жалобой пользователя.
+  const withGen=!!(opts&&opts.withGen);
   const f={units:JSON.parse(JSON.stringify(units)),B,p,risen:emptyUnits(),
            start:JSON.parse(JSON.stringify(units)), broken:emptyUnits(),
-           gen: (p&&p.gen&&p.gen.id!=null) ? genStats(p) : null,
+           gen: (withGen&&p&&p.gen&&p.gen.id!=null) ? genStats(p) : null,
            wallDef:(opts&&opts.wall)||0, bandit:(opts&&opts.bandit)||false,
            // mode — тот же режим, что потом пойдёт в splitLosses() для ЭТОЙ
            // стороны после боя ("siege-attack"/"hospital"): raiseSkeletons()
@@ -4568,11 +4630,16 @@ function marchSpeed(p,units){
   if(s>90) s=1;
   return s*MARCH_SPEED_SCALE*bonuses(p).march;      // клеток в минуту
 }
-function sendMarch(p,tx,ty,units,mode){
+function sendMarch(p,tx,ty,units,mode,withGen){
   const n=countUnits(units); if(n<=0) return {err:"Нет войск"};
-  // Лазутчики слот не занимают (см. sendScout) — считаем только боевые/обозные походы.
-  const busy=W.marches.filter(m=>m.pid===p.id&&m.mode!=="scout").length;
+  // Лазутчики слот не занимают (см. sendScout/sendScoutMarch) — считаем только боевые/обозные походы.
+  const busy=W.marches.filter(m=>m.pid===p.id&&!isScoutMarch(m)).length;
   if(busy>=marchSlots(p.b.hall)) return {err:"Все отряды заняты"};
+  // Полководец — один и физически в одном месте (см. gen:{...,away} в
+  // genWorld и makeForce): нельзя взять его в поход, если он уже в пути с
+  // другим (p.gen.away!=null). Composer (openLevy) уже прячет чекбокс в этом
+  // случае — проверка тут на случай гонки (два похода собраны почти разом).
+  const takeGen=!!withGen && p.gen && p.gen.id!=null && p.gen.away==null;
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++){
     if(units[t][i]>p.troops[t][i]) units[t][i]=p.troops[t][i];
     p.troops[t][i]-=units[t][i];
@@ -4581,8 +4648,9 @@ function sendMarch(p,tx,ty,units,mode){
   const d=pathLength(path)*(1-portalShortcut(p));
   const spd=marchSpeed(p,units);
   const travel=Math.max(20, d/spd*60);
-  const m={id:W.nextId++,pid:p.id,mode,x0:p.x,y0:p.y,tx,ty,units,
+  const m={id:W.nextId++,pid:p.id,mode,x0:p.x,y0:p.y,tx,ty,units,hasGen:takeGen,
     t0:W.t,t1:W.t+travel,state:"go",carry:null,gatherEnd:0};
+  if(takeGen) p.gen.away=m.id;
   setMarchPath(m,path);
   W.marches.push(m);
   schedule(travel,"arrive",{mid:m.id});
@@ -4613,6 +4681,13 @@ function sendMarch(p,tx,ty,units,mode){
    счёт слотов ведётся по W.marches, поэтому scout-походы там просто не считаем
    (см. sendMarch/botThink). Войск с собой не берёт — это один соглядатай. */
 const SCOUT_SPEED_MULT = 2.2;   // налегке и без обоза — заметно быстрее войска, независимо от уровня здания
+// Оба вида разведки (по городу — mode="scout", и по отряду в поле —
+// mode="scoutmarch", см. sendScoutMarch ниже) — один и тот же "лазутчик" по
+// смыслу: не занимает слот похода и делит один и тот же лимит одновременных
+// вылазок (SCOUT_TABLE.scouts). Отдельная функция, а не разбросанные
+// m.mode==="scout"||m.mode==="scoutmarch" по всему файлу — легко забыть
+// дописать вторую половину условия в новом месте.
+function isScoutMarch(m){ return m.mode==="scout"||m.mode==="scoutmarch"; }
 function sendScout(p,tx,ty){
   if((p.b.scout||0)<=0) return {err:"Нужна разведка"};
   const tgt=W.map[key(tx,ty)];
@@ -4638,6 +4713,45 @@ function sendScout(p,tx,ty){
   setMarchPath(m,path);
   W.marches.push(m);
   schedule(travel,"scouted",{mid:m.id});
+  return {ok:true,eta:travel};
+}
+// Разведка чужого ОТРЯДА в поле — раньше в игре просто не было такой цели:
+// sendScout() выше принимает только город, а панель чужого похода
+// (renderCartoucheFor) вообще не предлагала действия ("атака отряда в пути
+// не поддерживается"). Пользователь наводил разведку на вражескую армию,
+// стоящую на ресурсной точке, а лазутчик вместо этого улетал в город
+// хозяина — это было не багом с перепутанными координатами, а честной
+// нехваткой механики (реальный RoK разведку рэлли/похода умеет). Добавлено
+// по прямому запросу.
+// Только СТОЯЩИЙ на месте отряд (state="gather"/"siege") — движущийся марш
+// поймать негде: за время дороги лазутчика он уже сместится, а гнаться за
+// текущей позицией — отдельная, куда более сложная механика, которую никто
+// не просил. Ресурсная точка (ровно случай из запроса) как раз стоит на
+// месте всё время сбора — этого достаточно.
+function sendScoutMarch(p,marchId){
+  if((p.b.scout||0)<=0) return {err:"Нужна разведка"};
+  const target=W.marches.find(x=>x.id===marchId);
+  if(!target) return {err:"Отряд уже не на месте"};
+  if(target.pid===p.id) return {err:"Это ваш отряд"};
+  if(target.state!=="gather"&&target.state!=="siege") return {err:"Отряд движется — с ним не разминуться, только пока он стоит на месте"};
+  if(W.marches.some(m=>m.pid===p.id&&m.mode==="scoutmarch"&&m.targetMarchId===marchId))
+    return {err:"Лазутчик уже в пути"};
+  // Тот же лимит одновременных лазутчиков (SCOUT_TABLE.scouts), что и у
+  // городской разведки — здание одно, соглядатаев на него столько же,
+  // неважно, за кем именно они следят (см. isScoutMarch).
+  const outNow=W.marches.filter(m=>m.pid===p.id&&isScoutMarch(m)).length;
+  const maxScouts=tblRow(SCOUT_TABLE,p.b.scout).scouts;
+  if(outNow>=maxScouts) return {err:"Все лазутчики уже в пути ("+maxScouts+")"};
+  const tx=target.tx, ty=target.ty;
+  const path=waterPath(p.x,p.y,tx,ty);
+  const d=pathLength(path)*(1-portalShortcut(p));
+  const speedMult=SCOUT_SPEED_MULT*(1+tblRow(SCOUT_TABLE,p.b.scout).bonus/100);
+  const travel=Math.max(15, d/(marchSpeed(p,emptyUnits())*speedMult)*60);
+  const m={id:W.nextId++,pid:p.id,mode:"scoutmarch",x0:p.x,y0:p.y,tx,ty,units:emptyUnits(),
+    targetMarchId:marchId, t0:W.t,t1:W.t+travel,state:"go",carry:null,gatherEnd:0};
+  setMarchPath(m,path);
+  W.marches.push(m);
+  schedule(travel,"scoutedMarch",{mid:m.id});
   return {ok:true,eta:travel};
 }
 function recallMarch(m){
@@ -4764,6 +4878,33 @@ const EV = {
       intel:scoutSnapshot(p,q)});
     logg("Лазутчик вернулся с донесением о городе "+(q.nick||q.name)+".","good");
   },
+  // Разведка отряда в поле (см. sendScoutMarch) — застать можно только пока
+  // тот стоит на месте (gather/siege): за время дороги лазутчика цель вполне
+  // могла закончить сбор и уйти, или её отозвал хозяин. Ничего не поделать —
+  // марш куда подвижнее города, эта неопределённость даже больше, чем у
+  // городской разведки, и это честно (RoK такой же).
+  scoutedMarch(d){
+    const m=W.marches.find(x=>x.id===d.mid); if(!m) return;
+    W.marches=W.marches.filter(x=>x.id!==m.id);
+    const p=W.players.find(q=>q.id===m.pid); if(!p) return;
+    const target=W.marches.find(x=>x.id===m.targetMarchId);
+    if(!target || (target.state!=="gather"&&target.state!=="siege")){
+      if(!p.isBot) logg("Лазутчик не застал отряд на месте — тот уже снялся.","war");
+      return;
+    }
+    const owner=W.players.find(q=>q.id===target.pid);
+    if(!owner) return;
+    if(p.isBot) return;
+    const cell=W.map[key(m.tx,m.ty)];
+    pushMail({cat:"report",kind:"scoutmarch",
+      oppNick:owner.nick||"Безымянный лорд", oppRace:owner.race,
+      oppAvatar:playerAvatarSrc(owner),
+      coords:{x:m.tx,y:m.ty},
+      marchState:target.state,
+      res: (target.state==="gather"&&cell&&cell.t==="node") ? cell.res : null,
+      intel:scoutMarchSnapshot(p,target)});
+    logg("Лазутчик вернулся с донесением об отряде "+(owner.nick||owner.name)+".","good");
+  },
   // Снос узла (если он опустел) — теперь тут, а не в момент прибытия
   // отряда (см. комментарий у arriveMarch), плюс перестраховка на случай,
   // если cell вдруг уже пропал по другой причине к этому моменту.
@@ -4793,6 +4934,14 @@ const EV = {
   home(d){
     const m=W.marches.find(m=>m.id===d.mid); if(!m)return;
     const p=W.players.find(q=>q.id===m.pid);
+    // Генерал возвращается вместе с отрядом — независимо от того, как поход
+    // закончился (дошёл и вернулся сам, был отозван, или это выжившие/пустое
+    // войско после проигранного боя: EV.home — ЕДИНСТВЕННОЕ событие, которым
+    // рано или поздно заканчивается ЛЮБОЙ march, см. recallMarch). Проверка
+    // на p.gen.away===m.id, а не просто m.hasGen — если игрок каким-то
+    // образом успел заново отправить генерала (гонка/старый сейв), не отбирать
+    // его у НОВОГО похода из-за возврата старого.
+    if(m.hasGen && p && p.gen && p.gen.away===m.id) p.gen.away=null;
     TKEYS.forEach(t=>{for(let i=1;i<=5;i++)p.troops[t][i]+=m.units[t][i]});
     if(m.carry){ gain(p,m.carry);
       if(!p.isBot){
@@ -4896,7 +5045,7 @@ function arriveMarch(m){
 
   if(cell.t==="camp"||cell.t==="fort"){
     const B=bonuses(p);
-    const A=makeForce(m.units,p,{name:atkName(p),mode:"hospital"});
+    const A=makeForce(m.units,p,{name:atkName(p),mode:"hospital",withGen:!!m.hasGen});
     const bandUnits=banditArmy(cell.lv);
     const D=makeForce(bandUnits,null,{bandit:true,name:"Разбойники ур. "+cell.lv});
     D.B={atk:0,def:0,hp:0,matk:0,mdef:0,archer:0,raise:0};
@@ -5029,8 +5178,13 @@ function menuBadges(){
     army: 0,
   };
 }
-function genInfo(p){
-  if(!(p.gen&&p.gen.id!=null)) return null;
+function genInfo(p,present){
+  // present — реально ли полководец участвовал в ЭТОЙ силе (см. makeForce.
+  // withGen/f.gen). Раньше проверялось только "выбран ли генерал вообще" —
+  // отчёт о бое показывал бы его даже когда он остался дома или уехал с
+  // ДРУГИМ походом, из-за чего и была жалоба пользователя (генерал как бы
+  // участвовал сразу везде).
+  if(!present || !(p.gen&&p.gen.id!=null)) return null;
   // stars — та же формула, что и в foGen() (1 звезда ~10 уровней, всего 6).
   // talents — ветка, что реально была активна В МОМЕНТ боя (тот же разбор,
   // что и в разведке, см. talentBranchSpent) — RoK показывает в отчёте
@@ -5113,6 +5267,31 @@ function scoutSnapshot(p,q){
   }
   return snap;
 }
+// Разведка отряда в поле (см. sendScoutMarch) — та же ступень "se" (тот же
+// вклад в "Маскировку", один навык на оба вида разведки), но объект куда
+// проще города: нет запасов/стены/академии, только состав самого отряда и
+// взял ли он с собой полководца (см. m.hasGen). Ступени по смыслу совпадают
+// с scoutSnapshot() выше (родá войск с se3, тиры с se4), кроме "Запасы" (тут
+// им взяться неоткуда — походный отряд не хранит ресурсы, только везёт то,
+// что уже собрал, — это отдельно видно в самом донесении, не тут).
+function scoutMarchSnapshot(p,target){
+  const se=p.tech.mil_scout2||0, total=countUnits(target.units);
+  const snap={se,total};
+  if(se>=2){
+    const owner=W.players.find(q=>q.id===target.pid);
+    snap.genLv=(target.hasGen&&owner&&owner.gen&&owner.gen.id!=null)?owner.gen.lv:null;
+  }
+  if(se>=3){
+    snap.byType=TKEYS.map(t=>({t,n:Object.values(target.units[t]).reduce((a,b)=>a+b,0)})).filter(x=>x.n>0);
+  }
+  if(se>=4){
+    snap.byTier=TKEYS.map(t=>{
+      const parts=[]; for(let i=1;i<=5;i++) if(target.units[t][i]) parts.push({i,n:target.units[t][i]});
+      return {t,parts};
+    }).filter(x=>x.parts.length);
+  }
+  return snap;
+}
 // Отчёт о штурме города — отдельная запись для КАЖДОЙ человеческой стороны
 // (боты почту не читают, см. !att.isBot/!def.isBot ниже — тот же принцип,
 // что и у существующего logMsg): у атакующего и защитника разные потери и
@@ -5141,7 +5320,7 @@ function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords,weath
     selfRace:att.race, oppRace:def.race,
     selfCoords:{x:att.x,y:att.y}, oppCoords:{x:def.x,y:def.y}, fightCoords:coords,
     selfPower:powA, oppPower:powD,
-    selfGen:genInfo(att), oppGen:genInfo(def),
+    selfGen:genInfo(att,!!A.gen), oppGen:genInfo(def,!!D.gen),
     selfBuffs:buffsA, oppBuffs:buffsD,
     selfAvatar:playerAvatarSrc(att), oppAvatar:playerAvatarSrc(def),
     selfStart:startA, oppStart:startD,
@@ -5157,7 +5336,7 @@ function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords,weath
     selfRace:def.race, oppRace:att.race,
     selfCoords:{x:def.x,y:def.y}, oppCoords:{x:att.x,y:att.y}, fightCoords:coords,
     selfPower:powD, oppPower:powA,
-    selfGen:genInfo(def), oppGen:genInfo(att),
+    selfGen:genInfo(def,!!D.gen), oppGen:genInfo(att,!!A.gen),
     selfBuffs:buffsD, oppBuffs:buffsA,
     selfAvatar:playerAvatarSrc(def), oppAvatar:playerAvatarSrc(att),
     selfStart:startD, oppStart:startA,
@@ -5176,8 +5355,9 @@ function battleCity(att,def,m){
   const startA=countUnits(m.units), startD=countUnits(def.troops);
   const garrison=emptyUnits();
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++)garrison[t][i]=def.troops[t][i]});
-  const A=makeForce(m.units,att,{name:atkName(att),mode:"siege-attack"});
-  const D=makeForce(garrison,def,{wall:def.b.wall+def.b.garrison*0.5,defending:true,name:def.name,mode:"hospital"});
+  const A=makeForce(m.units,att,{name:atkName(att),mode:"siege-attack",withGen:!!m.hasGen});
+  const D=makeForce(garrison,def,{wall:def.b.wall+def.b.garrison*0.5,defending:true,name:def.name,mode:"hospital",
+    withGen:!!(def.gen&&def.gen.away==null)});
   const r=resolveBattle(A,D,{startA:countUnits(m.units),toDeath:false});
   // в хронику погода идёт короткой пометкой, подробности — в почтовом отчёте
   const wx=(r.weather&&r.weather.id!=="clear")?" ("+r.weather.name.toLowerCase()+")":"";
@@ -5274,7 +5454,7 @@ function botThink(p){
   const cap=capacity(p);
   const pr=production(p);
   const busyQ=p.queues.filter(Boolean).length;
-  const freeSlots=marchSlots(p.b.hall)-W.marches.filter(m=>m.pid===p.id&&m.mode!=="scout").length;
+  const freeSlots=marchSlots(p.b.hall)-W.marches.filter(m=>m.pid===p.id&&!isScoutMarch(m)).length;
 
   /* --- стройка --- */
   if(busyQ<2){
@@ -5421,7 +5601,7 @@ function botThink(p){
     const camp=findNear(p,c=>(c.t==="camp"||c.t==="fort")&&banditPower(c.lv)<sendable*0.55, 26,
       c=>c.lv*4-dist(p,c)*0.7);
     if(camp) acts.push({sc:44+22*(1-p.ai.greed)+(p.gen.lv<12?18:0),
-      run:()=>{ const u=pickArmy(p,0.55); if(countUnits(u)>0) sendMarch(p,camp.x,camp.y,u,"attack") }});
+      run:()=>{ const u=pickArmy(p,0.55); if(countUnits(u)>0) sendMarch(p,camp.x,camp.y,u,"attack",true) }});
   }
   /* --- нападение на город --- */
   if(freeSlots>0){
@@ -5439,7 +5619,7 @@ function botThink(p){
       if(sc>bs){bs=sc;best=q}
     });
     if(best) acts.push({sc:bs,run:()=>{
-      const u=pickArmy(p,0.8); if(countUnits(u)>0) sendMarch(p,best.x,best.y,u,"attack") }});
+      const u=pickArmy(p,0.8); if(countUnits(u)>0) sendMarch(p,best.x,best.y,u,"attack",true) }});
   }
   /* --- страх: отозвать войска домой --- */
   if(p.ai.threat && W.t<p.ai.threat){
@@ -5883,6 +6063,13 @@ async function load(){
     // экраны, читающие их напрямую, падают или считают NaN на "довоенных" сейвах).
     W.players.forEach((p,i)=>{
       if(!p.tomes) p.tomes={}; if(p.heal===undefined) p.heal=null;
+      // away — см. комментарий у gen:{...} в genWorld(): старые сохранения
+      // несут генерала без этого поля вовсе. Не подставляем "он в походе N" —
+      // честнее и безопаснее считать всех генералов из старых сейвов дома
+      // (в худшем случае игрок просто пере-отправит его сам, а не унаследует
+      // выдуманную задним числом привязку к марш-id, которого могло уже и не
+      // остаться в W.marches).
+      if(p.gen && p.gen.away===undefined) p.gen.away=null;
       BKEYS.forEach(k=>{ if(p.b[k]===undefined) p.b[k]=isMulti(k)?new Array(BUILDINGS[k].plots).fill(0):0; });
       // Старые боты создавались до появления личных ников (см. BOT_NICKS) —
       // над их замком в 3D теперь должен висеть ник, не пустая строка.
@@ -5914,6 +6101,7 @@ async function load(){
     thinMapDensity5();
     thinMapDensity6();
     thinMapDensity7();
+    thinMapDensity8();
     migrateInfiniteWorld();
     migrateStructLevels();
     // Старые походы в старом сохранении не несут m.path (маршрут в обход
@@ -6165,16 +6353,36 @@ function renderCartouche(){
     if(!m){ selMarch=null; } // прибыл или был отозван, пока панель была открыта
     else {
       const owner=W.players.find(q=>q.id===m.pid);
-      const mine=owner&&owner.id===me().id;
+      const p=me();
+      const mine=owner&&owner.id===p.id;
       const mcoord="<span class='n' style='font-family:var(--data);font-size:10px;color:var(--vellum-faint)'>"+
         m.tx+" · "+m.ty+"</span>";
-      put("<div class='hd'>"+(owner?shieldSvg(owner.race,14):"")+(owner?owner.nick:"?")+" — отряд "+mcoord+"</div>"+
+      let body="<div class='hd'>"+(owner?shieldSvg(owner.race,14):"")+(owner?owner.nick:"?")+" — отряд "+mcoord+"</div>"+
         "<div class='co'><span>Состояние</span><b>"+(MARCH_STATE_RU[m.state]||m.state)+"</b></div>"+
         "<div class='co'><span>Воинов</span><b>"+RU(countUnits(m.units))+"</b></div>"+
         "<div class='co'><span>Цель</span><b>"+m.tx+" · "+m.ty+"</b></div>"+
         (m.state!=="gather"&&m.state!=="siege"?"<div class='co'><span>Прибытие через</span><b>"+fmtDur(Math.max(0,m.t1-W.t))+"</b></div>":"")+
-        (mine?"<button class='seal wide' style='margin-top:9px' data-act='recall' data-m='"+m.id+"'>Отозвать</button>":
-          "<div class='hint'>Атака отряда в пути не поддерживается — только цели на карте (город/лагерь/точка).</div>"));
+        // Своему отряду видно всегда (это твоё же решение при отправке, см.
+        // openLevy) — чужому только через scoutMarchSnapshot (se>=2), не тут.
+        (mine&&m.hasGen?"<div class='co'><span>Полководец</span><b>с отрядом</b></div>":"");
+      if(mine){
+        body+="<button class='seal wide' style='margin-top:9px' data-act='recall' data-m='"+m.id+"'>Отозвать</button>";
+      } else if(m.state==="gather"||m.state==="siege"){
+        // Разведать чужой отряд можно, только пока он стоит на месте (см.
+        // sendScoutMarch) — движущийся марш лазутчик уже не догонит.
+        const hasScout=(p.b.scout||0)>0;
+        const already=W.marches.some(x=>x.pid===p.id&&x.mode==="scoutmarch"&&x.targetMarchId===m.id);
+        const maxScouts=hasScout?tblRow(SCOUT_TABLE,p.b.scout).scouts:0;
+        const scoutsOut=W.marches.filter(x=>x.pid===p.id&&isScoutMarch(x)).length;
+        const allBusy=hasScout&&scoutsOut>=maxScouts;
+        body += already?"<div class='hint'>Лазутчик уже в пути — донесение придёт письмом.</div>"
+          : !hasScout?"<div class='hint'>Постройте "+buildingName("scout",p).toLowerCase()+", чтобы засылать лазутчиков.</div>"
+          : allBusy?"<div class='hint'>Все лазутчики в пути ("+scoutsOut+"/"+maxScouts+") — дождитесь возвращения.</div>"
+          : "<button class='seal wide' style='margin-top:9px' data-act='sendscoutmarch' data-m='"+m.id+"'>Разведать</button>";
+      } else {
+        body+="<div class='hint'>Атака отряда в пути не поддерживается — только цели на карте (город/лагерь/точка).</div>";
+      }
+      put(body);
       return;
     }
   }
@@ -6247,7 +6455,7 @@ function renderCartouche(){
     // Сколько лазутчиков можно держать в пути разом — та же настоящая
     // цифра RoK, что теперь и правда проверяет sendScout (см. там).
     const maxScouts=hasScout?tblRow(SCOUT_TABLE,p.b.scout).scouts:0;
-    const scoutsOut=W.marches.filter(m=>m.pid===p.id&&m.mode==="scout").length;
+    const scoutsOut=W.marches.filter(m=>m.pid===p.id&&isScoutMarch(m)).length;
     const allBusy=hasScout&&scoutsOut>=maxScouts;
     const shielded=W.t<q.shieldUntil;
     put("<div class='hd'>"+shieldSvg(q.race,14)+q.nick+" "+coord+"</div>"+
@@ -6757,18 +6965,20 @@ function mailAvatarHtml(avatar,race,w){
 function mailRowHtml(m){
   const isBattle=m.kind==="battle";
   const icon = isBattle||m.kind==="barbarian" ? "images/ui/mail-seal.png"
-             : m.kind==="scout" ? "images/ui/icon-world.png"
+             : m.kind==="scout"||m.kind==="scoutmarch" ? "images/ui/icon-world.png"
              : m.kind==="gather" ? "images/ui/icon-march.png"
              : m.cat==="personal" ? "images/ui/icon-gen.png" : "images/ui/icon-world.png";
   const cls = isBattle ? (m.win?"win":"lose") : m.kind==="barbarian" ? "win" : "";
   const title = isBattle ? (m.win?"Победа":"Поражение")
               : m.kind==="barbarian" ? "Лагерь разбит"
               : m.kind==="scout" ? "Разведка"
+              : m.kind==="scoutmarch" ? "Разведка отряда"
               : m.kind==="gather" ? "Сбор ресурсов"
               : m.title;
   const sub = isBattle ? (m.attacker?"Вы атаковали "+m.oppNick:"Вас атаковал "+m.oppNick)
             : m.kind==="barbarian" ? "Лагерь "+m.lv+" ур. · X:"+m.coords.x+" Y:"+m.coords.y
             : m.kind==="scout" ? m.oppNick+" · X:"+m.oppCoords.x+" Y:"+m.oppCoords.y
+            : m.kind==="scoutmarch" ? m.oppNick+" · X:"+m.coords.x+" Y:"+m.coords.y
             : m.kind==="gather" ? resName(m.res)+" "+fmt(m.amount)+" · X:"+m.coords.x+" Y:"+m.coords.y
             : m.body;
   return "<div class='mail-row"+(m.read?" read":"")+"' data-act='mailopen' data-id='"+m.id+"'>"+
@@ -6931,6 +7141,42 @@ function scoutReportHtml(m){
      "К вашему подходу состав обороны может измениться.</div>";
   return h;
 }
+// Разведка отряда в поле — та же лестница ступеней (см. scoutMarchSnapshot),
+// но объект проще: нет запасов/стены/академии, только сам отряд и то, взял
+// ли хозяин с собой полководца. Шапка письма — не портрет города (тут нет
+// города), а сам отряд: чем занят (собирает/осаждает) и что именно, если
+// известно (m.res — только при mode="gather", осада ничего не собирает).
+function scoutMarchReportHtml(m){
+  const iv=m.intel||{}, se=iv.se||0;
+  const NEED=[1,2,3,4,5];
+  const doing = m.marchState==="siege" ? "Осаждает"
+              : m.res ? "Собирает "+resName(m.res).toLowerCase() : "Собирает ресурсы";
+  let h="<div class='mail-vs'><div class='mail-side'>"+mailAvatarHtml(m.oppAvatar,m.oppRace,52)+
+    "<div class='nm'>"+m.oppNick+"</div><div class='co'>X:"+m.coords.x+" Y:"+m.coords.y+"</div>"+
+    "<div class='pw'>"+doing+"</div></div></div>";
+
+  h+="<div class='sc-block'><div class='sc-hd'>Отряд</div>";
+  h+= se>=1 ? scoutRow("Войск всего", RU(iv.total)) : scoutLocked("Численность войск", NEED[0]);
+  if(se>=3 && iv.byType && iv.byType.length){
+    iv.byType.forEach(x=>{
+      const tiers = se>=4 && iv.byTier ? (iv.byTier.find(y=>y.t===x.t)||{}).parts : null;
+      h+=scoutRow(TROOP_TYPES[x.t].name, RU(x.n)+
+        (tiers&&tiers.length?"<em class='sc-tiers'>"+tiers.map(pp=>SCOUT_TIER_LABEL[pp.i-1]+" "+RU(pp.n)).join(" · ")+"</em>":""));
+    });
+  } else if(se>=1){
+    h+=scoutLocked("По родам войск", NEED[2]);
+  }
+  if(se>=1 && se<4) h+=scoutLocked("По тирам", NEED[3]);
+  h+="</div>";
+
+  h+="<div class='sc-block'><div class='sc-hd'>Полководец</div>";
+  h+= se>=2 ? scoutRow("С отрядом", iv.genLv!=null?"да, ур. "+iv.genLv:"нет") : scoutLocked("Полководец", NEED[1]);
+  h+="</div>";
+
+  h+="<div class='sc-note'>Донесение — снимок на момент, когда лазутчик застал отряд на месте. "+
+     "Отряд подвижен: пока вы решаете, что делать, он может уже сняться.</div>";
+  return h;
+}
 function mailDetailHtml(m){
   let h="<div class='mail-back' data-act='mailback'>&#8592; Назад к списку</div>";
   if(m.kind==="battle"){
@@ -6980,6 +7226,8 @@ function mailDetailHtml(m){
        battleLogHtml(m);
   } else if(m.kind==="scout"){
     h+=scoutReportHtml(m);
+  } else if(m.kind==="scoutmarch"){
+    h+=scoutMarchReportHtml(m);
   } else if(m.kind==="gather"){
     h+="<div class='mail-note'>Обоз собрал "+resName(m.res)+": "+fmt(m.amount)+".<br>"+
        "Точка сбора: X:"+m.coords.x+" Y:"+m.coords.y+"</div>";
@@ -7057,7 +7305,7 @@ function foArmy(){
       (B.heal<1?" · нежить поднимает своих втрое дешевле":"")+"</div></div></div>";
   }
 
-  h+=rubric("Отряды в поле",W.marches.filter(m=>m.pid===p.id&&m.mode!=="scout").length+" из "+marchSlots(p.b.hall));
+  h+=rubric("Отряды в поле",W.marches.filter(m=>m.pid===p.id&&!isScoutMarch(m)).length+" из "+marchSlots(p.b.hall));
   const mine=W.marches.filter(m=>m.pid===p.id);
   if(!mine.length) h+=hollow("&#9906;","Все войска дома. Выберите цель на чертеже.");
   mine.forEach(m=>{
@@ -7375,7 +7623,7 @@ function openLevy(cx,cy){
     o={t:"waste",x:cx,y:cy};
   }
   if(o.t==="city"&&o.pid===p.id) return herald("Это ваша столица.");
-  if(W.marches.filter(m=>m.pid===p.id&&m.mode!=="scout").length>=marchSlots(p.b.hall))
+  if(W.marches.filter(m=>m.pid===p.id&&!isScoutMarch(m)).length>=marchSlots(p.b.hall))
     return herald("Свободных отрядов нет. Отзовите марш или поднимите ратушу.");
   if(o.t==="city"){
     const q=W.players.find(z=>z.id===o.pid);
@@ -7383,6 +7631,16 @@ function openLevy(cx,cy){
   }
   const mode = o.t==="node"?"gather":o.t==="waste"?"scout":"attack";
   const capL = marchCapacity(p);
+  // "Взять полководца" — только для боевых походов (attack): в сборе и
+  // разведке он физически ни во что не вступает (враждебные отряды на карте
+  // сейчас нельзя ни атаковать, ни быть атакованным, пока идёт сбор — см.
+  // renderCartoucheFor), так что предлагать чекбокс там — только ловушка
+  // "случайно увёл генерала на сбор", ровно то, от чего просил избавить
+  // пользователь. По умолчанию НЕ взят — ни один поход не должен молча
+  // забирать его, только явный клик (см. genWorld: gen.away).
+  let withGen=false;
+  const genAvail = mode==="attack" && p.gen && p.gen.id!=null;
+  const genBusy = genAvail && p.gen.away!=null;
   const st={};
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++) st[t+i]=0});
   const auto=f=>{ const u=pickArmy(p,f); TKEYS.forEach(t=>{for(let i=1;i<=5;i++) st[t+i]=u[t][i]}) };
@@ -7418,6 +7676,12 @@ function openLevy(cx,cy){
        "<button class='seal' data-a='f50'>Половина</button>"+
        "<button class='seal' data-a='f100'>Всё войско</button>"+
        "<button class='seal' data-a='f0'>Сбросить</button></div>";
+    if(genAvail){
+      h+="<label class='gen-take"+(genBusy?" disabled":"")+"'>"+
+        "<input type='checkbox' data-gen='1' "+(withGen?"checked":"")+(genBusy?" disabled":"")+">"+
+        "<span>Взять полководца в этот поход</span>"+
+        "<em>"+(genBusy?"уже в другом походе":"ур. "+p.gen.lv)+"</em></label>";
+    }
     let any=false;
     TKEYS.forEach(t=>{ for(let i=1;i<=5;i++){
       const have=p.troops[t][i]; if(!have) continue; any=true;
@@ -7460,6 +7724,7 @@ function openLevy(cx,cy){
   paint(); $("#veil").classList.add("open");
 
   box.oninput=e=>{
+    if(e.target.dataset.gen){ withGen=e.target.checked; return paint(); }
     const s=e.target.dataset.s; if(!s) return;
     const t=s.slice(0,3), i=+s.slice(3);
     st[s]=clamp(Math.round(+e.target.value||0),0,p.troops[t][i]);
@@ -7475,7 +7740,7 @@ function openLevy(cx,cy){
     if(a==="f0"){TKEYS.forEach(t=>{for(let i=1;i<=5;i++)st[t+i]=0}); return paint()}
     if(a==="go"){
       const u=emptyUnits(); TKEYS.forEach(t=>{for(let i=1;i<=5;i++)u[t][i]=st[t+i]});
-      const r=sendMarch(p,cx,cy,u,mode);
+      const r=sendMarch(p,cx,cy,u,mode,genAvail&&withGen&&!genBusy);
       if(r.err) return herald(r.err);
       // Раньше тут был tab="army" (сразу показать список отрядов) — но
       // ribbons скрыты в городском режиме (см. CSS-комментарий у #ribbons),
@@ -7750,6 +8015,12 @@ function handleAct(e){
   // теперь отправка настоящего лазутчика, донесение приходит письмом.
   else if(a==="sendscout"){
     const r=sendScout(me(), +b.dataset.x, +b.dataset.y);
+    herald(r.err || ("Лазутчик выслан — вернётся через "+fmtDur(r.eta)+"."));
+    renderCartouche();
+    return;
+  }
+  else if(a==="sendscoutmarch"){
+    const r=sendScoutMarch(me(), +b.dataset.m);
     herald(r.err || ("Лазутчик выслан — вернётся через "+fmtDur(r.eta)+"."));
     renderCartouche();
     return;
