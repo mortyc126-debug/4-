@@ -2128,6 +2128,11 @@ function gearItemStats(cat,order,r){     // r = редкость 1..5
   }
   return order==="bastion" ? {hp:P,def:S,atk:T} : {atk:P,hp:S,def:T};   // акссессуар
 }
+// Было двумя одинаковыми локальными const внутри forgeInfoHtml и
+// genGearHtml — вынес один раз сюда, рядом с gearItemStats, которую он
+// форматирует: третье место (scoutReportHtml, разведка снаряжения) уже не
+// стало поводом заводить третью копию.
+function statTxt(st){ return Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+(st[k]*100).toFixed(1)+"%")).join(", "); }
 function gearPowerOf(p){     // мощь надетого снаряжения
   let v=0; GEAR_SLOTS.forEach(s=>{ const it=p.gear&&p.gear[s.id]; if(it) v+=GEAR_POWER[it.rarity-1]; });
   return v;
@@ -4807,7 +4812,14 @@ function scoutSnapshot(p,q){
     snap.genLv=(q.gen&&q.gen.id!=null)?q.gen.lv:null;
     snap.genTal=(q.gen&&q.gen.id!=null)?talentBranchSpent(q):null;
     snap.gearPower=gearPowerOf(q);
-    snap.gear=GEAR_SLOTS.map(s=>({name:s.name,rarity:(q.gear&&q.gear[s.id])?q.gear[s.id].rarity:0})).filter(g=>g.rarity>0);
+    // stats — то, что ПРЕДМЕТ РЕАЛЬНО ДАЁТ (см. gearItemStats), не только
+    // редкость: пользователь отметил, что мало знать, что надето, нужно
+    // понимать, что именно оно прибавляет, иначе пункт бесполезен для
+    // тактики так же, как раньше было бесполезно просто число очков.
+    snap.gear=GEAR_SLOTS.map(s=>{
+      const it=q.gear&&q.gear[s.id]; if(!it) return null;
+      return {name:s.name, rarity:it.rarity, stats:gearItemStats(s.cat,it.order,it.rarity)};
+    }).filter(Boolean);
     snap.wall=q.b.wall; snap.garrison=q.b.garrison;
   }
   return snap;
@@ -6104,7 +6116,6 @@ function unitThumb(p,t,i){
 }
 let forgeTab=null, forgeRarity=null;
 function forgeInfoHtml(p){
-  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+(st[k]*100).toFixed(1)+"%")).join(", ");
   let h="<div id='bm-tree'>";
   if(p.craft){
     const cf=(W.t-p.craft.t0)/Math.max(1,p.craft.t1-p.craft.t0);
@@ -6476,10 +6487,14 @@ function scoutReportHtml(m){
     }
     // Снаряжение — тоже часть боевой мощи генерала, скрывать его отдельно
     // от таланта было бы непоследовательно (репорт пользователя: "а
-    // снаряжение генерала показывается?").
+    // снаряжение генерала показывается?"). Мало знать, ЧТО надето — нужно
+    // понимать, ЧТО ИМЕННО оно даёт (репорт пользователя), поэтому рядом с
+    // редкостью — те же характеристики предмета, что показывает и
+    // genGearHtml у себя в профиле (см. gearItemStats/statTxt).
     h+=scoutRow("Снаряжение", "мощь "+RU(iv.gearPower)+
       (iv.gear&&iv.gear.length?"<em class='sc-tiers'>"+iv.gear.map(g=>
-        g.name+" <span style='color:"+RARITY_COLOR[g.rarity-1]+"'>"+RARITY_NAMES[g.rarity-1]+"</span>").join(" · ")+"</em>"
+        g.name+" <span style='color:"+RARITY_COLOR[g.rarity-1]+"'>"+RARITY_NAMES[g.rarity-1]+"</span>"+
+        " ("+statTxt(g.stats)+")").join(" · ")+"</em>"
        :""));
     h+="</div><div class='sc-block'><div class='sc-hd'>Город</div>";
     h+=scoutRow("Стена", iv.wall+" ур.");
@@ -6659,7 +6674,6 @@ function genSkillBadges(p){
 }
 const GEAR_LAYOUT = ["handL","helmet","handR","chest","acc1","gloves","pants","acc2","boots"];
 function genGearHtml(p){
-  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+(st[k]*100).toFixed(1)+"%")).join(", ");
   let h=rubric("Экипировка");
   h+="<div class='gear-slots'>";
   GEAR_LAYOUT.forEach(id=>{
