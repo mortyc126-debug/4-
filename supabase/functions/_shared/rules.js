@@ -330,10 +330,40 @@ export const MINE_TABLE = [
   { food: 17800000, wood: 17800000, stone: 24000000, t: 385200, power: 495206 }, { food: 26800000, wood: 26800000, stone: 36000000, t: 612000, power: 735046 },
 ];
 
+// index.html:1335 WATCH_TABLE (Гарнизон) / index.html:1376 SCOUT_TABLE (Разведка)
+export const WATCH_TABLE = [
+  { t: 0, power: 5 }, { food: 800, wood: 800, t: 30, power: 11 }, { food: 1500, wood: 1500, t: 100, power: 21 },
+  { food: 2800, wood: 2800, t: 300, power: 44 }, { food: 5000, wood: 5000, t: 900, power: 100 },
+  { food: 8500, wood: 8500, stone: 1300, t: 2100, power: 221 }, { food: 12800, wood: 12800, stone: 2000, t: 4200, power: 446 },
+  { food: 19300, wood: 19300, stone: 3200, t: 8400, power: 868 }, { food: 29000, wood: 29000, stone: 5200, t: 16800, power: 1671 },
+  { food: 43500, wood: 43500, stone: 8200, t: 33600, power: 3213 }, { food: 67500, wood: 67500, stone: 12500, t: 40320, power: 5133 },
+  { food: 102500, wood: 102500, stone: 20000, t: 48360, power: 7538 }, { food: 155000, wood: 155000, stone: 30000, t: 58080, power: 10570 },
+  { food: 232500, wood: 232500, stone: 45000, t: 69660, power: 14421 }, { food: 350000, wood: 350000, stone: 67500, t: 83580, power: 19367 },
+  { food: 525000, wood: 525000, stone: 102500, t: 100800, power: 25787 }, { food: 787500, wood: 787500, stone: 155000, t: 118800, power: 34217 },
+  { food: 1200000, wood: 1200000, stone: 250000, t: 144000, power: 45545 }, { food: 1800000, wood: 1800000, stone: 375000, t: 172800, power: 60804 },
+  { food: 2700000, wood: 2700000, stone: 575000, t: 208800, power: 81650 }, { food: 4100000, wood: 4100000, stone: 875000, t: 248400, power: 110460 },
+  { food: 6100000, wood: 6100000, stone: 1300000, t: 324000, power: 151716 }, { food: 9100000, wood: 9100000, stone: 2000000, t: 453600, power: 212389 },
+  { food: 13800000, wood: 13800000, stone: 3000000, t: 680400, power: 303649 }, { food: 20800000, wood: 20800000, stone: 4500000, t: 1234800, power: 495562 },
+];
+export const SCOUT_TABLE = [
+  { food: 300, wood: 300, t: 4, power: 5 }, { food: 500, wood: 500, t: 15, power: 10 }, { food: 1000, wood: 1000, t: 60, power: 16 },
+  { food: 2000, wood: 2000, t: 210, power: 32 }, { food: 3800, wood: 3800, t: 850, power: 81 },
+  { food: 6500, wood: 6500, t: 2100, power: 191 }, { food: 9800, wood: 9800, t: 4200, power: 398 },
+  { food: 14800, wood: 14800, t: 7800, power: 769 }, { food: 22300, wood: 22300, t: 10380, power: 1274 },
+  { food: 31300, wood: 31300, t: 14280, power: 1971 }, { food: 42500, wood: 42500, t: 19380, power: 2916 },
+  { food: 52500, wood: 52500, t: 28980, power: 4286 }, { food: 60000, wood: 60000, t: 35760, power: 5956 },
+  { food: 67500, wood: 67500, t: 43560, power: 7969 }, { food: 75000, wood: 75000, t: 52020, power: 10350 },
+  { food: 82500, wood: 82500, t: 62760, power: 13191 }, { food: 92500, wood: 92500, t: 86400, power: 17149 },
+  { food: 102500, wood: 102500, t: 115200, power: 22223 }, { food: 115000, wood: 115000, t: 144000, power: 28423 },
+  { food: 127500, wood: 127500, t: 180000, power: 36109 }, { food: 142500, wood: 142500, t: 234000, power: 46007 },
+  { food: 157500, wood: 157500, t: 288000, power: 58118 }, { food: 250000, wood: 250000, t: 378000, power: 74187 },
+  { food: 500000, wood: 500000, t: 504000, power: 96279 }, { food: 650000, wood: 650000, t: 669600, power: 139023 },
+];
 export const BUILD_BLD_TABLE = {
   barracks: BARRACKS_TABLE, range: BARRACKS_TABLE, stable: BARRACKS_TABLE, siege: SIEGE_TABLE,
   hall: HALL_TABLE, wall: WALL_TABLE, store: STORE_BUILD_TABLE, academy: ACADEMY_BUILD_TABLE,
   hospital: HOSPITAL_BUILD_TABLE, farm: FARM_TABLE, lumber: LUMBER_TABLE, quarry: QUARRY_TABLE, mine: MINE_TABLE,
+  garrison: WATCH_TABLE, scout: SCOUT_TABLE,
 };
 export const BUILD_MAX_LV = 25; // buildingMax(bk) для всех этих зданий — CFG.MAX_LEVEL, см. index.html
 // index.html:2425 BUILDINGS.*.plots — multi-здания среди перенесённых:
