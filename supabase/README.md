@@ -80,10 +80,20 @@ Edge Function:
 
 ### Как применить
 
-1. Задеплоить три функции (Dashboard → Edge Functions → Create, вставить
-   код `functions/mp-join/index.js`, `mp-train/index.js`, `mp-tick/index.js`
-   каждую под своим именем — или `supabase functions deploy mp-join` и т.д.
-   с компьютера, где есть Supabase CLI).
+Эта сессия не может задеплоить функции сама — у неё в принципе нет сетевого
+доступа к `api.supabase.com` (заблокировано политикой окружения, не вопрос
+токена/прав), поэтому единственный путь — руками, через Dashboard, или
+через Supabase CLI с вашего компьютера.
+
+1. Задеплоить три функции — **Dashboard → Edge Functions → Create Function**,
+   имя функции = имя папки (`mp-join`, `mp-train`, `mp-tick`, ровно так, без
+   суффиксов — это часть URL, который уже прописан в миграции 0002). Код —
+   содержимое `functions/mp-join/index.js`, `mp-train/index.js`,
+   `mp-tick/index.js` целиком. Эти файлы самодостаточны (без относительных
+   импортов на `_shared/` — Dashboard-редактор их не подтягивает, формулы
+   вклеены прямо внутрь с пометкой источника). Есть свой Supabase CLI —
+   можно и им (`supabase functions deploy mp-join` и т.д.), тогда относительный
+   импорт из `_shared/` тоже сработает, отдельно ничего готовить не надо.
 2. Project Settings → Edge Functions → Secrets → добавить
    `MP_TICK_SECRET` = случайная строка (например, `openssl rand -hex 20`).
 3. Вставить `migrations/0002_phase2_tick.sql` в SQL Editor, заменить

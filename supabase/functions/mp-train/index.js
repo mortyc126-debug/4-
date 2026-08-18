@@ -13,8 +13,59 @@
 //
 // Тело запроса: { type:"inf"|"arc"|"cav"|"sie", tier:1..5, n:number }
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { CORS_HEADERS, jsonResponse, handleOptions } from "../_shared/cors.js";
-import { TRAIN_BLD, troopCost, trainCap, trainDuration, canPay, pay, RES } from "../_shared/rules.js";
+
+// Вставлено буквально из ../_shared/cors.js и ../_shared/rules.js —
+// Dashboard-редактор Edge Functions не подтягивает относительные импорты на
+// общую папку, поэтому здесь код самодостаточен (копия, а не импорт). При
+// деплое через Supabase CLI можно вернуть импорты как в репозитории.
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+function jsonResponse(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+  });
+}
+function handleOptions(req) {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS_HEADERS });
+  return null;
+}
+
+const RES = ["food", "wood", "stone", "gold"];
+const TROOP_COST_COMBAT = [
+  { food: 10, wood: 10, stone: 0, gold: 0 },
+  { food: 40, wood: 40, stone: 0, gold: 0 },
+  { food: 100, wood: 100, stone: 20, gold: 0 },
+  { food: 200, wood: 200, stone: 150, gold: 0 },
+  { food: 350, wood: 350, stone: 350, gold: 80 },
+];
+const TROOP_COST_SIEGE = [
+  { food: 0, wood: 20, stone: 0, gold: 0 },
+  { food: 0, wood: 50, stone: 30, gold: 0 },
+  { food: 0, wood: 100, stone: 40, gold: 0 },
+  { food: 0, wood: 250, stone: 100, gold: 0 },
+  { food: 0, wood: 400, stone: 300, gold: 80 },
+];
+const troopCost = (type, tier) => (type === "sie" ? TROOP_COST_SIEGE : TROOP_COST_COMBAT)[tier - 1];
+const TRAIN_TIME = [3.6, 7.2, 12, 24, 48];
+const TRAIN_BLD = { inf: "barracks", arc: "range", cav: "stable", sie: "siege" };
+const TRAIN_CAP = [
+  20, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 550, 600, 700, 800,
+  900, 1000, 1100, 1200, 1300, 1400, 1500, 1600, 1700, 2000,
+];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const tblRow = (tbl, lv) => tbl[clamp(Math.round(lv), 1, tbl.length) - 1];
+const trainCap = (lv) => (lv <= 0 ? 0 : tblRow(TRAIN_CAP, lv));
+const canPay = (res, c) => RES.every((r) => !c[r] || res[r] >= c[r]);
+const pay = (res, c) => RES.forEach((r) => { if (c[r]) res[r] -= c[r]; });
+// trainSpeedBonus временно 0 (bonuses(p).trainSpeed ещё не перенесён на
+// сервер — зависит от рас/генералов/академии, см. supabase/README.md).
+function trainDuration(hallLv, type, tier, n, trainSpeedBonus = 0) {
+  return (TRAIN_TIME[tier - 1] * n) / ((1 + hallLv * 0.06) * (1 + trainSpeedBonus));
+}
 
 Deno.serve(async (req) => {
   const pre = handleOptions(req);
