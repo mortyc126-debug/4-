@@ -1321,41 +1321,46 @@ const WATCH_TABLE=[
   {food:13800000,wood:13800000,stone:3000000,t:680400,power:303649,atk:160000,hp:40000},
   {food:20800000,wood:20800000,stone:4500000,t:1234800,power:495562,atk:500000,hp:50000}
 ];
-// SCOUT_TABLE — Лагерь разведки: bonus%/radius/scouts — настоящие цифры
-// RoK (радиус обзора и число разведчиков на карте), но в этой игре
-// разведка устроена иначе — не радиус на карте, а глубина разведданных по
-// эпохе здания (см. scoutSnapshot) — другая механика, которую эта правка
-// не трогает. bonus/radius/scouts показаны как есть в подсказке по зданию,
-// но ни на что не влияют — переносить RoK-механику радиуса обзора значило
-// бы городить систему тумана войны с нуля, отдельный разговор.
+// SCOUT_TABLE — Лагерь разведки: bonus%/scouts — настоящие цифры RoK по
+// уровням здания. Раньше обе колонки были чисто декоративными (подсказка
+// у здания их печатала, но ни на что не влияли — см. старую версию этого
+// комментария), плюс была третья колонка radius (радиус обзора на карте),
+// которую убрали целиком: в этой игре нет тумана войны на карте, чтобы
+// радиус обзора что-то значил, а раз он не нужен — хранить его тут как
+// мёртвые данные незачем. Обе оставшиеся колонки теперь реальная механика:
+// scouts — сколько лазутчиков можно держать в пути одновременно (см.
+// sendScout), bonus — надбавка к их скорости поверх базового
+// SCOUT_SPEED_MULT (тоже sendScout). Глубина самих разведданных — по
+// эпохе технологии "Маскировка" (mil_scout2, см. scoutSnapshot), от этого
+// здания не зависит вовсе — другая механика, эту правку не трогает.
 // 25 ур.: цена/время не подтверждены источником ("?"), оценены по темпу
 // соседних уровней тира.
 const SCOUT_TABLE=[
-  {food:300,wood:300,t:4,power:5,bonus:5,radius:5,scouts:1},
-  {food:500,wood:500,t:15,power:10,bonus:10,radius:5,scouts:1},
-  {food:1000,wood:1000,t:60,power:16,bonus:15,radius:6,scouts:1},
-  {food:2000,wood:2000,t:210,power:32,bonus:20,radius:6,scouts:1},
-  {food:3800,wood:3800,t:850,power:81,bonus:25,radius:7,scouts:2},
-  {food:6500,wood:6500,t:2100,power:191,bonus:30,radius:7,scouts:2},
-  {food:9800,wood:9800,t:4200,power:398,bonus:35,radius:8,scouts:2},
-  {food:14800,wood:14800,t:7800,power:769,bonus:40,radius:8,scouts:2},
-  {food:22300,wood:22300,t:10380,power:1274,bonus:45,radius:9,scouts:2},
-  {food:31300,wood:31300,t:14280,power:1971,bonus:50,radius:9,scouts:2},
-  {food:42500,wood:42500,t:19380,power:2916,bonus:60,radius:10,scouts:3},
-  {food:52500,wood:52500,t:28980,power:4286,bonus:70,radius:10,scouts:3},
-  {food:60000,wood:60000,t:35760,power:5956,bonus:80,radius:11,scouts:3},
-  {food:67500,wood:67500,t:43560,power:7969,bonus:90,radius:12,scouts:3},
-  {food:75000,wood:75000,t:52020,power:10350,bonus:90,radius:13,scouts:3},
-  {food:82500,wood:82500,t:62760,power:13191,bonus:100,radius:13,scouts:3},
-  {food:92500,wood:92500,t:86400,power:17149,bonus:100,radius:14,scouts:3},
-  {food:102500,wood:102500,t:115200,power:22223,bonus:110,radius:14,scouts:3},
-  {food:115000,wood:115000,t:144000,power:28423,bonus:110,radius:15,scouts:3},
-  {food:127500,wood:127500,t:180000,power:36109,bonus:115,radius:15,scouts:3},
-  {food:142500,wood:142500,t:234000,power:46007,bonus:115,radius:16,scouts:3},
-  {food:157500,wood:157500,t:288000,power:58118,bonus:120,radius:16,scouts:3},
-  {food:250000,wood:250000,t:378000,power:74187,bonus:120,radius:17,scouts:3},
-  {food:500000,wood:500000,t:504000,power:96279,bonus:120,radius:18,scouts:3},
-  {food:650000,wood:650000,t:669600,power:139023,bonus:125,radius:20,scouts:3}
+  {food:300,wood:300,t:4,power:5,bonus:5,scouts:1},
+  {food:500,wood:500,t:15,power:10,bonus:10,scouts:1},
+  {food:1000,wood:1000,t:60,power:16,bonus:15,scouts:1},
+  {food:2000,wood:2000,t:210,power:32,bonus:20,scouts:1},
+  {food:3800,wood:3800,t:850,power:81,bonus:25,scouts:2},
+  {food:6500,wood:6500,t:2100,power:191,bonus:30,scouts:2},
+  {food:9800,wood:9800,t:4200,power:398,bonus:35,scouts:2},
+  {food:14800,wood:14800,t:7800,power:769,bonus:40,scouts:2},
+  {food:22300,wood:22300,t:10380,power:1274,bonus:45,scouts:2},
+  {food:31300,wood:31300,t:14280,power:1971,bonus:50,scouts:2},
+  {food:42500,wood:42500,t:19380,power:2916,bonus:60,scouts:3},
+  {food:52500,wood:52500,t:28980,power:4286,bonus:70,scouts:3},
+  {food:60000,wood:60000,t:35760,power:5956,bonus:80,scouts:3},
+  {food:67500,wood:67500,t:43560,power:7969,bonus:90,scouts:3},
+  {food:75000,wood:75000,t:52020,power:10350,bonus:90,scouts:3},
+  {food:82500,wood:82500,t:62760,power:13191,bonus:100,scouts:3},
+  {food:92500,wood:92500,t:86400,power:17149,bonus:100,scouts:3},
+  {food:102500,wood:102500,t:115200,power:22223,bonus:110,scouts:3},
+  {food:115000,wood:115000,t:144000,power:28423,bonus:110,scouts:3},
+  {food:127500,wood:127500,t:180000,power:36109,bonus:115,scouts:3},
+  {food:142500,wood:142500,t:234000,power:46007,bonus:115,scouts:3},
+  {food:157500,wood:157500,t:288000,power:58118,bonus:120,scouts:3},
+  {food:250000,wood:250000,t:378000,power:74187,bonus:120,scouts:3},
+  {food:500000,wood:500000,t:504000,power:96279,bonus:120,scouts:3},
+  {food:650000,wood:650000,t:669600,power:139023,bonus:125,scouts:3}
 ];
 // ИСПРАВЛЕНИЕ: раньше 'мощь' этих зданий (кроме Стены/Башни/Разведки выше)
 // считалась формулой BUILDING_POWER_BASE*exp(K*(ур-1)^2) — она была
@@ -4388,11 +4393,14 @@ function sendMarch(p,tx,ty,units,mode){
    был чит — знать точный состав чужой армии в момент удара нельзя.
    Теперь лазутчик реально идёт к городу и присылает СНИМОК на момент прибытия
    (scoutSnapshot): пока он возвращается, противник успевает и построить, и
-   потратить. Глубина сведений — от уровня Разведки, как и было задумано.
+   потратить. Глубина сведений — от технологии "Маскировка" (см. scoutSnapshot),
+   а не от этого здания — здание отвечает за то, СКОЛЬКО лазутчиков можно
+   держать в пути разом и КАК БЫСТРО они бегают (SCOUT_TABLE.scouts/bonus,
+   те же цифры, что настоящий RoK даёт Лагерю разведки по уровням).
    Слот марша лазутчик не занимает: в RoK разведка тоже не отнимает отряд, да и
    счёт слотов ведётся по W.marches, поэтому scout-походы там просто не считаем
    (см. sendMarch/botThink). Войск с собой не берёт — это один соглядатай. */
-const SCOUT_SPEED_MULT = 2.2;   // налегке и без обоза — заметно быстрее войска
+const SCOUT_SPEED_MULT = 2.2;   // налегке и без обоза — заметно быстрее войска, независимо от уровня здания
 function sendScout(p,tx,ty){
   if((p.b.scout||0)<=0) return {err:"Нужна разведка"};
   const tgt=W.map[key(tx,ty)];
@@ -4400,9 +4408,19 @@ function sendScout(p,tx,ty){
   if(tgt.pid===p.id) return {err:"Это ваш город"};
   if(W.marches.some(m=>m.pid===p.id&&m.mode==="scout"&&m.tx===tx&&m.ty===ty))
     return {err:"Лазутчик уже в пути"};
+  // SCOUT_TABLE.scouts — сколько лазутчиков одновременно (1 на уровнях 1-4,
+  // 2 на 5-10, 3 на 11+ — настоящая раскладка RoK). Раньше разведка вообще
+  // не считала занятость — можно было заслать их сколько угодно разом.
+  const outNow=W.marches.filter(m=>m.pid===p.id&&m.mode==="scout").length;
+  const maxScouts=tblRow(SCOUT_TABLE,p.b.scout).scouts;
+  if(outNow>=maxScouts) return {err:"Все лазутчики уже в пути ("+maxScouts+")"};
   const path=waterPath(p.x,p.y,tx,ty);
   const d=pathLength(path)*(1-portalShortcut(p));
-  const travel=Math.max(15, d/(marchSpeed(p,emptyUnits())*SCOUT_SPEED_MULT)*60);
+  // SCOUT_TABLE.bonus — надбавка скорости от прокачки здания, поверх
+  // базового SCOUT_SPEED_MULT (тот не меняется с уровнем — налегке они и
+  // так быстрее войска; bonus — это уже инвестиция в самих лазутчиков).
+  const speedMult=SCOUT_SPEED_MULT*(1+tblRow(SCOUT_TABLE,p.b.scout).bonus/100);
+  const travel=Math.max(15, d/(marchSpeed(p,emptyUnits())*speedMult)*60);
   const m={id:W.nextId++,pid:p.id,mode:"scout",x0:p.x,y0:p.y,tx,ty,units:emptyUnits(),
     t0:W.t,t1:W.t+travel,state:"go",carry:null,gatherEnd:0};
   setMarchPath(m,path);
@@ -5924,6 +5942,11 @@ function renderCartouche(){
     // по ним нельзя восстановить ни состав, ни тиры войск.
     const scouting=W.marches.some(m=>m.pid===p.id&&m.mode==="scout"&&m.tx===o.x&&m.ty===o.y);
     const hasScout=(p.b.scout||0)>0;
+    // Сколько лазутчиков можно держать в пути разом — та же настоящая
+    // цифра RoK, что теперь и правда проверяет sendScout (см. там).
+    const maxScouts=hasScout?tblRow(SCOUT_TABLE,p.b.scout).scouts:0;
+    const scoutsOut=W.marches.filter(m=>m.pid===p.id&&m.mode==="scout").length;
+    const allBusy=hasScout&&scoutsOut>=maxScouts;
     const shielded=W.t<q.shieldUntil;
     put("<div class='hd'>"+shieldSvg(q.race,14)+q.nick+" "+coord+"</div>"+
       "<div class='co'><span>Город</span><b>"+q.name+"</b></div>"+
@@ -5931,9 +5954,10 @@ function renderCartouche(){
       "<div class='co'><span>Сила</span><b>"+fmt(power(q))+"</b></div>"+
       (shielded?"<div class='co'><span>Статус</span><b style='color:#7ab2e0'>Под щитом мира</b></div>":"")+
       (scouting?"<div class='hint'>Лазутчик в пути — донесение придёт письмом.</div>"
-       :!hasScout?"<div class='hint'>Постройте "+buildingName("scout",p).toLowerCase()+", чтобы засылать лазутчиков.</div>":"")+
+       :!hasScout?"<div class='hint'>Постройте "+buildingName("scout",p).toLowerCase()+", чтобы засылать лазутчиков.</div>"
+       :allBusy?"<div class='hint'>Все лазутчики в пути ("+scoutsOut+"/"+maxScouts+") — дождитесь возвращения.</div>":"")+
       "<div class='chips' style='margin-top:9px'>"+
-        (hasScout&&!scouting?"<button class='seal' data-act='sendscout' data-x='"+o.x+"' data-y='"+o.y+"'>Разведать</button>":"")+
+        (hasScout&&!scouting&&!allBusy?"<button class='seal' data-act='sendscout' data-x='"+o.x+"' data-y='"+o.y+"'>Разведать</button>":"")+
         (shielded?"":"<button class='seal blood' data-act='march' data-x='"+o.x+"' data-y='"+o.y+"'>Атака</button>")+
       "</div>");
   }
@@ -6278,14 +6302,15 @@ function buildingStatDeltaHtml(bk,lv,nx){
     return "<table id='bm-stats'><tr><td>Урон залпа гарнизона</td><td>"+fmt(WATCH_TABLE[lv-1].atk)+" &rarr; "+fmt(WATCH_TABLE[nx-1].atk)+"</td></tr></table>";
   }
   if(bk==="scout"){
-    // bonus/radius/scouts — настоящие цифры RoK, показаны для справки: сама
-    // разведка в этой игре устроена иначе (см. комментарий у SCOUT_TABLE),
-    // эти три числа ни на что в бою/на карте не влияют.
+    // bonus/scouts — настоящие цифры RoK по уровням здания, и оба теперь
+    // реально работают (см. sendScout): scouts — сколько лазутчиков можно
+    // держать в пути одновременно, bonus — надбавка к их скорости. Радиус
+    // обзора (третья колонка у RoK) убран целиком — в этой игре нет тумана
+    // войны на карте, чтобы он что-то значил.
     const c=SCOUT_TABLE[lv-1], n=SCOUT_TABLE[nx-1];
     return "<table id='bm-stats'>"+
-      "<tr><td>Бонус скорости разведки (RoK)</td><td>+"+c.bonus+"% &rarr; +"+n.bonus+"%</td></tr>"+
-      "<tr><td>Радиус обзора (RoK)</td><td>"+c.radius+"&times;"+c.radius+" &rarr; "+n.radius+"&times;"+n.radius+"</td></tr>"+
-      "<tr><td>Разведчиков (RoK)</td><td>"+c.scouts+" &rarr; "+n.scouts+"</td></tr></table>";
+      "<tr><td>Бонус скорости разведки</td><td>+"+c.bonus+"% &rarr; +"+n.bonus+"%</td></tr>"+
+      "<tr><td>Разведчиков одновременно</td><td>"+c.scouts+" &rarr; "+n.scouts+"</td></tr></table>";
   }
   if(BLD_TRAIN[bk]){
     return "<table id='bm-stats'><tr><td>Воинов за один заказ</td><td>"+fmt(trainCap(lv))+" &rarr; "+fmt(trainCap(nx))+"</td></tr></table>";
