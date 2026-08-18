@@ -607,6 +607,17 @@ function bonuses(p, defending = false) {
   }
   GENERALS[p.race][(p.gen && p.gen.id) || 0].apply(b);
   b.march *= 1 + portalMarchBonus((p.b && p.b.portal) || 0);
+  // index.html:3760-3767 TALENTS (war/dev/gath) — Фаза 10, кусочек 3: раньше
+  // p.gen.tal было гарантированно {} (очков взять было неоткуда), теперь
+  // mp-talent (кусочек 2) реально его заполняет — здесь наконец читаем эффект.
+  const T = (p.gen && p.gen.tal) || {};
+  const g = (id) => T[id] || 0;
+  b.atk += g("w1") * .02; b.def += g("w2") * .02; b.hp += g("w3") * .02;
+  b.bandit += g("w4") * .05; b.mercy += g("w5") * .03;
+  b.build *= 1 + g("d1") * .03; b.prodFW += g("d2") * .04; b.prodSG += g("d3") * .04;
+  b.hosp += g("d4") * .05; b.cap += g("d5") * .04;
+  b.load += g("g1") * .04; b.gather += g("g2") * .04; b.march *= 1 + g("g3") * .03;
+  b.gatherFW = g("g4") * .05; b.gatherSG = g("g5") * .05;
   const tech = p.tech || {};
   const multAcc = {};
   [ACADEMY_TREE.eco, ACADEMY_TREE.mil].forEach((arr) => arr.forEach((n) => {
@@ -619,6 +630,32 @@ function bonuses(p, defending = false) {
     });
   }));
   Object.keys(multAcc).forEach((f) => b[f] *= (1 + multAcc[f]));
+  // index.html:3780-3787 GENERAL_TREE (город/армия) — тот же T, что и выше.
+  const GENERAL_TREE_NODES = [
+    { id: "gt_c1", per: .03, kind: "mult", field: "build" },
+    { id: "gt_c2", per: .03, kind: "add", field: "buildCostCut" },
+    { id: "gt_c3", per: .04, kind: "add", field: "trainSpeed" },
+    { id: "gt_c4", per: .03, kind: "add", field: "prodAll" },
+    { id: "gt_c5", per: .03, kind: "add", field: "cap" },
+    { id: "gt_a1", per: .03, kind: "add", field: "genAtkMod" },
+    { id: "gt_a2", per: .03, kind: "add", field: "genDefMod" },
+    { id: "gt_a3", per: .03, kind: "add", field: "genHpMod" },
+    { id: "gt_a4", per: .02, kind: "add", field: "atk" },
+    { id: "gt_a5", per: .02, kind: "add", field: "def" },
+    { id: "gt_a6", per: .02, kind: "add", field: "hp" },
+    { id: "gt_a7", per: .03, kind: "mult", field: "march" },
+    { id: "gt_a8", per: .03, kind: "add", field: "load" },
+    { id: "gt_a9", per: .05, kind: "add", field: "bandit" },
+    { id: "gt_a10", per: .03, kind: "add", field: "mercy" },
+  ];
+  const multAcc2 = {};
+  GENERAL_TREE_NODES.forEach((n) => {
+    const lv = T[n.id] || 0; if (!lv) return;
+    const inc = n.per * lv;
+    if (n.kind === "mult") multAcc2[n.field] = (multAcc2[n.field] || 0) + inc;
+    else b[n.field] = (b[n.field] || 0) + inc;
+  });
+  Object.keys(multAcc2).forEach((f) => b[f] *= (1 + multAcc2[f]));
   return b;
 }
 
@@ -853,10 +890,9 @@ function unitsTotal(units) {
 
 // Фаза 8, кусочек 2 — лагеря варваров. BANDIT_TROOPS/banditTier/banditArmy
 // дословно из index.html:3187-3195 — тот же гарнизон, что и в одиночной
-// игре, для того же уровня лагеря. BANDIT_XP не перенесён: в общем мире
-// нет ни одного источника опыта генерала вообще (Фаза 7 — "5 очков висят
-// неистраченными"), начислять его неоткуда и незачем, честный пробел, а
-// не забывчивость.
+// игре, для того же уровня лагеря. ~~BANDIT_XP не перенесён~~ — закрыто в
+// Фазе 10, кусочек 1 (см. addXp/BANDIT_XP ниже, applyRaidArrive начисляет
+// его победителю).
 const BANDIT_TROOPS = [20000,23000,26000,29000,32000,35000,38000,42000,46000,50000,55000,60000,66000,73000,80000,88000,96000,105000,115000,125000,135000,145000,157000,170000,185000,200000,215000,230000,245000,260000];
 const banditTier = (lv) => (lv <= 5 ? 1 : lv <= 12 ? 2 : lv <= 20 ? 3 : 4);
 // Фаза 10, кусочек 1 — опыт и уровень генерала. Дословно из index.html:
@@ -868,10 +904,10 @@ const banditTier = (lv) => (lv <= 5 ? 1 : lv <= 12 ? 2 : lv <= 20 ? 3 : 4);
 const GEN_XP_NEED=[210,210,276,483,846,1482,2594,4541,7950,7950,7950,7950,8449,10471,12978,16084,19935,24707,30621,30621,33942,40093,47360,55943,66083,78060,92207,108919,128659,128659,142186,163193,187303,214974,246734,283186,323079,370524,424937,424937,478776,540017,609091,687001,774876,873992,985786,1111879,1254102,1660595,1909956,2196763,2526638,2906048,3921926,4612964,5425762,6381774,7506234];
 const genXpNeed = (lv) => GEN_XP_NEED[lv - 1] || GEN_XP_NEED[GEN_XP_NEED.length - 1];
 const BANDIT_XP=[100,120,140,160,180,200,220,240,260,300,330,360,390,420,450,480,510,540,570,600,640,680,720,760,800,840,880,920,960,1000];
-// Только уровень/опыт/очки — САМА трата очков (mp-talent) и эффект уже
-// вложенных талантов в bonuses() — отдельные следующие кусочки (см.
-// supabase/README.md): p.gen.tal остаётся {} до тех пор, добавленные тут
-// очки честно копятся неистраченными, как и стартовые 5 из Фазы 7.
+// ~~Только уровень/опыт/очки~~ — трата очков (mp-talent, Фаза 10 кусочек 2)
+// и эффект вложенных талантов в bonuses() (Фаза 10, кусочек 3, см. bonuses()
+// в этом же файле) закрыты; addXp тут по-прежнему только копит очки в
+// p.gen.pts — трата отдельным действием, addXp её не делает и не обязана.
 function addXp(p, xp) {
   if (!p.gen) p.gen = { lv: 1, xp: 0, pts: 5, tal: {}, id: null, away: null }; // самоисцеление легаси-записей
   p.gen.xp = (p.gen.xp || 0) + xp;

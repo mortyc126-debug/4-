@@ -109,6 +109,14 @@ function bonuses(p) {
   }
   (GENERALS[p.race][(p.gen && p.gen.id) || 0]).apply(b);
   b.march *= 1 + portalMarchBonus((p.b && p.b.portal) || 0);
+  // index.html:3760-3767/3780-3787 TALENTS (g1-g5) и GENERAL_TREE (gt_a7/
+  // gt_a8) — только те узлы, что реально трогают march/gather/load, тот же
+  // принцип сужения, что и у ACADEMY_GATHER_NODES выше. Фаза 10, кусочек 3:
+  // p.gen.tal теперь реально заполняется (mp-talent, кусочек 2).
+  const T = (p.gen && p.gen.tal) || {};
+  const g = (id) => T[id] || 0;
+  b.load += g("g1") * .04; b.gather += g("g2") * .04; b.march *= 1 + g("g3") * .03;
+  b.gatherFW += g("g4") * .05; b.gatherSG += g("g5") * .05;
   const tech = p.tech || {};
   const multAcc = {};
   ACADEMY_GATHER_NODES.forEach((n) => {
@@ -118,6 +126,7 @@ function bonuses(p) {
     else b[n.field] = (b[n.field] || 0) + inc;
   });
   Object.keys(multAcc).forEach((f) => { b[f] = (b[f] === undefined ? 1 : b[f]) * (1 + multAcc[f]); });
+  b.load += g("gt_a8") * .03; b.march *= 1 + g("gt_a7") * .03;
   return b;
 }
 

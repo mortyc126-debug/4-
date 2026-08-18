@@ -621,6 +621,17 @@ function bonuses(p, defending = false) {
   }
   GENERALS[p.race][(p.gen && p.gen.id) || 0].apply(b);
   b.march *= 1 + portalMarchBonus((p.b && p.b.portal) || 0);
+  // index.html:3760-3767 TALENTS (war/dev/gath) — Фаза 10, кусочек 3: раньше
+  // p.gen.tal было гарантированно {} (очков взять было неоткуда), теперь
+  // mp-talent (кусочек 2) реально его заполняет — здесь наконец читаем эффект.
+  const T = (p.gen && p.gen.tal) || {};
+  const g = (id) => T[id] || 0;
+  b.atk += g("w1") * .02; b.def += g("w2") * .02; b.hp += g("w3") * .02;
+  b.bandit += g("w4") * .05; b.mercy += g("w5") * .03;
+  b.build *= 1 + g("d1") * .03; b.prodFW += g("d2") * .04; b.prodSG += g("d3") * .04;
+  b.hosp += g("d4") * .05; b.cap += g("d5") * .04;
+  b.load += g("g1") * .04; b.gather += g("g2") * .04; b.march *= 1 + g("g3") * .03;
+  b.gatherFW = g("g4") * .05; b.gatherSG = g("g5") * .05;
   const tech = p.tech || {};
   const multAcc = {};
   [ACADEMY_TREE.eco, ACADEMY_TREE.mil].forEach((arr) => arr.forEach((n) => {
@@ -633,6 +644,32 @@ function bonuses(p, defending = false) {
     });
   }));
   Object.keys(multAcc).forEach((f) => b[f] *= (1 + multAcc[f]));
+  // index.html:3780-3787 GENERAL_TREE (город/армия) — тот же T, что и выше.
+  const GENERAL_TREE_NODES = [
+    { id: "gt_c1", per: .03, kind: "mult", field: "build" },
+    { id: "gt_c2", per: .03, kind: "add", field: "buildCostCut" },
+    { id: "gt_c3", per: .04, kind: "add", field: "trainSpeed" },
+    { id: "gt_c4", per: .03, kind: "add", field: "prodAll" },
+    { id: "gt_c5", per: .03, kind: "add", field: "cap" },
+    { id: "gt_a1", per: .03, kind: "add", field: "genAtkMod" },
+    { id: "gt_a2", per: .03, kind: "add", field: "genDefMod" },
+    { id: "gt_a3", per: .03, kind: "add", field: "genHpMod" },
+    { id: "gt_a4", per: .02, kind: "add", field: "atk" },
+    { id: "gt_a5", per: .02, kind: "add", field: "def" },
+    { id: "gt_a6", per: .02, kind: "add", field: "hp" },
+    { id: "gt_a7", per: .03, kind: "mult", field: "march" },
+    { id: "gt_a8", per: .03, kind: "add", field: "load" },
+    { id: "gt_a9", per: .05, kind: "add", field: "bandit" },
+    { id: "gt_a10", per: .03, kind: "add", field: "mercy" },
+  ];
+  const multAcc2 = {};
+  GENERAL_TREE_NODES.forEach((n) => {
+    const lv = T[n.id] || 0; if (!lv) return;
+    const inc = n.per * lv;
+    if (n.kind === "mult") multAcc2[n.field] = (multAcc2[n.field] || 0) + inc;
+    else b[n.field] = (b[n.field] || 0) + inc;
+  });
+  Object.keys(multAcc2).forEach((f) => b[f] *= (1 + multAcc2[f]));
   return b;
 }
 

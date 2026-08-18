@@ -10,11 +10,12 @@
 // Честные упрощения:
 // 1. Расстояние — по прямой, как у mp-attack/mp-gather: местность помимо
 //    самих клеток не генерируется.
-// 2. Респаун разгромленного лагеря — НЕ перенесён (см. заголовок
-//    applyRaidArrive в mp-tick) — клетка просто исчезает с карты.
-// 3. Книги опыта генерала (bookDrop) и опыт генерала (BANDIT_XP) — не
-//    перенесены: в общем мире нет ни одного источника опыта генерала
-//    вообще (Фаза 7), начислять неоткуда.
+// 2. ~~Респаун разгромленного лагеря — НЕ перенесён~~ — закрыто в Фазе 8,
+//    кусочек 3 (см. applyCampRespawn в mp-tick).
+// 3. Книги опыта генерала (bookDrop) — не перенесены (в общем мире нет
+//    предметов/инвентаря вообще, Фаза 11). ~~Опыт генерала (BANDIT_XP) —
+//    не перенесён~~ — закрыто в Фазе 10, кусочек 1 (applyRaidArrive
+//    начисляет addXp победителю).
 //
 // Тело запроса: { x: number, y: number, units:{inf:{1:n,...},...} }
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -64,6 +65,12 @@ function marchBonusOnly(p) {
   if (p.race === "dwarf" && ((p.gen && p.gen.id) || 0) === 1) march += 0.10;
   if (p.race === "elf" && ((p.gen && p.gen.id) || 0) === 1) march += 0.05;
   march *= 1 + portalMarchBonus((p.b && p.b.portal) || 0);
+  // index.html:3766/3787 TALENTS.gath.g3 и GENERAL_TREE.army.gt_a7 — оба
+  // march-мультипликаторы (по .03 за очко). Фаза 10, кусочек 3: p.gen.tal
+  // теперь реально заполняется (mp-talent, кусочек 2).
+  const T = (p.gen && p.gen.tal) || {};
+  march *= 1 + (T.g3 || 0) * .03;
+  march *= 1 + (T.gt_a7 || 0) * .03;
   const tech = p.tech || {};
   let mult = 0;
   ACADEMY_MARCH_NODES.forEach((n) => { const lv = tech[n.id] || 0; if (lv) mult += n.total * (lv / n.max); });
