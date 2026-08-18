@@ -2279,6 +2279,22 @@ const GENERAL_TREE = {
     {id:"gt_a10",name:"Милосердие",  per:.03,kind:"add", field:"mercy",    max:5, txt:"Потери убитыми −3% (в лазарет)"},
   ]},
 };
+// Пять веток дерева генерала одним списком — раньше жили только внутри
+// genSkillBadges() (значки в профиле). Тот же разбор нужен и разведке (см.
+// scoutSnapshot/scoutReportHtml): куда именно вложены очки — тактическая
+// информация ("вложился в Армию — жди сильную защиту войск", "ничего в
+// Развитии — экономика слабая"), а не просто число, ни о чём не говорящее
+// само по себе. Один источник данных на оба места, чтобы не разъезжались.
+const TALENT_BRANCHES=[["city",GENERAL_TREE.city],["army",GENERAL_TREE.army],
+  ["war",TALENTS.war],["dev",TALENTS.dev],["gath",TALENTS.gath]];
+function talentBranchSpent(p){
+  const out={};
+  TALENT_BRANCHES.forEach(([key,br])=>{
+    let s=0; br.nodes.forEach(n=>s+=(p.gen.tal[n.id]||0));
+    out[key]=s;
+  });
+  return out;
+}
 
 /* ---- Здания ---- */
 const BUILDINGS = {
@@ -4781,9 +4797,19 @@ function scoutSnapshot(p,q){
   // портрет соперника и так виден в шапке того же письма (m.oppAvatar,
   // см. scouted() и scoutReportHtml), при ЛЮБОЙ ступени разведки: гадать,
   // какой это генерал, лазутчику незачем, его уже видно глазами. То, что
-  // реально не видно снаружи — сила вложения: уровень и потраченные очки
-  // таланта, вот это и стоит ступени 5.
-  if(se>=5){ snap.genLv=(q.gen&&q.gen.id!=null)?q.gen.lv:null; snap.genTal=(q.gen&&q.gen.id!=null)?genTalentSpent(q):null; snap.wall=q.b.wall; snap.garrison=q.b.garrison; }
+  // реально не видно снаружи — сила вложения: уровень, КУДА вложены очки
+  // таланта (не только сколько — пользователь отметил, что просто число
+  // ни для какой тактики не годится, а разбивка по веткам уже говорит:
+  // вложился в Армию — жди сильную защиту войск, пусто в Развитии —
+  // экономика слабая) и надетое снаряжение — тоже часть боевой мощи
+  // генерала, скрывать его отдельно от таланта было бы непоследовательно.
+  if(se>=5){
+    snap.genLv=(q.gen&&q.gen.id!=null)?q.gen.lv:null;
+    snap.genTal=(q.gen&&q.gen.id!=null)?talentBranchSpent(q):null;
+    snap.gearPower=gearPowerOf(q);
+    snap.gear=GEAR_SLOTS.map(s=>({name:s.name,rarity:(q.gear&&q.gear[s.id])?q.gear[s.id].rarity:0})).filter(g=>g.rarity>0);
+    snap.wall=q.b.wall; snap.garrison=q.b.garrison;
+  }
   return snap;
 }
 // Отчёт о штурме города — отдельная запись для КАЖДОЙ человеческой стороны
@@ -6434,17 +6460,34 @@ function scoutReportHtml(m){
   if(se<4) h+=scoutLocked("По тирам", NEED[3]);
   h+="</div>";
 
-  h+="<div class='sc-block'><div class='sc-hd'>Город</div>";
+  h+="<div class='sc-block'><div class='sc-hd'>Полководец</div>";
   if(se>=5){
     // Кто именно полководец — не тайна, портрет уже в шапке письма (см.
     // scoutSnapshot выше): донесение раскрывает то, что глазом не видно —
-    // насколько он прокачан.
-    h+= iv.genLv!=null ? scoutRow("Полководец", "ур. "+iv.genLv+" · очков вложено: "+RU(iv.genTal))
-                        : scoutRow("Полководец", "не выбран");
+    // насколько он прокачан. Не просто число очков, а КУДА они вложены:
+    // разбивка по веткам — тактическая информация (пусто в "Армия" —
+    // слабая защита войск, пусто в "Развитие" — слабая экономика), просто
+    // сумма для этого не годится.
+    if(iv.genLv!=null){
+      h+=scoutRow("Уровень", "ур. "+iv.genLv);
+      h+=scoutRow("Таланты", TALENT_BRANCHES.map(([key,br])=>br.name+" "+(iv.genTal[key]||0)).join(" · "));
+    } else {
+      h+=scoutRow("Полководец", "не выбран");
+    }
+    // Снаряжение — тоже часть боевой мощи генерала, скрывать его отдельно
+    // от таланта было бы непоследовательно (репорт пользователя: "а
+    // снаряжение генерала показывается?").
+    h+=scoutRow("Снаряжение", "мощь "+RU(iv.gearPower)+
+      (iv.gear&&iv.gear.length?"<em class='sc-tiers'>"+iv.gear.map(g=>
+        g.name+" <span style='color:"+RARITY_COLOR[g.rarity-1]+"'>"+RARITY_NAMES[g.rarity-1]+"</span>").join(" · ")+"</em>"
+       :""));
+    h+="</div><div class='sc-block'><div class='sc-hd'>Город</div>";
     h+=scoutRow("Стена", iv.wall+" ур.");
     h+=scoutRow("Гарнизон (башня)", iv.garrison+" ур.");
   } else {
-    h+=scoutLocked("Полководец, стена, башня", NEED[4]);
+    h+=scoutLocked("Уровень, таланты, снаряжение", NEED[4]);
+    h+="</div><div class='sc-block'><div class='sc-hd'>Город</div>";
+    h+=scoutLocked("Стена, башня", NEED[4]);
   }
   h+="</div>";
 
@@ -6609,11 +6652,10 @@ function genFigureHtml(race,i){
     "onerror=\"this.parentElement.style.display='none'\">";
 }
 function genSkillBadges(p){
-  const branches=[["city",GENERAL_TREE.city],["army",GENERAL_TREE.army],["war",TALENTS.war],["dev",TALENTS.dev],["gath",TALENTS.gath]];
-  return "<div class='gen-skills'>"+branches.map(([key,br])=>{
-    let spent=0; br.nodes.forEach(n=>spent+=(p.gen.tal[n.id]||0));
-    return "<span class='gen-skill' title='"+br.name+"'><img src='images/ui/talent-"+key+".png' alt=''><s>"+spent+"</s></span>";
-  }).join("")+"</div>";
+  const spent=talentBranchSpent(p);
+  return "<div class='gen-skills'>"+TALENT_BRANCHES.map(([key,br])=>
+    "<span class='gen-skill' title='"+br.name+"'><img src='images/ui/talent-"+key+".png' alt=''><s>"+spent[key]+"</s></span>"
+  ).join("")+"</div>";
 }
 const GEAR_LAYOUT = ["handL","helmet","handR","chest","acc1","gloves","pants","acc2","boots"];
 function genGearHtml(p){
