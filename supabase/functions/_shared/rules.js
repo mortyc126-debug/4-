@@ -270,19 +270,85 @@ export const HOSPITAL_BUILD_TABLE = [
   { food: 47200000, wood: 47200000, stone: 24000000, t: 0, power: 881480 },
 ];
 
+// index.html:1442/1471/1498/1525 FARM/LUMBER/QUARRY/MINE_TABLE
+export const FARM_TABLE = [
+  { wood: 100, t: 2, power: 5 }, { wood: 200, t: 15, power: 11 }, { wood: 300, t: 60, power: 18 },
+  { wood: 500, t: 90, power: 28 }, { wood: 1000, t: 120, power: 38 },
+  { wood: 1800, stone: 1000, t: 600, power: 68 }, { wood: 2700, stone: 1600, t: 1800, power: 150 },
+  { wood: 4000, stone: 2600, t: 3600, power: 309 }, { wood: 6000, stone: 4200, t: 5400, power: 549 },
+  { wood: 9000, stone: 6600, t: 7200, power: 874 }, { wood: 15000, stone: 10000, t: 10800, power: 1366 },
+  { wood: 22500, stone: 15000, t: 14400, power: 2032 }, { wood: 35000, stone: 22500, t: 22020, power: 3049 },
+  { wood: 52500, stone: 35000, t: 28980, power: 4419 }, { wood: 80000, stone: 52500, t: 36000, power: 6176 },
+  { wood: 120000, stone: 80000, t: 48000, power: 8576 }, { wood: 180000, stone: 120000, t: 64980, power: 11896 },
+  { wood: 275000, stone: 200000, t: 79980, power: 16246 }, { wood: 425000, stone: 300000, t: 100800, power: 21966 },
+  { wood: 650000, stone: 450000, t: 129600, power: 29846 }, { wood: 975000, stone: 675000, t: 158400, power: 40211 },
+  { wood: 1500000, stone: 1000000, t: 208800, power: 54646 }, { wood: 2200000, stone: 1600000, t: 280800, power: 74946 },
+  { wood: 3500000, stone: 2500000, t: 349200, power: 103446 }, { wood: 5200000, stone: 3800000, t: 439200, power: 143196 },
+];
+// Лесопилка — те же числа, что и Ферма, только тратит еду вместо дерева
+// (index.html:1469).
+export const LUMBER_TABLE = [
+  { food: 100, t: 2, power: 5 }, { food: 200, t: 15, power: 11 }, { food: 300, t: 60, power: 18 },
+  { food: 500, t: 90, power: 28 }, { food: 1000, t: 120, power: 38 },
+  { food: 1800, stone: 1000, t: 600, power: 68 }, { food: 2700, stone: 1600, t: 1800, power: 150 },
+  { food: 4000, stone: 2600, t: 3600, power: 309 }, { food: 6000, stone: 4200, t: 5400, power: 549 },
+  { food: 9000, stone: 6600, t: 7200, power: 874 }, { food: 15000, stone: 10000, t: 10800, power: 1366 },
+  { food: 22500, stone: 15000, t: 14400, power: 2032 }, { food: 35000, stone: 22500, t: 22020, power: 3049 },
+  { food: 52500, stone: 35000, t: 28980, power: 4419 }, { food: 80000, stone: 52500, t: 36000, power: 6176 },
+  { food: 120000, stone: 80000, t: 48000, power: 8576 }, { food: 180000, stone: 120000, t: 64980, power: 11896 },
+  { food: 275000, stone: 200000, t: 79980, power: 16246 }, { food: 425000, stone: 300000, t: 100800, power: 21966 },
+  { food: 650000, stone: 450000, t: 129600, power: 29846 }, { food: 975000, stone: 675000, t: 158400, power: 40211 },
+  { food: 1500000, stone: 1000000, t: 208800, power: 54646 }, { food: 2200000, stone: 1600000, t: 280800, power: 74946 },
+  { food: 3500000, stone: 2500000, t: 349200, power: 103446 }, { food: 5200000, stone: 3800000, t: 439200, power: 143196 },
+];
+export const QUARRY_TABLE = [
+  { food: 100, wood: 100, t: 10, power: 5 }, { food: 300, wood: 300, t: 60, power: 10 }, { food: 500, wood: 500, t: 120, power: 16 },
+  { food: 1000, wood: 1000, t: 300, power: 32 }, { food: 2000, wood: 2000, t: 1200, power: 88 },
+  { food: 3500, wood: 3500, t: 2400, power: 198 }, { food: 5300, wood: 5300, t: 4200, power: 387 },
+  { food: 8000, wood: 8000, t: 5220, power: 627 }, { food: 12000, wood: 12000, t: 6480, power: 934 },
+  { food: 18000, wood: 18000, t: 8640, power: 1351 }, { food: 27500, wood: 27500, t: 12960, power: 1979 },
+  { food: 42500, wood: 42500, t: 19440, power: 2926 }, { food: 65000, wood: 65000, t: 24180, power: 4152 },
+  { food: 97500, wood: 97500, t: 29160, power: 5708 }, { food: 147500, wood: 147500, t: 34800, power: 7690 },
+  { food: 222500, wood: 222500, t: 42000, power: 10260 }, { food: 335000, wood: 335000, t: 60000, power: 14000 },
+  { food: 525000, wood: 525000, t: 78000, power: 19220 }, { food: 800000, wood: 800000, t: 97200, power: 26260 },
+  { food: 1200000, wood: 1200000, t: 118800, power: 35860 }, { food: 1800000, wood: 1800000, t: 154800, power: 49300 },
+  { food: 2700000, wood: 2700000, t: 190800, power: 67780 }, { food: 4100000, wood: 4100000, t: 252000, power: 94060 },
+  { food: 6300000, wood: 6300000, t: 334800, power: 132500 }, { food: 9500000, wood: 9500000, t: 540000, power: 192100 },
+];
+export const MINE_TABLE = [
+  { food: 500, wood: 500, t: 10, power: 6 }, { food: 1000, wood: 1000, t: 240, power: 19 }, { food: 2000, wood: 2000, t: 480, power: 46 },
+  { food: 3800, wood: 3800, stone: 2500, t: 800, power: 100 }, { food: 6800, wood: 6800, stone: 5000, t: 1920, power: 219 },
+  { food: 11500, wood: 11500, stone: 12000, t: 2500, power: 401 }, { food: 17300, wood: 17300, stone: 19200, t: 4320, power: 699 },
+  { food: 26000, wood: 26000, stone: 30800, t: 6000, power: 1335 }, { food: 39000, wood: 39000, stone: 49200, t: 7980, power: 1758 },
+  { food: 58500, wood: 58500, stone: 78700, t: 10980, power: 2668 }, { food: 90000, wood: 90000, stone: 120000, t: 14880, power: 3984 },
+  { food: 135000, wood: 135000, stone: 180000, t: 22380, power: 5958 }, { food: 202500, wood: 202500, stone: 270000, t: 27480, power: 8678 },
+  { food: 305000, wood: 305000, stone: 405000, t: 33540, power: 12454 }, { food: 457500, wood: 457500, stone: 607500, t: 40020, power: 17707 },
+  { food: 687500, wood: 687500, stone: 912500, t: 48300, power: 25126 }, { food: 1000000, wood: 1000000, stone: 1400000, t: 69000, power: 36126 },
+  { food: 1600000, wood: 1600000, stone: 2100000, t: 86400, power: 52139 }, { food: 2300000, wood: 2300000, stone: 3100000, t: 111600, power: 75230 },
+  { food: 3500000, wood: 3500000, stone: 4700000, t: 136800, power: 108850 }, { food: 5300000, wood: 5300000, stone: 7100000, t: 180000, power: 158176 },
+  { food: 7900000, wood: 7900000, stone: 10600000, t: 219600, power: 230233 }, { food: 11800000, wood: 11800000, stone: 15900000, t: 291600, power: 336750 },
+  { food: 17800000, wood: 17800000, stone: 24000000, t: 385200, power: 495206 }, { food: 26800000, wood: 26800000, stone: 36000000, t: 612000, power: 735046 },
+];
+
 export const BUILD_BLD_TABLE = {
   barracks: BARRACKS_TABLE, range: BARRACKS_TABLE, stable: BARRACKS_TABLE, siege: SIEGE_TABLE,
   hall: HALL_TABLE, wall: WALL_TABLE, store: STORE_BUILD_TABLE, academy: ACADEMY_BUILD_TABLE,
-  hospital: HOSPITAL_BUILD_TABLE,
+  hospital: HOSPITAL_BUILD_TABLE, farm: FARM_TABLE, lumber: LUMBER_TABLE, quarry: QUARRY_TABLE, mine: MINE_TABLE,
 };
 export const BUILD_MAX_LV = 25; // buildingMax(bk) для всех этих зданий — CFG.MAX_LEVEL, см. index.html
-// index.html:2425 BUILDINGS.hospital.plots — единственное multi-здание среди
-// перенесённых (остальные — barracks/range/stable/siege/hall/wall/store/
-// academy — не multi). Портирован только участок 0 (index плота 0 у
-// isMulti-зданий ВСЕГДА разблокирован — см. plotUnlocked в index.html — и
-// это ровно тот участок, что нужен HALL_REQ ниже); участки 1-3 (доп. вместимость
-// лазарета) — следующий шаг, если понадобится отдельно от разблокировки ратуши.
-export const BUILD_MULTI = new Set(["hospital"]);
+// index.html:2425 BUILDINGS.*.plots — multi-здания среди перенесённых:
+// hospital (лазарет) и farm/lumber/quarry/mine (все 4 экономических).
+// Портирован только участок 0 у каждого (индекс 0 у isMulti-зданий ВСЕГДА
+// разблокирован — см. plotUnlocked в index.html, остальные 3 участка
+// открываются по эпохе — epochOf(hall)>=idx+1 — то есть практически
+// недостижимы, пока ратуша низкого уровня); участки 1-3 — следующий шаг.
+// ВАЖНО: сам приток ресурсов от уровня фермы/лесопилки/каменоломни/шахты
+// (production() в index.html, тикает по реальному времени через resAt) ещё
+// НЕ перенесён — эти 4 здания пока можно строить/улучшать, но добыча
+// ресурсов в общем мире по-прежнему не идёт сама по себе, это отдельный
+// следующий шаг (другой тип механики — непрерывное накопление, а не
+// разовое событие, как постройка/набор).
+export const BUILD_MULTI = new Set(["hospital", "farm", "lumber", "quarry", "mine"]);
 // index.html:2463 HALL_REQ / index.html:2872 hallGateLevel — чтобы поднять
 // ратушу с уровня L на L+1, все 5 зданий должны быть НЕ НИЖЕ текущего L.
 export const HALL_REQ = ["wall", "store", "academy", "barracks", "hospital"];

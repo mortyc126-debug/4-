@@ -44,10 +44,11 @@ function newPlayerState(race) {
   const BKEYS = ["hall", "wall", "farm", "lumber", "quarry", "mine", "academy",
     "store", "barracks", "range", "stable", "siege", "hospital", "scout", "garrison"];
   // Столько же участков, сколько BUILDINGS[k].plots в index.html: farm/
-  // lumber — 4, hospital — тоже 4 (index.html:2425). Раньше hospital сюда
-  // забыт не был включён — заводился скаляром 0 вместо [0,0,0,0], что
-  // ломало mp-build при попытке поднять госпиталь (см. самоисцеление там же).
-  const MULTI = { farm: 4, lumber: 4, hospital: 4 };
+  // lumber/quarry/mine/hospital — все 4 (index.html:2416-2425). Раньше
+  // hospital/quarry/mine сюда забыты не были включены — заводились
+  // скаляром 0 вместо [0,0,0,0], что ломало mp-build при попытке поднять
+  // такое здание (см. самоисцеление в mp-build/mp-tick).
+  const MULTI = { farm: 4, lumber: 4, quarry: 4, mine: 4, hospital: 4 };
   const b = {};
   BKEYS.forEach((k) => { b[k] = MULTI[k] ? new Array(MULTI[k]).fill(0) : 0; });
   b.hall = 1; b.wall = 1; b.farm[0] = 1; b.lumber[0] = 1; b.store = 1;
