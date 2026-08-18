@@ -8484,6 +8484,8 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(scoutBtn){ mpDoScout(+scoutBtn.dataset.id); return; }
   const recallBtn=e.target.closest("[data-mp='recall']");
   if(recallBtn){ mpDoRecall(+recallBtn.dataset.id); return; }
+  const shieldBtn=e.target.closest("[data-mp='shield']");
+  if(shieldBtn){ mpDoShield(+shieldBtn.dataset.i); return; }
 });
 
 // Двойной тап по чужой клетке в 3D сразу открывал лист похода (openLevy) —
@@ -8867,6 +8869,13 @@ async function mpDoRecall(marchId){
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
+// Фаза 4, десятый кусочек — щит мира (mp-shield).
+async function mpDoShield(tier){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-shield",{tier}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
 // Фаза 4, второй кусочек — собственные марши (RLS marches_select_all из
 // миграции 0001 уже разрешает читать их напрямую, как и mail/players).
 async function mpRefreshMarches(){
@@ -8936,6 +8945,22 @@ function foMultiplayer(){
   h+="<div class='entry hot'><div class='line'><div class='fill'>"+
      "<div class='title'>"+(p.nick||"Безымянный лорд")+" · "+RACES[p.race].name+"</div>"+
      "<div class='note'>Координаты в общем мире: "+p.x+", "+p.y+"</div></div></div></div>";
+
+  // Фаза 4, десятый кусочек — щит мира (mp-shield). Три дня новичку уже
+  // ставятся при первом входе (mp-join), тут можно продлить/поставить
+  // заново. CFG.SHIELD_COST — та же таблица, что и в одиночной игре
+  // (index.html:1725), чистые числа без единой bonuses()-зависимости,
+  // безопасно использовать напрямую, в отличие от prod/train-формул выше.
+  {
+    const now=Date.now()/1000, shieldLeft=Math.max(0,(p.shield_until||0)-now);
+    h+=rubric("Щит мира","защита от набегов");
+    h+="<div class='entry"+(shieldLeft>0?" hot":" war")+"'><div class='line'><div class='fill'>"+
+       "<div class='title'>"+(shieldLeft>0?"Держится ещё "+fmtDur(shieldLeft):"Не поставлен — город открыт для набегов")+"</div>";
+    CFG.SHIELD_COST.forEach((s,i)=>{
+      h+="<button class='seal' data-mp='shield' data-i='"+i+"'"+(mpState.loading?" disabled":"")+">+"+fmtDur(s[0])+" за "+RU(s[1])+" золота</button> ";
+    });
+    h+="</div></div></div>";
+  }
 
   if(mpState.incoming.length){
     h+=rubric("Входящие атаки","тревога");

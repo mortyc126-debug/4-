@@ -13,6 +13,19 @@
 // index.html: RES
 export const RES = ["food", "wood", "stone", "gold"];
 
+// index.html:1725 CFG.SHIELD_COST — [длительность в секундах, цена в
+// золоте]. Единственная простая денежная кнопка среди перенесённых — не
+// зависит от bonuses()/построек/рас вообще, портирована без единой
+// временной заглушки (см. mp-shield, Фаза 4, десятый кусочек).
+export const SHIELD_COST = [
+  [8 * 3600, 1200],
+  [24 * 3600, 3000],
+  [3 * 86400, 7500],
+];
+// index.html:3299 — три дня "щита новичка" при первом входе (me.
+// shieldUntil=3*86400), см. mp-join.
+export const NEWBIE_SHIELD_SEC = 3 * 86400;
+
 // index.html: TROOP_COST_COMBAT / TROOP_COST_SIEGE / troopCost
 export const TROOP_COST_COMBAT = [
   { food: 10, wood: 10, stone: 0, gold: 0 },
