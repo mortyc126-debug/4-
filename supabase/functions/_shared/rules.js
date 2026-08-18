@@ -330,20 +330,24 @@ export const MINE_TABLE = [
   { food: 17800000, wood: 17800000, stone: 24000000, t: 385200, power: 495206 }, { food: 26800000, wood: 26800000, stone: 36000000, t: 612000, power: 735046 },
 ];
 
-// index.html:1335 WATCH_TABLE (Гарнизон) / index.html:1376 SCOUT_TABLE (Разведка)
+// index.html:1335 WATCH_TABLE (Гарнизон) / index.html:1376 SCOUT_TABLE (Разведка).
+// atk — урон разового залпа Сторожевой башни перед общей схваткой (см.
+// garrisonVolley, index.html:4057); hp в игре не подключён отдельно (у
+// гарнизона нет своего пула HP — использует общий wallHp города), но
+// перенесён вместе с остальными полями для точности копии, не используется.
 export const WATCH_TABLE = [
-  { t: 0, power: 5 }, { food: 800, wood: 800, t: 30, power: 11 }, { food: 1500, wood: 1500, t: 100, power: 21 },
-  { food: 2800, wood: 2800, t: 300, power: 44 }, { food: 5000, wood: 5000, t: 900, power: 100 },
-  { food: 8500, wood: 8500, stone: 1300, t: 2100, power: 221 }, { food: 12800, wood: 12800, stone: 2000, t: 4200, power: 446 },
-  { food: 19300, wood: 19300, stone: 3200, t: 8400, power: 868 }, { food: 29000, wood: 29000, stone: 5200, t: 16800, power: 1671 },
-  { food: 43500, wood: 43500, stone: 8200, t: 33600, power: 3213 }, { food: 67500, wood: 67500, stone: 12500, t: 40320, power: 5133 },
-  { food: 102500, wood: 102500, stone: 20000, t: 48360, power: 7538 }, { food: 155000, wood: 155000, stone: 30000, t: 58080, power: 10570 },
-  { food: 232500, wood: 232500, stone: 45000, t: 69660, power: 14421 }, { food: 350000, wood: 350000, stone: 67500, t: 83580, power: 19367 },
-  { food: 525000, wood: 525000, stone: 102500, t: 100800, power: 25787 }, { food: 787500, wood: 787500, stone: 155000, t: 118800, power: 34217 },
-  { food: 1200000, wood: 1200000, stone: 250000, t: 144000, power: 45545 }, { food: 1800000, wood: 1800000, stone: 375000, t: 172800, power: 60804 },
-  { food: 2700000, wood: 2700000, stone: 575000, t: 208800, power: 81650 }, { food: 4100000, wood: 4100000, stone: 875000, t: 248400, power: 110460 },
-  { food: 6100000, wood: 6100000, stone: 1300000, t: 324000, power: 151716 }, { food: 9100000, wood: 9100000, stone: 2000000, t: 453600, power: 212389 },
-  { food: 13800000, wood: 13800000, stone: 3000000, t: 680400, power: 303649 }, { food: 20800000, wood: 20800000, stone: 4500000, t: 1234800, power: 495562 },
+  { t: 0, power: 5, atk: 1000, hp: 1000 }, { food: 800, wood: 800, t: 30, power: 11, atk: 1500, hp: 1500 }, { food: 1500, wood: 1500, t: 100, power: 21, atk: 2000, hp: 2000 },
+  { food: 2800, wood: 2800, t: 300, power: 44, atk: 3000, hp: 3000 }, { food: 5000, wood: 5000, t: 900, power: 100, atk: 4000, hp: 4000 },
+  { food: 8500, wood: 8500, stone: 1300, t: 2100, power: 221, atk: 5000, hp: 5000 }, { food: 12800, wood: 12800, stone: 2000, t: 4200, power: 446, atk: 6000, hp: 6000 },
+  { food: 19300, wood: 19300, stone: 3200, t: 8400, power: 868, atk: 16000, hp: 8000 }, { food: 29000, wood: 29000, stone: 5200, t: 16800, power: 1671, atk: 20000, hp: 10000 },
+  { food: 43500, wood: 43500, stone: 8200, t: 33600, power: 3213, atk: 24000, hp: 12000 }, { food: 67500, wood: 67500, stone: 12500, t: 40320, power: 5133, atk: 28000, hp: 14000 },
+  { food: 102500, wood: 102500, stone: 20000, t: 48360, power: 7538, atk: 32000, hp: 16000 }, { food: 155000, wood: 155000, stone: 30000, t: 58080, power: 10570, atk: 36000, hp: 18000 },
+  { food: 232500, wood: 232500, stone: 45000, t: 69660, power: 14421, atk: 40000, hp: 20000 }, { food: 350000, wood: 350000, stone: 67500, t: 83580, power: 19367, atk: 66000, hp: 22000 },
+  { food: 525000, wood: 525000, stone: 102500, t: 100800, power: 25787, atk: 72000, hp: 24000 }, { food: 787500, wood: 787500, stone: 155000, t: 118800, power: 34217, atk: 78000, hp: 26000 },
+  { food: 1200000, wood: 1200000, stone: 250000, t: 144000, power: 45545, atk: 84000, hp: 28000 }, { food: 1800000, wood: 1800000, stone: 375000, t: 172800, power: 60804, atk: 90000, hp: 30000 },
+  { food: 2700000, wood: 2700000, stone: 575000, t: 208800, power: 81650, atk: 96000, hp: 32000 }, { food: 4100000, wood: 4100000, stone: 875000, t: 248400, power: 110460, atk: 136000, hp: 34000 },
+  { food: 6100000, wood: 6100000, stone: 1300000, t: 324000, power: 151716, atk: 144000, hp: 36000 }, { food: 9100000, wood: 9100000, stone: 2000000, t: 453600, power: 212389, atk: 152000, hp: 38000 },
+  { food: 13800000, wood: 13800000, stone: 3000000, t: 680400, power: 303649, atk: 160000, hp: 40000 }, { food: 20800000, wood: 20800000, stone: 4500000, t: 1234800, power: 495562, atk: 500000, hp: 50000 },
 ];
 export const SCOUT_TABLE = [
   { food: 300, wood: 300, t: 4, power: 5 }, { food: 500, wood: 500, t: 15, power: 10 }, { food: 1000, wood: 1000, t: 60, power: 16 },
@@ -603,6 +607,28 @@ export function applyLosses(units, dmgByType, race) {
   });
   return { units: lost, hpLost };
 }
+// index.html:4057 garrisonVolley — Сторожевая башня защитника один раз бьёт
+// наступающих ДО общей схватки (в index.html — до раундового цикла, вместе
+// с залпом лучников; здесь, раз обмен и так один, просто добавляется к
+// единственному урону по атакующему). Урон делится по родам войск
+// атакующего пропорционально доле в общем HP (без контр-множителя —
+// башня не участник треугольника, бьёт по площади), смягчается защитой
+// атакующего той же /70-формулой. WATCH_TABLE.atk — настоящая атака
+// Сторожевой башни RoK (до 500000 на максимуме), не придуманная lv*900
+// из старой версии клиента (см. комментарий у WATCH_TABLE).
+export function garrisonVolley(defGarrisonLv, attS) {
+  if (defGarrisonLv <= 0) return null;
+  const dmg = tblRow(WATCH_TABLE, defGarrisonLv).atk;
+  const TKEYS = ["inf", "arc", "cav", "sie"];
+  const out = {};
+  TKEYS.forEach((t) => {
+    if (attS[t].n <= 0) { out[t] = 0; return; }
+    const share = dmg * (attS[t].hp / Math.max(1, attS.totalHp));
+    const mitig = 1 + (attS[t].def / Math.max(1, attS[t].n)) / 70;
+    out[t] = share / mitig;
+  });
+  return out;
+}
 // Один обмен ударами: attacker бьёт defender, defender отвечает тем же
 // разом (не в очередь, как в резолвBattle() — тут только один шаг). Все
 // живые войска защитника участвуют — марш-система (кто именно "дошёл")
@@ -610,9 +636,15 @@ export function applyLosses(units, dmgByType, race) {
 // defWallLv — уровень стены защитника (p.b.wall), смягчает урон ТОЛЬКО по
 // защитнику (index.html:4218-4219: defWall=wallMul для dA, но 1 для dD —
 // стена защищает дом, а не марширующих в чужие земли атакующих).
-export function resolvePvp(attUnits, attRace, defUnits, defRace, defWallLv = 0) {
+// defGarrisonLv — уровень Сторожевой башни защитника (p.b.garrison),
+// добавляет разовый залп по атакующему поверх основного обмена (см.
+// garrisonVolley выше) — тоже защищает только оборону, симметрично стене.
+export function resolvePvp(attUnits, attRace, defUnits, defRace, defWallLv = 0, defGarrisonLv = 0) {
+  const TKEYS = ["inf", "arc", "cav", "sie"];
   const attS = sideStats(attUnits, attRace), defS = sideStats(defUnits, defRace);
   const dmgToDef = dmgTo(attS, defS, defWallLv), dmgToAtt = dmgTo(defS, attS);
+  const openG = garrisonVolley(defGarrisonLv, attS);
+  if (openG) TKEYS.forEach((t) => { dmgToAtt[t] = (dmgToAtt[t] || 0) + (openG[t] || 0); });
   const defLoss = applyLosses(defUnits, dmgToDef, defRace);
   const attLoss = applyLosses(attUnits, dmgToAtt, attRace);
   const defHpLeft = Math.max(0, defS.totalHp - defLoss.hpLost);

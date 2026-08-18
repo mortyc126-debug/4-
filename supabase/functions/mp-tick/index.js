@@ -174,6 +174,29 @@ function wallDefBonus(lv) {
   const hp = tableAt(WALL_TABLE, lv, "hp"), hp1 = WALL_TABLE[0].hp, hpMax = WALL_TABLE[WALL_TABLE.length - 1].hp;
   return 0.125 * (hp - hp1) / (hpMax - hp1);
 }
+// index.html:1335 WATCH_TABLE — только колонка atk нужна для garrisonVolley.
+const tblRow = (tbl, lv) => tbl[clamp(Math.round(lv), 1, tbl.length) - 1];
+const WATCH_TABLE = [
+  { atk: 1000 }, { atk: 1500 }, { atk: 2000 }, { atk: 3000 }, { atk: 4000 },
+  { atk: 5000 }, { atk: 6000 }, { atk: 16000 }, { atk: 20000 }, { atk: 24000 },
+  { atk: 28000 }, { atk: 32000 }, { atk: 36000 }, { atk: 40000 }, { atk: 66000 },
+  { atk: 72000 }, { atk: 78000 }, { atk: 84000 }, { atk: 90000 }, { atk: 96000 },
+  { atk: 136000 }, { atk: 144000 }, { atk: 152000 }, { atk: 160000 }, { atk: 500000 },
+];
+// index.html:4057 garrisonVolley — см. подробный комментарий в
+// _shared/rules.js (буквальная копия оттуда).
+function garrisonVolley(defGarrisonLv, attS) {
+  if (defGarrisonLv <= 0) return null;
+  const dmg = tblRow(WATCH_TABLE, defGarrisonLv).atk;
+  const out = {};
+  TKEYS.forEach((t) => {
+    if (attS[t].n <= 0) { out[t] = 0; return; }
+    const share = dmg * (attS[t].hp / Math.max(1, attS.totalHp));
+    const mitig = 1 + (attS[t].def / Math.max(1, attS[t].n)) / 70;
+    out[t] = share / mitig;
+  });
+  return out;
+}
 const COUNTER_UP = 1.5, COUNTER_DOWN = 0.7;
 function counterMult(from, to) {
   const T = TROOP_TYPES[from];
@@ -239,9 +262,11 @@ function applyLosses(units, dmgByType, race) {
   });
   return { units: lost, hpLost };
 }
-function resolvePvp(attUnits, attRace, defUnits, defRace, defWallLv = 0) {
+function resolvePvp(attUnits, attRace, defUnits, defRace, defWallLv = 0, defGarrisonLv = 0) {
   const attS = sideStats(attUnits, attRace), defS = sideStats(defUnits, defRace);
   const dmgToDef = dmgTo(attS, defS, defWallLv), dmgToAtt = dmgTo(defS, attS);
+  const openG = garrisonVolley(defGarrisonLv, attS);
+  if (openG) TKEYS.forEach((t) => { dmgToAtt[t] = (dmgToAtt[t] || 0) + (openG[t] || 0); });
   const defLoss = applyLosses(defUnits, dmgToDef, defRace);
   const attLoss = applyLosses(attUnits, dmgToAtt, attRace);
   const defHpLeft = Math.max(0, defS.totalHp - defLoss.hpLost);
@@ -291,7 +316,8 @@ async function applyMarchArrive(admin, ev) {
   if (defRow && !(defRow.shield_until > nowSec)) {
     const attP = attRow.state, defP = defRow.state;
     const defWallLv = (defP.b && typeof defP.b.wall === "number") ? defP.b.wall : 0;
-    const result = resolvePvp(m.units, attP.race, defP.troops, defP.race, defWallLv);
+    const defGarrisonLv = (defP.b && typeof defP.b.garrison === "number") ? defP.b.garrison : 0;
+    const result = resolvePvp(m.units, attP.race, defP.troops, defP.race, defWallLv, defGarrisonLv);
     defP.troops = unitsSub(defP.troops, result.defLoss);
     survivors = unitsSub(m.units, result.attLoss);
 
