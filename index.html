@@ -8482,6 +8482,8 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(attackBtn){ mpDoAttack(+attackBtn.dataset.id); return; }
   const scoutBtn=e.target.closest("[data-mp='scout']");
   if(scoutBtn){ mpDoScout(+scoutBtn.dataset.id); return; }
+  const recallBtn=e.target.closest("[data-mp='recall']");
+  if(recallBtn){ mpDoRecall(+recallBtn.dataset.id); return; }
 });
 
 // Двойной тап по чужой клетке в 3D сразу открывал лист похода (openLevy) —
@@ -8858,6 +8860,13 @@ async function mpDoScout(defenderId){
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
+// Фаза 4, девятый кусочек — отзыв похода на полпути (mp-recall).
+async function mpDoRecall(marchId){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-recall",{march_id:marchId}); await mpRefreshMarches(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
 // Фаза 4, второй кусочек — собственные марши (RLS marches_select_all из
 // миграции 0001 уже разрешает читать их напрямую, как и mail/players).
 async function mpRefreshMarches(){
@@ -8986,8 +8995,13 @@ function foMultiplayer(){
       const opp=mpState.neighbors.find(n=>n.id===(m.data&&m.data.defender_id));
       h+="<div class='entry'><div class='line'><div class='fill'>"+
          "<div class='title'>"+(going?"Идёт к ":"Возвращается от ")+(opp?opp.nick||"Безымянный лорд":m.tx+", "+m.ty)+"</div>"+
-         "<div class='note'>Осталось: "+fmtDur(left)+"</div>"+
-         "</div></div></div>";
+         "<div class='note'>Осталось: "+fmtDur(left)+"</div>";
+      // Фаза 4, девятый кусочек — отзыв похода на полпути (mp-recall):
+      // разворачивает отряд ОТ ТЕКУЩЕЙ ТОЧКИ, а не мгновенно из дома — чем
+      // дальше он уже прошёл, тем дольше идти назад. Только для ещё идущих
+      // (state:"go") — уже возвращающихся отзывать нечего.
+      if(going) h+="<button class='seal' data-mp='recall' data-id='"+m.id+"'"+(mpState.loading?" disabled":"")+">Отозвать</button>";
+      h+="</div></div></div>";
     });
   }
 
