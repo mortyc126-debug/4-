@@ -8488,6 +8488,8 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(rschTabBtn){ mpState.rschTab=rschTabBtn.dataset.t; mpRerender(); return; }
   const researchBtn=e.target.closest("[data-mp='research']");
   if(researchBtn){ mpDoResearch(researchBtn.dataset.id); return; }
+  const pickgenBtn=e.target.closest("[data-mp='pickgen']");
+  if(pickgenBtn){ mpDoPickGen(+pickgenBtn.dataset.id); return; }
 });
 
 // Двойной тап по чужой клетке в 3D сразу открывал лист похода (openLevy) —
@@ -8879,6 +8881,13 @@ async function mpDoResearch(id){
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
+// Фаза 7 — выбор полководца (mp-pickgen). См. рубрику «Полководец» в foMultiplayer.
+async function mpDoPickGen(id){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-pickgen",{id}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
 // Фаза 4, второй кусочек — собственные марши (RLS marches_select_all из
 // миграции 0001 уже разрешает читать их напрямую, как и mail/players).
 async function mpRefreshMarches(){
@@ -9049,11 +9058,17 @@ function foMultiplayer(){
     });
   }
 
-  // Фаза 4, восьмой кусочек — донесения разведки. se (глубина донесения,
-  // от p.tech.mil_scout2) всегда 0 — исследования ещё не перенесены на
-  // сервер (см. заголовок mp-scout), поэтому донесение честно несёт только
-  // общее число войск цели — ни родов войск, ни тиров, ни запасов, ни
-  // стены, ни полководца: всё это появляется лишь с очками в "Маскировку".
+  // Фаза 4, восьмой кусочек — донесения разведки; глубина по ступеням
+  // подключена в Фазе 6 (продолжение) — se=d.se (сырой уровень
+  // p.tech.mil_scout2 у ОТПРАВИВШЕГО лазутчика на момент прибытия, не
+  // bonuses(p).scoutBonus — та величина к глубине донесения отношения не
+  // имеет, см. заголовок applyScoutArrive в mp-tick). Честно НЕ показано:
+  // прочность стены (wallHp/wallMax, se>=2) — сама механика прочности как
+  // отдельного пула HP ещё не перенесена на сервер, есть только уровень;
+  // полководец/снаряжение (se>=2/5) — генералы не перенесены, оба поля
+  // сервер честно шлёт null/0/[]. Ступени и пороги — те же самые se>=1..5,
+  // что и в scoutSnapshot/scoutReportHtml одиночной игры (index.html:
+  // 5237-5282/7080-7151), просто короче (без блочной вёрстки — тут почта).
   if(mpState.scoutMail.length){
     h+=rubric("Разведка","донесения лазутчиков");
     mpState.scoutMail.forEach(m=>{
@@ -9063,10 +9078,25 @@ function foMultiplayer(){
       if(!d.found){
         h+="<div class='note'>Лазутчик не нашёл цель на месте — она пропала между отправкой и прибытием.</div>";
       } else {
-        h+="<div class='note'>Ратуша "+d.hall+" ур. · войск: "+RU(d.total)+
-           (d.shielded?" · под щитом мира":"")+"</div>"+
-           "<div class='note'>Без очков в «Маскировку» (исследования ещё не перенесены) видно только общее "+
-           "число — не роды войск и не тиры.</div>";
+        const se=d.se||0;
+        h+="<div class='note'>Ратуша "+d.hall+" ур."+(d.shielded?" · под щитом мира":"")+"</div>";
+        if(se>=1){
+          h+="<div class='note'>Войск: "+(se>=3?RU(d.total):"около "+RU(Math.round(d.total/100)*100))+"</div>";
+          if(se>=3 && d.byType && d.byType.length){
+            h+="<div class='note'>"+d.byType.map(x=>{
+              const tiers=se>=4 && d.byTier ? (d.byTier.find(y=>y.t===x.t)||{}).parts : null;
+              return TROOP_TYPES[x.t].name+" "+RU(x.n)+
+                (tiers&&tiers.length?" ("+tiers.map(pp=>SCOUT_TIER_LABEL[pp.i-1]+" "+RU(pp.n)).join(", ")+")":"");
+            }).join(" · ")+"</div>";
+          }
+          h+="<div class='note'>Запасы: "+RES.map(r=>RES_NAME[r]+" "+RU(d.res[r])).join(" · ")+"</div>";
+        } else {
+          h+="<div class='note'>Без очков в «Маскировку» (mil_scout2) видно только ратушу и щит.</div>";
+        }
+        if(se>=2) h+="<div class='note'>Стена: "+d.wall+" ур. · Полководец: "+(d.genLv!=null?"ур. "+d.genLv:"не выбран")+"</div>";
+        if(se>=3) h+="<div class='note'>Академия: "+d.academy+" ур.</div>";
+        if(se>=4) h+="<div class='note'>Гарнизон (башня): "+d.garrison+" ур.</div>";
+        if(se>=5) h+="<div class='note'>Лазарет: "+RU(d.wounded)+" раненых · снаряжение: мощь "+RU(d.gearPower)+"</div>";
       }
       h+="</div></div></div>";
     });
@@ -9195,24 +9225,51 @@ function foMultiplayer(){
     });
   }
 
+  // Фаза 7 — выбор полководца (mp-pickgen), зеркало foGen()'s "Выбор
+  // полководца" (index.html:7414-7426) и клика (index.html:7951-7953).
+  // Честно переиспользует ту же самую глобальную таблицу GENERALS, что и
+  // одиночная игра — один файл, отдельной копии не заводим. Одноразово,
+  // бесплатно, необратимо: как только st.gen.id не null, кнопка выбора
+  // больше не показывается вообще (переиграть нельзя, ровно как в клиенте).
+  // Уровни/опыт/очки таланта генерала (p.gen.lv/xp/pts/tal) НЕ перенесены —
+  // общий мир не начисляет генералу опыт нигде (ни один mp-* эндпоинт не
+  // трогает p.gen.xp), поэтому дальше плоского apply() выбранного генерала
+  // здесь пока нечему появиться; см. supabase/README.md.
+  h+=rubric("Полководец","решение окончательное");
+  if(!st.gen||st.gen.id==null){
+    GENERALS[p.race].forEach((g,i)=>{
+      h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
+        genPortraitHtml(p.race,i)+shieldSvg(p.race,26)+"</div><div class='fill'>"+
+        "<div class='title'>"+g.name+"<span class='tag gilt'>"+g.role+"</span></div>"+
+        "<div class='note'>"+g.flavor+"<span class='gen-stat'>"+g.stat+"</span></div></div></div>"+
+        "<button class='seal' data-mp='pickgen' data-id='"+i+"'"+(mpState.loading?" disabled":"")+">Выбрать</button></div>";
+    });
+  } else {
+    const g=GENERALS[p.race][st.gen.id];
+    h+="<div class='entry'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
+      genPortraitHtml(p.race,st.gen.id)+shieldSvg(p.race,26)+"</div><div class='fill'>"+
+      "<div class='title'>"+g.name+"<span class='tag gilt'>"+g.role+"</span></div>"+
+      "<div class='note'>"+g.flavor+"<span class='gen-stat'>"+g.stat+"</span></div></div></div></div>";
+  }
+
   // Фаза 5, Академия — дерево исследований (ACADEMY_TREE, зеркало
   // startResearch(p,id) из index.html:5848-5863, см. mp-research). Честно
   // переиспользует те же самые глобальные ACADEMY_TREE/researchLocked/
   // lockReason/nodeVisibleFor/findNode/nodeTitle/researchCost/researchTime,
   // что и одиночная игра — это ОДИН И ТОТ ЖЕ файл, отдельной копии не
   // заводим (как buildCost/buildTime/troopCost выше в этой же панели).
-  // pShim2 (в отличие от pShim выше) уже несёт race/b/gen/tech — этого
-  // достаточно nodeVisibleFor/researchLocked/rowGate, но НЕ полноценный
-  // игрок для bonuses(p) — как и everywhere else в общем мире,
-  // bonuses(p).researchSpeed здесь не подключена: researchTime(n,lv)
-  // показывается как есть, без деления, та же честная заглушка, что и на
-  // сервере (см. supabase/README.md). Сами ЭФФЕКТЫ исследований (надбавки
-  // к добыче/бою через bonuses()) тоже не подключены — только сама
-  // механика набора уровней, p.tech заполняется настоящими значениями.
+  // pShim2 несёт race/b/gen/tech — этого достаточно ДЛЯ ВСЕГО, что здесь
+  // нужно, включая настоящий bonuses(pShim2) (Фаза 6): предпросмотр времени
+  // исследования теперь совпадает с тем, что реально спишет сервер
+  // (researchTime(n,lv)/(1+B.researchSpeed), см. mp-research).
   const academyLv=st.b.academy||0;
   if(academyLv>0){
     h+=rubric("Академия","дерево исследований");
-    const pShim2={race:p.race,b:st.b,gen:st.gen||{id:null},tech:st.tech||{}};
+    // portal:0 — см. тот же приём в mpProdPerHour выше (Портал не входит в
+    // постройки общего мира, без явного 0 portalMarchBonus(undefined) внутри
+    // bonuses() уходит в NaN — не влияет на B.researchSpeed, но так чище).
+    const pShim2={race:p.race,b:Object.assign({portal:0},st.b),gen:st.gen||{id:null},tech:st.tech||{}};
+    const rschB=bonuses(pShim2);
     const rsch=st.rsch;
     if(rsch){
       const rn=findNode(rsch.id);
@@ -9237,7 +9294,7 @@ function foMultiplayer(){
       } else if(rsch){
         h+="<div class='note'>Академия уже занята другим исследованием.</div>";
       } else {
-        const nlv=lv+1, c=researchCost(n,nlv), t=researchTime(n,nlv);
+        const nlv=lv+1, c=researchCost(n,nlv), t=researchTime(n,nlv)/(1+rschB.researchSpeed);
         h+="<div class='note'>До "+nlv+" ур.: "+
            (RES.some(r=>c[r])?RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", "):"бесплатно")+
            " · "+fmtDur(t)+"</div>"+

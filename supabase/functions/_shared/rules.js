@@ -494,19 +494,25 @@ export function syncRes(p, nowSec) {
 }
 
 // =============================================================================
-// PvP-бой — Фаза 4. НЕ resolveBattle() из index.html (index.html:4129) —
-// тот раунд за раундом считает погоду, слом дисциплины, урон полководцам,
-// поднятие нежити прямо в бою, контрудар гарнизона и оборону стены; полный
-// перенос — отдельная большая задача (сравнимая по объёму с bonuses()).
-// Здесь — единственный обмен ударами по настоящим базовым характеристикам
-// войск (TROOP_TYPES/TIER_MULT/RACE_TROOP_MOD/COUNTER_UP/COUNTER_DOWN —
-// буквальная копия из index.html:2578-2651, те же числа), без стены, без
-// полководцев, без погоды/раундов/дисциплины/подъёма нежити. Урон по типу
-// защитника считается той же формулой "доля-по-HP + контр-множитель", что
-// и dmgTo() внутри resolveBattle() (index.html:4194-4213), просто один раз,
-// а не в цикле — честно ПРИБЛИЖЕНИЕ, а не точная замена, как и остальные
-// временные заглушки в этом файле (trainSpeed/build/prod-бонусы), только
-// на этот раз — заглушка не одного бонуса, а всего боевого движка целиком.
+// PvP-бой — Фаза 4, продолжено в Фазе 6. НЕ resolveBattle() из index.html
+// (index.html:4129) — тот раунд за раундом считает погоду, слом дисциплины,
+// урон/от полководцев, поднятие нежити прямо в бою, контрудар гарнизона
+// (dwarf defMods "counter") и первый залп лучников без ответа (elf
+// firstStrike); полный перенос — отдельная большая задача, сравнимая по
+// объёму с самой bonuses(). Здесь — единственный обмен ударами по настоящим
+// базовым характеристикам войск (TROOP_TYPES/TIER_MULT/RACE_TROOP_MOD/
+// COUNTER_UP/COUNTER_DOWN — буквальная копия из index.html:2578-2651, те же
+// числа), без раундов/погоды/дисциплины/полководцев/подъёма нежити/
+// гарнизонного контрудара/первого залпа. Стена (уровень + расовый/
+// эпохальный wallBonus) и остальные боевые бонусы (atk/def/matk/mdef/hp по
+// каждому роду войск, archer, дефолтный генерал, дерево исследований) — уже
+// подключены (Фаза 6, sideStats/dmgTo/resolvePvp ниже принимают bonuses(p)).
+// Урон по типу защитника считается той же формулой "доля-по-HP + контр-
+// множитель", что и dmgTo() внутри resolveBattle() (index.html:4194-4213),
+// просто один раз, а не в цикле — честно ПРИБЛИЖЕНИЕ, а не точная замена
+// целого раундового боевого движка (не заглушка одного бонуса, как
+// trainSpeed/build/prod раньше, а сознательное упрощение всей МЕХАНИКИ боя;
+// сами бонусы внутри этого упрощения теперь настоящие, см. выше).
 export const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];
 export const TROOP_TYPES = {
   inf: { atk: 34, def: 46, hp: 44, speed: 1.00, magicAtk: 8, magicDef: 18, beats: "arc", losesTo: "cav" },
@@ -546,22 +552,36 @@ export function counterMult(from, to) {
   return 1;
 }
 // index.html:3974 sideStats — свёрнутые атака/защита/HP по каждому роду
-// войск (сумма по тирам), без бонусов (бонусы p.gen/tal/tech/race-пассивки
-// ещё не перенесены, см. заголовок файла).
-export function sideStats(units, race) {
+// войск (сумма по тирам). Фаза 6, продолжение: раньше бонусы p.gen/tal/
+// tech/race-пассивки были не перенесены — теперь принимает готовый B
+// (bonuses(p) или bonuses(p,true) для защитника) и применяет ровно те же
+// множители, что и index.html:3974-4014 (per-type atkX/defX/matkX/mdefX +
+// общие atk/def/matk/mdef/hp + archer для лучников). НЕ переносит f.broken
+// (слом дисциплины) и f.risen (поднятые скелеты) — оба существуют только
+// внутри раундового resolveBattle(), здесь один обмен без раундов.
+const SIDE_TYPE_ATK = { inf: "atkInf", arc: "atkArc", cav: "atkCav", sie: "atkSie" };
+const SIDE_TYPE_DEF = { inf: "defInf", arc: "defArc", cav: "defCav", sie: "defSie" };
+const SIDE_TYPE_MATK = { inf: "matkInf", arc: "matkArc", cav: "matkCav", sie: "matkSie" };
+const SIDE_TYPE_MDEF = { inf: "mdefInf", arc: "mdefArc", cav: "mdefCav", sie: "mdefSie" };
+export function sideStats(units, race, B) {
   const TKEYS = ["inf", "arc", "cav", "sie"];
   const s = {};
   TKEYS.forEach((t) => {
     let atk = 0, def = 0, matk = 0, mdef = 0, hp = 0, n = 0;
+    const atkMod = 1 + (B[SIDE_TYPE_ATK[t]] || 0), defMod = 1 + (B[SIDE_TYPE_DEF[t]] || 0);
+    const matkMod = 1 + (B[SIDE_TYPE_MATK[t]] || 0), mdefMod = 1 + (B[SIDE_TYPE_MDEF[t]] || 0);
     for (let i = 1; i <= 5; i++) {
       const c = (units[t] && units[t][i]) || 0;
       if (!c) continue;
       const w = TIER_MULT[i - 1];
-      atk += c * TROOP_TYPES[t].atk * w * troopMod(race, t, "atk");
-      def += c * TROOP_TYPES[t].def * w * troopMod(race, t, "def");
-      matk += c * TROOP_TYPES[t].magicAtk * w * troopMod(race, t, "atk");
-      mdef += c * TROOP_TYPES[t].magicDef * w * troopMod(race, t, "def");
-      hp += c * TROOP_TYPES[t].hp * w * troopMod(race, t, "hp");
+      let a = TROOP_TYPES[t].atk * w * troopMod(race, t, "atk") * atkMod;
+      if (t === "arc") a *= 1 + (B.archer || 0);
+      const d = TROOP_TYPES[t].def * w * troopMod(race, t, "def") * defMod;
+      const ma = TROOP_TYPES[t].magicAtk * w * troopMod(race, t, "atk") * matkMod;
+      const md = TROOP_TYPES[t].magicDef * w * troopMod(race, t, "def") * mdefMod;
+      atk += c * a * (1 + B.atk); def += c * d * (1 + B.def);
+      matk += c * ma * (1 + B.matk); mdef += c * md * (1 + B.mdef);
+      hp += c * TROOP_TYPES[t].hp * w * troopMod(race, t, "hp") * (1 + B.hp);
       n += c;
     }
     s[t] = { atk, def, matk, mdef, hp, n };
@@ -573,17 +593,18 @@ export function sideStats(units, race) {
 // index.html:4194 dmgTo(att,attS,defS,defWall,shake) — урон, наносимый attS
 // стороне defS, по родам войск защитника (доля по HP + контр-множитель +
 // смягчение защитой×стеной). defWall — множитель index.html:4142
-// (1+wallDefBonus(lv)*(1+bonus)), где bonus (D.B.wallBonus, из bonuses())
-// временно заглушён нулём, как и все остальные bonuses()-члены в этом
-// файле; defWall умножает ИМЕННО дробь def/70 (мультипликативно внутри
+// (1+wallDefBonus(lv)*(1+bonus)) — Фаза 6: bonus (defB.wallBonus) теперь
+// настоящий, передаётся явным 4-м параметром вместо захардкоженного нуля;
+// defWall умножает ИМЕННО дробь def/70 (мультипликативно внутри
 // mitig=1+x/70*defWall — не всё выражение (1+x)), в точности как в
 // index.html:4208. defWall=1, если стены нет (defWallLv<=0) или для урона
-// по атакующему (у него в бою своя стена не защищает). Без
+// по атакующему (у него в бою своя стена не защищает — resolvePvp зовёт
+// это с defWallLv=0/wallBonus=0 для урона по атакующему). Без
 // CFG.BATTLE_PACE/шейка (это один обмен, не раунд в цикле — масштаб урона
 // другой, скидка на "раунд" тут не нужна).
-export function dmgTo(attS, defS, defWallLv = 0) {
+export function dmgTo(attS, defS, defWallLv = 0, wallBonus = 0) {
   const TKEYS = ["inf", "arc", "cav", "sie"];
-  const defWall = 1 + wallDefBonus(defWallLv) * (1 + 0);
+  const defWall = 1 + wallDefBonus(defWallLv) * (1 + wallBonus);
   const out = {};
   TKEYS.forEach((dt) => {
     if (defS[dt].n <= 0) { out[dt] = 0; return; }
@@ -602,10 +623,13 @@ export function dmgTo(attS, defS, defWallLv = 0) {
 }
 // Переводит урон по HP (dmgTo) в реальные потери юнитов, распределённые по
 // тирам пропорционально их числу внутри рода войск (не по HP — упрощение,
-// точное распределение по тирам resolveBattle() не переносим). Возвращает
-// {units, hpLost} — units той же формы, что p.troops[t], hpLost — суммарный
-// нанесённый урон (нужен только для итоговой сводки).
-export function applyLosses(units, dmgByType, race) {
+// точное распределение по тирам resolveBattle() не переносим). hpBonus —
+// сырой B.hp (та же величина, что sideStats уже подставляла как (1+B.hp) в
+// totalHp) — нужен здесь тоже, иначе hpTotal (знаменатель доли потерь)
+// разойдётся с тем пулом HP, из которого dmgTo() фактически считал урон.
+// Возвращает {units, hpLost} — units той же формы, что p.troops[t], hpLost —
+// суммарный нанесённый урон (нужен только для итоговой сводки).
+export function applyLosses(units, dmgByType, race, hpBonus = 0) {
   const TKEYS = ["inf", "arc", "cav", "sie"];
   const lost = { inf: {}, arc: {}, cav: {}, sie: {} };
   let hpLost = 0;
@@ -613,7 +637,7 @@ export function applyLosses(units, dmgByType, race) {
     const n = TKEYS.includes(t) ? [1, 2, 3, 4, 5].reduce((s, i) => s + ((units[t] && units[t][i]) || 0), 0) : 0;
     if (n <= 0 || !dmgByType[t]) { [1, 2, 3, 4, 5].forEach((i) => lost[t][i] = 0); return; }
     let hpTotal = 0;
-    for (let i = 1; i <= 5; i++) hpTotal += ((units[t][i] || 0)) * TROOP_TYPES[t].hp * TIER_MULT[i - 1] * troopMod(race, t, "hp");
+    for (let i = 1; i <= 5; i++) hpTotal += ((units[t][i] || 0)) * TROOP_TYPES[t].hp * TIER_MULT[i - 1] * troopMod(race, t, "hp") * (1 + hpBonus);
     const dmg = Math.min(dmgByType[t], hpTotal);
     hpLost += dmg;
     const frac = hpTotal > 0 ? dmg / hpTotal : 0;
@@ -656,14 +680,24 @@ export function garrisonVolley(defGarrisonLv, attS) {
 // defGarrisonLv — уровень Сторожевой башни защитника (p.b.garrison),
 // добавляет разовый залп по атакующему поверх основного обмена (см.
 // garrisonVolley выше) — тоже защищает только оборону, симметрично стене.
-export function resolvePvp(attUnits, attRace, defUnits, defRace, defWallLv = 0, defGarrisonLv = 0) {
+//
+// Фаза 6, продолжение — attP/defP теперь ПОЛНЫЕ объекты игрока (race+b+
+// gen+tech), не голые строки расы: нужны для bonuses(attP)/bonuses(defP,
+// true) — defP считается С defending=true (5-я эпоха, defMods — например,
+// дворфский "Несокрушимые"). attB.wallBonus НЕ участвует нигде — у
+// атакующего в чужом походе своей стены нет; тем же принципом объясняется,
+// почему сам урон ПО атакующему (dmgTo(defS,attS)) зовётся с defWallLv=0/
+// wallBonus=0 — там "защитник" внутри dmgTo это атакующая сторона данного
+// обмена, у которой стены дома нет.
+export function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv = 0) {
   const TKEYS = ["inf", "arc", "cav", "sie"];
-  const attS = sideStats(attUnits, attRace), defS = sideStats(defUnits, defRace);
-  const dmgToDef = dmgTo(attS, defS, defWallLv), dmgToAtt = dmgTo(defS, attS);
+  const attB = bonuses(attP), defB = bonuses(defP, true);
+  const attS = sideStats(attUnits, attP.race, attB), defS = sideStats(defUnits, defP.race, defB);
+  const dmgToDef = dmgTo(attS, defS, defWallLv, defB.wallBonus), dmgToAtt = dmgTo(defS, attS);
   const openG = garrisonVolley(defGarrisonLv, attS);
   if (openG) TKEYS.forEach((t) => { dmgToAtt[t] = (dmgToAtt[t] || 0) + (openG[t] || 0); });
-  const defLoss = applyLosses(defUnits, dmgToDef, defRace);
-  const attLoss = applyLosses(attUnits, dmgToAtt, attRace);
+  const defLoss = applyLosses(defUnits, dmgToDef, defP.race, defB.hp);
+  const attLoss = applyLosses(attUnits, dmgToAtt, attP.race, attB.hp);
   const defHpLeft = Math.max(0, defS.totalHp - defLoss.hpLost);
   const attHpLeft = Math.max(0, attS.totalHp - attLoss.hpLost);
   // Победитель: чья сторона выжила целиком при уничтоженной другой, иначе —
@@ -700,7 +734,9 @@ export function totalHospitalCap(p) {
 // чужой город) — гибель насмерть без исключений, той же логике, что
 // index.html:4352-4359; в общем мире это всегда атакующий марш — у
 // защитника всегда обычный режим (лазарет свой, дома). bonuses(p).hosp/
-// mercy временно = 0, та же заглушка везде.
+// mercy — Фаза 6, настоящий подсчёт (index.html:4360 зовёт bonuses(p) БЕЗ
+// defending=true, дословно повторено здесь, а не "исправлено" на true —
+// hospitalSplit в клиенте используется не только для обороны города).
 export const SLIGHT_WOUND_FRAC = 0.12;
 export function hospitalSplit(p, loss, mode) {
   const TKEYS = ["inf", "arc", "cav", "sie"];
@@ -710,7 +746,8 @@ export function hospitalSplit(p, loss, mode) {
     TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) { const n = (loss[t] && loss[t][i]) || 0; deadUnits[t][i] = n; dead += n; } });
     return { dead, hurt: 0, slight: 0, slightUnits: { inf: {}, arc: {}, cav: {}, sie: {} }, deadUnits, hurtUnits: { inf: {}, arc: {}, cav: {}, sie: {} } };
   }
-  const cap = Math.round(totalHospitalCap(p) * (1 + 0));
+  const B = bonuses(p);
+  const cap = Math.round(totalHospitalCap(p) * (1 + B.hosp + B.mercy));
   let inHosp = 0;
   TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) inHosp += (p.wounded && p.wounded[t] && p.wounded[t][i]) || 0; });
   let dead = 0, hurt = 0, slight = 0;
@@ -800,16 +837,14 @@ export function scoutTravelSeconds(dist, scoutLv, marchBonus = 1) {
 // узла, а не как прямой список условий — это дословное поведение клиента,
 // не упрощение с нашей стороны, каким бы неожиданным оно ни казалось.
 //
-// bonuses(p).researchSpeed (влияет на длительность через
-// researchTime(n,lv)/(1+B.researchSpeed), index.html:5859) временно = 0 —
-// та же заглушка, что и everywhere else в этом файле. Сами ЭФФЕКТЫ
-// исследований (n.field/n.effects — надбавки к добыче/бою/etc через
-// bonuses()) в эту Фазу НЕ входят: bonuses() как таковая ещё не перенесена
-// на сервер вообще (см. заголовок файла) — здесь переносится только
-// МЕХАНИКА исследования (набрать очки, продвинуться по дереву), то есть
-// p.tech заполняется настоящими уровнями, но сами бонусы от них в других
-// формулах этого файла (production/dmgTo/marchSpeed/...) пока не
-// подключены — честно заявленный следующий шаг, отдельный от этого.
+// bonuses(p).researchSpeed (влияет на длительность БУДУЩИХ исследований
+// через researchTime(n,lv)/(1+B.researchSpeed), index.html:5859) и сами
+// ЭФФЕКТЫ уже исследованных узлов (n.field/n.effects — надбавки к добыче/
+// бою/etc) — с Фазы 6 оба подключены по-настоящему через bonuses() ниже в
+// этом же файле (см. её собственный заголовок): p.tech заполняется
+// настоящими уровнями (эта Фаза, Фаза 5), а сами бонусы от них применяются
+// в production()/trainDuration/healDuration/buildDuration/dmgTo/sideStats
+// и mp-research'а собственном researchTime()/(1+B.researchSpeed) (Фаза 6).
 //
 // gen-гейтед "венцы" (eco_crown_*/mil_crown_* с полем gen:0|1) видны только
 // игроку с p.gen.id===n.gen (nodeVisibleFor: n.gen!==(p.gen.id||0)) —
@@ -1209,15 +1244,11 @@ export function lockReason(n,p){
 //   2. Расовые эпохальные способности (RACE_EPOCHS, index.html:1767-1832) —
 //      по числу открытых эпох (epochOf(p.b.hall)), плюс defMods 5-й эпохи
 //      ТОЛЬКО при обороне (defending=true).
-//   3. Бонус "генерала по умолчанию" — genOf(p)=GENERALS[p.race][p.gen.id||0]
-//      (index.html:2345): т.к. в общем мире игрок физически не может выбрать
-//      другого генерала (p.gen.id всегда null, mp-join не заводит выбор), это
-//      ВСЕГДА индекс 0 — тот же дефолт, что и у игрока одиночной игры,
-//      который просто ещё не открывал вкладку "Генерал". GENERALS_DEFAULT
-//      ниже — только эти 4 записи (index 0 на расу), не вся таблица GENERALS
-//      (второй генерал каждой расы здесь физически недостижим, выбирать
-//      нечем — переносить его было бы "то, чего ещё нет", см. правило
-//      пользователя из более ранней переписки).
+//   3. Бонус выбранного генерала — genOf(p)=GENERALS[p.race][p.gen.id||0]
+//      (index.html:2345). Фаза 7: выбор генерала подключён по-настоящему
+//      (mp-pickgen) — p.gen.id больше не всегда null, GENERALS ниже несёт
+//      ОБЕ записи на расу (не только index 0), apply() читается по
+//      реальному p.gen.id||0, как в клиенте.
 //   4. portalMarchBonus(p.b.portal) — Портал не входит в постройки общего
 //      мира (нет в BUILD_MP_BLDS/BKEYS этого модуля), поэтому p.b.portal
 //      всегда отсутствует — передаётся 0 явно (portalMarchBonus(0)=0), это
@@ -1236,11 +1267,25 @@ export function lockReason(n,p){
 //     значило бы скопировать код, который на сервере гарантированно не
 //     умеет посчитать ничего, кроме нуля. Поэтому они просто опущены, а не
 //     скопированы ради видимости полноты.
-export const GENERALS_DEFAULT = {
-  human:  { apply: (b) => { b.atk += .15; b.def += .08; } },                 // Король Алдрик
-  dwarf:  { apply: (b) => { b.def += .08; b.wallBonus += .08; } },           // Дорвальд Каменный Трон
-  elf:    { apply: (b) => { b.def += .10; b.archer = 0; } },                 // Ильвен Хрустальный Щит
-  undead: { apply: (b) => { b.def += .10; b.healSpeed = 1; } },              // Владислав фон Морвейн — обнуляет расовую скидку лазарета (см. RACE_EPOCHS.undead[1])
+// index.html:2283-2344 GENERALS — оба генерала на расу (name — только для
+// mp-pickgen'а ответа/сверки, косметика apply не нужна серверу).
+export const GENERALS = {
+  human: [
+    { name: "Король Алдрик", apply: (b) => { b.atk += .15; b.def += .08; } },
+    { name: "Королева Астрид", apply: (b) => { b.prodGold += .15; b.prodAll += .05; } },
+  ],
+  dwarf: [
+    { name: "Дорвальд Каменный Трон", apply: (b) => { b.def += .08; b.wallBonus += .08; } },
+    { name: "Гимрод Быстрая Секира", apply: (b) => { b.march += .10; b.wallBonus = 0; } },
+  ],
+  elf: [
+    { name: "Ильвен Хрустальный Щит", apply: (b) => { b.def += .10; b.archer = 0; } },
+    { name: "Тариэль Вечная", apply: (b) => { b.archer += .15; b.march += .05; } },
+  ],
+  undead: [
+    { name: "Владислав фон Морвейн", apply: (b) => { b.def += .10; b.healSpeed = 1; } }, // обнуляет расовую скидку лазарета (RACE_EPOCHS.undead[1])
+    { name: "Кармилла", apply: (b) => { b.raise += .15; b.mercy += .05; } },
+  ],
 };
 // index.html:1736-1759 RACES[*].minus (без name/color/desc — косметика клиента).
 export const RACES_MINUS = {
@@ -1300,7 +1345,7 @@ export function bonuses(p, defending = false) {
   };
   const mn = RACES_MINUS[p.race];
   if (mn.kind === "mult") b[mn.field] *= mn.value; else b[mn.field] = (b[mn.field] || 0) + mn.value;
-  const epoch = epochOf(p.b.hall), track = RACE_EPOCHS[p.race];
+  const epoch = epochOf(p.b && p.b.hall), track = RACE_EPOCHS[p.race];
   for (let i = 0; i < epoch; i++) {
     (track[i].mods || []).forEach((m) => {
       if (m.kind === "mult") b[m.field] *= m.value; else b[m.field] = m.value;
@@ -1311,8 +1356,8 @@ export function bonuses(p, defending = false) {
       if (m.kind === "abs") b[m.field] = m.value; else b[m.field] = (b[m.field] || 0) + m.value;
     });
   }
-  GENERALS_DEFAULT[p.race].apply(b);
-  b.march *= 1 + portalMarchBonus(p.b.portal || 0);
+  GENERALS[p.race][(p.gen && p.gen.id) || 0].apply(b);
+  b.march *= 1 + portalMarchBonus((p.b && p.b.portal) || 0);
   const tech = p.tech || {};
   const multAcc = {};
   [ACADEMY_TREE.eco, ACADEMY_TREE.mil].forEach((arr) => arr.forEach((n) => {
