@@ -80,6 +80,7 @@ Deno.serve(async (req) => {
         else if (ev.type === "heal") await applyHeal(admin, ev);
         else if (ev.type === "scout_arrive") await applyScoutArrive(admin, ev);
         else if (ev.type === "research") await applyResearch(admin, ev);
+        else if (ev.type === "gathered") await applyGathered(admin, ev);
         // else: неизвестный/ещё не перенесённый тип — оставляем как есть,
         // не помечаем processed, чтобы не потерять событие молча; заберётся
         // следующим тиком после того, как для него появится case.
@@ -284,6 +285,7 @@ async function applyBuild(admin, ev) {
 // разбор в _shared/rules.js и в заголовке mp-attack) — буквальная копия
 // оттуда, самодостаточная копия (см. пояснение о Dashboard-редакторе выше).
 const TKEYS = ["inf", "arc", "cav", "sie"];
+const RES = ["food", "wood", "stone", "gold"]; // Фаза 8, кусочек 1 — applyMarchHome зачисляет добычу сбора
 const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];
 const TROOP_TYPES = {
   inf: { atk: 34, def: 46, hp: 44, speed: 1.00, magicAtk: 8, magicDef: 18, beats: "arc", losesTo: "cav" },
@@ -819,6 +821,14 @@ async function applyMarchArrive(admin, ev) {
   if (mErr) throw mErr;
   if (!m || m.state !== "go") return; // уже разобрано/отменено
 
+  // Фаза 8, кусочек 1 — марш на сбор ресурсов: отряд дошёл до точки, но
+  // это не бой (нет defender_id) — начинается отдельный отсчёт сбора,
+  // см. applyGatherStart/applyGathered ниже. Ветка целиком отдельная от
+  // боевой логики (которая ниже подряд читает defenderId/defRow) — иначе
+  // gather-марш прошёл бы через неё как "бой без защитника" и вернулся бы
+  // домой пустым, ничего не собрав.
+  if (m.mode === "gather") { await applyGatherStart(admin, m); return; }
+
   const { data: attRow, error: aErr } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
   if (aErr) throw aErr;
   if (!attRow) { await admin.from("marches").delete().eq("id", m.id); return; } // хозяина нет — некому возвращать
@@ -902,8 +912,59 @@ async function applyMarchHome(admin, ev) {
   if (row) {
     const p = row.state;
     p.troops = unitsAdd(p.troops, m.units);
+    // Фаза 8, кусочек 1 — зеркало gain(p,m.carry) из EV.home (index.html:
+    // 4959-4964). Только gather-марши несут m.data.carry (см. applyGathered
+    // ниже) — у атакующих маршей этого поля никогда не было и не будет,
+    // для них ничего не меняется.
+    if (m.data && m.data.carry) {
+      RES.forEach((r) => { if (m.data.carry[r]) p.res[r] = (p.res[r] || 0) + m.data.carry[r]; });
+    }
     const { error: updErr } = await admin.from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
     if (updErr) throw updErr;
   }
   await admin.from("marches").delete().eq("id", m.id);
+}
+
+// Фаза 8, кусочек 1 — отряд дошёл до точки сбора: начинается отдельный
+// отсчёт сбора (gather_secs посчитан заранее в mp-gather, на отправке —
+// зависит от бонусов игрока на тот момент, тот же принцип "снимок при
+// отправке", что и у dist/spd для дороги). Зеркало перехода
+// m.state="gather" в arriveMarch (index.html:5030-5031).
+async function applyGatherStart(admin, m) {
+  const nowSec = Date.now() / 1000;
+  const gatherSecs = Math.max(0, (m.data && m.data.gather_secs) || 0);
+  const { error: updM } = await admin.from("marches")
+    .update({ state: "gather", t0: nowSec, t1: nowSec + gatherSecs }).eq("id", m.id);
+  if (updM) throw updM;
+  const { error: evErr } = await admin.from("events").insert({
+    world_id: m.world_id, fire_at: new Date((nowSec + gatherSecs) * 1000).toISOString(),
+    type: "gathered", data: { march_id: m.id },
+  });
+  if (evErr) throw evErr;
+}
+
+// Фаза 8, кусочек 1 — сбор закончен: отряд разворачивается домой с
+// добычей (m.data.take/res, посчитаны в mp-gather — количество уже
+// списано с точки авансом при отправке, здесь пересчитывать нечего).
+// Зеркало EV.gathered (index.html:4970-4977) — без переноса respawn
+// истощённой точки (см. заголовок mp-gather, честное упрощение №3).
+async function applyGathered(admin, ev) {
+  const marchId = ev.data && ev.data.march_id;
+  if (marchId == null) return;
+  const { data: m, error: mErr } = await admin.from("marches").select("*").eq("id", marchId).maybeSingle();
+  if (mErr) throw mErr;
+  if (!m || m.state !== "gather") return; // уже разобрано/отозвано
+
+  const nowSec = Date.now() / 1000;
+  const dist = (m.data && m.data.dist) || 0, spd = (m.data && m.data.spd) || 1;
+  const travelBack = Math.max(15, (dist / spd) * 60);
+  const carry = {}; if (m.data && m.data.res) carry[m.data.res] = m.data.take || 0;
+  const { error: updM } = await admin.from("marches")
+    .update({ state: "back", t0: nowSec, t1: nowSec + travelBack, data: { ...m.data, carry } }).eq("id", m.id);
+  if (updM) throw updM;
+  const { error: evErr } = await admin.from("events").insert({
+    world_id: m.world_id, fire_at: new Date((nowSec + travelBack) * 1000).toISOString(),
+    type: "march_home", data: { march_id: m.id },
+  });
+  if (evErr) throw evErr;
 }

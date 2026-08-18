@@ -8480,6 +8480,12 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(attackCancelBtn){ mpState.attackTarget=null; mpRerender(); return; }
   const attackBtn=e.target.closest("[data-mp='attack']");
   if(attackBtn){ mpDoAttack(+attackBtn.dataset.id); return; }
+  const gatherPickBtn=e.target.closest("[data-mp='gatherpick']");
+  if(gatherPickBtn){ mpState.gatherTarget=gatherPickBtn.dataset.k; mpRerender(); return; }
+  const gatherCancelBtn=e.target.closest("[data-mp='gathercancel']");
+  if(gatherCancelBtn){ mpState.gatherTarget=null; mpRerender(); return; }
+  const gatherBtn=e.target.closest("[data-mp='gather']");
+  if(gatherBtn){ mpDoGather(+gatherBtn.dataset.x, +gatherBtn.dataset.y); return; }
   const scoutBtn=e.target.closest("[data-mp='scout']");
   if(scoutBtn){ mpDoScout(+scoutBtn.dataset.id); return; }
   const recallBtn=e.target.closest("[data-mp='recall']");
@@ -8714,7 +8720,7 @@ async function claimChronicle(){
    восполняются со временem — серверное производство ещё не перенесено,
    стартовых 100000 хватает на несколько заказов набора для проверки.
    ========================================================================= */
-let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco" };
+let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null };
 let mpPollTimer = null;
 // Все 15 зданий (кроме Горна — max:1, без реальной механики крафта в общем
 // мире) перенесены на сервер (mp-build): 4 разблокируют mp-train (barracks/
@@ -8763,7 +8769,7 @@ function mpRerender(){
 }
 function mpStartPolling(){ mpStopPolling(); mpPollTimer=setInterval(mpPollTick,5000); }
 function mpStopPolling(){ if(mpPollTimer){ clearInterval(mpPollTimer); mpPollTimer=null; } }
-async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); }
+async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); }
 async function mpRefreshPlayer(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("players").select("*").eq("id",mpState.player.id).maybeSingle();
@@ -8805,7 +8811,7 @@ async function mpOpen(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{});
-    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail();
+    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes();
   }catch(e){ mpState.joined=false; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -8814,7 +8820,7 @@ async function mpDoJoin(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{race:mpState.race,nick:mpState.nick||""});
-    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail();
+    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes();
   }catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -8858,6 +8864,18 @@ async function mpDoAttack(defenderId){
   }catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
+// Фаза 8, кусочек 1 — отправка отряда собирать ресурсы (mp-gather).
+async function mpDoGather(x,y){
+  const units={};
+  TKEYS.forEach(t=>{ const inp=$("#mp-gth-"+t); units[t]={1:Math.max(0,Math.round(+((inp&&inp.value)||0)))}; });
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{
+    await mpCall("mp-gather",{x,y,units});
+    mpState.gatherTarget=null;
+    await mpRefreshPlayer(); await mpRefreshMarches(); await mpRefreshNodes();
+  }catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
 // Фаза 4, восьмой кусочек — разведка (mp-scout): один клик, без формы —
 // лазутчик один и без войск, выбирать нечего.
 async function mpDoScout(defenderId){
@@ -8890,11 +8908,26 @@ async function mpDoPickGen(id){
 }
 // Фаза 4, второй кусочек — собственные марши (RLS marches_select_all из
 // миграции 0001 уже разрешает читать их напрямую, как и mail/players).
+// Фаза 8, кусочек 1: mode теперь ещё и "gather" — та же общая "Отряды в
+// поле", что и в клиенте одиночной игры (renderFieldArmy не отличает
+// сбор от похода, кроме подписи состояния).
 async function mpRefreshMarches(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("marches").select("*")
-    .eq("player_id",mpState.player.id).eq("mode","attack").order("t1");
+    .eq("player_id",mpState.player.id).in("mode",["attack","gather"]).order("t1");
   if(!error && data){ mpState.marches=data; mpRerender(); }
+}
+// Фаза 8, кусочек 1 — точки сбора рядом (map_cells, t:"node"). RLS
+// map_cells_select_all из миграции 0001 уже разрешает читать всю карту
+// напрямую — свежий Edge Function для СПИСКА не нужен, только для самого
+// действия сбора (mp-gather). Простая близость по прямой, без чанков —
+// пока узлов на игрока немного (NODE_SEED_COUNT=5 на новичка), полный
+// перебор map_cells мира не проблема.
+async function mpRefreshNodes(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("map_cells").select("x,y,data")
+    .eq("world_id",mpState.player.world_id).eq("t","node").limit(400);
+  if(!error && data){ mpState.nodes=data; mpRerender(); }
 }
 // Входящие атаки — раньше защитник вообще не мог узнать, что на него идёт
 // поход, пока бой не разрешится сам (см. историю коммитов). data->>defender_id
@@ -9016,20 +9049,65 @@ function foMultiplayer(){
     });
   }
 
+  // Фаза 8, кусочек 1 — точки сбора ресурсов (map_cells, t:"node"), см.
+  // mpRefreshNodes/mpDoGather выше. Кольцо в 5 узлов появляется вокруг
+  // города при первом входе (seedNodesAround в mp-join) — respawn
+  // истощённых точек ещё не перенесён (см. заголовок mp-gather), поэтому
+  // список может со временем оскудевать, честно как есть.
+  h+=rubric("Точки сбора","общий мир");
+  if(!mpState.nodes.length){
+    h+="<div class='entry'><div class='line'><div class='fill'><div class='note'>"+
+       "Рядом с городом появляется несколько точек сбора при первом входе — если пусто, обновите вкладку.</div></div></div></div>";
+  } else {
+    const sortedNodes=[...mpState.nodes].sort((a,b)=>Math.hypot(a.x-p.x,a.y-p.y)-Math.hypot(b.x-p.x,b.y-p.y));
+    sortedNodes.forEach(n=>{
+      const dist=Math.round(Math.hypot(n.x-p.x,n.y-p.y));
+      const key=n.x+","+n.y;
+      const amount=(n.data&&n.data.amount)||0, res=(n.data&&n.data.res)||"food", lv=(n.data&&n.data.lv)||1;
+      h+="<div class='entry'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+RES_NAME[res]+", жила "+lv+" ур.</div>"+
+         "<div class='note'>"+n.x+", "+n.y+" · "+dist+" клет. · осталось "+fmt(amount)+"</div>";
+      if(mpState.gatherTarget===key){
+        if(amount<=0){
+          h+="<div class='note'>Точка истощена.</div></div>"+
+             "<button class='seal' data-mp='gathercancel'>Назад</button>";
+        } else {
+          h+="</div>";
+          TKEYS.forEach(t=>{
+            const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
+            h+="<div class='note'>"+unitName(t,1,p.race)+" (T1, есть "+RU(have)+"): "+
+               "<input id='mp-gth-"+t+"' type='number' min='0' max='"+have+"' value='0'></div>";
+          });
+          h+="<button class='seal' data-mp='gather' data-x='"+n.x+"' data-y='"+n.y+"'"+(mpState.loading?" disabled":"")+">Собрать</button> "+
+             "<button class='seal' data-mp='gathercancel'>Отмена</button>";
+        }
+      } else {
+        h+="</div><button class='seal' data-mp='gatherpick' data-k='"+key+"'"+(amount<=0?" disabled":"")+">Собрать</button>";
+      }
+      h+="</div></div>";
+    });
+  }
+
   if(mpState.marches.length){
     h+=rubric("Отряды в поле",mpState.marches.length+" из "+mpMarchSlots(st.b.hall||0));
     mpState.marches.forEach(m=>{
       const left=Math.max(0,m.t1-Date.now()/1000);
-      const going=m.state==="go";
+      const going=m.state==="go", gathering=m.state==="gather", isGather=m.mode==="gather";
       const opp=mpState.neighbors.find(n=>n.id===(m.data&&m.data.defender_id));
+      const title = isGather
+        ? (going?"Идёт к точке сбора "+m.tx+", "+m.ty:gathering?"Собирает у "+m.tx+", "+m.ty:"Везёт добычу домой")
+        : (going?"Идёт к ":"Возвращается от ")+(opp?opp.nick||"Безымянный лорд":m.tx+", "+m.ty);
       h+="<div class='entry'><div class='line'><div class='fill'>"+
-         "<div class='title'>"+(going?"Идёт к ":"Возвращается от ")+(opp?opp.nick||"Безымянный лорд":m.tx+", "+m.ty)+"</div>"+
+         "<div class='title'>"+title+"</div>"+
          "<div class='note'>Осталось: "+fmtDur(left)+"</div>";
       // Фаза 4, девятый кусочек — отзыв похода на полпути (mp-recall):
       // разворачивает отряд ОТ ТЕКУЩЕЙ ТОЧКИ, а не мгновенно из дома — чем
       // дальше он уже прошёл, тем дольше идти назад. Только для ещё идущих
-      // (state:"go") — уже возвращающихся отзывать нечего.
-      if(going) h+="<button class='seal' data-mp='recall' data-id='"+m.id+"'"+(mpState.loading?" disabled":"")+">Отозвать</button>";
+      // (state:"go") — уже возвращающихся отзывать нечего. Пока действует
+      // только на боевые марши (mp-recall — зеркало recallMarch, для
+      // gather-марша нужен отдельный разбор "что делать с уже забронированной
+      // добычей" — не в этом кусочке, см. supabase/README.md).
+      if(going && !isGather) h+="<button class='seal' data-mp='recall' data-id='"+m.id+"'"+(mpState.loading?" disabled":"")+">Отозвать</button>";
       h+="</div></div></div>";
     });
   }

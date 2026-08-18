@@ -434,6 +434,35 @@ function pickSpawn(existing) {
   return { x: Math.round(Math.random() * 400 - 200), y: Math.round(Math.random() * 400 - 200) };
 }
 
+// Фаза 8, кусочек 1 — точки сбора ресурсов (map_cells, t:"node"). Таблица
+// map_cells существует с самой первой миграции (0001) — заведена "на
+// вырост", под именно узлы сбора и лагеря/форты разбойников (см. её
+// комментарий), просто до сих пор никто в неё не писал. Честное упрощение:
+// вместо hash-детерминированной плотности по всей бескрайней карте
+// (nodeLevelAt/findFreeCellInChunk, index.html:2968/3103 — заточены под
+// чанки одного браузера) — небольшое кольцо узлов вокруг КАЖДОГО нового
+// города, только при первом создании игрока (не на каждый join/опрос).
+// upsert с ignoreDuplicates — если чьё-то кольцо случайно перекроет чужое
+// (или повторный вызов из-за retry), лишняя запись просто не создаётся,
+// без падения на конфликте первичного ключа.
+const NODE_SEED_COUNT = 5, NODE_SEED_MIN_R = 8, NODE_SEED_MAX_R = 25;
+async function seedNodesAround(admin, worldId, cx, cy) {
+  const rows = [];
+  for (let i = 0; i < NODE_SEED_COUNT; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = NODE_SEED_MIN_R + Math.random() * (NODE_SEED_MAX_R - NODE_SEED_MIN_R);
+    const x = Math.round(cx + Math.cos(ang) * r), y = Math.round(cy + Math.sin(ang) * r);
+    const lv = 1 + Math.floor(Math.random() * 3); // 1..3 — новичкам не нужны жилы 5 уровня под боком
+    const amount = Math.round(6000 * Math.pow(2.6, lv - 1)); // index.html:3111 (EV.nodeback) — та же формула
+    const res = RES[Math.floor(Math.random() * RES.length)];
+    rows.push({ world_id: worldId, x, y, t: "node", data: { res, lv, amount, max: amount } });
+  }
+  // ignoreDuplicates: true = ON CONFLICT DO NOTHING на (world_id,x,y) —
+  // ошибка изредка возможной коллизии координат никого не должна ронять.
+  const { error } = await admin.from("map_cells").upsert(rows, { onConflict: "world_id,x,y", ignoreDuplicates: true });
+  if (error) throw error; // не критично для самого mp-join, но лучше видеть в логах, если формат данных разъехался
+}
+
 Deno.serve(async (req) => {
   const pre = handleOptions(req);
   if (pre) return pre;
@@ -500,6 +529,12 @@ Deno.serve(async (req) => {
       x, y, state: newPlayerState(race, nowSec),
     }).select().single();
     if (ins.error) return jsonResponse({ err: ins.error.message }, 500);
+
+    // Фаза 8, кусочек 1 — только при создании НОВОГО игрока, не на каждый
+    // повторный join/опрос (см. seedNodesAround выше). Ошибка сева узлов не
+    // должна ронять сам вход игрока — он уже создан, точки сбора можно
+    // досеять и позже, поэтому не return jsonResponse на исключении.
+    try { await seedNodesAround(admin, world.id, x, y); } catch (_) { /* см. комментарий */ }
 
     return jsonResponse({ ok: true, world_id: world.id, player: ins.data });
   } catch (e) {

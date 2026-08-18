@@ -401,11 +401,14 @@ Deno.serve(async (req) => {
     attP.race = attP.race || attRow.race;
 
     // Лимит отрядов в поле — marchSlots(hall), считаем текущие незавершённые
-    // марши игрока (mode:"attack") в таблице marches.
+    // марши игрока. Фаза 8, кусочек 1: пул общий с mode:"gather" (новый
+    // mp-gather) — то же "Отряды в поле" в клиенте, что и у похода; раньше,
+    // до сбора ресурсов, тут был только "attack", отдельно считать сбор
+    // было неоткуда.
     const hallLv = Array.isArray(attP.b.hall) ? Math.max(0, ...attP.b.hall) : attP.b.hall;
     const { count: busy, error: busyErr } = await admin
       .from("marches").select("id", { count: "exact", head: true })
-      .eq("world_id", world.id).eq("player_id", attRow.id).eq("mode", "attack");
+      .eq("world_id", world.id).eq("player_id", attRow.id).in("mode", ["attack", "gather"]);
     if (busyErr) return jsonResponse({ err: busyErr.message }, 500);
     if ((busy || 0) >= marchSlots(hallLv)) return jsonResponse({ err: "Все отряды заняты" }, 400);
 
