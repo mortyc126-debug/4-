@@ -8702,7 +8702,7 @@ async function claimChronicle(){
    восполняются со временem — серверное производство ещё не перенесено,
    стартовых 100000 хватает на несколько заказов набора для проверки.
    ========================================================================= */
-let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[] };
+let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[] };
 let mpPollTimer = null;
 // Ровно эти 9 зданий перенесены на сервер (mp-build): 4 разблокируют
 // mp-train (barracks/range/stable/siege), ещё 5 — это HALL_REQ плюс сама
@@ -8749,7 +8749,7 @@ function mpRerender(){
 }
 function mpStartPolling(){ mpStopPolling(); mpPollTimer=setInterval(mpPollTick,5000); }
 function mpStopPolling(){ if(mpPollTimer){ clearInterval(mpPollTimer); mpPollTimer=null; } }
-async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); }
+async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); }
 async function mpRefreshPlayer(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("players").select("*").eq("id",mpState.player.id).maybeSingle();
@@ -8782,7 +8782,7 @@ async function mpOpen(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{});
-    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail();
+    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches();
   }catch(e){ mpState.joined=false; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -8791,7 +8791,7 @@ async function mpDoJoin(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{race:mpState.race,nick:mpState.nick||""});
-    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail();
+    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches();
   }catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -8817,9 +8817,17 @@ async function mpDoAttack(defenderId){
   try{
     await mpCall("mp-attack",{defender_id:defenderId,units});
     mpState.attackTarget=null;
-    await mpRefreshPlayer(); await mpRefreshMail();
+    await mpRefreshPlayer(); await mpRefreshMarches();
   }catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
+}
+// Фаза 4, второй кусочек — собственные марши (RLS marches_select_all из
+// миграции 0001 уже разрешает читать их напрямую, как и mail/players).
+async function mpRefreshMarches(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("marches").select("*")
+    .eq("player_id",mpState.player.id).eq("mode","attack").order("t1");
+  if(!error && data){ mpState.marches=data; mpRerender(); }
 }
 // Превью добычи/час для панели — НЕ настоящий клиентский production() (тот
 // зовёт bonuses(p), которая ждёт полный игровой объект — gen.tal/tech/race
@@ -8837,6 +8845,8 @@ function mpProdPerHour(st){
   });
   return out;
 }
+// index.html:2863 marchSlots — сколько отрядов можно держать в поле разом.
+const mpMarchSlots=hall=>(hall>=22?5:hall>=17?4:hall>=11?3:hall>=5?2:1);
 function mpRaceCardsHtml(){
   return "<div class='mp-races'>"+RACE_KEYS.map(r=>
     "<button class='mp-race"+(mpState.race===r?" on":"")+"' data-mp='race' data-r='"+r+"' style='--rc:"+RACES[r].color+"'>"+
@@ -8888,19 +8898,33 @@ function foMultiplayer(){
          "<div class='title'>"+(n.nick||"Безымянный лорд")+(n.is_bot?" <span class='note'>(бот)</span>":"")+"</div>"+
          "<div class='note'>"+RACES[n.race].name+" · "+n.x+", "+n.y+" · "+dist+" клет."+"</div>";
       if(mpState.attackTarget===n.id){
-        h+="<div class='note' style='color:#e08'>Бой честный, но упрощённый — без марша (бьёт мгновенно), "+
-           "стены, полководцев и погоды, см. supabase/README.md.</div>";
+        h+="<div class='note' style='color:#e08'>Бой честный, но упрощённый — без стены, полководцев и погоды "+
+           "(марш и время в пути уже настоящие — чем медленнее войска, тем дольше идти). "+dist+" клет. по прямой, "+
+           "см. supabase/README.md.</div>";
         TKEYS.forEach(t=>{
           const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
           h+="<div class='note'>"+unitName(t,1,p.race)+" (T1, есть "+RU(have)+"): "+
              "<input id='mp-atk-"+t+"' type='number' min='0' max='"+have+"' value='0'></div>";
         });
-        h+="<button class='seal' data-mp='attack' data-id='"+n.id+"'"+(mpState.loading?" disabled":"")+">В бой</button> "+
+        h+="<button class='seal' data-mp='attack' data-id='"+n.id+"'"+(mpState.loading?" disabled":"")+">В поход</button> "+
            "<button class='seal' data-mp='attackcancel'>Отмена</button>";
       } else {
         h+="<button class='seal' data-mp='attackpick' data-id='"+n.id+"'>Атаковать</button>";
       }
       h+="</div></div></div>";
+    });
+  }
+
+  if(mpState.marches.length){
+    h+=rubric("Отряды в поле",mpState.marches.length+" из "+mpMarchSlots(st.b.hall||0));
+    mpState.marches.forEach(m=>{
+      const left=Math.max(0,m.t1-Date.now()/1000);
+      const going=m.state==="go";
+      const opp=mpState.neighbors.find(n=>n.id===(m.data&&m.data.defender_id));
+      h+="<div class='entry'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+(going?"Идёт к ":"Возвращается от ")+(opp?opp.nick||"Безымянный лорд":m.tx+", "+m.ty)+"</div>"+
+         "<div class='note'>Осталось: "+fmtDur(left)+"</div>"+
+         "</div></div></div>";
     });
   }
 

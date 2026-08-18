@@ -458,16 +458,16 @@ export function syncRes(p, nowSec) {
 // на этот раз — заглушка не одного бонуса, а всего боевого движка целиком.
 export const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];
 export const TROOP_TYPES = {
-  inf: { atk: 34, def: 46, hp: 44, magicAtk: 8, magicDef: 18, beats: "arc", losesTo: "cav" },
-  arc: { atk: 50, def: 30, hp: 36, magicAtk: 20, magicDef: 8, beats: "cav", losesTo: "inf" },
-  cav: { atk: 46, def: 34, hp: 40, magicAtk: 12, magicDef: 12, beats: "inf", losesTo: "arc" },
-  sie: { atk: 24, def: 20, hp: 60, magicAtk: 26, magicDef: 6, beats: null, losesTo: null },
+  inf: { atk: 34, def: 46, hp: 44, speed: 1.00, magicAtk: 8, magicDef: 18, beats: "arc", losesTo: "cav" },
+  arc: { atk: 50, def: 30, hp: 36, speed: 1.10, magicAtk: 20, magicDef: 8, beats: "cav", losesTo: "inf" },
+  cav: { atk: 46, def: 34, hp: 40, speed: 1.70, magicAtk: 12, magicDef: 12, beats: "inf", losesTo: "arc" },
+  sie: { atk: 24, def: 20, hp: 60, speed: 0.60, magicAtk: 26, magicDef: 6, beats: null, losesTo: null },
 };
 export const RACE_TROOP_MOD = {
   dwarf: { inf: { atk: 1.05, def: 1.05, hp: 1.05 } },
   human: { cav: { atk: 1.05, def: 1.05, hp: 1.05 } },
   elf: { arc: { atk: 1.05, def: 1.05, hp: 1.05 } },
-  undead: { sie: { atk: 2.20 * 1.05, def: 1.05, hp: 1.05 } },
+  undead: { sie: { atk: 2.20 * 1.05, def: 1.05, hp: 1.05, speed: 1.20 } },
 };
 export const troopMod = (race, t, stat) => (RACE_TROOP_MOD[race] && RACE_TROOP_MOD[race][t] && RACE_TROOP_MOD[race][t][stat]) || 1;
 export const COUNTER_UP = 1.5, COUNTER_DOWN = 0.7;
@@ -567,4 +567,36 @@ export function resolvePvp(attUnits, attRace, defUnits, defRace) {
   // для нападавших, иначе защита; см. комментарий там же "штурм не удался").
   const winner = defHpLeft <= 0 && attHpLeft > 0 ? "att" : attHpLeft <= 0 && defHpLeft > 0 ? "def" : (attHpLeft > defHpLeft ? "att" : "def");
   return { attLoss: attLoss.units, defLoss: defLoss.units, attHpLeft, defHpLeft, winner };
+}
+
+// =============================================================================
+// Марш — Фаза 4, второй кусочек: настоящее время в пути вместо мгновенной
+// атаки. Зеркало marchSlots (index.html:2863) и marchSpeed/sendMarch
+// (index.html:4640-4681), с одним честным упрощением: расстояние —
+// напрямую по прямой (Math.hypot), а не waterPath() (index.html:4596) —
+// та огибает воду по карте W.map, а в общем мире клетки местности
+// (map_cells) ещё не сгенерированы вообще, обходить пока нечего.
+export const MARCH_SPEED_SCALE = 32;
+export const marchSlots = (hall) => (hall >= 22 ? 5 : hall >= 17 ? 4 : hall >= 11 ? 3 : hall >= 5 ? 2 : 1);
+// index.html:4641 marchSpeed — минимальная скорость среди отправленных
+// типов войск (медленный тип держит темп всего отряда), ×MARCH_SPEED_SCALE,
+// ×bonuses(p).march (временно = 1, та же заглушка, что и everywhere else).
+export function marchSpeed(units, race, marchBonus = 1) {
+  const TKEYS = ["inf", "arc", "cav", "sie"];
+  let s = 99;
+  TKEYS.forEach((t) => {
+    for (let i = 1; i <= 5; i++) {
+      if ((units[t] && units[t][i]) > 0) s = Math.min(s, TROOP_TYPES[t].speed * troopMod(race, t, "speed"));
+    }
+  });
+  if (s > 90) s = 1; // пустой отряд — не должно случаться (проверка на totalSend>0 выше по стеку), но не делить на 0
+  return s * MARCH_SPEED_SCALE * marchBonus; // клеток в минуту
+}
+// index.html:4663/4775 — время в пути в секундах: расстояние (клетки) /
+// скорость (клеток/мин) * 60, не короче 20с туда / 15с обратно (те же
+// нижние пороги, что и в index.html, чтобы соседние клетки не били
+// мгновенно).
+export function travelSeconds(dist, units, race, marchBonus, minSec) {
+  const spd = marchSpeed(units, race, marchBonus);
+  return Math.max(minSec, (dist / spd) * 60);
 }
