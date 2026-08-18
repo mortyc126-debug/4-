@@ -8470,6 +8470,8 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(joinBtn){ const nickInp=$("#mp-nick"); mpState.nick=nickInp?nickInp.value:""; mpDoJoin(); return; }
   const trainBtn=e.target.closest("[data-mp='train']");
   if(trainBtn){ mpDoTrain(trainBtn.dataset.t); return; }
+  const healBtn=e.target.closest("[data-mp='heal']");
+  if(healBtn){ mpDoHeal(healBtn.dataset.t); return; }
   const buildBtn=e.target.closest("[data-mp='build']");
   if(buildBtn){ mpDoBuild(buildBtn.dataset.bk, buildBtn.dataset.plot==null?null:+buildBtn.dataset.plot); return; }
   const attackPickBtn=e.target.closest("[data-mp='attackpick']");
@@ -8812,6 +8814,20 @@ async function mpDoBuild(bk,plot){
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
+// Фаза 4, седьмой кусочек — лечение раненых (mp-heal), см. рубрику
+// «Лазарет» в foMultiplayer.
+async function mpDoHeal(type){
+  const st=mpState.player.state;
+  const hospLv=Array.isArray(st.b.hospital)?Math.max(0,...st.b.hospital):(st.b.hospital||0);
+  const wounded=(st.wounded&&st.wounded[type]&&st.wounded[type][1])||0;
+  const cap=Math.min(wounded,trainCap(hospLv));
+  const inp=$("#mp-heal-n-"+type);
+  const n=Math.max(1,Math.min(cap,+((inp&&inp.value)||1)));
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-heal",{type,tier:1,n}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
 async function mpDoAttack(defenderId){
   const units={};
   TKEYS.forEach(t=>{ const inp=$("#mp-atk-"+t); units[t]={1:Math.max(0,Math.round(+((inp&&inp.value)||0)))}; });
@@ -9059,6 +9075,48 @@ function foMultiplayer(){
     }
     h+="</div></div></div>";
   });
+
+  // Фаза 4, седьмой кусочек — лазарет: тяжелораненые (Фаза 4, шестой
+  // кусочек) больше не застревают в p.wounded навсегда, их можно вылечить
+  // обратно в строй. Как и "Добыча/час" выше, здесь НЕ вызывается настоящий
+  // healUnitCost(p,type,tier)/healDuration(p,...) из одиночной игры — те
+  // читают bonuses(p), а pShim не полноценный игрок; вместо них — та же
+  // лёгкая переформулировка без bonuses (стоимость/время ровно с
+  // healBonus=1/healSpeedBonus=1, см. _shared/rules.js), что и на сервере
+  // в mp-heal. Только тир 1 — в общем мире набор войск (Фаза 2/5) тоже
+  // только тира 1, других тиров тут взяться неоткуда.
+  const mpHospLv=Array.isArray(st.b.hospital)?Math.max(0,...st.b.hospital):(st.b.hospital||0);
+  const mpHealCap=trainCap(mpHospLv);
+  const healing=st.heal;
+  const anyWounded=TKEYS.some(t=>(st.wounded&&st.wounded[t]&&st.wounded[t][1])||0);
+  if(anyWounded||healing){
+    h+=rubric("Лазарет","лечение раненых, тир 1");
+    TKEYS.forEach(t=>{
+      const wounded=(st.wounded&&st.wounded[t]&&st.wounded[t][1])||0;
+      const healingThis=healing&&healing.type===t&&healing.tier===1;
+      if(!wounded && !healingThis) return;
+      h+="<div class='entry'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+unitName(t,1,p.race)+" — ранено "+RU(wounded)+"</div>";
+      if(healingThis){
+        const left=Math.max(0,healing.t1-Date.now()/1000);
+        h+="<div class='note'>Лечится: ×"+RU(healing.n)+", осталось "+fmtDur(left)+"</div>";
+      } else if(healing){
+        h+="<div class='note'>Лазарет занят лечением другого рода войск.</div>";
+      } else if(mpHealCap<=0){
+        h+="<div class='note'>Нужен построенный госпиталь.</div>";
+      } else {
+        const tc=troopCost(t,1);
+        const c={food:Math.round((tc.food||0)/2),wood:Math.round((tc.wood||0)/2),stone:Math.round((tc.stone||0)/2),gold:0};
+        const maxN=Math.min(wounded,mpHealCap);
+        h+="<div class='note'>Цена за штуку: "+(RES.some(r=>c[r])?RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", "):"бесплатно")+
+           " · вдвое дешевле и быстрее набора · максимум за раз: "+mpHealCap+"</div>"+
+           "<input id='mp-heal-n-"+t+"' type='number' min='1' max='"+maxN+"' value='"+Math.min(maxN,10)+"'> "+
+           "<button class='seal' data-mp='heal' data-t='"+t+"'"+(mpState.loading?" disabled":"")+">Лечить</button>";
+      }
+      h+="</div></div></div>";
+    });
+  }
+
   if(mpState.err) h+="<div class='entry'><div class='line'><div class='fill'><div class='note' style='color:#e08'>"+mpState.err+"</div></div></div></div>";
   return h;
 }

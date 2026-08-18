@@ -7,12 +7,14 @@
 // у кого-то браузер, что и было целью Фазы 2 ("сервер сам считает время").
 //
 // Умеет type:"train" (зеркало EV.train, index.html:4821-4826), type:"build"
-// (зеркало EV.build, index.html:4814-4819, см. mp-build) и type:
+// (зеркало EV.build, index.html:4814-4819, см. mp-build), type:
 // "march_arrive"/"march_home" (зеркало EV.arrive->arriveMarch->battleCity
-// и EV.home, см. mp-attack — марш с настоящим временем в пути, Фаза 4).
-// Остальные типы событий (research/craft/heal/gathered/scouted/...) будут
-// добавляться сюда по одному по мере переноса самих действий (Фаза 5),
-// каждый — отдельным case, по образцу ниже.
+// и EV.home, см. mp-attack — марш с настоящим временем в пути, Фаза 4) и
+// type:"heal" (зеркало EV.heal, index.html:4867-4873, см. mp-heal —
+// лечение раненых в лазарете, Фаза 4, седьмой кусочек). Остальные типы
+// событий (research/craft/gathered/scouted/...) будут добавляться сюда по
+// одному по мере переноса самих действий (Фаза 5), каждый — отдельным
+// case, по образцу ниже.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // Вставлено буквально из ../_shared/cors.js — Dashboard-редактор Edge
@@ -72,6 +74,7 @@ Deno.serve(async (req) => {
         else if (ev.type === "build") await applyBuild(admin, ev);
         else if (ev.type === "march_arrive") await applyMarchArrive(admin, ev);
         else if (ev.type === "march_home") await applyMarchHome(admin, ev);
+        else if (ev.type === "heal") await applyHeal(admin, ev);
         // else: неизвестный/ещё не перенесённый тип — оставляем как есть,
         // не помечаем processed, чтобы не потерять событие молча; заберётся
         // следующим тиком после того, как для него появится case.
@@ -101,6 +104,33 @@ async function applyTrain(admin, ev) {
   if (!T) return; // уже разобрано/отменено
   p.troops[T.type][T.tier] = (p.troops[T.type][T.tier] || 0) + T.n;
   p.train[type] = null;
+  const { error: updErr } = await admin
+    .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
+  if (updErr) throw updErr;
+}
+
+// Зеркало EV.heal(d) из index.html:4867-4873 — Фаза 4, седьмой кусочек.
+// n клампится по фактическому p.wounded на МОМЕНТ ЗАВЕРШЕНИЯ (не по тому,
+// что было на момент старта лечения) — тот же принцип "текущее состояние,
+// не снимок", что и у march_arrive; на практике p.wounded[type][tier] не
+// может УМЕНЬШИТЬСЯ между стартом и завершением (кроме этого же лечения —
+// а p.heal гарантированно один на игрока), но защититься не вредно.
+async function applyHeal(admin, ev) {
+  const playerId = ev.data && ev.data.player_id;
+  if (playerId == null) return;
+  const { data: row, error } = await admin.from("players").select("*").eq("id", playerId).maybeSingle();
+  if (error) throw error;
+  if (!row) return;
+  const p = row.state;
+  const H = p.heal;
+  if (!H) return; // уже разобрано/отменено
+  if (!p.wounded) p.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
+  if (!p.wounded[H.type]) p.wounded[H.type] = {};
+  if (!p.troops[H.type]) p.troops[H.type] = {};
+  const n = Math.min(H.n, p.wounded[H.type][H.tier] || 0);
+  p.wounded[H.type][H.tier] = (p.wounded[H.type][H.tier] || 0) - n;
+  p.troops[H.type][H.tier] = (p.troops[H.type][H.tier] || 0) + n;
+  p.heal = null;
   const { error: updErr } = await admin
     .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
   if (updErr) throw updErr;

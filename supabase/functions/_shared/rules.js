@@ -66,6 +66,31 @@ export function trainDuration(hallLv, type, tier, n, trainSpeedBonus = 0) {
   return (trainTime(type, tier) * n) / ((1 + hallLv * 0.06) * (1 + trainSpeedBonus));
 }
 
+// index.html:2840 healUnitCost — лечение раненого в лазарете стоит вдвое
+// дешевле полного набора того же юнита и никогда не требует золота.
+// healBonus — bonuses(p).heal, временно = 1 (без скидки), та же заглушка,
+// что и trainSpeedBonus выше.
+export function healUnitCost(type, tier, healBonus = 1) {
+  const c = troopCost(type, tier);
+  return {
+    food: Math.round(((c.food || 0) / 2) * healBonus),
+    wood: Math.round(((c.wood || 0) / 2) * healBonus),
+    stone: Math.round(((c.stone || 0) / 2) * healBonus),
+    gold: 0,
+  };
+}
+// index.html:2844 healUnitTime — лечение вдвое быстрее набора того же юнита.
+export const healUnitTime = (type, tier) => trainTime(type, tier) / 2;
+// index.html:5778 healDuration — healSpeedBonus (bonuses(p).healSpeed) это
+// готовый МАСШТАБ времени, стоящий в ЧИСЛИТЕЛЕ (дефолт 1 = "как обычно",
+// МЕНЬШЕ значение = быстрее) — НЕ конвенция trainSpeed/build (бонус сверху
+// единицы в знаменателе). В index.html эту формулу дважды чинили в
+// неверном направлении подряд, там же подробный разбор почему — легко
+// перепутать снова, если переносить не глядя на оригинал.
+export function healDuration(hallLv, type, tier, n, healSpeedBonus = 1) {
+  return (healUnitTime(type, tier) * n * healSpeedBonus) / (1 + hallLv * 0.06);
+}
+
 // =============================================================================
 // Постройки — Фаза 5. Первый кусочек (казармы/стрельбище/конюшня/мастерская)
 // уже был; этот довешивает ратушу и все 5 зданий из HALL_REQ (index.html:2463
