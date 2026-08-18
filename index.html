@@ -3720,6 +3720,17 @@ function marchCapacity(p){
    Треугольник: пехота бьёт лучников, лучники — конницу, конница — пехоту.
    Осадные слабы в поле, но везут груз и ломают стены.
    ========================================================================= */
+// Подпись НАПАДАЮЩЕЙ стороны для хроники боя (resolveBattle читает f.name
+// напрямую в каждой строке рассказа — "Схватка N: X теряет...", "X дрогнули"
+// и т.п.). p.name — это имя ГОРОДА игрока, годится как подпись, когда p
+// обороняется (это буквально его город и держит стену). Но когда p —
+// нападающий, в бою участвует отряд, ушедший ИЗ города, а не сам город: у
+// живого игрока p.name — буквально строка "Ваш город" (см. genWorld), и
+// "Ваш город теряет 882" в отчёте о ШТУРМЕ читается так, будто под ударом
+// сам город, хотя дома он цел, воюет отправленное войско. У ботов p.name —
+// собственное имя города (не служебная фраза "ваш"), там та же метонимия
+// не режет слух ("Тангрим теряет" — нормально), так что не трогаем.
+function atkName(p){ return p.isBot ? p.name : "Ваши войска"; }
 function makeForce(units,p,opts){
   const defending=!!(opts&&opts.defending);
   const B=p?bonuses(p,defending):{atk:0,def:0,hp:0,matk:0,mdef:0,archer:0,raise:0,bandit:0,mercy:0,counter:0,firstStrike:0};
@@ -4620,7 +4631,7 @@ function arriveMarch(m){
 
   if(cell.t==="camp"||cell.t==="fort"){
     const B=bonuses(p);
-    const A=makeForce(m.units,p,{name:p.name});
+    const A=makeForce(m.units,p,{name:atkName(p)});
     const bandUnits=banditArmy(cell.lv);
     const D=makeForce(bandUnits,null,{bandit:true,name:"Разбойники ур. "+cell.lv});
     D.B={atk:0,def:0,hp:0,matk:0,mdef:0,archer:0,raise:0};
@@ -4766,7 +4777,13 @@ function scoutSnapshot(p,q){
     return {t,parts};
   }).filter(x=>x.parts.length);
   if(se>=2){ snap.res={}; RES.forEach(rr=>snap.res[rr]=q.res[rr]); }
-  if(se>=5){ snap.gen=(q.gen&&q.gen.id!=null)?GENERALS[q.race][q.gen.id].name:null; snap.wall=q.b.wall; snap.garrison=q.b.garrison; }
+  // ИМЯ полководца сюда специально не идёт (было snap.gen=...name раньше) —
+  // портрет соперника и так виден в шапке того же письма (m.oppAvatar,
+  // см. scouted() и scoutReportHtml), при ЛЮБОЙ ступени разведки: гадать,
+  // какой это генерал, лазутчику незачем, его уже видно глазами. То, что
+  // реально не видно снаружи — сила вложения: уровень и потраченные очки
+  // таланта, вот это и стоит ступени 5.
+  if(se>=5){ snap.genLv=(q.gen&&q.gen.id!=null)?q.gen.lv:null; snap.genTal=(q.gen&&q.gen.id!=null)?genTalentSpent(q):null; snap.wall=q.b.wall; snap.garrison=q.b.garrison; }
   return snap;
 }
 // Отчёт о штурме города — отдельная запись для КАЖДОЙ человеческой стороны
@@ -4820,7 +4837,7 @@ function battleCity(att,def,m){
   const startA=countUnits(m.units), startD=countUnits(def.troops);
   const garrison=emptyUnits();
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++)garrison[t][i]=def.troops[t][i]});
-  const A=makeForce(m.units,att,{name:att.name});
+  const A=makeForce(m.units,att,{name:atkName(att)});
   const D=makeForce(garrison,def,{wall:def.b.wall+def.b.garrison*0.5,defending:true,name:def.name});
   const r=resolveBattle(A,D,{startA:countUnits(m.units),toDeath:false});
   // в хронику погода идёт короткой пометкой, подробности — в почтовом отчёте
@@ -6419,7 +6436,11 @@ function scoutReportHtml(m){
 
   h+="<div class='sc-block'><div class='sc-hd'>Город</div>";
   if(se>=5){
-    h+=scoutRow("Полководец", iv.gen||"не выбран");
+    // Кто именно полководец — не тайна, портрет уже в шапке письма (см.
+    // scoutSnapshot выше): донесение раскрывает то, что глазом не видно —
+    // насколько он прокачан.
+    h+= iv.genLv!=null ? scoutRow("Полководец", "ур. "+iv.genLv+" · очков вложено: "+RU(iv.genTal))
+                        : scoutRow("Полководец", "не выбран");
     h+=scoutRow("Стена", iv.wall+" ур.");
     h+=scoutRow("Гарнизон (башня)", iv.garrison+" ур.");
   } else {
