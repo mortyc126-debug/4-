@@ -162,14 +162,22 @@ async function applyResearch(admin, ev) {
   if (updErr) throw updErr;
 }
 
-// Зеркало EV.scouted(d) из index.html:4877-4893 — Фаза 4, восьмой кусочек
-// (разведка чужого города, см. mp-scout). Лазутчик не возвращается домой —
-// марш удаляется сразу после снятия показаний, независимо от исхода
-// (совпадает с клиентом: "обратной дороги ему не рисуем, он один и
-// налегке, возвращать домой нечего"). se (глубина донесения, от
-// p.tech.mil_scout2) всегда 0 — исследования ещё не перенесены на сервер,
-// см. заголовок mp-scout; при se=0 донесение несёт ровно то же, что и в
-// index.html на этом тире — только общее число войск.
+// index.html RES — нужен здесь только для сборки snap.res (se>=1), больше
+// нигде в mp-tick не используется, поэтому не в общих const'ах выше.
+const SCOUT_RES = ["food", "wood", "stone", "gold"];
+// Зеркало EV.scouted(d)/scoutSnapshot(p,q) из index.html:4877-4893/5237-5282
+// — Фаза 4, восьмой кусочек (разведка чужого города, см. mp-scout), глубина
+// донесения подключена в Фазе 6 (продолжение): se=p.tech.mil_scout2 (0-5) —
+// ЭТО НЕ bonuses(p).scoutBonus (тот процент, от mil_scout1+mil_scout2
+// вместе, — декоративное поле, реально нигде в клиенте не читается для
+// глубины донесения; глубину задаёт СЫРОЙ уровень mil_scout2, отдельно от
+// bonuses()). Честно НЕ перенесено: wallHp/wallMax (se>=2) — сама механика
+// прочности стены как отдельного, регенерирующего пула HP ещё не перенесена
+// на сервер вообще (в общем мире есть только УРОВЕНЬ стены, p.b.wall);
+// genLv/genTal/gearPower/gear (se>=2/5) — генералы/снаряжение не перенесены,
+// честно null/0/[] (то же самое случилось бы и в одиночной игре у игрока
+// без выбранного генерала: genLv тоже null). Лазутчик не возвращается домой
+// — марш удаляется сразу после снятия показаний, независимо от исхода.
 async function applyScoutArrive(admin, ev) {
   const marchId = ev.data && ev.data.march_id;
   if (marchId == null) return;
@@ -199,17 +207,47 @@ async function applyScoutArrive(admin, ev) {
     return;
   }
 
+  const attP = attRow.state || {};
+  const se = (attP.tech && attP.tech.mil_scout2) || 0;
   const defP = defRow.state;
   const hallLv = Array.isArray(defP.b && defP.b.hall) ? Math.max(0, ...defP.b.hall) : ((defP.b && defP.b.hall) || 0);
   const total = unitsTotal(defP.troops || {});
   const nowSec = Date.now() / 1000;
 
+  const data = {
+    found: true, opponent_id: defRow.id, opponent_nick: defRow.nick,
+    hall: hallLv, shielded: defRow.shield_until > nowSec, total, se,
+  };
+  const bAt = (bk) => Array.isArray(defP.b && defP.b[bk]) ? Math.max(0, ...defP.b[bk]) : ((defP.b && defP.b[bk]) || 0);
+  if (se >= 1) {
+    data.res = {};
+    SCOUT_RES.forEach((r) => { data.res[r] = (defP.res && defP.res[r]) || 0; });
+  }
+  if (se >= 2) {
+    data.wall = bAt("wall");
+    data.genLv = null; // генералы не перенесены — как и в одиночной игре у игрока без выбранного генерала
+  }
+  if (se >= 3) {
+    data.academy = bAt("academy");
+    data.byType = TKEYS.map((t) => ({ t, n: [1, 2, 3, 4, 5].reduce((s, i) => s + ((defP.troops[t] && defP.troops[t][i]) || 0), 0) })).filter((x) => x.n > 0);
+  }
+  if (se >= 4) {
+    data.garrison = bAt("garrison");
+    data.byTier = TKEYS.map((t) => {
+      const parts = [];
+      for (let i = 1; i <= 5; i++) { const n = (defP.troops[t] && defP.troops[t][i]) || 0; if (n) parts.push({ i, n }); }
+      return { t, parts };
+    }).filter((x) => x.parts.length);
+  }
+  if (se >= 5) {
+    data.genTal = null; data.gearPower = 0; data.gear = [];
+    let wounded = 0;
+    TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) wounded += (defP.wounded && defP.wounded[t] && defP.wounded[t][i]) || 0; });
+    data.wounded = wounded;
+  }
+
   const { error: mailErr } = await admin.from("mail").insert({
-    world_id: m.world_id, player_id: attRow.id, kind: "scout",
-    data: {
-      found: true, opponent_id: defRow.id, opponent_nick: defRow.nick,
-      hall: hallLv, shielded: defRow.shield_until > nowSec, total,
-    },
+    world_id: m.world_id, player_id: attRow.id, kind: "scout", data,
   });
   if (mailErr) throw mailErr;
 }
