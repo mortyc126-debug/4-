@@ -441,3 +441,130 @@ export function syncRes(p, nowSec) {
   });
   p.resAt = nowSec;
 }
+
+// =============================================================================
+// PvP-бой — Фаза 4. НЕ resolveBattle() из index.html (index.html:4129) —
+// тот раунд за раундом считает погоду, слом дисциплины, урон полководцам,
+// поднятие нежити прямо в бою, контрудар гарнизона и оборону стены; полный
+// перенос — отдельная большая задача (сравнимая по объёму с bonuses()).
+// Здесь — единственный обмен ударами по настоящим базовым характеристикам
+// войск (TROOP_TYPES/TIER_MULT/RACE_TROOP_MOD/COUNTER_UP/COUNTER_DOWN —
+// буквальная копия из index.html:2578-2651, те же числа), без стены, без
+// полководцев, без погоды/раундов/дисциплины/подъёма нежити. Урон по типу
+// защитника считается той же формулой "доля-по-HP + контр-множитель", что
+// и dmgTo() внутри resolveBattle() (index.html:4194-4213), просто один раз,
+// а не в цикле — честно ПРИБЛИЖЕНИЕ, а не точная замена, как и остальные
+// временные заглушки в этом файле (trainSpeed/build/prod-бонусы), только
+// на этот раз — заглушка не одного бонуса, а всего боевого движка целиком.
+export const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];
+export const TROOP_TYPES = {
+  inf: { atk: 34, def: 46, hp: 44, magicAtk: 8, magicDef: 18, beats: "arc", losesTo: "cav" },
+  arc: { atk: 50, def: 30, hp: 36, magicAtk: 20, magicDef: 8, beats: "cav", losesTo: "inf" },
+  cav: { atk: 46, def: 34, hp: 40, magicAtk: 12, magicDef: 12, beats: "inf", losesTo: "arc" },
+  sie: { atk: 24, def: 20, hp: 60, magicAtk: 26, magicDef: 6, beats: null, losesTo: null },
+};
+export const RACE_TROOP_MOD = {
+  dwarf: { inf: { atk: 1.05, def: 1.05, hp: 1.05 } },
+  human: { cav: { atk: 1.05, def: 1.05, hp: 1.05 } },
+  elf: { arc: { atk: 1.05, def: 1.05, hp: 1.05 } },
+  undead: { sie: { atk: 2.20 * 1.05, def: 1.05, hp: 1.05 } },
+};
+export const troopMod = (race, t, stat) => (RACE_TROOP_MOD[race] && RACE_TROOP_MOD[race][t] && RACE_TROOP_MOD[race][t][stat]) || 1;
+export const COUNTER_UP = 1.5, COUNTER_DOWN = 0.7;
+export function counterMult(from, to) {
+  const T = TROOP_TYPES[from];
+  if (T.beats === to) return COUNTER_UP;
+  if (T.losesTo === to) return COUNTER_DOWN;
+  return 1;
+}
+// index.html:3974 sideStats — свёрнутые атака/защита/HP по каждому роду
+// войск (сумма по тирам), без бонусов (бонусы p.gen/tal/tech/race-пассивки
+// ещё не перенесены, см. заголовок файла).
+export function sideStats(units, race) {
+  const TKEYS = ["inf", "arc", "cav", "sie"];
+  const s = {};
+  TKEYS.forEach((t) => {
+    let atk = 0, def = 0, matk = 0, mdef = 0, hp = 0, n = 0;
+    for (let i = 1; i <= 5; i++) {
+      const c = (units[t] && units[t][i]) || 0;
+      if (!c) continue;
+      const w = TIER_MULT[i - 1];
+      atk += c * TROOP_TYPES[t].atk * w * troopMod(race, t, "atk");
+      def += c * TROOP_TYPES[t].def * w * troopMod(race, t, "def");
+      matk += c * TROOP_TYPES[t].magicAtk * w * troopMod(race, t, "atk");
+      mdef += c * TROOP_TYPES[t].magicDef * w * troopMod(race, t, "def");
+      hp += c * TROOP_TYPES[t].hp * w * troopMod(race, t, "hp");
+      n += c;
+    }
+    s[t] = { atk, def, matk, mdef, hp, n };
+  });
+  s.totalHp = TKEYS.reduce((a, t) => a + s[t].hp, 0);
+  s.totalN = TKEYS.reduce((a, t) => a + s[t].n, 0);
+  return s;
+}
+// index.html:4194 dmgTo — урон, наносимый attS стороне defS, по родам войск
+// защитника (доля по HP + контр-множитель + смягчение защитой), без стены
+// (defWall=1 всегда) и без CFG.BATTLE_PACE/шейка (это один обмен, не раунд
+// в цикле — масштаб урона другой, скидка на "раунд" тут не нужна).
+export function dmgTo(attS, defS) {
+  const TKEYS = ["inf", "arc", "cav", "sie"];
+  const out = {};
+  TKEYS.forEach((dt) => {
+    if (defS[dt].n <= 0) { out[dt] = 0; return; }
+    let d = 0, dm = 0;
+    TKEYS.forEach((at) => {
+      if (attS[at].n <= 0) return;
+      const share = defS[dt].hp / Math.max(1, defS.totalHp);
+      d += attS[at].atk * counterMult(at, dt) * share;
+      dm += attS[at].matk * counterMult(at, dt) * share;
+    });
+    const mitig = 1 + (defS[dt].def / Math.max(1, defS[dt].n)) / 70;
+    const mitigM = 1 + (defS[dt].mdef / Math.max(1, defS[dt].n)) / 70;
+    out[dt] = d / mitig + dm / mitigM;
+  });
+  return out;
+}
+// Переводит урон по HP (dmgTo) в реальные потери юнитов, распределённые по
+// тирам пропорционально их числу внутри рода войск (не по HP — упрощение,
+// точное распределение по тирам resolveBattle() не переносим). Возвращает
+// {units, hpLost} — units той же формы, что p.troops[t], hpLost — суммарный
+// нанесённый урон (нужен только для итоговой сводки).
+export function applyLosses(units, dmgByType, race) {
+  const TKEYS = ["inf", "arc", "cav", "sie"];
+  const lost = { inf: {}, arc: {}, cav: {}, sie: {} };
+  let hpLost = 0;
+  TKEYS.forEach((t) => {
+    const n = TKEYS.includes(t) ? [1, 2, 3, 4, 5].reduce((s, i) => s + ((units[t] && units[t][i]) || 0), 0) : 0;
+    if (n <= 0 || !dmgByType[t]) { [1, 2, 3, 4, 5].forEach((i) => lost[t][i] = 0); return; }
+    let hpTotal = 0;
+    for (let i = 1; i <= 5; i++) hpTotal += ((units[t][i] || 0)) * TROOP_TYPES[t].hp * TIER_MULT[i - 1] * troopMod(race, t, "hp");
+    const dmg = Math.min(dmgByType[t], hpTotal);
+    hpLost += dmg;
+    const frac = hpTotal > 0 ? dmg / hpTotal : 0;
+    for (let i = 1; i <= 5; i++) {
+      const c = units[t][i] || 0;
+      lost[t][i] = Math.min(c, Math.round(c * frac));
+    }
+  });
+  return { units: lost, hpLost };
+}
+// Один обмен ударами: attacker бьёт defender, defender отвечает тем же
+// разом (не в очередь, как в резолвBattle() — тут только один шаг). Все
+// живые войска защитника участвуют — марш-система (кто именно "дошёл")
+// ещё не перенесена, атака бьёт мгновенно по всему гарнизону защитника.
+export function resolvePvp(attUnits, attRace, defUnits, defRace) {
+  const attS = sideStats(attUnits, attRace), defS = sideStats(defUnits, defRace);
+  const dmgToDef = dmgTo(attS, defS), dmgToAtt = dmgTo(defS, attS);
+  const defLoss = applyLosses(defUnits, dmgToDef, defRace);
+  const attLoss = applyLosses(attUnits, dmgToAtt, attRace);
+  const defHpLeft = Math.max(0, defS.totalHp - defLoss.hpLost);
+  const attHpLeft = Math.max(0, attS.totalHp - attLoss.hpLost);
+  // Победитель: чья сторона выжила целиком при уничтоженной другой, иначе —
+  // у кого осталось больше суммарного HP (тот же дух, что и armyPower-
+  // сравнение в resolveBattle(), без полного портирования armyPower).
+  // Ничья (в т.ч. 0:0) — победа ОБОРОНЫ, тот же принцип, что и в
+  // resolveBattle() (index.html: win=...powA>powD?"A":"D" — строго больше
+  // для нападавших, иначе защита; см. комментарий там же "штурм не удался").
+  const winner = defHpLeft <= 0 && attHpLeft > 0 ? "att" : attHpLeft <= 0 && defHpLeft > 0 ? "def" : (attHpLeft > defHpLeft ? "att" : "def");
+  return { attLoss: attLoss.units, defLoss: defLoss.units, attHpLeft, defHpLeft, winner };
+}

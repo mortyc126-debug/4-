@@ -8472,6 +8472,12 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(trainBtn){ mpDoTrain(trainBtn.dataset.t); return; }
   const buildBtn=e.target.closest("[data-mp='build']");
   if(buildBtn){ mpDoBuild(buildBtn.dataset.bk); return; }
+  const attackPickBtn=e.target.closest("[data-mp='attackpick']");
+  if(attackPickBtn){ mpState.attackTarget=+attackPickBtn.dataset.id; mpRerender(); return; }
+  const attackCancelBtn=e.target.closest("[data-mp='attackcancel']");
+  if(attackCancelBtn){ mpState.attackTarget=null; mpRerender(); return; }
+  const attackBtn=e.target.closest("[data-mp='attack']");
+  if(attackBtn){ mpDoAttack(+attackBtn.dataset.id); return; }
 });
 
 // Двойной тап по чужой клетке в 3D сразу открывал лист похода (openLevy) —
@@ -8696,7 +8702,7 @@ async function claimChronicle(){
    восполняются со временem — серверное производство ещё не перенесено,
    стартовых 100000 хватает на несколько заказов набора для проверки.
    ========================================================================= */
-let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[] };
+let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[] };
 let mpPollTimer = null;
 // Ровно эти 9 зданий перенесены на сервер (mp-build): 4 разблокируют
 // mp-train (barracks/range/stable/siege), ещё 5 — это HALL_REQ плюс сама
@@ -8743,7 +8749,7 @@ function mpRerender(){
 }
 function mpStartPolling(){ mpStopPolling(); mpPollTimer=setInterval(mpPollTick,5000); }
 function mpStopPolling(){ if(mpPollTimer){ clearInterval(mpPollTimer); mpPollTimer=null; } }
-async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); }
+async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); }
 async function mpRefreshPlayer(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("players").select("*").eq("id",mpState.player.id).maybeSingle();
@@ -8760,6 +8766,14 @@ async function mpRefreshNeighbors(){
     .eq("world_id", mpState.player.world_id).neq("id", mpState.player.id).order("id");
   if(!error && data){ mpState.neighbors=data; mpRerender(); }
 }
+// Фаза 4 — свежие боевые отчёты (mail, RLS mail_select_own из миграции
+// 0001 уже ограничивает выборку своими же письмами, читаем напрямую).
+async function mpRefreshMail(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
+    .eq("kind","battle").order("created_at",{ascending:false}).limit(10);
+  if(!error && data){ mpState.mail=data; mpRerender(); }
+}
 // Открытие вкладки: если этот anon-uid уже заходил в общий мир раньше
 // (сессия сохранена в localStorage), mp-join без указания расы вернёт уже
 // существующего игрока — сразу дашборд, без анкеты. Если нет — тихо ловим
@@ -8768,7 +8782,7 @@ async function mpOpen(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{});
-    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors();
+    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail();
   }catch(e){ mpState.joined=false; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -8777,7 +8791,7 @@ async function mpDoJoin(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{race:mpState.race,nick:mpState.nick||""});
-    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors();
+    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail();
   }catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -8794,6 +8808,17 @@ async function mpDoBuild(bk){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-build",{bk}); await mpRefreshPlayer(); }
   catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+async function mpDoAttack(defenderId){
+  const units={};
+  TKEYS.forEach(t=>{ const inp=$("#mp-atk-"+t); units[t]={1:Math.max(0,Math.round(+((inp&&inp.value)||0)))}; });
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{
+    await mpCall("mp-attack",{defender_id:defenderId,units});
+    mpState.attackTarget=null;
+    await mpRefreshPlayer(); await mpRefreshMail();
+  }catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
 // Превью добычи/час для панели — НЕ настоящий клиентский production() (тот
@@ -8861,7 +8886,35 @@ function foMultiplayer(){
       const dist=Math.round(Math.hypot(n.x-p.x,n.y-p.y));
       h+="<div class='entry'><div class='line'>"+shieldSvg(n.race,28)+"<div class='fill'>"+
          "<div class='title'>"+(n.nick||"Безымянный лорд")+(n.is_bot?" <span class='note'>(бот)</span>":"")+"</div>"+
-         "<div class='note'>"+RACES[n.race].name+" · "+n.x+", "+n.y+" · "+dist+" клет."+"</div>"+
+         "<div class='note'>"+RACES[n.race].name+" · "+n.x+", "+n.y+" · "+dist+" клет."+"</div>";
+      if(mpState.attackTarget===n.id){
+        h+="<div class='note' style='color:#e08'>Бой честный, но упрощённый — без марша (бьёт мгновенно), "+
+           "стены, полководцев и погоды, см. supabase/README.md.</div>";
+        TKEYS.forEach(t=>{
+          const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
+          h+="<div class='note'>"+unitName(t,1,p.race)+" (T1, есть "+RU(have)+"): "+
+             "<input id='mp-atk-"+t+"' type='number' min='0' max='"+have+"' value='0'></div>";
+        });
+        h+="<button class='seal' data-mp='attack' data-id='"+n.id+"'"+(mpState.loading?" disabled":"")+">В бой</button> "+
+           "<button class='seal' data-mp='attackcancel'>Отмена</button>";
+      } else {
+        h+="<button class='seal' data-mp='attackpick' data-id='"+n.id+"'>Атаковать</button>";
+      }
+      h+="</div></div></div>";
+    });
+  }
+
+  if(mpState.mail.length){
+    h+=rubric("Бой","последние стычки");
+    mpState.mail.forEach(m=>{
+      const d=m.data, mine=d.role==="attacker";
+      const myLoss=mine?d.attLoss:d.defLoss, oppLoss=mine?d.defLoss:d.attLoss;
+      const lostN=u=>TKEYS.reduce((s,t)=>s+[1,2,3,4,5].reduce((s2,i)=>s2+((u[t]&&u[t][i])||0),0),0);
+      const won=(mine&&d.winner==="att")||(!mine&&d.winner==="def");
+      h+="<div class='entry"+(won?" hot":" war")+"'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+(mine?"Напали на ":"Напали от ")+(d.opponent_nick||"Безымянный лорд")+
+         " — "+(won?"победа":"поражение")+"</div>"+
+         "<div class='note'>Наши потери: "+RU(lostN(myLoss))+" · потери противника: "+RU(lostN(oppLoss))+"</div>"+
          "</div></div></div>";
     });
   }
