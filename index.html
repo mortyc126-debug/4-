@@ -1068,10 +1068,22 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .levy input[type=range]{width:118px;flex:0 0 auto;accent-color:var(--gilt);height:18px}
 .levy input[type=number]{width:74px;flex:0 0 auto;background:rgba(0,0,0,.4);color:var(--vellum);
   border:1px solid var(--rule);padding:4px 6px;font-family:var(--data);font-size:12.5px;text-align:right}
-#nick-input{background:rgba(0,0,0,.4);color:var(--vellum);border:1px solid var(--rule);
+#nick-input,#mp-nick{background:rgba(0,0,0,.4);color:var(--vellum);border:1px solid var(--rule);
   padding:7px 9px;font-family:var(--serif);font-size:13.5px;border-radius:3px}
+#mp-nick{display:block;width:100%;margin:10px 0;box-sizing:border-box}
 .chips{display:flex;gap:6px;margin:12px 0}
 .chips .seal{flex:1;text-align:center;padding:5px 0;font-size:11.5px}
+/* Общий мир (бета) — панель во вкладке "mp", тёмный фон menu-modal, поэтому
+   НЕ переиспользует .ob-race/.ob-races из экрана летописи (та палитра
+   рассчитана на светлый пергамент #onboard и была бы нечитаемой тут). */
+.mp-races{display:flex;flex-wrap:wrap;gap:7px;margin:8px 0}
+.mp-race{display:flex;align-items:center;gap:6px;padding:6px 11px;border:1px solid var(--rule);
+  border-radius:20px;background:rgba(0,0,0,.3);color:var(--vellum-dim);cursor:pointer;
+  font-size:12.5px;font-family:var(--serif)}
+.mp-race img{filter:drop-shadow(0 2px 4px rgba(0,0,0,.6))}
+.mp-race.on{border-color:var(--rc,var(--gilt));color:var(--vellum);background:rgba(0,0,0,.5)}
+#menu-modal-body input[type=number]{width:74px;flex:0 0 auto;background:rgba(0,0,0,.4);color:var(--vellum);
+  border:1px solid var(--rule);padding:4px 6px;font-family:var(--data);font-size:12.5px;text-align:right}
 
 .verdict{margin-top:13px;padding:11px 13px;border:1px solid var(--rule);
   background:rgba(0,0,0,.28);display:flex;align-items:center;gap:11px}
@@ -1172,6 +1184,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   <button data-menu="army" aria-label="Войско"><img src="images/ui/icon-army.png" alt=""><span>Войско</span><i class="nbadge" id="nb-army"></i></button>
   <button data-menu="gen" aria-label="Генерал"><img src="images/ui/icon-gen.png" alt=""><span>Генерал</span><i class="nbadge" id="nb-gen"></i></button>
   <button data-menu="inv" aria-label="Инвентарь"><img src="images/ui/icon-inv.png" alt=""><span>Инвентарь</span><i class="nbadge" id="nb-inv"></i></button>
+  <button data-menu="mp" aria-label="Общий мир"><img src="images/ui/icon-world.png" alt=""><span>Общий мир</span><i class="nbadge" id="nb-mp"></i></button>
 </nav>
 <div id="menu-modal">
   <img class="menu-corner tl" src="images/ui/mail-corner.png" alt="">
@@ -8351,13 +8364,18 @@ function openMenuModal(t){
   // открытии. У почты и генерала гасить нечего: метка сама пропадёт, когда
   // письма прочитаны, а очки таланта вложены.
   if(t==="inv") me().invNew=false;
+  // Общий мир — отдельная вкладка со своим опросом сервера (см. mpStartPolling
+  // ниже): уходя с неё, глушим таймер, чтобы не дёргать Supabase впустую,
+  // пока игрок смотрит другую вкладку.
+  if($("#menu-modal").dataset.tab==="mp" && t!=="mp") mpStopPolling();
   $("#menu-modal").dataset.tab = t;
-  const html = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): foInv();
+  const html = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): t==="mp"?foMultiplayer(): foInv();
   lastMenuBody = html;
   $("#menu-modal-body").innerHTML = html;
   $("#menu-modal").classList.add("open");
   $("#side-menu").classList.remove("open");
   renderBadges();
+  if(t==="mp") mpOpen();
 }
 // Метки перерисовываются в общем такте с шапкой (renderTop раз в секунду) —
 // отдельного таймера им не нужно.
@@ -8375,7 +8393,7 @@ function renderBadges(){
   const mb=$("#nb-menu");
   if(mb){ mb.classList.toggle("on", any>0); mb.setAttribute("data-n",""); }
 }
-function closeMenuModal(){ $("#menu-modal").classList.remove("open"); }
+function closeMenuModal(){ $("#menu-modal").classList.remove("open"); mpStopPolling(); }
 /* ---- Живое обновление открытых окошек раз в секунду, без переоткрытия ---- */
 function refreshOpenModal(){
   if($("#building-modal").classList.contains("open")){
@@ -8423,7 +8441,7 @@ function refreshOpenModal(){
     (document.activeElement.tagName==="INPUT"||document.activeElement.tagName==="TEXTAREA");
   if(menu.classList.contains("open") && !typingInModal){
     const t=menu.dataset.tab;
-    const html = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): foInv();
+    const html = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): t==="mp"?foMultiplayer(): foInv();
     if(html!==lastMenuBody){                       // не перерисовываем зря (иначе моргает аватар)
       lastMenuBody=html;
       $("#menu-modal-body").innerHTML = html;
@@ -8438,6 +8456,29 @@ $("#menu-modal").addEventListener("click",e=>{ if(e.target.id==="menu-modal") cl
 $("#menu-modal").addEventListener("click",handleAct);
 $("#view-toggle").addEventListener("click",toggleView);
 $("#crest").addEventListener("click",()=>openMenuModal("profile"));
+// Общий мир — свой делегированный обработчик, отдельно от handleAct
+// (data-mp вместо data-act): панель полностью изолирована от одиночной
+// игры, ничего в handleAct трогать не пришлось.
+$("#menu-modal-body").addEventListener("click",e=>{
+  if($("#menu-modal").dataset.tab!=="mp") return;
+  const raceBtn=e.target.closest("[data-mp='race']");
+  if(raceBtn){
+    const nickInp=$("#mp-nick"); if(nickInp) mpState.nick=nickInp.value; // не терять уже набранный ник
+    mpState.race=raceBtn.dataset.r; mpRerender(); return;
+  }
+  const joinBtn=e.target.closest("[data-mp='join']");
+  if(joinBtn){ const nickInp=$("#mp-nick"); mpState.nick=nickInp?nickInp.value:""; mpDoJoin(); return; }
+  const trainBtn=e.target.closest("[data-mp='train']");
+  if(trainBtn){ mpDoTrain(trainBtn.dataset.t); return; }
+  const buildBtn=e.target.closest("[data-mp='build']");
+  if(buildBtn){ mpDoBuild(buildBtn.dataset.bk); return; }
+  const attackPickBtn=e.target.closest("[data-mp='attackpick']");
+  if(attackPickBtn){ mpState.attackTarget=+attackPickBtn.dataset.id; mpRerender(); return; }
+  const attackCancelBtn=e.target.closest("[data-mp='attackcancel']");
+  if(attackCancelBtn){ mpState.attackTarget=null; mpRerender(); return; }
+  const attackBtn=e.target.closest("[data-mp='attack']");
+  if(attackBtn){ mpDoAttack(+attackBtn.dataset.id); return; }
+});
 
 // Двойной тап по чужой клетке в 3D сразу открывал лист похода (openLevy) —
 // удобный ярлык поверх обычного тапа+кнопки в cartouche, но не необходимый:
@@ -8646,6 +8687,334 @@ async function claimChronicle(){
   delete W.pendingSetup;
   await save();
   return q;
+}
+
+/* =========================================================================
+   Общий мир (бета) — Фаза 2/3 (см. supabase/README.md). Полностью
+   изолированная от одиночной игры панель: собственное состояние (mpState),
+   собственные запросы к Supabase Edge Functions (mp-join/mp-train),
+   собственный рендер (foMultiplayer) и собственный обработчик кликов (см.
+   делегированный listener на #menu-modal-body выше) — ничего из W/me()/
+   handleAct/frame() не читает и не меняет, сломать одиночную игру не может.
+   Пока умеет ровно то, что уже перенесено на сервер: вход в общий мир и
+   набор войск тира 1 (постройки/исследования/маршруты/бой — ещё локальные,
+   следующие шаги переноса). Ресурсы игрока в общем мире пока НЕ
+   восполняются со временem — серверное производство ещё не перенесено,
+   стартовых 100000 хватает на несколько заказов набора для проверки.
+   ========================================================================= */
+let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[] };
+let mpPollTimer = null;
+// Ровно эти 9 зданий перенесены на сервер (mp-build): 4 разблокируют
+// mp-train (barracks/range/stable/siege), ещё 5 — это HALL_REQ плюс сама
+// ратуша (wall/store/academy/hospital + hall), без которых ратуша не растёт
+// выше 1 уровня. Порядок в списке — тот, в котором они реально нужны игроку
+// (сначала HALL_REQ-здания, потом ратуша, потом казармы и мастерские).
+// дозор/разведка (garrison/scout) — сами механики (предупреждение о марше,
+// разведданные) на сервер ещё не перенесены, но постройка/уровень честны и
+// считаются в мощь так же, как остальные. Остался только Горн (max:1, без
+// реальной механики крафта в общем мире — следующий шаг, если понадобится).
+const BUILD_MP_BLDS = ["wall","store","academy","hospital","hall","barracks","range","stable","siege","farm","lumber","quarry","mine","garrison","scout"];
+// hospital/farm/lumber/quarry/mine — multi-здания среди перенесённых
+// (plots:4 у каждого), см. mpBuildLv в foMultiplayer. Приток ресурсов от
+// уровня фермы/лесопилки/каменоломни/шахты (production(), тикает по
+// реальному времени) ещё НЕ перенесён на сервер — их можно строить, но
+// добыча в общем мире сама по себе пока не идёт, см. заметку в панели ниже.
+const BUILD_MP_MULTI = new Set(["hospital","farm","lumber","quarry","mine"]);
+
+async function mpEnsureAuth(){
+  // Переиспользуем уже сохранённую supabase-клиентом anon-сессию, если она
+  // есть — signInAnonymously() без этой проверки заводит НОВОГО анонимного
+  // пользователя при каждом вызове (проверено на практике: id игрока рос
+  // при каждом визите), а нужен один и тот же игрок между заходами.
+  const { data:{ session } } = await sb.auth.getSession();
+  if(session) return session;
+  const { data, error } = await sb.auth.signInAnonymously();
+  if(error) throw error;
+  return data.session;
+}
+async function mpCall(fn, body){
+  const session = await mpEnsureAuth();
+  const r = await fetch(SUPABASE_URL+"/functions/v1/"+fn, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+session.access_token, "apikey":SUPABASE_ANON_KEY },
+    body: JSON.stringify(body||{}),
+  });
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok || j.err) throw new Error(j.err || ("HTTP "+r.status));
+  return j;
+}
+function mpRerender(){
+  if($("#menu-modal").classList.contains("open") && $("#menu-modal").dataset.tab==="mp"){
+    lastMenuBody = foMultiplayer();
+    $("#menu-modal-body").innerHTML = lastMenuBody;
+  }
+}
+function mpStartPolling(){ mpStopPolling(); mpPollTimer=setInterval(mpPollTick,5000); }
+function mpStopPolling(){ if(mpPollTimer){ clearInterval(mpPollTimer); mpPollTimer=null; } }
+async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); }
+async function mpRefreshPlayer(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("players").select("*").eq("id",mpState.player.id).maybeSingle();
+  if(!error && data){ mpState.player=data; mpRerender(); }
+}
+// Фаза 3 — общая видимость: остальные игроки того же мира читаются напрямую
+// клиентом (RLS players_select_world из миграции 0001 уже разрешает SELECT
+// всем — новая Edge Function не нужна). Берём только нечувствительные
+// колонки (ник/раса/координаты) — полное состояние (ресурсы/войска) в
+// список соседей нарочно не тянем, хотя RLS формально это тоже позволяет.
+async function mpRefreshNeighbors(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("players").select("id,nick,race,x,y,is_bot")
+    .eq("world_id", mpState.player.world_id).neq("id", mpState.player.id).order("id");
+  if(!error && data){ mpState.neighbors=data; mpRerender(); }
+}
+// Фаза 4 — свежие боевые отчёты (mail, RLS mail_select_own из миграции
+// 0001 уже ограничивает выборку своими же письмами, читаем напрямую).
+async function mpRefreshMail(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
+    .eq("kind","battle").order("created_at",{ascending:false}).limit(10);
+  if(!error && data){ mpState.mail=data; mpRerender(); }
+}
+// Открытие вкладки: если этот anon-uid уже заходил в общий мир раньше
+// (сессия сохранена в localStorage), mp-join без указания расы вернёт уже
+// существующего игрока — сразу дашборд, без анкеты. Если нет — тихо ловим
+// ожидаемую ошибку "Нужна раса" и показываем анкету, это не сбой.
+async function mpOpen(){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{
+    const j=await mpCall("mp-join",{});
+    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches();
+  }catch(e){ mpState.joined=false; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+async function mpDoJoin(){
+  if(!mpState.race) return;
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{
+    const j=await mpCall("mp-join",{race:mpState.race,nick:mpState.nick||""});
+    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches();
+  }catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+async function mpDoTrain(type){
+  const p=mpState.player, cap=trainCap(p.state.b[TRAIN_BLD[type]]);
+  const inp=$("#mp-n-"+type);
+  const n=Math.max(1,Math.min(cap,+((inp&&inp.value)||1)));
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-train",{type,tier:1,n}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+async function mpDoBuild(bk){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-build",{bk}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+async function mpDoAttack(defenderId){
+  const units={};
+  TKEYS.forEach(t=>{ const inp=$("#mp-atk-"+t); units[t]={1:Math.max(0,Math.round(+((inp&&inp.value)||0)))}; });
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{
+    await mpCall("mp-attack",{defender_id:defenderId,units});
+    mpState.attackTarget=null;
+    await mpRefreshPlayer(); await mpRefreshMarches();
+  }catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+// Фаза 4, второй кусочек — собственные марши (RLS marches_select_all из
+// миграции 0001 уже разрешает читать их напрямую, как и mail/players).
+async function mpRefreshMarches(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("marches").select("*")
+    .eq("player_id",mpState.player.id).eq("mode","attack").order("t1");
+  if(!error && data){ mpState.marches=data; mpRerender(); }
+}
+// Превью добычи/час для панели — НЕ настоящий клиентский production() (тот
+// зовёт bonuses(p), которая ждёт полный игровой объект — gen.tal/tech/race
+// и т.д., а тут только урезанный снимок из players.state); используем
+// уже глобальный prodRate (та же PROD_TABLE, без всяких бонусов — ровно то
+// же приближение, что и сервер, см. supabase/functions/_shared/rules.js).
+const MP_PROD_BLD={food:"farm",wood:"lumber",stone:"quarry",gold:"mine"};
+const MP_PROD_MULT={food:1,wood:1,stone:.75,gold:.5};
+function mpProdPerHour(st){
+  const out={};
+  RES.forEach(r=>{
+    const plots=st.b[MP_PROD_BLD[r]];
+    let base=0; (Array.isArray(plots)?plots:[plots||0]).forEach(lv=>{ if(lv>0) base+=prodRate(lv) });
+    out[r]=Math.round(base*MP_PROD_MULT[r]);
+  });
+  return out;
+}
+// index.html:2863 marchSlots — сколько отрядов можно держать в поле разом.
+const mpMarchSlots=hall=>(hall>=22?5:hall>=17?4:hall>=11?3:hall>=5?2:1);
+function mpRaceCardsHtml(){
+  return "<div class='mp-races'>"+RACE_KEYS.map(r=>
+    "<button class='mp-race"+(mpState.race===r?" on":"")+"' data-mp='race' data-r='"+r+"' style='--rc:"+RACES[r].color+"'>"+
+    shieldSvg(r,22)+"<b>"+RACES[r].name+"</b></button>").join("")+"</div>";
+}
+function foMultiplayer(){
+  let h=rubric("Общий мир","бета");
+  h+="<div class='entry'><div class='line'><div class='fill'>"+
+     "<div class='note'>Один настоящий мир на всех, кто сюда заходит — не отдельная копия для "+
+     "каждого браузера. Все постройки, кроме Горна, набор войск (тир 1) и атака с настоящим маршем "+
+     "уже здесь, честно упрощённые (см. подсказки на месте и supabase/README.md); исследования и "+
+     "полный многораундовый бой из одиночной игры — следующие шаги.</div></div></div></div>"+
+     "<div class='entry'><div class='line'><div class='fill'>"+
+     "<div class='note'>Ферму/лесопилку/каменоломню/шахту уже можно строить, но добыча ресурсов "+
+     "от их уровня в общем мире пока не идёт сама по себе (приток по времени ещё не перенесён на "+
+     "сервер) — начальных ресурсов при входе хватит на первые постройки/наборы, а не бесконечно.</div>"+
+     "</div></div></div>";
+
+  if(!mpState.joined){
+    h+="<div class='entry'><div class='line'><div class='fill'>"+
+       "<div class='title'>Выберите народ</div>"+mpRaceCardsHtml()+
+       "<input id='mp-nick' maxlength='24' placeholder='Ник правителя' value='"+(mpState.nick||"").replace(/'/g,"&#39;")+"'>"+
+       (mpState.err?"<div class='note' style='color:#e08'>"+mpState.err+"</div>":"")+
+       "<button class='seal' data-mp='join'"+(mpState.race&&!mpState.loading?"":" disabled")+">"+
+       (mpState.loading?"Вхожу...":"Войти в общий мир")+"</button>"+
+       "</div></div></div>";
+    return h;
+  }
+
+  const p=mpState.player, st=p.state, pShim={race:p.race,b:st.b};
+  h+="<div class='entry hot'><div class='line'><div class='fill'>"+
+     "<div class='title'>"+(p.nick||"Безымянный лорд")+" · "+RACES[p.race].name+"</div>"+
+     "<div class='note'>Координаты в общем мире: "+p.x+", "+p.y+"</div></div></div></div>";
+
+  // Фаза 3, первый кусочек — общая видимость: список соседей вместо самой
+  // 3D-карты (та рассчитана на локальных ботов одного браузера — встроить
+  // туда настоящих других игроков отдельная большая задача, следующий шаг
+  // после этого). Отсортировано по расстоянию — ближайшие сверху.
+  h+=rubric("Соседи","общий мир");
+  if(!mpState.neighbors.length){
+    h+="<div class='entry'><div class='line'><div class='fill'><div class='note'>"+
+       "Пока никого рядом — позовите друга, он увидит вас здесь же, как только зайдёт.</div></div></div></div>";
+  } else {
+    const sorted=[...mpState.neighbors].sort((a,b)=>Math.hypot(a.x-p.x,a.y-p.y)-Math.hypot(b.x-p.x,b.y-p.y));
+    sorted.forEach(n=>{
+      const dist=Math.round(Math.hypot(n.x-p.x,n.y-p.y));
+      h+="<div class='entry'><div class='line'>"+shieldSvg(n.race,28)+"<div class='fill'>"+
+         "<div class='title'>"+(n.nick||"Безымянный лорд")+(n.is_bot?" <span class='note'>(бот)</span>":"")+"</div>"+
+         "<div class='note'>"+RACES[n.race].name+" · "+n.x+", "+n.y+" · "+dist+" клет."+"</div>";
+      if(mpState.attackTarget===n.id){
+        h+="<div class='note' style='color:#e08'>Бой честный, но упрощённый — без стены, полководцев и погоды "+
+           "(марш и время в пути уже настоящие — чем медленнее войска, тем дольше идти). "+dist+" клет. по прямой, "+
+           "см. supabase/README.md.</div>";
+        TKEYS.forEach(t=>{
+          const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
+          h+="<div class='note'>"+unitName(t,1,p.race)+" (T1, есть "+RU(have)+"): "+
+             "<input id='mp-atk-"+t+"' type='number' min='0' max='"+have+"' value='0'></div>";
+        });
+        h+="<button class='seal' data-mp='attack' data-id='"+n.id+"'"+(mpState.loading?" disabled":"")+">В поход</button> "+
+           "<button class='seal' data-mp='attackcancel'>Отмена</button>";
+      } else {
+        h+="<button class='seal' data-mp='attackpick' data-id='"+n.id+"'>Атаковать</button>";
+      }
+      h+="</div></div></div>";
+    });
+  }
+
+  if(mpState.marches.length){
+    h+=rubric("Отряды в поле",mpState.marches.length+" из "+mpMarchSlots(st.b.hall||0));
+    mpState.marches.forEach(m=>{
+      const left=Math.max(0,m.t1-Date.now()/1000);
+      const going=m.state==="go";
+      const opp=mpState.neighbors.find(n=>n.id===(m.data&&m.data.defender_id));
+      h+="<div class='entry'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+(going?"Идёт к ":"Возвращается от ")+(opp?opp.nick||"Безымянный лорд":m.tx+", "+m.ty)+"</div>"+
+         "<div class='note'>Осталось: "+fmtDur(left)+"</div>"+
+         "</div></div></div>";
+    });
+  }
+
+  if(mpState.mail.length){
+    h+=rubric("Бой","последние стычки");
+    mpState.mail.forEach(m=>{
+      const d=m.data, mine=d.role==="attacker";
+      const myLoss=mine?d.attLoss:d.defLoss, oppLoss=mine?d.defLoss:d.attLoss;
+      const lostN=u=>TKEYS.reduce((s,t)=>s+[1,2,3,4,5].reduce((s2,i)=>s2+((u[t]&&u[t][i])||0),0),0);
+      const won=(mine&&d.winner==="att")||(!mine&&d.winner==="def");
+      h+="<div class='entry"+(won?" hot":" war")+"'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+(mine?"Напали на ":"Напали от ")+(d.opponent_nick||"Безымянный лорд")+
+         " — "+(won?"победа":"поражение")+"</div>"+
+         "<div class='note'>Наши потери: "+RU(lostN(myLoss))+" · потери противника: "+RU(lostN(oppLoss))+"</div>"+
+         "</div></div></div>";
+    });
+  }
+
+  const perHour=mpProdPerHour(st);
+  h+="<div class='entry'><div class='line'><div class='fill'><div class='title'>Ресурсы</div>"+
+     "<div class='note'>"+RES.map(r=>RES_NAME[r]+": "+RU(st.res[r])).join(" · ")+"</div>"+
+     "<div class='note'>Добыча/час: "+RES.map(r=>RES_NAME[r]+" "+RU(perHour[r])).join(" · ")+
+     " — досчитывается при каждом действии и при опросе (раз в 5с, пока открыта вкладка).</div>"+
+     "</div></div></div>";
+
+  // hospital — единственное multi-здание среди перенесённых (BUILDINGS.
+  // hospital.plots=4, index.html:2425); показываем/строим только участок 0
+  // (он один разблокирован всегда — см. plotUnlocked — и это ровно тот,
+  // что нужен HALL_REQ). Старые записи могли завести его скаляром (баг
+  // mp-join, уже починен) — mpBuildLv читает защитно, не падая на этом.
+  const mpBuildLv=(bld)=>{ const raw=st.b[bld]; return BUILD_MP_MULTI.has(bld)?((Array.isArray(raw)?raw[0]:raw)||0):(raw||0) };
+  const hallLv=mpBuildLv("hall");
+  h+=rubric("Постройки","ратуша и хозяйство");
+  BUILD_MP_BLDS.forEach(bld=>{
+    const lv=mpBuildLv(bld), nextLv=lv+1, plotKey=BUILD_MP_MULTI.has(bld)?0:null;
+    const queued=st.queues.find(q=>q&&q.b===bld&&q.plot===plotKey);
+    h+="<div class='entry'><div class='line'><div class='fill'>"+
+       "<div class='title'>"+buildingName(bld,pShim)+" — уровень "+lv+"</div>";
+    if(queued){
+      const left=Math.max(0,queued.t1-Date.now()/1000);
+      h+="<div class='note'>Строится до "+nextLv+" ур., осталось "+fmtDur(left)+"</div>";
+    } else if(nextLv>25){
+      h+="<div class='note'>Максимальный уровень.</div>";
+    } else if(bld==="hall"){
+      const need=HALL_REQ.filter(k=>mpBuildLv(k)<hallLv);
+      if(need.length){
+        h+="<div class='note'>Сначала до "+hallLv+" ур.: "+need.map(k=>buildingName(k,pShim)).join(", ")+"</div>";
+      } else {
+        const c=buildCost(bld,nextLv), t=buildTime(bld,nextLv);
+        h+="<div class='note'>До "+nextLv+" ур.: "+
+           (RES.some(r=>c[r])?RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", "):"бесплатно")+
+           " · "+fmtDur(t)+"</div>"+
+           "<button class='seal' data-mp='build' data-bk='"+bld+"'"+(mpState.loading?" disabled":"")+">Улучшить</button>";
+      }
+    } else if(nextLv>hallLv){
+      h+="<div class='note'>Требуется ратуша "+nextLv+" уровня (сейчас "+hallLv+").</div>";
+    } else {
+      const c=buildCost(bld,nextLv), t=buildTime(bld,nextLv);
+      h+="<div class='note'>До "+nextLv+" ур.: "+
+         (RES.some(r=>c[r])?RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", "):"бесплатно")+
+         " · "+fmtDur(t)+"</div>"+
+         "<button class='seal' data-mp='build' data-bk='"+bld+"'"+(mpState.loading?" disabled":"")+">"+(lv?"Улучшить":"Построить")+"</button>";
+    }
+    h+="</div></div></div>";
+  });
+
+  h+=rubric("Набор войск","тир 1");
+  TKEYS.forEach(t=>{
+    const bld=TRAIN_BLD[t], lv=st.b[bld]||0, cap=trainCap(lv);
+    const have=(st.troops[t]&&st.troops[t][1])||0;
+    const training=st.train&&st.train[t];
+    h+="<div class='entry'><div class='line'><div class='fill'>"+
+       "<div class='title'>"+unitName(t,1,p.race)+" — есть "+RU(have)+"</div>";
+    if(training){
+      const left=Math.max(0,training.t1-Date.now()/1000);
+      h+="<div class='note'>В наборе: ×"+RU(training.n)+", осталось "+fmtDur(left)+"</div>";
+    } else if(cap<=0){
+      h+="<div class='note'>Нужно здание ("+buildingName(bld,pShim)+") — постройте его выше.</div>";
+    } else {
+      const c=troopCost(t,1);
+      h+="<div class='note'>Цена за штуку: "+RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", ")+
+         " · максимум за раз: "+cap+"</div>"+
+         "<input id='mp-n-"+t+"' type='number' min='1' max='"+cap+"' value='"+Math.min(cap,10)+"'> "+
+         "<button class='seal' data-mp='train' data-t='"+t+"'"+(mpState.loading?" disabled":"")+">Обучить</button>";
+    }
+    h+="</div></div></div>";
+  });
+  if(mpState.err) h+="<div class='entry'><div class='line'><div class='fill'><div class='note' style='color:#e08'>"+mpState.err+"</div></div></div></div>";
+  return h;
 }
 
 /* ---- Запуск ---- */
