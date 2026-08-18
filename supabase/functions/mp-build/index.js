@@ -227,6 +227,47 @@ function buildLv(p, bk) {
 }
 const canPay = (res, c) => RES.every((r) => !c[r] || res[r] >= c[r]);
 const pay = (res, c) => RES.forEach((r) => { if (c[r]) res[r] -= c[r]; });
+// Добыча ресурсов по времени (index.html:3790/3813/3838, см. _shared/
+// rules.js) — дергаем перед canPay/pay, чтобы цена постройки списывалась с
+// актуального баланса.
+const PROD_TABLE = [
+  400, 430, 470, 520, 580, 650, 730, 830, 950, 1100, 1300, 1550, 1850, 2200, 2700,
+  3200, 3700, 4300, 5000, 5800, 6700, 7800, 9000, 10400, 20800,
+];
+const prodRate = (lv) => (lv <= 0 ? 0 : tblRow(PROD_TABLE, lv));
+const plotCap = (lv) => (lv <= 0 ? 0 : tblRow(PROD_TABLE, lv) * 10);
+const PROD_BLD = { food: "farm", wood: "lumber", stone: "quarry", gold: "mine" };
+const PROD_MULT = { food: 1, wood: 1, stone: 0.75, gold: 0.5 };
+function production(p) {
+  const out = {};
+  RES.forEach((r) => {
+    const plots = p.b[PROD_BLD[r]];
+    let base = 0;
+    (Array.isArray(plots) ? plots : [plots || 0]).forEach((lv) => { if (lv > 0) base += prodRate(lv); });
+    out[r] = base * PROD_MULT[r];
+  });
+  return out;
+}
+function plotFillCap(p) {
+  const out = {};
+  RES.forEach((r) => {
+    const plots = p.b[PROD_BLD[r]];
+    let extra = 0;
+    (Array.isArray(plots) ? plots : [plots || 0]).forEach((lv) => { extra += plotCap(lv) * PROD_MULT[r]; });
+    out[r] = Math.round(extra);
+  });
+  return out;
+}
+function syncRes(p, nowSec) {
+  const dt = (nowSec - (p.resAt || 0)) / 3600;
+  if (dt <= 0) { p.resAt = nowSec; return; }
+  const pr = production(p), cap = plotFillCap(p);
+  RES.forEach((r) => {
+    const add = Math.min(pr[r] * dt, cap[r]);
+    p.res[r] = Math.max(0, p.res[r] + add);
+  });
+  p.resAt = nowSec;
+}
 
 Deno.serve(async (req) => {
   const pre = handleOptions(req);
@@ -268,6 +309,9 @@ Deno.serve(async (req) => {
     // задним числом тех, кто успел зайти раньше любого из этих исправлений.
     for (const k of BUILD_MULTI) if (!Array.isArray(p.b[k])) p.b[k] = [p.b[k] || 0, 0, 0, 0];
 
+    const now = Date.now() / 1000;
+    syncRes(p, now);
+
     const isMulti = BUILD_MULTI.has(bk), plotKey = isMulti ? 0 : null;
 
     // Дословно startBuild(p,bk,plot) из index.html:5712-5726.
@@ -294,7 +338,6 @@ Deno.serve(async (req) => {
     pay(p.res, c);
 
     const t = buildDuration(bk, lv, 1);
-    const now = Date.now() / 1000;
     p.queues[slot] = { b: bk, lv, plot: plotKey, t0: now, t1: now + t };
 
     const { error: updErr } = await admin

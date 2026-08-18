@@ -8784,6 +8784,22 @@ async function mpDoBuild(bk){
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
+// Превью добычи/час для панели — НЕ настоящий клиентский production() (тот
+// зовёт bonuses(p), которая ждёт полный игровой объект — gen.tal/tech/race
+// и т.д., а тут только урезанный снимок из players.state); используем
+// уже глобальный prodRate (та же PROD_TABLE, без всяких бонусов — ровно то
+// же приближение, что и сервер, см. supabase/functions/_shared/rules.js).
+const MP_PROD_BLD={food:"farm",wood:"lumber",stone:"quarry",gold:"mine"};
+const MP_PROD_MULT={food:1,wood:1,stone:.75,gold:.5};
+function mpProdPerHour(st){
+  const out={};
+  RES.forEach(r=>{
+    const plots=st.b[MP_PROD_BLD[r]];
+    let base=0; (Array.isArray(plots)?plots:[plots||0]).forEach(lv=>{ if(lv>0) base+=prodRate(lv) });
+    out[r]=Math.round(base*MP_PROD_MULT[r]);
+  });
+  return out;
+}
 function mpRaceCardsHtml(){
   return "<div class='mp-races'>"+RACE_KEYS.map(r=>
     "<button class='mp-race"+(mpState.race===r?" on":"")+"' data-mp='race' data-r='"+r+"' style='--rc:"+RACES[r].color+"'>"+
@@ -8819,9 +8835,11 @@ function foMultiplayer(){
      "<div class='title'>"+(p.nick||"Безымянный лорд")+" · "+RACES[p.race].name+"</div>"+
      "<div class='note'>Координаты в общем мире: "+p.x+", "+p.y+"</div></div></div></div>";
 
+  const perHour=mpProdPerHour(st);
   h+="<div class='entry'><div class='line'><div class='fill'><div class='title'>Ресурсы</div>"+
      "<div class='note'>"+RES.map(r=>RES_NAME[r]+": "+RU(st.res[r])).join(" · ")+"</div>"+
-     "<div class='note'>Пока не восполняются сами — производство ещё не перенесено на сервер.</div>"+
+     "<div class='note'>Добыча/час: "+RES.map(r=>RES_NAME[r]+" "+RU(perHour[r])).join(" · ")+
+     " — досчитывается при каждом действии и при опросе (раз в 5с, пока открыта вкладка).</div>"+
      "</div></div></div>";
 
   // hospital — единственное multi-здание среди перенесённых (BUILDINGS.

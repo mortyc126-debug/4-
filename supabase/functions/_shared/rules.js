@@ -376,3 +376,68 @@ export function buildLv(p, bk) {
   const raw = p.b[bk];
   return BUILD_MULTI.has(bk) ? ((Array.isArray(raw) ? raw[0] : raw) || 0) : (raw || 0);
 }
+
+// =============================================================================
+// Добыча ресурсов по времени — Фаза 5. Зеркало syncRes/production/
+// plotFillCap из index.html (syncRes: index.html:3838). В одиночной игре
+// это "ленивая экономика" — синкается при любом чтении/трате, а не тикает
+// сама по себе постоянно; на сервере то же самое: syncRes() ниже дергается
+// из mp-join (сразу же и на каждый последующий опрос — вкладка "Общий мир"
+// опрашивает mp-join раз в 5с, см. index.html) и из mp-train/mp-build перед
+// canPay/pay, так что p.res всегда актуален на момент, когда он реально
+// понадобился — отдельный "тикер добычи" в pg_cron не нужен (та же причина,
+// по которой одиночная игра не тикает ресурсы каждый кадр, см. комментарий
+// у syncRes в index.html).
+// index.html:1290 PROD_TABLE / index.html:2797 prodRate / index.html:2461 plotCap
+export const PROD_TABLE = [
+  400, 430, 470, 520, 580, 650, 730, 830, 950, 1100, 1300, 1550, 1850, 2200, 2700,
+  3200, 3700, 4300, 5000, 5800, 6700, 7800, 9000, 10400, 20800,
+];
+export const prodRate = (lv) => (lv <= 0 ? 0 : tblRow(PROD_TABLE, lv));
+export const plotCap = (lv) => (lv <= 0 ? 0 : tblRow(PROD_TABLE, lv) * 10);
+const PROD_BLD = { food: "farm", wood: "lumber", stone: "quarry", gold: "mine" };
+const PROD_MULT = { food: 1, wood: 1, stone: 0.75, gold: 0.5 };
+// index.html:3790 production(). bonuses(p).prodAll/prodFood/prodWood/
+// prodStone/prodGold/prodFW/prodSG ЗАВИСЯТ от рас/генералов/академии — та
+// же временная заглушка (=0), что у trainSpeed/build выше. Т.к. пока
+// перенесён только участок 0 у farm/lumber/quarry/mine (см. BUILD_MULTI),
+// формула ниже автоматически считает только его — участки 1-3 всегда 0 в
+// текущей форме состояния, forEach их честно учтёт (просто добавит 0), как
+// только участки 1-3 станут переносимыми, менять здесь ничего не придётся.
+export function production(p) {
+  const out = {};
+  RES.forEach((r) => {
+    const plots = p.b[PROD_BLD[r]];
+    let base = 0;
+    (Array.isArray(plots) ? plots : [plots || 0]).forEach((lv) => { if (lv > 0) base += prodRate(lv); });
+    out[r] = base * PROD_MULT[r];
+  });
+  return out;
+}
+// index.html:3813 plotFillCap — сколько добычи участок копит за один синк,
+// прежде чем перестать расти (роль "тапа" на сервере играет сам факт
+// вызова syncRes, см. заголовок блока).
+export function plotFillCap(p) {
+  const out = {};
+  RES.forEach((r) => {
+    const plots = p.b[PROD_BLD[r]];
+    let extra = 0;
+    (Array.isArray(plots) ? plots : [plots || 0]).forEach((lv) => { extra += plotCap(lv) * PROD_MULT[r]; });
+    out[r] = Math.round(extra);
+  });
+  return out;
+}
+// index.html:3838 syncRes (без lazy-порога — серверные вызовы и так редкие
+// относительно кадров браузера, порог тут не нужен; без p.isBot-ветки — в
+// общем мире пока нет ботов). nowSec — Date.now()/1000, та же секундная
+// шкала, что t0/t1 у очередей/наборов в mp-train/mp-build.
+export function syncRes(p, nowSec) {
+  const dt = (nowSec - (p.resAt || 0)) / 3600;
+  if (dt <= 0) { p.resAt = nowSec; return; }
+  const pr = production(p), cap = plotFillCap(p);
+  RES.forEach((r) => {
+    const add = Math.min(pr[r] * dt, cap[r]);
+    p.res[r] = Math.max(0, p.res[r] + add);
+  });
+  p.resAt = nowSec;
+}
