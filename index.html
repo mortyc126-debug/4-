@@ -639,6 +639,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .mail-side .co{font-size:10.5px;color:#8a6d2c;font-family:var(--data)}
 .mail-side .pw{font-size:11px;color:#5a4530;margin-top:2px}
 .mail-side .gen{font-size:11px;color:#5a4530;margin-top:3px}
+.mail-side .gen-tal{font-size:9.5px;color:#8a6d2c;margin-top:1px;line-height:1.4}
 .mail-vmid{flex:0 0 auto;font-size:20px;color:#8a2f22;margin-top:14px}
 .mail-stamp{text-align:center;font-variant:small-caps;letter-spacing:.15em;font-size:22px;font-weight:bold;
   margin:2px 0 16px;padding:4px;border:3px solid;border-radius:4px;transform:rotate(-3deg)}
@@ -1321,41 +1322,46 @@ const WATCH_TABLE=[
   {food:13800000,wood:13800000,stone:3000000,t:680400,power:303649,atk:160000,hp:40000},
   {food:20800000,wood:20800000,stone:4500000,t:1234800,power:495562,atk:500000,hp:50000}
 ];
-// SCOUT_TABLE — Лагерь разведки: bonus%/radius/scouts — настоящие цифры
-// RoK (радиус обзора и число разведчиков на карте), но в этой игре
-// разведка устроена иначе — не радиус на карте, а глубина разведданных по
-// эпохе здания (см. scoutSnapshot) — другая механика, которую эта правка
-// не трогает. bonus/radius/scouts показаны как есть в подсказке по зданию,
-// но ни на что не влияют — переносить RoK-механику радиуса обзора значило
-// бы городить систему тумана войны с нуля, отдельный разговор.
+// SCOUT_TABLE — Лагерь разведки: bonus%/scouts — настоящие цифры RoK по
+// уровням здания. Раньше обе колонки были чисто декоративными (подсказка
+// у здания их печатала, но ни на что не влияли — см. старую версию этого
+// комментария), плюс была третья колонка radius (радиус обзора на карте),
+// которую убрали целиком: в этой игре нет тумана войны на карте, чтобы
+// радиус обзора что-то значил, а раз он не нужен — хранить его тут как
+// мёртвые данные незачем. Обе оставшиеся колонки теперь реальная механика:
+// scouts — сколько лазутчиков можно держать в пути одновременно (см.
+// sendScout), bonus — надбавка к их скорости поверх базового
+// SCOUT_SPEED_MULT (тоже sendScout). Глубина самих разведданных — по
+// эпохе технологии "Маскировка" (mil_scout2, см. scoutSnapshot), от этого
+// здания не зависит вовсе — другая механика, эту правку не трогает.
 // 25 ур.: цена/время не подтверждены источником ("?"), оценены по темпу
 // соседних уровней тира.
 const SCOUT_TABLE=[
-  {food:300,wood:300,t:4,power:5,bonus:5,radius:5,scouts:1},
-  {food:500,wood:500,t:15,power:10,bonus:10,radius:5,scouts:1},
-  {food:1000,wood:1000,t:60,power:16,bonus:15,radius:6,scouts:1},
-  {food:2000,wood:2000,t:210,power:32,bonus:20,radius:6,scouts:1},
-  {food:3800,wood:3800,t:850,power:81,bonus:25,radius:7,scouts:2},
-  {food:6500,wood:6500,t:2100,power:191,bonus:30,radius:7,scouts:2},
-  {food:9800,wood:9800,t:4200,power:398,bonus:35,radius:8,scouts:2},
-  {food:14800,wood:14800,t:7800,power:769,bonus:40,radius:8,scouts:2},
-  {food:22300,wood:22300,t:10380,power:1274,bonus:45,radius:9,scouts:2},
-  {food:31300,wood:31300,t:14280,power:1971,bonus:50,radius:9,scouts:2},
-  {food:42500,wood:42500,t:19380,power:2916,bonus:60,radius:10,scouts:3},
-  {food:52500,wood:52500,t:28980,power:4286,bonus:70,radius:10,scouts:3},
-  {food:60000,wood:60000,t:35760,power:5956,bonus:80,radius:11,scouts:3},
-  {food:67500,wood:67500,t:43560,power:7969,bonus:90,radius:12,scouts:3},
-  {food:75000,wood:75000,t:52020,power:10350,bonus:90,radius:13,scouts:3},
-  {food:82500,wood:82500,t:62760,power:13191,bonus:100,radius:13,scouts:3},
-  {food:92500,wood:92500,t:86400,power:17149,bonus:100,radius:14,scouts:3},
-  {food:102500,wood:102500,t:115200,power:22223,bonus:110,radius:14,scouts:3},
-  {food:115000,wood:115000,t:144000,power:28423,bonus:110,radius:15,scouts:3},
-  {food:127500,wood:127500,t:180000,power:36109,bonus:115,radius:15,scouts:3},
-  {food:142500,wood:142500,t:234000,power:46007,bonus:115,radius:16,scouts:3},
-  {food:157500,wood:157500,t:288000,power:58118,bonus:120,radius:16,scouts:3},
-  {food:250000,wood:250000,t:378000,power:74187,bonus:120,radius:17,scouts:3},
-  {food:500000,wood:500000,t:504000,power:96279,bonus:120,radius:18,scouts:3},
-  {food:650000,wood:650000,t:669600,power:139023,bonus:125,radius:20,scouts:3}
+  {food:300,wood:300,t:4,power:5,bonus:5,scouts:1},
+  {food:500,wood:500,t:15,power:10,bonus:10,scouts:1},
+  {food:1000,wood:1000,t:60,power:16,bonus:15,scouts:1},
+  {food:2000,wood:2000,t:210,power:32,bonus:20,scouts:1},
+  {food:3800,wood:3800,t:850,power:81,bonus:25,scouts:2},
+  {food:6500,wood:6500,t:2100,power:191,bonus:30,scouts:2},
+  {food:9800,wood:9800,t:4200,power:398,bonus:35,scouts:2},
+  {food:14800,wood:14800,t:7800,power:769,bonus:40,scouts:2},
+  {food:22300,wood:22300,t:10380,power:1274,bonus:45,scouts:2},
+  {food:31300,wood:31300,t:14280,power:1971,bonus:50,scouts:2},
+  {food:42500,wood:42500,t:19380,power:2916,bonus:60,scouts:3},
+  {food:52500,wood:52500,t:28980,power:4286,bonus:70,scouts:3},
+  {food:60000,wood:60000,t:35760,power:5956,bonus:80,scouts:3},
+  {food:67500,wood:67500,t:43560,power:7969,bonus:90,scouts:3},
+  {food:75000,wood:75000,t:52020,power:10350,bonus:90,scouts:3},
+  {food:82500,wood:82500,t:62760,power:13191,bonus:100,scouts:3},
+  {food:92500,wood:92500,t:86400,power:17149,bonus:100,scouts:3},
+  {food:102500,wood:102500,t:115200,power:22223,bonus:110,scouts:3},
+  {food:115000,wood:115000,t:144000,power:28423,bonus:110,scouts:3},
+  {food:127500,wood:127500,t:180000,power:36109,bonus:115,scouts:3},
+  {food:142500,wood:142500,t:234000,power:46007,bonus:115,scouts:3},
+  {food:157500,wood:157500,t:288000,power:58118,bonus:120,scouts:3},
+  {food:250000,wood:250000,t:378000,power:74187,bonus:120,scouts:3},
+  {food:500000,wood:500000,t:504000,power:96279,bonus:120,scouts:3},
+  {food:650000,wood:650000,t:669600,power:139023,bonus:125,scouts:3}
 ];
 // ИСПРАВЛЕНИЕ: раньше 'мощь' этих зданий (кроме Стены/Башни/Разведки выше)
 // считалась формулой BUILDING_POWER_BASE*exp(K*(ур-1)^2) — она была
@@ -1765,10 +1771,20 @@ const RACE_EPOCHS = {
       mods:[{field:"mercy",kind:"frac",value:0.10}]},
     {title:"Погост пробуждается", desc:"Доля восстающих мертвецов растёт до 25% павших.",
       mods:[{field:"raise",kind:"frac",value:0.25}]},
+    // Раньше здесь тоже стояло {field:"raise",...} — то есть венец бустил долю
+    // подъёма от НАСТОЯЩИХ мертвецов при обороне. После того как raiseSkeletons
+    // стал считать raise только от реального hospitalSplit().deadUnits (см. ниже),
+    // при обороне настоящих мертвецов почти нет — большинство идёт в госпиталь,
+    // и любой % от них — это % от почти нуля, венец на практике почти не
+    // работал. По прямому запросу пользователя источник заменён: венец больше
+    // не трогает raise (обычный "от мертвецов" продолжает расти сам по себе от
+    // редких случаев переполненного лазарета), а поднимает часть ТЯЖЕЛОРАНЕНЫХ
+    // (тех, кто и так уходит в лазарет) — раз при обороне тяжелораненых
+    // действительно много, а не горстка, венец снова ощутим.
     {title:"Венец «Пробуждение кургана»",
-      desc:"При обороне города доля восстающих мертвецов растёт до 40% павших.",
+      desc:"При обороне города дополнительно 40% тяжелораненых поднимаются в строй скелетами на время боя (сами раненые при этом как обычно едут в лазарет — венец не отнимает их).",
       mods:[],
-      defMods:[{field:"raise",kind:"abs",value:0.40}]},
+      defMods:[{field:"raiseHurt",kind:"abs",value:0.40}]},
   ],
 };
 
@@ -1780,9 +1796,15 @@ const RACE_EPOCHS = {
    построек. Узлы-двойники ("числа идентичны X" в источнике — например
    Irrigation/Handsaw, три родственные техники тира открытия войск не считая
    осадных) делят один и тот же массив RS_*, а не переписаны трижды.
-   Формула ниже (RESEARCH_GROWTH и т.д.) осталась только для 8 венцов рас —
-   это придуманный игрой контент, у него нет прообраза в RoK и взять его
-   неоткуда, кроме как продолжить ту же геометрию, что и раньше.
+   8 венцов рас (eco_crown_N / mil_crown_N) — тоже придуманный игрой контент,
+   прообраза в RoK нет; изначально считались формулой ниже, но на 4-й волне
+   она давала абсурд — уже 1 уровень выходил на ~1.5-1.7 млн мощи разом.
+   Теперь у них тоже явные таблицы (RS_CROWN_ECO/RS_CROWN_MIL) — та же
+   геометрия роста, что и у настоящих RoK-таблиц (коэффициенты подсмотрены у
+   RS_CARRIAGE/RS_COMBATTACTICS), просто с другой точкой старта. Формула
+   RESEARCH_GROWTH/RESEARCH_WAVE ниже с тех пор — общий фолбэк для узлов без
+   своей RS_*-таблицы вообще (сейчас таких в дереве не осталось, но функции
+   должны на что-то отвечать, если такой узел появится).
    Два места, где сам источник не смог подтвердить точные числа (Cutting &
    Polishing — стоимость/время, финальный уровень Machinery/Stone Saw/Shaft
    Mining), помечены в комментариях у соответствующих RS_*-серий ниже. */
@@ -1796,6 +1818,27 @@ const RS_CARRIAGE = [{food:400000,wood:400000,stone:300000,gold:200000,t:48000,p
 const RS_CARTOGRAPHY = [{food:850000,wood:850000,stone:637500,gold:425000,t:36000,power:8877},{food:1280000,wood:1280000,stone:957000,gold:638000,t:54000,power:22198},{food:1910000,wood:1910000,stone:1440000,gold:1150000,t:81000,power:43136},{food:2870000,wood:2870000,stone:2150000,gold:1720000,t:122400,power:74543},{food:4300000,wood:4300000,stone:3230000,gold:2580000,t:183600,power:121648}];
 const RS_CHISEL = [{food:30000,wood:30000,stone:22500,gold:15000,t:3600,power:406},{food:60000,wood:60000,stone:45000,gold:30000,t:5400,power:1147},{food:120000,wood:120000,stone:90000,gold:60000,t:7200,power:2485},{food:240000,wood:240000,stone:180000,gold:120000,t:14400,power:5161},{food:480000,wood:480000,stone:360000,gold:240000,t:28800,power:10513}];
 const RS_COMBATTACTICS = [{food:500000,wood:500000,stone:375000,gold:250000,t:32400,power:5671},{food:750000,wood:750000,stone:563000,gold:375000,t:64800,power:14827},{food:1130000,wood:1130000,stone:845000,gold:675000,t:129600,power:30421},{food:1690000,wood:1690000,stone:1270000,gold:1010000,t:259200,power:56408},{food:2530000,wood:2530000,stone:1900000,gold:1520000,t:518400,power:100570},{food:3800000,wood:3800000,stone:2860000,gold:2280000,t:1036800,power:177222},{food:5700000,wood:5700000,stone:4290000,gold:3420000,t:2073600,power:312936},{food:8550000,wood:8550000,stone:6440000,gold:5130000,t:4147200,power:557994},{food:12830000,wood:12830000,stone:9660000,gold:7700000,t:8294400,power:1008570},{food:19250000,wood:19250000,stone:14490000,gold:11550000,t:16588800,power:1850342}];
+// Венцы рас (eco_crown_*/mil_crown_*) — придуманный игрой контент без
+// прообраза в RoK (см. комментарий в начале файла), раньше считались формулой
+// ниже (RESEARCH_GROWTH/RESEARCH_WAVE) — та формула на 4-й волне (венцы) даёт
+// lv*60*BASE, то есть уже на 1 уровне ~1.5-1.7 млн мощи разом (нашёл
+// пользователь, "так не пойдёт"). Первая правка пересчитала только power, а
+// время/цену оставила от старой формулы "как есть" — по итогу пользователь
+// правильно указал, что их тоже никто не пересматривал, и они по факту
+// унаследовали ту же болезнь (та же WAVE=60 на 4-й волне, gold:0 — просто
+// формула так считала, не осмысленное решение).
+// Теперь ВСЯ строка (еда/дерево/камень/золото/время/мощь) — это ОДНА строка
+// уже готовой настоящей RoK-таблицы (RS_CARRIAGE для эко, RS_COMBATTACTICS
+// для военных — те же источники, что и раньше для геометрии мощи), целиком
+// умноженная на один и тот же коэффициент (подобран так, чтобы 1 уровень
+// мощи вышел на 5255/4832 — те же числа, что и в первой правке). Так как
+// умножен ВЕСЬ ряд одним числом, а не только power, "цена за единицу мощи"
+// и "время за единицу мощи" — ТОЧНО те же, что у настоящей RoK Carriage/
+// Combat Tactics, просто в меньшем масштабе (венец — не полноценная
+// 10-уровневая ветка, а вершина дерева на 5 уровнях). Заодно вернулось
+// золото в цену (было 0 — артефакт старой формулы, не сознательный выбор).
+const RS_CROWN_ECO = [{food:387823,wood:387823,stone:290867,gold:193911,t:46539,power:5255},{food:581734,wood:581734,stone:436301,gold:290867,t:69808,power:13138},{food:872601,wood:872601,stone:654451,gold:436301,t:104712,power:24961},{food:1308902,wood:1308902,stone:979253,gold:654451,t:157068,power:42698},{food:1968201,wood:1968201,stone:1473727,gold:979253,t:237348,power:69308}];
+const RS_CROWN_MIL = [{food:426027,wood:426027,stone:319520,gold:213014,t:27607,power:4832},{food:639041,wood:639041,stone:479707,gold:319520,t:55213,power:12633},{food:962821,wood:962821,stone:719986,gold:575137,t:110426,power:25920},{food:1439972,wood:1439972,stone:1082109,gold:860575,t:220852,power:48063},{food:2155697,wood:2155697,stone:1618903,gold:1295123,t:441705,power:85691}];
 const RS_ENGINEERING = [{food:250000,wood:250000,stone:187500,gold:125000,t:43200,power:3915},{food:375000,wood:375000,stone:282000,gold:188000,t:60480,power:9620},{food:563000,wood:563000,stone:423000,gold:282000,t:84660,power:17937},{food:845000,wood:845000,stone:635000,gold:423000,t:118800,power:30078},{food:1270000,wood:1270000,stone:953000,gold:635000,t:165600,power:47822},{food:1900000,wood:1900000,stone:1430000,gold:953000,t:234000,power:73778},{food:2850000,wood:2850000,stone:2150000,gold:1430000,t:324000,power:111786},{food:4280000,wood:4280000,stone:3220000,gold:2150000,t:453600,power:167500},{food:6420000,wood:6420000,stone:4830000,gold:3220000,t:637200,power:249252},{food:9630000,wood:9630000,stone:7240000,gold:4830000,t:892800,power:369332}];
 const RS_HANDCART = [{food:50000,wood:50000,stone:37500,gold:25000,t:3600,power:581},{food:100000,wood:100000,stone:75000,gold:50000,t:5400,power:1672},{food:200000,wood:200000,stone:150000,gold:100000,t:7200,power:3710},{food:400000,wood:400000,stone:300000,gold:200000,t:14400,power:7786},{food:800000,wood:800000,stone:600000,gold:400000,t:28800,power:15938}];
 const RS_HEAVYFRAME = [{food:400000,wood:400000,stone:300000,gold:200000,t:38880,power:5055},{food:600000,wood:600000,stone:450000,gold:300000,t:77760,power:13415},{food:900000,wood:900000,stone:675000,gold:450000,t:154800,power:27510},{food:1350000,wood:1350000,stone:1010000,gold:675000,t:309600,power:51765},{food:2030000,wood:2030000,stone:1520000,gold:1010000,t:622800,power:94373},{food:3040000,wood:3040000,stone:2280000,gold:1520000,t:1245600,power:170726},{food:4560000,wood:4560000,stone:3420000,gold:2740000,t:2487600,power:312421},{food:6840000,wood:6840000,stone:5130000,gold:4100000,t:4975200,power:574730},{food:10250000,wood:10250000,stone:7700000,gold:6150000,t:9954000,power:1067727},{food:15380000,wood:15380000,stone:11540000,gold:9230000,t:13302000,power:2006287}];
@@ -1857,6 +1900,10 @@ const RESEARCH_TABLE = {
   eco_gall2: RS_MACHINERY,
   eco_load2: RS_CARRIAGE,
   eco_amber1: RS_CARRIAGE,
+  eco_crown_dwarf: RS_CROWN_ECO,
+  eco_crown_human: RS_CROWN_ECO,
+  eco_crown_elf: RS_CROWN_ECO,
+  eco_crown_undead: RS_CROWN_ECO,
   mil_trainspd: RS_MILDISCIPLINE,
   mil_atk_inf1: RS_IRONWORKING,
   mil_atk_arc1: RS_IRONWORKING,
@@ -1900,8 +1947,16 @@ const RESEARCH_TABLE = {
   mil_tier_arc5: RS_T5UNLOCK_MELEE,
   mil_tier_cav5: RS_T5UNLOCK_MELEE,
   mil_tier_sie5: RS_T5UNLOCK_SIEGE,
+  mil_crown_dwarf: RS_CROWN_MIL,
+  mil_crown_human: RS_CROWN_MIL,
+  mil_crown_elf: RS_CROWN_MIL,
+  mil_crown_undead: RS_CROWN_MIL,
 };
-// Только для 8 венцов рас (нет прообраза в RoK, см. комментарий выше).
+// Раньше комментарий гласил "только для 8 венцов рас" — теперь у всех 8 есть
+// явные таблицы (RS_CROWN_ECO/RS_CROWN_MIL, см. выше), формула ниже как
+// фактический фолбэк уже не используется ни одним узлом ACADEMY_TREE, но
+// оставлена (не мёртвый код в строгом смысле — сработает для любого будущего
+// узла без своей RS_*-таблицы, как и для остальных wave 1-3 без своих таблиц).
 const RESEARCH_GROWTH=1.6, RESEARCH_WAVE={1:1,2:5,3:20,4:60};
 const RESEARCH_POWER_BASE={eco:28500, mil:26200};
 const RESEARCH_POWER_WAVE = {1:0.018, 2:5, 3:20, 4:60};
@@ -2068,7 +2123,14 @@ function nodeVisibleFor(n,p){                          // раса + выбор 
   return true;
 }
 function nodeImgSrc(n,p){                               // открытие тира — портрет самого юнита, чтобы сразу видно, кого дают
-  return n.unlock ? "images/units/"+p.race+"-"+n.unlock.type+n.unlock.tier+".png" : "images/ui/research-"+n.id+".png";
+  if(n.unlock) return "images/units/"+p.race+"-"+n.unlock.type+n.unlock.tier+".png";
+  // Янтарные узлы (eco_amber0/1) — своей картинки-исследования для них никогда
+  // не рисовали (images/ui/research-eco_amber0.png и research-eco_amber1.png
+  // не существуют — узел оставался вовсе без иконки, onerror просто прятал
+  // img). Ресурс уже есть готовой иконкой (см. #amber-badge выше) — переиспользуем
+  // её же, а не рисуем отдельную картинку с нуля под конкретный узел.
+  if(n.field==="gatherAmber") return "images/ui/res-amber.png";
+  return "images/ui/research-"+n.id+".png";
 }
 
 /* ---- Снаряжение: заимствовано из RoK (материалы, редкость, крафт), без чертежей —
@@ -2128,6 +2190,11 @@ function gearItemStats(cat,order,r){     // r = редкость 1..5
   }
   return order==="bastion" ? {hp:P,def:S,atk:T} : {atk:P,hp:S,def:T};   // акссессуар
 }
+// Было двумя одинаковыми локальными const внутри forgeInfoHtml и
+// genGearHtml — вынес один раз сюда, рядом с gearItemStats, которую он
+// форматирует: третье место (scoutReportHtml, разведка снаряжения) уже не
+// стало поводом заводить третью копию.
+function statTxt(st){ return Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+(st[k]*100).toFixed(1)+"%")).join(", "); }
 function gearPowerOf(p){     // мощь надетого снаряжения
   let v=0; GEAR_SLOTS.forEach(s=>{ const it=p.gear&&p.gear[s.id]; if(it) v+=GEAR_POWER[it.rarity-1]; });
   return v;
@@ -2216,11 +2283,15 @@ const GENERALS = {
     { name:"Владислав фон Морвейн", role:"Несокрушимый",
       // Раньше флейвор объяснял бонус защиты через "не даёт лазарету поблажек" —
       // но лазарет тут ни при чём: это здание, его характеристики от выбора
-      // генерала не меняются. healSpeed=1 в apply() — реальный размен (см.
-      // stat ниже), просто не то, чем стоит объяснять ХАРАКТЕР персонажа —
-      // защита войск объясняется муштрой и строем, а не отношением к лазарету.
+      // генерала не меняются. healSpeed=1 в apply() отменяет расовую скидку
+      // нежити на лечение в лазарете (healSpeed:0.5 c эпохи 2, см. RACE_EPOCHS.
+      // undead) — размен "+10% защиты вместо вдвое быстрого лазарета" (реально
+      // работает только после починки healDuration(), раньше healSpeed=1 был
+      // холостым — дефолт и так уже был 1, см. комментарий у healDuration).
+      // Не то, чем стоит объяснять ХАРАКТЕР персонажа во flavor — защита войск
+      // объясняется муштрой и строем, а не отношением к лазарету.
       flavor:"Муштрует свою мёртвую рать без устали — дисциплина и отточенный строй значат для него больше, чем крепость доспеха.",
-      stat:"Защита войск +10%, подъём павших — обычной скорости.",
+      stat:"Защита войск +10%, лечение в лазарете — обычной скорости (без расовой скидки нежити).",
       apply:b=>{ b.def+=.10; b.healSpeed=1; } },
     { name:"Кармилла", role:"Некромантка",
       flavor:"Осторожна до расчётливости: предпочитает брать врага хитростью, а не числом, и просчётов себе почти не прощает.",
@@ -2279,6 +2350,22 @@ const GENERAL_TREE = {
     {id:"gt_a10",name:"Милосердие",  per:.03,kind:"add", field:"mercy",    max:5, txt:"Потери убитыми −3% (в лазарет)"},
   ]},
 };
+// Пять веток дерева генерала одним списком — раньше жили только внутри
+// genSkillBadges() (значки в профиле). Тот же разбор нужен и разведке (см.
+// scoutSnapshot/scoutReportHtml): куда именно вложены очки — тактическая
+// информация ("вложился в Армию — жди сильную защиту войск", "ничего в
+// Развитии — экономика слабая"), а не просто число, ни о чём не говорящее
+// само по себе. Один источник данных на оба места, чтобы не разъезжались.
+const TALENT_BRANCHES=[["city",GENERAL_TREE.city],["army",GENERAL_TREE.army],
+  ["war",TALENTS.war],["dev",TALENTS.dev],["gath",TALENTS.gath]];
+function talentBranchSpent(p){
+  const out={};
+  TALENT_BRANCHES.forEach(([key,br])=>{
+    let s=0; br.nodes.forEach(n=>s+=(p.gen.tal[n.id]||0));
+    out[key]=s;
+  });
+  return out;
+}
 
 /* ---- Здания ---- */
 const BUILDINGS = {
@@ -3518,7 +3605,7 @@ function logg(text,kind){ W.log.unshift({t:W.t,text,kind:kind||""}); if(W.log.le
 /* ---- Ленивая экономика ------------------------------------------------ */
 function bonuses(p, defending){
   const b={build:1, march:1, heal:1, healSpeed:1,
-    atk:0, def:0, hp:0, archer:0, raise:0, gather:0, load:0, hosp:0, cap:0,
+    atk:0, def:0, hp:0, archer:0, raise:0, raiseHurt:0, gather:0, load:0, hosp:0, cap:0,
     prodFW:0, prodSG:0, bandit:0, mercy:0,
     gatherAmber:0,   // скорость сбора янтаря (см. eco_amber0/1) — сам ресурс/сбор на карте ещё не заведён,
                       // поле уже считается наравне с остальными, чтобы не переделывать bonuses() задним числом
@@ -3706,6 +3793,12 @@ function armyPower(units,B,race){
 }
 function countUnits(u){let n=0;TKEYS.forEach(t=>{for(let i=1;i<=5;i++)n+=(u[t]&&u[t][i])||0});return n}
 function emptyUnits(){const u={};TKEYS.forEach(t=>{u[t]={};for(let i=1;i<=5;i++)u[t][i]=0});return u}
+// Складывает src в dst на месте (dst[t][i]+=src[t][i]) — нужна splitLosses,
+// чтобы вернуть легкораненых (см. SLIGHT_WOUND_FRAC) обратно в строй ровно
+// в ту сторону, которая переживает бой (m.units у похода/D.units у
+// обороны), а не в p.troops напрямую — иначе более поздняя перезапись
+// p.troops «после боя» стёрла бы их (см. battleCity/arriveMarch).
+function addUnitsInto(dst,src){ TKEYS.forEach(t=>{for(let i=1;i<=5;i++) dst[t][i]=(dst[t][i]||0)+(src[t][i]||0)}); }
 // Кривая — регрессия по табличке "Ратуша" из оригинала (Troop Capacity, ур.17-25):
 // cap = 145.98 * ур^2.1443 (степенной закон, лог-лог МНК), ошибка ~0.1-3%.
 const marchCapacityBase = hall => 145.98*Math.pow(hall,2.1443);
@@ -3720,6 +3813,17 @@ function marchCapacity(p){
    Треугольник: пехота бьёт лучников, лучники — конницу, конница — пехоту.
    Осадные слабы в поле, но везут груз и ломают стены.
    ========================================================================= */
+// Подпись НАПАДАЮЩЕЙ стороны для хроники боя (resolveBattle читает f.name
+// напрямую в каждой строке рассказа — "Схватка N: X теряет...", "X дрогнули"
+// и т.п.). p.name — это имя ГОРОДА игрока, годится как подпись, когда p
+// обороняется (это буквально его город и держит стену). Но когда p —
+// нападающий, в бою участвует отряд, ушедший ИЗ города, а не сам город: у
+// живого игрока p.name — буквально строка "Ваш город" (см. genWorld), и
+// "Ваш город теряет 882" в отчёте о ШТУРМЕ читается так, будто под ударом
+// сам город, хотя дома он цел, воюет отправленное войско. У ботов p.name —
+// собственное имя города (не служебная фраза "ваш"), там та же метонимия
+// не режет слух ("Тангрим теряет" — нормально), так что не трогаем.
+function atkName(p){ return p.isBot ? p.name : "Ваши войска"; }
 function makeForce(units,p,opts){
   const defending=!!(opts&&opts.defending);
   const B=p?bonuses(p,defending):{atk:0,def:0,hp:0,matk:0,mdef:0,archer:0,raise:0,bandit:0,mercy:0,counter:0,firstStrike:0};
@@ -3727,6 +3831,11 @@ function makeForce(units,p,opts){
            start:JSON.parse(JSON.stringify(units)), broken:emptyUnits(),
            gen: (p&&p.gen&&p.gen.id!=null) ? genStats(p) : null,
            wallDef:(opts&&opts.wall)||0, bandit:(opts&&opts.bandit)||false,
+           // mode — тот же режим, что потом пойдёт в splitLosses() для ЭТОЙ
+           // стороны после боя ("siege-attack"/"hospital"): raiseSkeletons()
+           // должен считать "настоящих" мертвецов той же меркой, что и
+           // итоговый разбор потерь, иначе они разойдутся (см. raiseSkeletons).
+           mode:(opts&&opts.mode)||"hospital",
            name:(opts&&opts.name)||(p?p.name:"Разбойники")};
   return f;
 }
@@ -3770,6 +3879,26 @@ function sideStats(f){
   s.totalHp=TKEYS.reduce((a,t)=>a+s[t].hp,0);
   s.totalN =TKEYS.reduce((a,t)=>a+s[t].n,0);
   return s;
+}
+// Итоговые проценты бонусов по роду войск на секунду боя — та же пара
+// модификаторов (TYPE_ATK/TYPE_DEF + archer), что sideStats() выше уже
+// сворачивает в абсолютную силу юнитов, только НЕ свёрнутая, а как
+// проценты сверху расовой базы — то, что в отчёте о бое реально хочется
+// прочитать ("почему я продул размен"), а не абсолютная мощь стороны.
+// Здоровье в нашей модели не завязано на род войск (нет defInf/hpArc и
+// т.п.), поэтому одно общее число на всю армию, не по каждому роду.
+function battleBuffSnapshot(f){
+  const B=f.B||{};
+  const TYPE_ATK={inf:"atkInf",arc:"atkArc",cav:"atkCav",sie:"atkSie"};
+  const TYPE_DEF={inf:"defInf",arc:"defArc",cav:"defCav",sie:"defSie"};
+  const out={hp:B.hp||0};
+  TKEYS.forEach(t=>{
+    let atk=(1+(B.atk||0))*(1+(B[TYPE_ATK[t]]||0))-1;
+    if(t==="arc") atk=(1+atk)*(1+(B.archer||0))-1;
+    const def=(1+(B.def||0))*(1+(B[TYPE_DEF[t]]||0))-1;
+    out[t]={atk,def};
+  });
+  return out;
 }
 function counterMult(from,to){
   const T=TROOP_TYPES[from];
@@ -4065,37 +4194,100 @@ function checkDiscipline(f,loss){
   });
   return broke;
 }
-function raiseSkeletons(f,loss){
-  const rate=f.B.raise||0; if(rate<=0) return;
-  if(!f._raisedCum) f._raisedCum=emptyUnits();
-  TKEYS.forEach(t=>{
-    for(let i=1;i<=5;i++){
-      const dead=loss[t][i]||0; if(!dead)continue;
-      const should=Math.floor(dead*rate), already=f._raisedCum[t][i]||0;
-      if(should>already){ f.risen[t][i]=(f.risen[t][i]||0)+(should-already); f._raisedCum[t][i]=should; }
-    }
-  });
-}
-/* Раненые вместо убитых — механика RoK: гибель насмерть только у атакующего при штурме
-   чужого города (mode="siege-attack"), без формул и госпиталя. Во всех прочих случаях
-   (оборона города, полевые стычки с разбойниками) потери сперва целиком идут в госпиталь
-   и гибнут только сверх его вместимости. */
-function splitLosses(p,loss,mode){
+// Раненые вместо убитых — механика RoK: гибель насмерть только у атакующего при штурме
+// чужого города (mode="siege-attack"), без формул и госпиталя. Во всех прочих случаях
+// (оборона города, полевые стычки с разбойниками) потери сперва целиком идут в госпиталь
+// и гибнут только сверх его вместимости.
+// Доля потерь, что отделывается лёгким испугом и сама возвращается в
+// строй тут же, лазарет им не нужен вовсе — третья корзина отчёта о бое
+// (RoK: Remaining/Slightly Wounded/Severely Wounded/Dead, у нас раньше
+// было только hurt+dead, т.е. "тяжелораненые"+"убитые" без "легкораненых").
+// Точной цифры разброса из источника нет (пользователь дал только СПИСОК
+// категорий, не проценты) — 12% подобрано на глаз как заметная, но не
+// доминирующая доля: не обесценивает лазарет как механику, но и не ноль.
+const SLIGHT_WOUND_FRAC = 0.12;
+// Чистое ядро госпитального разбора — БЕЗ побочных эффектов (не пишет в
+// p.wounded). Раньше эта арифметика жила только внутри splitLosses() и
+// вызывалась ОДИН раз, целиком, уже после конца боя — а raiseSkeletons()
+// поднимала скелетов от СЫРОГО loss (кто просто выбыл из боя), а не от
+// того, кто по итогу окажется настоящим трупом: при обороне города/стычке
+// в поле бо́льшая часть выбывших едет в лазарет и остаётся жива, значит
+// скелет вставал из тела бойца, который "на самом деле" не умирал —
+// найдено в разборе с пользователем боевого отчёта. Теперь и итоговый
+// splitLosses(), и raiseSkeletons() зовут ЭТУ функцию — гарантированно
+// одна и та же арифметика, посчитанная дважды не разойдётся.
+function hospitalSplit(p,loss,mode){
   if(mode==="siege-attack"){
-    let dead=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) dead+=loss[t][i]||0});
-    return {dead,hurt:0};
+    // Штурм чужого города/лагеря/крепости — потери насмерть без исключений,
+    // ни лазарета, ни "легкого испуга": в RoK это тоже единственный случай
+    // безвозвратной гибели войск (см. комментарий выше у mode).
+    const deadUnits=emptyUnits(); let dead=0;
+    TKEYS.forEach(t=>{for(let i=1;i<=5;i++){ const n=loss[t][i]||0; deadUnits[t][i]=n; dead+=n; }});
+    return {dead,hurt:0,slight:0,slightUnits:emptyUnits(),deadUnits,hurtUnits:emptyUnits()};
   }
   const B=bonuses(p);
   const cap=Math.round(totalHospitalCap(p)*(1+B.hosp+B.mercy));
   let inHosp=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) inHosp+=p.wounded[t][i]});
-  let dead=0, hurt=0;
+  let dead=0, hurt=0, slight=0;
+  const slightUnits=emptyUnits(), deadUnits=emptyUnits(), hurtUnits=emptyUnits();
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++){
-    const n=loss[t][i]; if(!n)continue;
+    let n=loss[t][i]; if(!n)continue;
+    const sl=Math.round(n*SLIGHT_WOUND_FRAC);
+    if(sl>0){ slightUnits[t][i]=sl; slight+=sl; n-=sl; }
     const room=Math.max(0,cap-inHosp);
     const w=Math.min(n,room); inHosp+=w;
-    p.wounded[t][i]+=w; hurt+=w; dead+=n-w;
+    hurtUnits[t][i]=w; hurt+=w;
+    const d=n-w; deadUnits[t][i]=d; dead+=d;
   }});
-  return {dead,hurt};
+  return {dead,hurt,slight,slightUnits,deadUnits,hurtUnits};
+}
+// Настоящий, безвозвратный подъём скелетов: цепляется не за "кто вообще
+// выбыл из боя в этом раунде", а за hospitalSplit(...).deadUnits — то, что
+// НА ЭТОТ МОМЕНТ боя уже не влезло бы в госпиталь и умерло по-настоящему.
+// loss, который сюда приходит (см. вызовы в resolveBattle), — накопленный
+// с начала боя итог, не дельта за раунд: hospitalSplit каждый раз пересчитывает
+// его заново от реальной (фиксированной на начало боя) занятости лазарета —
+// значит по ходу боя, по мере роста накопленных потерь, доля "настоящих"
+// мертвецов в них растёт сама, без отдельного счётчика заполнения госпиталя.
+// При штурме (mode="siege-attack") deadUnits==loss целиком — там для
+// атакующего ничего не меняется, поднимает как и раньше, от каждого павшего.
+// f.p может быть пуст (разбойничий гарнизон) — тогда госпиталю просто
+// неоткуда взяться, считаем всех выбывших мёртвыми (как и раньше; на деле
+// не важно — у разбойников raise всегда 0).
+//
+// raiseHurt (венец нежити «Пробуждение кургана», см. RACE_EPOCHS.undead) —
+// ОТДЕЛЬНЫЙ, параллельный источник: часть тяжелораненых (hurtUnits, те, кто
+// и так едет в лазарет как обычно, никуда не девается) тоже встаёт скелетами
+// на время боя. Копится в ТОТ ЖЕ f.risen/_raisedCum, что и raise — should
+// считается суммой обоих источников разом, поэтому не поднимает дважды одних
+// и тех же, даже если raise и raiseHurt активны одновременно.
+function raiseSkeletons(f,loss){
+  const rate=f.B.raise||0, rateHurt=f.B.raiseHurt||0;
+  if(rate<=0 && rateHurt<=0) return;
+  if(!f._raisedCum) f._raisedCum=emptyUnits();
+  let dead=loss, hurt=null;
+  if(f.p){ const hs=hospitalSplit(f.p,loss,f.mode); dead=hs.deadUnits; hurt=hs.hurtUnits; }
+  TKEYS.forEach(t=>{
+    for(let i=1;i<=5;i++){
+      const shouldDead=Math.floor((dead[t][i]||0)*rate);
+      const shouldHurt=(rateHurt>0 && hurt) ? Math.floor((hurt[t][i]||0)*rateHurt) : 0;
+      const should=shouldDead+shouldHurt, already=f._raisedCum[t][i]||0;
+      if(should>already){ f.risen[t][i]=(f.risen[t][i]||0)+(should-already); f._raisedCum[t][i]=should; }
+    }
+  });
+}
+function splitLosses(p,loss,mode){
+  const r=hospitalSplit(p,loss,mode);
+  if(mode!=="siege-attack"){
+    // slightUnits/deadUnits НЕ добавлены в p.troops здесь — вызывающий код
+    // сам решает, куда именно вернуть легкораненых (в живой поход, что ещё
+    // идёт домой, или в гарнизон, который вот-вот перезапишется post-боем),
+    // см. battleCity/arriveMarch и addUnitsInto выше. А вот в госпиталь
+    // тяжелораненые едут отсюда же — конкурирующей перезаписи p.wounded
+    // нигде нет, в отличие от p.troops.
+    TKEYS.forEach(t=>{for(let i=1;i<=5;i++){ const w=r.hurtUnits[t][i]||0; if(w) p.wounded[t][i]+=w; }});
+  }
+  return {dead:r.dead,hurt:r.hurt,slight:r.slight,slightUnits:r.slightUnits};
 }
 
 /* =========================================================================
@@ -4356,11 +4548,14 @@ function sendMarch(p,tx,ty,units,mode){
    был чит — знать точный состав чужой армии в момент удара нельзя.
    Теперь лазутчик реально идёт к городу и присылает СНИМОК на момент прибытия
    (scoutSnapshot): пока он возвращается, противник успевает и построить, и
-   потратить. Глубина сведений — от уровня Разведки, как и было задумано.
+   потратить. Глубина сведений — от технологии "Маскировка" (см. scoutSnapshot),
+   а не от этого здания — здание отвечает за то, СКОЛЬКО лазутчиков можно
+   держать в пути разом и КАК БЫСТРО они бегают (SCOUT_TABLE.scouts/bonus,
+   те же цифры, что настоящий RoK даёт Лагерю разведки по уровням).
    Слот марша лазутчик не занимает: в RoK разведка тоже не отнимает отряд, да и
    счёт слотов ведётся по W.marches, поэтому scout-походы там просто не считаем
    (см. sendMarch/botThink). Войск с собой не берёт — это один соглядатай. */
-const SCOUT_SPEED_MULT = 2.2;   // налегке и без обоза — заметно быстрее войска
+const SCOUT_SPEED_MULT = 2.2;   // налегке и без обоза — заметно быстрее войска, независимо от уровня здания
 function sendScout(p,tx,ty){
   if((p.b.scout||0)<=0) return {err:"Нужна разведка"};
   const tgt=W.map[key(tx,ty)];
@@ -4368,9 +4563,19 @@ function sendScout(p,tx,ty){
   if(tgt.pid===p.id) return {err:"Это ваш город"};
   if(W.marches.some(m=>m.pid===p.id&&m.mode==="scout"&&m.tx===tx&&m.ty===ty))
     return {err:"Лазутчик уже в пути"};
+  // SCOUT_TABLE.scouts — сколько лазутчиков одновременно (1 на уровнях 1-4,
+  // 2 на 5-10, 3 на 11+ — настоящая раскладка RoK). Раньше разведка вообще
+  // не считала занятость — можно было заслать их сколько угодно разом.
+  const outNow=W.marches.filter(m=>m.pid===p.id&&m.mode==="scout").length;
+  const maxScouts=tblRow(SCOUT_TABLE,p.b.scout).scouts;
+  if(outNow>=maxScouts) return {err:"Все лазутчики уже в пути ("+maxScouts+")"};
   const path=waterPath(p.x,p.y,tx,ty);
   const d=pathLength(path)*(1-portalShortcut(p));
-  const travel=Math.max(15, d/(marchSpeed(p,emptyUnits())*SCOUT_SPEED_MULT)*60);
+  // SCOUT_TABLE.bonus — надбавка скорости от прокачки здания, поверх
+  // базового SCOUT_SPEED_MULT (тот не меняется с уровнем — налегке они и
+  // так быстрее войска; bonus — это уже инвестиция в самих лазутчиков).
+  const speedMult=SCOUT_SPEED_MULT*(1+tblRow(SCOUT_TABLE,p.b.scout).bonus/100);
+  const travel=Math.max(15, d/(marchSpeed(p,emptyUnits())*speedMult)*60);
   const m={id:W.nextId++,pid:p.id,mode:"scout",x0:p.x,y0:p.y,tx,ty,units:emptyUnits(),
     t0:W.t,t1:W.t+travel,state:"go",carry:null,gatherEnd:0};
   setMarchPath(m,path);
@@ -4492,7 +4697,7 @@ const EV = {
     const cell=W.map[key(m.tx,m.ty)];
     const q=cell&&cell.t==="city" ? W.players.find(z=>z.id===cell.pid) : null;
     if(!q){ if(!p.isBot) logg("Лазутчик не нашёл города на месте — возвращается ни с чем.","war"); return }
-    syncRes(q);
+    syncRes(q); syncWall(q);
     if(p.isBot) return;
     pushMail({cat:"report",kind:"scout",
       oppNick:q.nick||"Безымянный лорд", oppRace:q.race,
@@ -4620,13 +4825,16 @@ function arriveMarch(m){
 
   if(cell.t==="camp"||cell.t==="fort"){
     const B=bonuses(p);
-    const A=makeForce(m.units,p,{name:p.name});
+    const A=makeForce(m.units,p,{name:atkName(p),mode:"hospital"});
     const bandUnits=banditArmy(cell.lv);
     const D=makeForce(bandUnits,null,{bandit:true,name:"Разбойники ур. "+cell.lv});
     D.B={atk:0,def:0,hp:0,matk:0,mdef:0,archer:0,raise:0};
     A.B.atk += B.bandit;
     const r=resolveBattle(A,D,{startA:countUnits(m.units)});
     const sp=splitLosses(p,r.lossA,"hospital");   // полевая стычка — потери идут в госпиталь, не насмерть
+    // Легкораненые возвращаются в САМ ПОХОД (A.units), а не сразу в p.troops —
+    // отряд ещё физически в поле и топает домой (см. m.units=A.units ниже).
+    addUnitsInto(A.units, sp.slightUnits);
     if(r.win==="A"){
       const i=clamp(cell.lv,1,CFG.MAX_LEVEL), xp=BANDIT_XP[i-1];
       addXp(p,xp);
@@ -4751,22 +4959,87 @@ function menuBadges(){
   };
 }
 function genInfo(p){
-  return (p.gen&&p.gen.id!=null) ? {name:GENERALS[p.race][p.gen.id].name, lv:p.gen.lv} : null;
+  if(!(p.gen&&p.gen.id!=null)) return null;
+  // stars — та же формула, что и в foGen() (1 звезда ~10 уровней, всего 6).
+  // talents — ветка, что реально была активна В МОМЕНТ боя (тот же разбор,
+  // что и в разведке, см. talentBranchSpent) — RoK показывает в отчёте
+  // именно билд командира на секунду столкновения, не текущий "как сейчас".
+  return {name:GENERALS[p.race][p.gen.id].name, lv:p.gen.lv,
+    stars:Math.min(6,1+Math.floor(p.gen.lv/10)),
+    talents:talentBranchSpent(p)};
 }
 // Слепок разведданных на момент разведки (та же градация по эпохе разведки,
 // что и в живой панели cartouche) — снимок, а не ссылка на живые войска q,
 // потому что у противника они продолжат меняться уже после того, как отчёт
 // лёг в почту.
+// Ступень разведки — уровень технологии "Маскировка" (mil_scout2), а НЕ
+// уровень здания Разведки (p.b.scout). Раньше было наоборот (se=epochOf
+// уровня здания) — но по пользовательской подсказке о реальном RoK, за
+// подробность донесений отвечает именно академическая технология
+// Camouflage, а здание Скаутстанции влияет на скорость/число/радиус
+// разведчиков — на СОДЕРЖАНИЕ отчёта оно не влияет вовсе. У "Маскировки"
+// в реальной игре 10 уровней; наш узел mil_scout2 (max:5) — половина
+// сетки, поэтому каждая наша ступень открывает СРАЗУ ДВЕ настоящих
+// ступени Camouflage подряд, не теряя ни одного пункта настоящей лестницы,
+// просто с более крупным шагом:
+//   0        — ничего сверх шапки письма (имя/ратуша/мощь и так видны
+//              всегда — см. scouted()/renderCartouche, они открыты в RoK
+//              любому правителю без разведки, это тир 1 реальной лестницы)
+//   1 (2-3)  — прикидка числа войск (диапазоном) + точные запасы склада
+//   2 (4-5)  — стена: уровень и текущая прочность + уровень полководца
+//              (сам ЛИЧНОСТЬ генерала не тайна — портрет уже в шапке
+//              письма при любой ступени, см. комментарий ниже)
+//   3 (6-7)  — точный уровень Академии + точная раскладка по родам войск
+//   4 (8-9)  — уровень гарнизонной башни (в реальном RoK тут второй,
+//              заместительский, командир — но у нас на генерала ровно
+//              один слот, второго попросту нет, заменить нечем) + точная
+//              раскладка по тирам
+//   5 (10)   — полный шпионаж: куда вложены очки таланта (по веткам) и
+//              снаряжение полководца, раненые в лазарете
 function scoutSnapshot(p,q){
-  const sl=p.b.scout||0, se=epochOf(sl), total=countUnits(q.troops);
+  const se=p.tech.mil_scout2||0, total=countUnits(q.troops);
   const snap={se,total};
-  if(se>=3) snap.byType=TKEYS.map(t=>({t,n:Object.values(q.troops[t]).reduce((a,b)=>a+b,0)})).filter(x=>x.n>0);
-  if(se>=4) snap.byTier=TKEYS.map(t=>{
-    const parts=[]; for(let i=1;i<=5;i++) if(q.troops[t][i]) parts.push({i,n:q.troops[t][i]});
-    return {t,parts};
-  }).filter(x=>x.parts.length);
-  if(se>=2){ snap.res={}; RES.forEach(rr=>snap.res[rr]=q.res[rr]); }
-  if(se>=5){ snap.gen=(q.gen&&q.gen.id!=null)?GENERALS[q.race][q.gen.id].name:null; snap.wall=q.b.wall; snap.garrison=q.b.garrison; }
+  if(se>=1){
+    snap.res={}; RES.forEach(rr=>snap.res[rr]=q.res[rr]);
+  }
+  if(se>=2){
+    snap.wall=q.b.wall; snap.wallHp=Math.round(q.wallHp||0); snap.wallMax=maxWallHp(q.b.wall);
+    snap.genLv=(q.gen&&q.gen.id!=null)?q.gen.lv:null;
+  }
+  if(se>=3){
+    snap.academy=q.b.academy;
+    snap.byType=TKEYS.map(t=>({t,n:Object.values(q.troops[t]).reduce((a,b)=>a+b,0)})).filter(x=>x.n>0);
+  }
+  if(se>=4){
+    snap.garrison=q.b.garrison;
+    snap.byTier=TKEYS.map(t=>{
+      const parts=[]; for(let i=1;i<=5;i++) if(q.troops[t][i]) parts.push({i,n:q.troops[t][i]});
+      return {t,parts};
+    }).filter(x=>x.parts.length);
+  }
+  // ИМЯ полководца сюда специально не идёт — портрет соперника и так виден
+  // в шапке того же письма (m.oppAvatar, см. scouted() и scoutReportHtml),
+  // при ЛЮБОЙ ступени разведки: гадать, какой это генерал, лазутчику
+  // незачем, его уже видно глазами. То, что реально не видно снаружи —
+  // сила вложения: КУДА вложены очки таланта (не только сколько —
+  // пользователь отметил, что просто число ни для какой тактики не
+  // годится, а разбивка по веткам уже говорит: вложился в Армию — жди
+  // сильную защиту войск) и надетое снаряжение — тоже часть боевой мощи
+  // генерала, скрывать его отдельно от таланта было бы непоследовательно.
+  if(se>=5){
+    snap.genTal=(q.gen&&q.gen.id!=null)?talentBranchSpent(q):null;
+    snap.gearPower=gearPowerOf(q);
+    // stats — то, что ПРЕДМЕТ РЕАЛЬНО ДАЁТ (см. gearItemStats), не только
+    // редкость: пользователь отметил, что мало знать, что надето, нужно
+    // понимать, что именно оно прибавляет, иначе пункт бесполезен для
+    // тактики так же, как раньше было бесполезно просто число очков.
+    snap.gear=GEAR_SLOTS.map(s=>{
+      const it=q.gear&&q.gear[s.id]; if(!it) return null;
+      return {name:s.name, rarity:it.rarity, stats:gearItemStats(s.cat,it.order,it.rarity)};
+    }).filter(Boolean);
+    let wounded=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) wounded+=q.wounded[t][i]||0});
+    snap.wounded=wounded;
+  }
   return snap;
 }
 // Отчёт о штурме города — отдельная запись для КАЖДОЙ человеческой стороны
@@ -4774,7 +5047,12 @@ function scoutSnapshot(p,q){
 // что и у существующего logMsg): у атакующего и защитника разные потери и
 // разный исход одного и того же боя, поэтому это не одна запись с двумя
 // углами обзора, а две независимые.
-function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords,weather,log){
+// A/D — те же боевые силы (см. makeForce), что resolveBattle уже отыграл:
+// A.B/D.B несут ИМЕННО тот профиль бонусов, что участвовал в бою (гарнизон
+// защитника — с учётом defending:true и стены, см. battleCity), пересчитывать
+// bonuses(att)/bonuses(def) заново здесь было бы неверно — вышел бы другой
+// (атакующий по умолчанию) профиль для защитника.
+function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords,weather,log,A,D){
   // Погода одна на бой и одинаково касается обеих сторон, поэтому в оба отчёта
   // уходит одна и та же строка (см. BATTLE_WEATHER). Ясную не пишем вовсе —
   // "погода не мешала" не новость, строка бы просто зашумляла каждый отчёт.
@@ -4785,6 +5063,7 @@ function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords,weath
   // battleLogHtml). Погодную строку из хроники убираем — она уже отдельной
   // плашкой над таблицей, дублировать незачем.
   const chron = (log||[]).filter(e=>e.kind!=="weather");
+  const buffsA=battleBuffSnapshot(A), buffsD=battleBuffSnapshot(D);
   if(!att.isBot) pushMail({
     cat:"report", kind:"battle", win: win==="A", weather:wx, log:chron,
     selfNick:att.nick||"Безымянный лорд", oppNick:def.nick||"Безымянный лорд",
@@ -4792,10 +5071,13 @@ function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords,weath
     selfCoords:{x:att.x,y:att.y}, oppCoords:{x:def.x,y:def.y}, fightCoords:coords,
     selfPower:powA, oppPower:powD,
     selfGen:genInfo(att), oppGen:genInfo(def),
+    selfBuffs:buffsA, oppBuffs:buffsD,
     selfAvatar:playerAvatarSrc(att), oppAvatar:playerAvatarSrc(def),
     selfStart:startA, oppStart:startD,
-    selfDead:la.dead, selfHurt:la.hurt, selfRemain:Math.max(0,startA-la.dead-la.hurt),
-    oppDead:ld.dead, oppHurt:ld.hurt, oppRemain:Math.max(0,startD-ld.dead-ld.hurt),
+    selfDead:la.dead, selfHurt:la.hurt, selfSlight:la.slight,
+    selfRemain:Math.max(0,startA-la.dead-la.hurt-la.slight),
+    oppDead:ld.dead, oppHurt:ld.hurt, oppSlight:ld.slight,
+    oppRemain:Math.max(0,startD-ld.dead-ld.hurt-ld.slight),
     attacker:true,
   });
   if(!def.isBot) pushMail({
@@ -4805,10 +5087,13 @@ function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords,weath
     selfCoords:{x:def.x,y:def.y}, oppCoords:{x:att.x,y:att.y}, fightCoords:coords,
     selfPower:powD, oppPower:powA,
     selfGen:genInfo(def), oppGen:genInfo(att),
+    selfBuffs:buffsD, oppBuffs:buffsA,
     selfAvatar:playerAvatarSrc(def), oppAvatar:playerAvatarSrc(att),
     selfStart:startD, oppStart:startA,
-    selfDead:ld.dead, selfHurt:ld.hurt, selfRemain:Math.max(0,startD-ld.dead-ld.hurt),
-    oppDead:la.dead, oppHurt:la.hurt, oppRemain:Math.max(0,startA-la.dead-la.hurt),
+    selfDead:ld.dead, selfHurt:ld.hurt, selfSlight:ld.slight,
+    selfRemain:Math.max(0,startD-ld.dead-ld.hurt-ld.slight),
+    oppDead:la.dead, oppHurt:la.hurt, oppSlight:la.slight,
+    oppRemain:Math.max(0,startA-la.dead-la.hurt-la.slight),
     attacker:false,
   });
 }
@@ -4820,13 +5105,16 @@ function battleCity(att,def,m){
   const startA=countUnits(m.units), startD=countUnits(def.troops);
   const garrison=emptyUnits();
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++)garrison[t][i]=def.troops[t][i]});
-  const A=makeForce(m.units,att,{name:att.name});
-  const D=makeForce(garrison,def,{wall:def.b.wall+def.b.garrison*0.5,defending:true,name:def.name});
+  const A=makeForce(m.units,att,{name:atkName(att),mode:"siege-attack"});
+  const D=makeForce(garrison,def,{wall:def.b.wall+def.b.garrison*0.5,defending:true,name:def.name,mode:"hospital"});
   const r=resolveBattle(A,D,{startA:countUnits(m.units),toDeath:false});
   // в хронику погода идёт короткой пометкой, подробности — в почтовом отчёте
   const wx=(r.weather&&r.weather.id!=="clear")?" ("+r.weather.name.toLowerCase()+")":"";
   const la=splitLosses(att,r.lossA,"siege-attack");   // штурмующий теряет войска насмерть, без госпиталя
   const ld=splitLosses(def,r.lossD,"hospital");
+  // Легкораненые защитники — назад в D.units ДО перезаписи def.troops ниже,
+  // иначе перезапись их просто стёрла бы (см. addUnitsInto/splitLosses).
+  addUnitsInto(D.units, ld.slightUnits);
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++)def.troops[t][i]=D.units[t][i]});
   m.units=A.units;
 
@@ -4855,7 +5143,7 @@ function battleCity(att,def,m){
     logMsg(att,def,"Штурм "+def.name+wx+" провалился. Убито "+la.dead+", ранено "+la.hurt+".",
                    "Отражена атака "+att.name+wx+". Убито "+ld.dead+", ранено "+ld.hurt+".");
   }
-  pushBattleReport(att,def,startA,startD,powA,powD,la,ld,r.win,{x:m.tx,y:m.ty},r.weather,r.log);
+  pushBattleReport(att,def,startA,startD,powA,powD,la,ld,r.win,{x:m.tx,y:m.ty},r.weather,r.log,A,D);
   recallMarch(m);
 }
 function logMsg(att,def,forAtt,forDef){
@@ -5137,6 +5425,12 @@ function startBuild(p,bk,plot){
   const plotKey = multi ? plot : null;
   if(p.queues.some(q=>q && q.b===bk && q.plot===plotKey))
     return {err:"Эта постройка уже в работе у одной из бригад"};
+  // Казармы/Стрельбище/Конюшня/Мастерская — пока в них идёт набор/переобучение
+  // (p.train[type]), улучшать само здание нельзя: набор либо шёл бы в старом
+  // здании, либо непонятно, по каким характеристикам считать уже оплаченный
+  // заказ. Симметричный запрет — в startTrain/startRetrain ниже.
+  const trainType=BLD_TRAIN[bk];
+  if(trainType && p.train[trainType]) return {err:"Здание занято набором войск — дождитесь окончания"};
   const cur = multi ? p.b[bk][plot] : p.b[bk];
   const lv=cur+1;
   if(lv>buildingMax(bk)) return {err:"Максимальный уровень"};
@@ -5163,6 +5457,9 @@ function trainMax(p,type,tier){
 }
 function startTrain(p,type,tier,n){
   if(p.train[type]) return {err:"Здание уже занято набором"};
+  // Симметрично startBuild выше: пока здание само улучшается (в очереди
+  // строительства), запускать в нём набор нельзя.
+  if(p.queues.some(q=>q && q.b===TRAIN_BLD[type])) return {err:"Здание сейчас улучшается — дождитесь окончания"};
   const cap=trainCap(p.b[TRAIN_BLD[type]]);
   n=Math.round(n);
   if(n<1) return {err:"Наберите хотя бы одного воина"};
@@ -5189,7 +5486,21 @@ function healMaxN(p,type,tier){
   return Math.max(0,Math.min(have,cap,afford));
 }
 function healDuration(p,type,tier,n){
-  return healUnitTime(type,tier)*n/((1+p.b.hall*0.06)*(1+bonuses(p).healSpeed));
+  // healSpeed — той же конвенции, что и heal (стоимость, см. healUnitCost
+  // выше): готовый МАСШТАБ времени, дефолт 1 = "как обычно", МЕНЬШЕ = быстрее
+  // (не конвенция trainSpeed/build, где поле — бонус сверху 1 в знаменателе).
+  // Поэтому — множитель в ЧИСЛИТЕЛЕ, а не добавка в знаменатель.
+  // Раньше стояло (1+bonuses(p).healSpeed) в знаменателе — при дефолте 1 это
+  // ВСЕГДА давало ×2 скорость лечения ВСЕМ расам без единого бонуса, а
+  // расовая способность нежити (healSpeed:0.5, заявлено "вдвое быстрее")
+  // с той же формулой давала (1+0.5)=1.5 в знаменателе — то есть МЕДЛЕННЕЕ
+  // бездефолтного случая у остальных рас, ровно наоборот заявленному.
+  // (Первая попытка чинить это здесь тоже была неверной — просто убрала "1+",
+  // оставив healSpeed в знаменателе: там меньшее значение делает время БОЛЬШЕ,
+  // то есть медленнее — снова не то направление. Числитель — правильное место.)
+  // По механике RoK лазарет стоит и лечит вдвое дешевле/быстрее полного
+  // набора, без скрытого допмножителя сверху (см. healUnitCost/healUnitTime).
+  return healUnitTime(type,tier)*n*bonuses(p).healSpeed/(1+p.b.hall*0.06);
 }
 function startHeal(p,type,tier,n){
   if(p.heal) return {err:"Лазарет уже занят лечением"};
@@ -5226,6 +5537,7 @@ function retrainMax(p,type,fromTier){
 }
 function startRetrain(p,type,fromTier,n){
   if(p.train[type]) return {err:"Здание уже занято набором"};
+  if(p.queues.some(q=>q && q.b===TRAIN_BLD[type])) return {err:"Здание сейчас улучшается — дождитесь окончания"};
   const maxT=tierUnlockedFor(p,type);
   if(fromTier<1||fromTier+1>maxT) return {err:"Следующий тир ещё не открыт"};
   n=Math.round(n);
@@ -5834,6 +6146,11 @@ function renderCartouche(){
     // по ним нельзя восстановить ни состав, ни тиры войск.
     const scouting=W.marches.some(m=>m.pid===p.id&&m.mode==="scout"&&m.tx===o.x&&m.ty===o.y);
     const hasScout=(p.b.scout||0)>0;
+    // Сколько лазутчиков можно держать в пути разом — та же настоящая
+    // цифра RoK, что теперь и правда проверяет sendScout (см. там).
+    const maxScouts=hasScout?tblRow(SCOUT_TABLE,p.b.scout).scouts:0;
+    const scoutsOut=W.marches.filter(m=>m.pid===p.id&&m.mode==="scout").length;
+    const allBusy=hasScout&&scoutsOut>=maxScouts;
     const shielded=W.t<q.shieldUntil;
     put("<div class='hd'>"+shieldSvg(q.race,14)+q.nick+" "+coord+"</div>"+
       "<div class='co'><span>Город</span><b>"+q.name+"</b></div>"+
@@ -5841,9 +6158,10 @@ function renderCartouche(){
       "<div class='co'><span>Сила</span><b>"+fmt(power(q))+"</b></div>"+
       (shielded?"<div class='co'><span>Статус</span><b style='color:#7ab2e0'>Под щитом мира</b></div>":"")+
       (scouting?"<div class='hint'>Лазутчик в пути — донесение придёт письмом.</div>"
-       :!hasScout?"<div class='hint'>Постройте "+buildingName("scout",p).toLowerCase()+", чтобы засылать лазутчиков.</div>":"")+
+       :!hasScout?"<div class='hint'>Постройте "+buildingName("scout",p).toLowerCase()+", чтобы засылать лазутчиков.</div>"
+       :allBusy?"<div class='hint'>Все лазутчики в пути ("+scoutsOut+"/"+maxScouts+") — дождитесь возвращения.</div>":"")+
       "<div class='chips' style='margin-top:9px'>"+
-        (hasScout&&!scouting?"<button class='seal' data-act='sendscout' data-x='"+o.x+"' data-y='"+o.y+"'>Разведать</button>":"")+
+        (hasScout&&!scouting&&!allBusy?"<button class='seal' data-act='sendscout' data-x='"+o.x+"' data-y='"+o.y+"'>Разведать</button>":"")+
         (shielded?"":"<button class='seal blood' data-act='march' data-x='"+o.x+"' data-y='"+o.y+"'>Атака</button>")+
       "</div>");
   }
@@ -5998,6 +6316,7 @@ const RESEARCH_FIELD_ICON = {
   prodFood:"res-food", prodWood:"res-wood", prodStone:"res-stone", prodGold:"res-gold",
   build:"icon-build", march:"icon-march", trainSpeed:"icon-army",
   gatherFW:"res-food", gatherSG:"res-stone", gather:"stat-load", load:"stat-load",
+  gatherAmber:"res-amber",
   atkInf:"class-inf", defInf:"class-inf", matkInf:"class-inf", mdefInf:"class-inf",
   atkArc:"class-arc", defArc:"class-arc", matkArc:"class-arc", mdefArc:"class-arc",
   atkCav:"class-cav", defCav:"class-cav", matkCav:"class-cav", mdefCav:"class-cav",
@@ -6024,6 +6343,13 @@ function renderTreeMap(arr,p){
 }
 function nodeEffectRows(n,lv,nx){
   if(n.unlock) return [{label:"Открывает бойца",icon:"class-"+n.unlock.type,now:lv>=1?"открыто":"заперто",next:null}];
+  // Маскировка не даёт числовой процент — уровень технологии напрямую
+  // определяет ступень подробности донесений разведки (см. scoutSnapshot):
+  // выдумывать здесь "+N% точность разведки" значило бы врать о механике,
+  // которой не существует — узел исторически делил поле "scoutBonus" с
+  // mil_scout1, но реального числового бонуса ни один из них не даёт.
+  if(n.id==="mil_scout2") return [{label:"Подробность донесений",icon:RESEARCH_FIELD_ICON.scoutBonus,
+    now:"ступень "+lv+"/"+n.max, next:lv>=n.max?null:"ступень "+nx+"/"+n.max}];
   const list=n.effects||[{field:n.field,total:n.total}];
   const fname=f=>RESEARCH_FIELD_NAME[f]||f;
   const maxed=lv>=n.max;
@@ -6061,7 +6387,6 @@ function unitThumb(p,t,i){
 }
 let forgeTab=null, forgeRarity=null;
 function forgeInfoHtml(p){
-  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+(st[k]*100).toFixed(1)+"%")).join(", ");
   let h="<div id='bm-tree'>";
   if(p.craft){
     const cf=(W.t-p.craft.t0)/Math.max(1,p.craft.t1-p.craft.t0);
@@ -6182,14 +6507,15 @@ function buildingStatDeltaHtml(bk,lv,nx){
     return "<table id='bm-stats'><tr><td>Урон залпа гарнизона</td><td>"+fmt(WATCH_TABLE[lv-1].atk)+" &rarr; "+fmt(WATCH_TABLE[nx-1].atk)+"</td></tr></table>";
   }
   if(bk==="scout"){
-    // bonus/radius/scouts — настоящие цифры RoK, показаны для справки: сама
-    // разведка в этой игре устроена иначе (см. комментарий у SCOUT_TABLE),
-    // эти три числа ни на что в бою/на карте не влияют.
+    // bonus/scouts — настоящие цифры RoK по уровням здания, и оба теперь
+    // реально работают (см. sendScout): scouts — сколько лазутчиков можно
+    // держать в пути одновременно, bonus — надбавка к их скорости. Радиус
+    // обзора (третья колонка у RoK) убран целиком — в этой игре нет тумана
+    // войны на карте, чтобы он что-то значил.
     const c=SCOUT_TABLE[lv-1], n=SCOUT_TABLE[nx-1];
     return "<table id='bm-stats'>"+
-      "<tr><td>Бонус скорости разведки (RoK)</td><td>+"+c.bonus+"% &rarr; +"+n.bonus+"%</td></tr>"+
-      "<tr><td>Радиус обзора (RoK)</td><td>"+c.radius+"&times;"+c.radius+" &rarr; "+n.radius+"&times;"+n.radius+"</td></tr>"+
-      "<tr><td>Разведчиков (RoK)</td><td>"+c.scouts+" &rarr; "+n.scouts+"</td></tr></table>";
+      "<tr><td>Бонус скорости разведки</td><td>+"+c.bonus+"% &rarr; +"+n.bonus+"%</td></tr>"+
+      "<tr><td>Разведчиков одновременно</td><td>"+c.scouts+" &rarr; "+n.scouts+"</td></tr></table>";
   }
   if(BLD_TRAIN[bk]){
     return "<table id='bm-stats'><tr><td>Воинов за один заказ</td><td>"+fmt(trainCap(lv))+" &rarr; "+fmt(trainCap(nx))+"</td></tr></table>";
@@ -6360,6 +6686,32 @@ function mailRowHtml(m){
 const BATTLE_LOG_ICON={weather:"&#9730;",volley:"&#10148;",tower:"&#9819;",panic:"&#9888;",
   counter:"&#8634;",raise:"&#9760;",general:"&#9876;",mark:"&#9873;",round:"&#8226;",
   rout:"&#8617;",end:"&#9873;"};
+// Проценты бонуса — со знаком (+12.3% / −4.0%), тем же округлением, что и
+// остальные проценты в игре (одна десятая, как у snap talents/statTxt).
+function pctTxt(v){ return (v>=0?"+":"")+(v*100).toFixed(1)+"%"; }
+// Строки "Статистика войск" отчёта — по родам войск атака/защита у обеих
+// сторон рядом (та же таблица .mail-stats, что и у потерь выше), плюс
+// общее здоровье последней строкой (см. комментарий у battleBuffSnapshot —
+// в нашей модели оно не зависит от рода войск).
+function battleStatsRows(sb,ob){
+  let h="";
+  TKEYS.forEach(t=>{
+    h+="<tr><td>"+TROOP_TYPES[t].name+" · атака</td><td>"+pctTxt(sb[t].atk)+"</td><td>"+pctTxt(ob[t].atk)+"</td></tr>";
+    h+="<tr><td>"+TROOP_TYPES[t].name+" · защита</td><td>"+pctTxt(sb[t].def)+"</td><td>"+pctTxt(ob[t].def)+"</td></tr>";
+  });
+  h+="<tr><td>Здоровье</td><td>"+pctTxt(sb.hp)+"</td><td>"+pctTxt(ob.hp)+"</td></tr>";
+  return h;
+}
+// Полководец в шапке отчёта — имя/уровень уже были, добавились звёзды (та
+// же формула, что и в foGen()) и ветка талантов, что реально была активна
+// в момент боя (не "как сейчас" — билд после боя мог уже смениться).
+function battleGenHtml(g){
+  if(!g) return "";
+  const stars="&#9733;".repeat(g.stars)+"&#9734;".repeat(6-g.stars);
+  const tal=g.talents?TALENT_BRANCHES.map(([key,br])=>br.name+" "+(g.talents[key]||0)).join(" · "):"";
+  return "<div class='gen'>"+g.name+" (ур. "+g.lv+") "+stars+"</div>"+
+    (tal?"<div class='gen-tal'>"+tal+"</div>":"");
+}
 function battleLogHtml(m){
   const log=m.log||[];
   if(!log.length) return "";
@@ -6389,21 +6741,38 @@ function scoutRow(label,value){
   return "<div class='sc-row'><span>"+label+"</span><b>"+value+"</b></div>";
 }
 function scoutLocked(label,need){
-  return "<div class='sc-row locked'><span>"+label+"</span><b>Разведка "+need+" ур.</b></div>";
+  // "Маскировка" (mil_scout2) — та самая академическая технология, что в
+  // реальном RoK отвечает за подробность донесений (Camouflage), не
+  // уровень здания Разведки (см. scoutSnapshot выше).
+  return "<div class='sc-row locked'><span>"+label+"</span><b>Маскировка "+need+" ур.</b></div>";
 }
 function scoutReportHtml(m){
-  const iv=m.intel||{}, se=iv.se||1;
-  // до каких уровней Разведки открываются ступени (эпоха -> уровень ратуши/здания)
-  const NEED=[1,7,13,19,25];
+  const iv=m.intel||{}, se=iv.se||0;
+  // Ступени привязаны к уровню "Маскировки" (mil_scout2), см. scoutSnapshot —
+  // 1..5, каждая закрывает пару ступеней настоящей 10-уровневой Camouflage.
+  const NEED=[1,2,3,4,5];
   let h="<div class='mail-vs'><div class='mail-side'>"+mailAvatarHtml(m.oppAvatar,m.oppRace,52)+
     "<div class='nm'>"+m.oppNick+"</div><div class='co'>X:"+m.oppCoords.x+" Y:"+m.oppCoords.y+"</div>"+
     "<div class='pw'>Ратуша "+m.hall+" · мощь "+RU(m.oppPower)+"</div></div></div>";
   if(m.shielded) h+="<div class='mail-weather'><b>Город под щитом мира</b>"+
     "<span>Пока щит держится, напасть нельзя.</span></div>";
 
+  // Запасы — самая ранняя ступень (наравне с прикидкой числа войск), не
+  // требует вообще ничего сверх самой "Маскировки" 1 ур.
+  h+="<div class='sc-block'><div class='sc-hd'>Запасы</div>";
+  if(iv.res){
+    RES.forEach(rr=>h+=scoutRow(RES_NAME[rr], fmt(iv.res[rr])));
+    h+="<div class='sc-note'>Часть запасов защищена складом и при набеге не достанется.</div>";
+  } else h+=scoutLocked("Запасы города", NEED[0]);
+  h+="</div>";
+
   h+="<div class='sc-block'><div class='sc-hd'>Гарнизон</div>";
-  h+= se>=2 ? scoutRow("Войск всего", RU(iv.total))
-            : scoutRow("Войск (на глаз)", "около "+fmt(Math.round(iv.total/100)*100));
+  if(se>=1){
+    h+= se>=3 ? scoutRow("Войск всего", RU(iv.total))
+              : scoutRow("Войск (на глаз)", "около "+fmt(Math.round(iv.total/100)*100));
+  } else {
+    h+=scoutLocked("Численность войск", NEED[0]);
+  }
   if(se>=3 && iv.byType && iv.byType.length){
     iv.byType.forEach(x=>{
       // на 4-й ступени рядом с родом войск показываем и раскладку по тирам
@@ -6411,27 +6780,53 @@ function scoutReportHtml(m){
       h+=scoutRow(TROOP_TYPES[x.t].name, RU(x.n)+
         (tiers&&tiers.length?"<em class='sc-tiers'>"+tiers.map(pp=>SCOUT_TIER_LABEL[pp.i-1]+" "+RU(pp.n)).join(" · ")+"</em>":""));
     });
-  } else {
+  } else if(se>=1){
     h+=scoutLocked("По родам войск", NEED[2]);
   }
-  if(se<4) h+=scoutLocked("По тирам", NEED[3]);
+  if(se>=1 && se<4) h+=scoutLocked("По тирам", NEED[3]);
   h+="</div>";
 
+  // Город: стена (со ступени 2, вместе с уровнем полководца — см. ниже),
+  // академия (со ступени 3, вместе с раскладкой по родам войск выше),
+  // гарнизонная башня (со ступени 4, вместе с раскладкой по тирам выше) —
+  // порядок ступеней в точности как в настоящем RoK, просто по два пункта
+  // реальной лестницы за один наш узел "Маскировки".
   h+="<div class='sc-block'><div class='sc-hd'>Город</div>";
-  if(se>=5){
-    h+=scoutRow("Полководец", iv.gen||"не выбран");
-    h+=scoutRow("Стена", iv.wall+" ур.");
-    h+=scoutRow("Гарнизон (башня)", iv.garrison+" ур.");
-  } else {
-    h+=scoutLocked("Полководец, стена, башня", NEED[4]);
-  }
+  h+= se>=2 ? scoutRow("Стена", iv.wall+" ур. · прочность "+RU(iv.wallHp)+" / "+RU(iv.wallMax))
+            : scoutLocked("Стена", NEED[1]);
+  h+= se>=3 ? scoutRow("Академия", iv.academy+" ур.") : scoutLocked("Академия", NEED[2]);
+  h+= se>=4 ? scoutRow("Гарнизон (башня)", iv.garrison+" ур.") : scoutLocked("Гарнизон (башня)", NEED[3]);
+  h+= se>=5 ? scoutRow("Лазарет", RU(iv.wounded)+" раненых") : scoutLocked("Лазарет", NEED[4]);
   h+="</div>";
 
-  h+="<div class='sc-block'><div class='sc-hd'>Запасы</div>";
-  if(iv.res){
-    RES.forEach(rr=>h+=scoutRow(RES_NAME[rr], fmt(iv.res[rr])));
-    h+="<div class='sc-note'>Часть запасов защищена складом и при набеге не достанется.</div>";
-  } else h+=scoutLocked("Запасы города", NEED[1]);
+  // Полководец: кто именно — не тайна, портрет уже в шапке письма (см.
+  // scoutSnapshot выше), гадать незачем. Уровень открывается той же
+  // ступенью, что и стена (настоящий RoK тоже даёт их рядом — 4 и 5), а
+  // полный расклад — куда вложены очки таланта и что надето — только на
+  // максимуме, как и подробный билд командира в настоящей игре.
+  h+="<div class='sc-block'><div class='sc-hd'>Полководец</div>";
+  if(se>=2){
+    h+= iv.genLv!=null ? scoutRow("Уровень", "ур. "+iv.genLv) : scoutRow("Полководец", "не выбран");
+  } else {
+    h+=scoutLocked("Уровень", NEED[1]);
+  }
+  if(se>=5 && iv.genLv!=null){
+    // Не просто число очков, а КУДА они вложены: разбивка по веткам — уже
+    // тактическая информация (пусто в "Армия" — слабая защита войск),
+    // просто сумма для этого не годится.
+    h+=scoutRow("Таланты", TALENT_BRANCHES.map(([key,br])=>br.name+" "+(iv.genTal[key]||0)).join(" · "));
+    // Снаряжение — тоже часть боевой мощи генерала. Мало знать, ЧТО
+    // надето — нужно понимать, ЧТО ИМЕННО оно даёт, поэтому рядом с
+    // редкостью — те же характеристики предмета, что показывает и
+    // genGearHtml у себя в профиле (см. gearItemStats/statTxt).
+    h+=scoutRow("Снаряжение", "мощь "+RU(iv.gearPower)+
+      (iv.gear&&iv.gear.length?"<em class='sc-tiers'>"+iv.gear.map(g=>
+        g.name+" <span style='color:"+RARITY_COLOR[g.rarity-1]+"'>"+RARITY_NAMES[g.rarity-1]+"</span>"+
+        " ("+statTxt(g.stats)+")").join(" · ")+"</em>"
+       :""));
+  } else if(se>=2){
+    h+=scoutLocked("Таланты, снаряжение", NEED[4]);
+  }
   h+="</div>";
 
   h+="<div class='sc-note'>Донесение — снимок на момент, когда лазутчик добрался до города. "+
@@ -6445,25 +6840,35 @@ function mailDetailHtml(m){
        "<div class='mail-side'>"+mailAvatarHtml(m.selfAvatar,m.selfRace,52)+
          "<div class='nm'>"+m.selfNick+"</div><div class='co'>X:"+m.selfCoords.x+" Y:"+m.selfCoords.y+"</div>"+
          "<div class='pw'>Мощь "+RU(m.selfPower)+"</div>"+
-         (m.selfGen?"<div class='gen'>"+m.selfGen.name+" (ур. "+m.selfGen.lv+")</div>":"")+
+         battleGenHtml(m.selfGen)+
        "</div>"+
        "<div class='mail-vmid'>&#9876;</div>"+
        "<div class='mail-side'>"+mailAvatarHtml(m.oppAvatar,m.oppRace,52)+
          "<div class='nm'>"+m.oppNick+"</div><div class='co'>X:"+m.oppCoords.x+" Y:"+m.oppCoords.y+"</div>"+
          "<div class='pw'>Мощь "+RU(m.oppPower)+"</div>"+
-         (m.oppGen?"<div class='gen'>"+m.oppGen.name+" (ур. "+m.oppGen.lv+")</div>":"")+
+         battleGenHtml(m.oppGen)+
        "</div></div>"+
        "<div class='mail-stamp "+(m.win?"win":"lose")+"'>"+(m.win?"Победа":"Поражение")+"</div>"+
        // Погода была общей для обеих сторон — в отчёте она стоит НАД таблицей
        // потерь, потому что объясняет её цифры (см. BATTLE_WEATHER). В ясную
        // погоду поля weather нет вовсе, и строка не рисуется.
        (m.weather?"<div class='mail-weather'><b>"+m.weather.name+"</b><span>"+m.weather.desc+"</span></div>":"")+
+       // Порядок строк — от лучшего исхода к худшему (как в самом RoK):
+       // осталось нетронутыми -> легкораненые (сами вылечились) ->
+       // тяжелораненые (заняли лазарет) -> убитые (безвозвратно).
        "<table class='mail-stats'><tr><th></th><th>"+m.selfNick+"</th><th>"+m.oppNick+"</th></tr>"+
        "<tr><td>Войск</td><td>"+RU(m.selfStart)+"</td><td>"+RU(m.oppStart)+"</td></tr>"+
-       "<tr><td>Убито</td><td>"+RU(m.selfDead)+"</td><td>"+RU(m.oppDead)+"</td></tr>"+
-       "<tr><td>Ранено</td><td>"+RU(m.selfHurt)+"</td><td>"+RU(m.oppHurt)+"</td></tr>"+
        "<tr><td>Осталось</td><td>"+RU(m.selfRemain)+"</td><td>"+RU(m.oppRemain)+"</td></tr>"+
+       "<tr><td>Легкораненые</td><td>"+RU(m.selfSlight||0)+"</td><td>"+RU(m.oppSlight||0)+"</td></tr>"+
+       "<tr><td>Тяжелораненые</td><td>"+RU(m.selfHurt)+"</td><td>"+RU(m.oppHurt)+"</td></tr>"+
+       "<tr><td>Убито</td><td>"+RU(m.selfDead)+"</td><td>"+RU(m.oppDead)+"</td></tr>"+
        "</table>"+
+       // Статистика войск — итоговые проценты бонусов на секунду боя (см.
+       // battleBuffSnapshot): не просто "кто победил", а почему — та же
+       // логика, что и в настоящем RoK ("Здоровье — самый ценный стат").
+       (m.selfBuffs&&m.oppBuffs?"<div class='mail-chron'><div class='mail-chron-hd'>Статистика войск</div>"+
+         "<table class='mail-stats'><tr><th></th><th>"+m.selfNick+"</th><th>"+m.oppNick+"</th></tr>"+
+         battleStatsRows(m.selfBuffs,m.oppBuffs)+"</table></div>":"")+
        "<div class='mail-note'>Место боя: X:"+m.fightCoords.x+" Y:"+m.fightCoords.y+"</div>"+
        battleLogHtml(m);
   } else if(m.kind==="barbarian"){
@@ -6588,15 +6993,13 @@ function genFigureHtml(race,i){
     "onerror=\"this.parentElement.style.display='none'\">";
 }
 function genSkillBadges(p){
-  const branches=[["city",GENERAL_TREE.city],["army",GENERAL_TREE.army],["war",TALENTS.war],["dev",TALENTS.dev],["gath",TALENTS.gath]];
-  return "<div class='gen-skills'>"+branches.map(([key,br])=>{
-    let spent=0; br.nodes.forEach(n=>spent+=(p.gen.tal[n.id]||0));
-    return "<span class='gen-skill' title='"+br.name+"'><img src='images/ui/talent-"+key+".png' alt=''><s>"+spent+"</s></span>";
-  }).join("")+"</div>";
+  const spent=talentBranchSpent(p);
+  return "<div class='gen-skills'>"+TALENT_BRANCHES.map(([key,br])=>
+    "<span class='gen-skill' title='"+br.name+"'><img src='images/ui/talent-"+key+".png' alt=''><s>"+spent[key]+"</s></span>"
+  ).join("")+"</div>";
 }
 const GEAR_LAYOUT = ["handL","helmet","handR","chest","acc1","gloves","pants","acc2","boots"];
 function genGearHtml(p){
-  const statTxt=st=>Object.keys(st).map(k=>({atk:"атк",def:"защ",hp:"хп"}[k]+" +"+(st[k]*100).toFixed(1)+"%")).join(", ");
   let h=rubric("Экипировка");
   h+="<div class='gear-slots'>";
   GEAR_LAYOUT.forEach(id=>{
