@@ -4524,7 +4524,7 @@ const EV = {
     const cell=W.map[key(m.tx,m.ty)];
     const q=cell&&cell.t==="city" ? W.players.find(z=>z.id===cell.pid) : null;
     if(!q){ if(!p.isBot) logg("Лазутчик не нашёл города на месте — возвращается ни с чем.","war"); return }
-    syncRes(q);
+    syncRes(q); syncWall(q);
     if(p.isBot) return;
     pushMail({cat:"report",kind:"scout",
       oppNick:q.nick||"Безымянный лорд", oppRace:q.race,
@@ -4789,27 +4789,61 @@ function genInfo(p){
 // что и в живой панели cartouche) — снимок, а не ссылка на живые войска q,
 // потому что у противника они продолжат меняться уже после того, как отчёт
 // лёг в почту.
+// Ступень разведки — уровень технологии "Маскировка" (mil_scout2), а НЕ
+// уровень здания Разведки (p.b.scout). Раньше было наоборот (se=epochOf
+// уровня здания) — но по пользовательской подсказке о реальном RoK, за
+// подробность донесений отвечает именно академическая технология
+// Camouflage, а здание Скаутстанции влияет на скорость/число/радиус
+// разведчиков — на СОДЕРЖАНИЕ отчёта оно не влияет вовсе. У "Маскировки"
+// в реальной игре 10 уровней; наш узел mil_scout2 (max:5) — половина
+// сетки, поэтому каждая наша ступень открывает СРАЗУ ДВЕ настоящих
+// ступени Camouflage подряд, не теряя ни одного пункта настоящей лестницы,
+// просто с более крупным шагом:
+//   0        — ничего сверх шапки письма (имя/ратуша/мощь и так видны
+//              всегда — см. scouted()/renderCartouche, они открыты в RoK
+//              любому правителю без разведки, это тир 1 реальной лестницы)
+//   1 (2-3)  — прикидка числа войск (диапазоном) + точные запасы склада
+//   2 (4-5)  — стена: уровень и текущая прочность + уровень полководца
+//              (сам ЛИЧНОСТЬ генерала не тайна — портрет уже в шапке
+//              письма при любой ступени, см. комментарий ниже)
+//   3 (6-7)  — точный уровень Академии + точная раскладка по родам войск
+//   4 (8-9)  — уровень гарнизонной башни (в реальном RoK тут второй,
+//              заместительский, командир — но у нас на генерала ровно
+//              один слот, второго попросту нет, заменить нечем) + точная
+//              раскладка по тирам
+//   5 (10)   — полный шпионаж: куда вложены очки таланта (по веткам) и
+//              снаряжение полководца, раненые в лазарете
 function scoutSnapshot(p,q){
-  const sl=p.b.scout||0, se=epochOf(sl), total=countUnits(q.troops);
+  const se=p.tech.mil_scout2||0, total=countUnits(q.troops);
   const snap={se,total};
-  if(se>=3) snap.byType=TKEYS.map(t=>({t,n:Object.values(q.troops[t]).reduce((a,b)=>a+b,0)})).filter(x=>x.n>0);
-  if(se>=4) snap.byTier=TKEYS.map(t=>{
-    const parts=[]; for(let i=1;i<=5;i++) if(q.troops[t][i]) parts.push({i,n:q.troops[t][i]});
-    return {t,parts};
-  }).filter(x=>x.parts.length);
-  if(se>=2){ snap.res={}; RES.forEach(rr=>snap.res[rr]=q.res[rr]); }
-  // ИМЯ полководца сюда специально не идёт (было snap.gen=...name раньше) —
-  // портрет соперника и так виден в шапке того же письма (m.oppAvatar,
-  // см. scouted() и scoutReportHtml), при ЛЮБОЙ ступени разведки: гадать,
-  // какой это генерал, лазутчику незачем, его уже видно глазами. То, что
-  // реально не видно снаружи — сила вложения: уровень, КУДА вложены очки
-  // таланта (не только сколько — пользователь отметил, что просто число
-  // ни для какой тактики не годится, а разбивка по веткам уже говорит:
-  // вложился в Армию — жди сильную защиту войск, пусто в Развитии —
-  // экономика слабая) и надетое снаряжение — тоже часть боевой мощи
+  if(se>=1){
+    snap.res={}; RES.forEach(rr=>snap.res[rr]=q.res[rr]);
+  }
+  if(se>=2){
+    snap.wall=q.b.wall; snap.wallHp=Math.round(q.wallHp||0); snap.wallMax=maxWallHp(q.b.wall);
+    snap.genLv=(q.gen&&q.gen.id!=null)?q.gen.lv:null;
+  }
+  if(se>=3){
+    snap.academy=q.b.academy;
+    snap.byType=TKEYS.map(t=>({t,n:Object.values(q.troops[t]).reduce((a,b)=>a+b,0)})).filter(x=>x.n>0);
+  }
+  if(se>=4){
+    snap.garrison=q.b.garrison;
+    snap.byTier=TKEYS.map(t=>{
+      const parts=[]; for(let i=1;i<=5;i++) if(q.troops[t][i]) parts.push({i,n:q.troops[t][i]});
+      return {t,parts};
+    }).filter(x=>x.parts.length);
+  }
+  // ИМЯ полководца сюда специально не идёт — портрет соперника и так виден
+  // в шапке того же письма (m.oppAvatar, см. scouted() и scoutReportHtml),
+  // при ЛЮБОЙ ступени разведки: гадать, какой это генерал, лазутчику
+  // незачем, его уже видно глазами. То, что реально не видно снаружи —
+  // сила вложения: КУДА вложены очки таланта (не только сколько —
+  // пользователь отметил, что просто число ни для какой тактики не
+  // годится, а разбивка по веткам уже говорит: вложился в Армию — жди
+  // сильную защиту войск) и надетое снаряжение — тоже часть боевой мощи
   // генерала, скрывать его отдельно от таланта было бы непоследовательно.
   if(se>=5){
-    snap.genLv=(q.gen&&q.gen.id!=null)?q.gen.lv:null;
     snap.genTal=(q.gen&&q.gen.id!=null)?talentBranchSpent(q):null;
     snap.gearPower=gearPowerOf(q);
     // stats — то, что ПРЕДМЕТ РЕАЛЬНО ДАЁТ (см. gearItemStats), не только
@@ -4820,7 +4854,8 @@ function scoutSnapshot(p,q){
       const it=q.gear&&q.gear[s.id]; if(!it) return null;
       return {name:s.name, rarity:it.rarity, stats:gearItemStats(s.cat,it.order,it.rarity)};
     }).filter(Boolean);
-    snap.wall=q.b.wall; snap.garrison=q.b.garrison;
+    let wounded=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) wounded+=q.wounded[t][i]||0});
+    snap.wounded=wounded;
   }
   return snap;
 }
@@ -6079,6 +6114,13 @@ function renderTreeMap(arr,p){
 }
 function nodeEffectRows(n,lv,nx){
   if(n.unlock) return [{label:"Открывает бойца",icon:"class-"+n.unlock.type,now:lv>=1?"открыто":"заперто",next:null}];
+  // Маскировка не даёт числовой процент — уровень технологии напрямую
+  // определяет ступень подробности донесений разведки (см. scoutSnapshot):
+  // выдумывать здесь "+N% точность разведки" значило бы врать о механике,
+  // которой не существует — узел исторически делил поле "scoutBonus" с
+  // mil_scout1, но реального числового бонуса ни один из них не даёт.
+  if(n.id==="mil_scout2") return [{label:"Подробность донесений",icon:RESEARCH_FIELD_ICON.scoutBonus,
+    now:"ступень "+lv+"/"+n.max, next:lv>=n.max?null:"ступень "+nx+"/"+n.max}];
   const list=n.effects||[{field:n.field,total:n.total}];
   const fname=f=>RESEARCH_FIELD_NAME[f]||f;
   const maxed=lv>=n.max;
@@ -6443,21 +6485,38 @@ function scoutRow(label,value){
   return "<div class='sc-row'><span>"+label+"</span><b>"+value+"</b></div>";
 }
 function scoutLocked(label,need){
-  return "<div class='sc-row locked'><span>"+label+"</span><b>Разведка "+need+" ур.</b></div>";
+  // "Маскировка" (mil_scout2) — та самая академическая технология, что в
+  // реальном RoK отвечает за подробность донесений (Camouflage), не
+  // уровень здания Разведки (см. scoutSnapshot выше).
+  return "<div class='sc-row locked'><span>"+label+"</span><b>Маскировка "+need+" ур.</b></div>";
 }
 function scoutReportHtml(m){
-  const iv=m.intel||{}, se=iv.se||1;
-  // до каких уровней Разведки открываются ступени (эпоха -> уровень ратуши/здания)
-  const NEED=[1,7,13,19,25];
+  const iv=m.intel||{}, se=iv.se||0;
+  // Ступени привязаны к уровню "Маскировки" (mil_scout2), см. scoutSnapshot —
+  // 1..5, каждая закрывает пару ступеней настоящей 10-уровневой Camouflage.
+  const NEED=[1,2,3,4,5];
   let h="<div class='mail-vs'><div class='mail-side'>"+mailAvatarHtml(m.oppAvatar,m.oppRace,52)+
     "<div class='nm'>"+m.oppNick+"</div><div class='co'>X:"+m.oppCoords.x+" Y:"+m.oppCoords.y+"</div>"+
     "<div class='pw'>Ратуша "+m.hall+" · мощь "+RU(m.oppPower)+"</div></div></div>";
   if(m.shielded) h+="<div class='mail-weather'><b>Город под щитом мира</b>"+
     "<span>Пока щит держится, напасть нельзя.</span></div>";
 
+  // Запасы — самая ранняя ступень (наравне с прикидкой числа войск), не
+  // требует вообще ничего сверх самой "Маскировки" 1 ур.
+  h+="<div class='sc-block'><div class='sc-hd'>Запасы</div>";
+  if(iv.res){
+    RES.forEach(rr=>h+=scoutRow(RES_NAME[rr], fmt(iv.res[rr])));
+    h+="<div class='sc-note'>Часть запасов защищена складом и при набеге не достанется.</div>";
+  } else h+=scoutLocked("Запасы города", NEED[0]);
+  h+="</div>";
+
   h+="<div class='sc-block'><div class='sc-hd'>Гарнизон</div>";
-  h+= se>=2 ? scoutRow("Войск всего", RU(iv.total))
-            : scoutRow("Войск (на глаз)", "около "+fmt(Math.round(iv.total/100)*100));
+  if(se>=1){
+    h+= se>=3 ? scoutRow("Войск всего", RU(iv.total))
+              : scoutRow("Войск (на глаз)", "около "+fmt(Math.round(iv.total/100)*100));
+  } else {
+    h+=scoutLocked("Численность войск", NEED[0]);
+  }
   if(se>=3 && iv.byType && iv.byType.length){
     iv.byType.forEach(x=>{
       // на 4-й ступени рядом с родом войск показываем и раскладку по тирам
@@ -6465,30 +6524,43 @@ function scoutReportHtml(m){
       h+=scoutRow(TROOP_TYPES[x.t].name, RU(x.n)+
         (tiers&&tiers.length?"<em class='sc-tiers'>"+tiers.map(pp=>SCOUT_TIER_LABEL[pp.i-1]+" "+RU(pp.n)).join(" · ")+"</em>":""));
     });
-  } else {
+  } else if(se>=1){
     h+=scoutLocked("По родам войск", NEED[2]);
   }
-  if(se<4) h+=scoutLocked("По тирам", NEED[3]);
+  if(se>=1 && se<4) h+=scoutLocked("По тирам", NEED[3]);
   h+="</div>";
 
+  // Город: стена (со ступени 2, вместе с уровнем полководца — см. ниже),
+  // академия (со ступени 3, вместе с раскладкой по родам войск выше),
+  // гарнизонная башня (со ступени 4, вместе с раскладкой по тирам выше) —
+  // порядок ступеней в точности как в настоящем RoK, просто по два пункта
+  // реальной лестницы за один наш узел "Маскировки".
+  h+="<div class='sc-block'><div class='sc-hd'>Город</div>";
+  h+= se>=2 ? scoutRow("Стена", iv.wall+" ур. · прочность "+RU(iv.wallHp)+" / "+RU(iv.wallMax))
+            : scoutLocked("Стена", NEED[1]);
+  h+= se>=3 ? scoutRow("Академия", iv.academy+" ур.") : scoutLocked("Академия", NEED[2]);
+  h+= se>=4 ? scoutRow("Гарнизон (башня)", iv.garrison+" ур.") : scoutLocked("Гарнизон (башня)", NEED[3]);
+  h+= se>=5 ? scoutRow("Лазарет", RU(iv.wounded)+" раненых") : scoutLocked("Лазарет", NEED[4]);
+  h+="</div>";
+
+  // Полководец: кто именно — не тайна, портрет уже в шапке письма (см.
+  // scoutSnapshot выше), гадать незачем. Уровень открывается той же
+  // ступенью, что и стена (настоящий RoK тоже даёт их рядом — 4 и 5), а
+  // полный расклад — куда вложены очки таланта и что надето — только на
+  // максимуме, как и подробный билд командира в настоящей игре.
   h+="<div class='sc-block'><div class='sc-hd'>Полководец</div>";
-  if(se>=5){
-    // Кто именно полководец — не тайна, портрет уже в шапке письма (см.
-    // scoutSnapshot выше): донесение раскрывает то, что глазом не видно —
-    // насколько он прокачан. Не просто число очков, а КУДА они вложены:
-    // разбивка по веткам — тактическая информация (пусто в "Армия" —
-    // слабая защита войск, пусто в "Развитие" — слабая экономика), просто
-    // сумма для этого не годится.
-    if(iv.genLv!=null){
-      h+=scoutRow("Уровень", "ур. "+iv.genLv);
-      h+=scoutRow("Таланты", TALENT_BRANCHES.map(([key,br])=>br.name+" "+(iv.genTal[key]||0)).join(" · "));
-    } else {
-      h+=scoutRow("Полководец", "не выбран");
-    }
-    // Снаряжение — тоже часть боевой мощи генерала, скрывать его отдельно
-    // от таланта было бы непоследовательно (репорт пользователя: "а
-    // снаряжение генерала показывается?"). Мало знать, ЧТО надето — нужно
-    // понимать, ЧТО ИМЕННО оно даёт (репорт пользователя), поэтому рядом с
+  if(se>=2){
+    h+= iv.genLv!=null ? scoutRow("Уровень", "ур. "+iv.genLv) : scoutRow("Полководец", "не выбран");
+  } else {
+    h+=scoutLocked("Уровень", NEED[1]);
+  }
+  if(se>=5 && iv.genLv!=null){
+    // Не просто число очков, а КУДА они вложены: разбивка по веткам — уже
+    // тактическая информация (пусто в "Армия" — слабая защита войск),
+    // просто сумма для этого не годится.
+    h+=scoutRow("Таланты", TALENT_BRANCHES.map(([key,br])=>br.name+" "+(iv.genTal[key]||0)).join(" · "));
+    // Снаряжение — тоже часть боевой мощи генерала. Мало знать, ЧТО
+    // надето — нужно понимать, ЧТО ИМЕННО оно даёт, поэтому рядом с
     // редкостью — те же характеристики предмета, что показывает и
     // genGearHtml у себя в профиле (см. gearItemStats/statTxt).
     h+=scoutRow("Снаряжение", "мощь "+RU(iv.gearPower)+
@@ -6496,21 +6568,9 @@ function scoutReportHtml(m){
         g.name+" <span style='color:"+RARITY_COLOR[g.rarity-1]+"'>"+RARITY_NAMES[g.rarity-1]+"</span>"+
         " ("+statTxt(g.stats)+")").join(" · ")+"</em>"
        :""));
-    h+="</div><div class='sc-block'><div class='sc-hd'>Город</div>";
-    h+=scoutRow("Стена", iv.wall+" ур.");
-    h+=scoutRow("Гарнизон (башня)", iv.garrison+" ур.");
-  } else {
-    h+=scoutLocked("Уровень, таланты, снаряжение", NEED[4]);
-    h+="</div><div class='sc-block'><div class='sc-hd'>Город</div>";
-    h+=scoutLocked("Стена, башня", NEED[4]);
+  } else if(se>=2){
+    h+=scoutLocked("Таланты, снаряжение", NEED[4]);
   }
-  h+="</div>";
-
-  h+="<div class='sc-block'><div class='sc-hd'>Запасы</div>";
-  if(iv.res){
-    RES.forEach(rr=>h+=scoutRow(RES_NAME[rr], fmt(iv.res[rr])));
-    h+="<div class='sc-note'>Часть запасов защищена складом и при набеге не достанется.</div>";
-  } else h+=scoutLocked("Запасы города", NEED[1]);
   h+="</div>";
 
   h+="<div class='sc-note'>Донесение — снимок на момент, когда лазутчик добрался до города. "+
