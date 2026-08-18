@@ -370,19 +370,25 @@ export const BUILD_BLD_TABLE = {
   garrison: WATCH_TABLE, scout: SCOUT_TABLE,
 };
 export const BUILD_MAX_LV = 25; // buildingMax(bk) для всех этих зданий — CFG.MAX_LEVEL, см. index.html
-// index.html:2425 BUILDINGS.*.plots — multi-здания среди перенесённых:
-// hospital (лазарет) и farm/lumber/quarry/mine (все 4 экономических).
-// Портирован только участок 0 у каждого (индекс 0 у isMulti-зданий ВСЕГДА
-// разблокирован — см. plotUnlocked в index.html, остальные 3 участка
-// открываются по эпохе — epochOf(hall)>=idx+1 — то есть практически
-// недостижимы, пока ратуша низкого уровня); участки 1-3 — следующий шаг.
-// ВАЖНО: сам приток ресурсов от уровня фермы/лесопилки/каменоломни/шахты
-// (production() в index.html, тикает по реальному времени через resAt) ещё
-// НЕ перенесён — эти 4 здания пока можно строить/улучшать, но добыча
-// ресурсов в общем мире по-прежнему не идёт сама по себе, это отдельный
-// следующий шаг (другой тип механики — непрерывное накопление, а не
-// разовое событие, как постройка/набор).
+// index.html:2425 BUILDINGS.*.plots — multi-здания: hospital (лазарет) и
+// farm/lumber/quarry/mine (все 4 экономических), у каждого 4 участка
+// (индексы 0-3). Участок 0 разблокирован всегда, участки 1-3 — по эпохе
+// ратуши (см. epochOf/plotUnlocked ниже, index.html:2453/2854).
 export const BUILD_MULTI = new Set(["hospital", "farm", "lumber", "quarry", "mine"]);
+// index.html:2854 epochOf — эпоха ратуши (1..5), определяет разблокировку
+// участков multi-зданий (см. plotUnlocked) и ряд других вещей в клиенте,
+// сюда не относящихся (декор, названия зданий по эпохе и т.п.).
+export const epochOf = (hall) => (hall >= 25 ? 5 : hall >= 19 ? 4 : hall >= 13 ? 3 : hall >= 7 ? 2 : 1);
+// index.html:2453 plotUnlocked — участок 0 у multi-зданий открыт всегда,
+// участок N (1-3) — с эпохи N+1 (участок 1 → эпоха 2 → ратуша 7 ур.,
+// участок 2 → эпоха 3 → ратуша 13 ур., участок 3 → эпоха 4 → ратуша 19 ур.).
+export const plotUnlocked = (bk, idx, hall) => !BUILD_MULTI.has(bk) || idx === 0 || epochOf(hall) >= idx + 1;
+// index.html:5724 cur — уровень КОНКРЕТНОГО участка multi-здания (buildLv
+// ниже — только участок 0, для HALL_REQ-проверки; тут нужен произвольный).
+export function buildLvAt(p, bk, plot) {
+  const raw = p.b[bk];
+  return BUILD_MULTI.has(bk) ? ((Array.isArray(raw) ? raw[plot] : (plot === 0 ? raw : 0)) || 0) : (raw || 0);
+}
 // index.html:2463 HALL_REQ / index.html:2872 hallGateLevel — чтобы поднять
 // ратушу с уровня L на L+1, все 5 зданий должны быть НЕ НИЖЕ текущего L.
 export const HALL_REQ = ["wall", "store", "academy", "barracks", "hospital"];

@@ -8471,7 +8471,7 @@ $("#menu-modal-body").addEventListener("click",e=>{
   const trainBtn=e.target.closest("[data-mp='train']");
   if(trainBtn){ mpDoTrain(trainBtn.dataset.t); return; }
   const buildBtn=e.target.closest("[data-mp='build']");
-  if(buildBtn){ mpDoBuild(buildBtn.dataset.bk); return; }
+  if(buildBtn){ mpDoBuild(buildBtn.dataset.bk, buildBtn.dataset.plot==null?null:+buildBtn.dataset.plot); return; }
   const attackPickBtn=e.target.closest("[data-mp='attackpick']");
   if(attackPickBtn){ mpState.attackTarget=+attackPickBtn.dataset.id; mpRerender(); return; }
   const attackCancelBtn=e.target.closest("[data-mp='attackcancel']");
@@ -8704,21 +8704,21 @@ async function claimChronicle(){
    ========================================================================= */
 let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[] };
 let mpPollTimer = null;
-// Ровно эти 9 зданий перенесены на сервер (mp-build): 4 разблокируют
-// mp-train (barracks/range/stable/siege), ещё 5 — это HALL_REQ плюс сама
-// ратуша (wall/store/academy/hospital + hall), без которых ратуша не растёт
-// выше 1 уровня. Порядок в списке — тот, в котором они реально нужны игроку
-// (сначала HALL_REQ-здания, потом ратуша, потом казармы и мастерские).
-// дозор/разведка (garrison/scout) — сами механики (предупреждение о марше,
-// разведданные) на сервер ещё не перенесены, но постройка/уровень честны и
-// считаются в мощь так же, как остальные. Остался только Горн (max:1, без
-// реальной механики крафта в общем мире — следующий шаг, если понадобится).
+// Все 15 зданий (кроме Горна — max:1, без реальной механики крафта в общем
+// мире) перенесены на сервер (mp-build): 4 разблокируют mp-train (barracks/
+// range/stable/siege), ещё 5 — это HALL_REQ плюс сама ратуша (wall/store/
+// academy/hospital + hall), без которых ратуша не растёт выше 1 уровня,
+// farm/lumber/quarry/mine дают реальную добычу по времени (production(),
+// см. mpProdPerHour ниже), garrison бьёт настоящим залпом в бою (Фаза 4,
+// пятый кусочек), у scout сама механика разведки (снимок вражеского
+// состава) на сервер ещё не перенесена — постройка и уровень честные,
+// считаются в мощь как и остальные. Порядок в списке — тот, в котором
+// здания реально нужны игроку (сначала HALL_REQ, потом ратуша, потом
+// казармы/мастерские/хозяйство).
 const BUILD_MP_BLDS = ["wall","store","academy","hospital","hall","barracks","range","stable","siege","farm","lumber","quarry","mine","garrison","scout"];
-// hospital/farm/lumber/quarry/mine — multi-здания среди перенесённых
-// (plots:4 у каждого), см. mpBuildLv в foMultiplayer. Приток ресурсов от
-// уровня фермы/лесопилки/каменоломни/шахты (production(), тикает по
-// реальному времени) ещё НЕ перенесён на сервер — их можно строить, но
-// добыча в общем мире сама по себе пока не идёт, см. заметку в панели ниже.
+// hospital/farm/lumber/quarry/mine — multi-здания (plots:4 у каждого), все
+// 4 участка (0-3) строятся отдельно — см. renderPlotRow/mpBuildLvAt в
+// foMultiplayer, зеркало plotUnlocked/epochOf.
 const BUILD_MP_MULTI = new Set(["hospital","farm","lumber","quarry","mine"]);
 
 async function mpEnsureAuth(){
@@ -8806,9 +8806,9 @@ async function mpDoTrain(type){
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
-async function mpDoBuild(bk){
+async function mpDoBuild(bk,plot){
   mpState.loading=true; mpState.err=null; mpRerender();
-  try{ await mpCall("mp-build",{bk}); await mpRefreshPlayer(); }
+  try{ await mpCall("mp-build",plot==null?{bk}:{bk,plot}); await mpRefreshPlayer(); }
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -8976,20 +8976,25 @@ function foMultiplayer(){
      " — досчитывается при каждом действии и при опросе (раз в 5с, пока открыта вкладка).</div>"+
      "</div></div></div>";
 
-  // hospital — единственное multi-здание среди перенесённых (BUILDINGS.
-  // hospital.plots=4, index.html:2425); показываем/строим только участок 0
-  // (он один разблокирован всегда — см. plotUnlocked — и это ровно тот,
-  // что нужен HALL_REQ). Старые записи могли завести его скаляром (баг
-  // mp-join, уже починен) — mpBuildLv читает защитно, не падая на этом.
+  // hospital/farm/lumber/quarry/mine — multi-здания (BUILDINGS.*.plots=4,
+  // index.html:2425), все 4 участка (0-3) теперь строятся отдельно — участок
+  // 0 всегда разблокирован (и это ровно тот, что нужен HALL_REQ у hospital),
+  // участки 1-3 — по эпохе ратуши (plotUnlocked/epochOf, те же функции из
+  // однопользовательской игры, что и здесь; см. _shared/rules.js на сервере
+  // для точного зеркала). Старые записи могли завести здание скаляром (баг
+  // mp-join, уже починен) — mpBuildLv/mpBuildLvAt читают защитно.
   const mpBuildLv=(bld)=>{ const raw=st.b[bld]; return BUILD_MP_MULTI.has(bld)?((Array.isArray(raw)?raw[0]:raw)||0):(raw||0) };
+  const mpBuildLvAt=(bld,plot)=>{ const raw=st.b[bld]; return BUILD_MP_MULTI.has(bld)?((Array.isArray(raw)?raw[plot]:(plot===0?raw:0))||0):(raw||0) };
   const hallLv=mpBuildLv("hall");
   h+=rubric("Постройки","ратуша и хозяйство");
-  BUILD_MP_BLDS.forEach(bld=>{
-    const lv=mpBuildLv(bld), nextLv=lv+1, plotKey=BUILD_MP_MULTI.has(bld)?0:null;
+  const renderPlotRow=(bld,plot,lv,titleSuffix)=>{
+    const nextLv=lv+1, plotKey=BUILD_MP_MULTI.has(bld)?plot:null;
     const queued=st.queues.find(q=>q&&q.b===bld&&q.plot===plotKey);
     h+="<div class='entry'><div class='line'><div class='fill'>"+
-       "<div class='title'>"+buildingName(bld,pShim)+" — уровень "+lv+"</div>";
-    if(queued){
+       "<div class='title'>"+buildingName(bld,pShim)+titleSuffix+" — уровень "+lv+"</div>";
+    if(BUILD_MP_MULTI.has(bld) && !plotUnlocked(bld,plot,hallLv)){
+      h+="<div class='note'>Участок откроется позже (нужна ратуша "+([0,7,13,19][plot])+" ур.).</div>";
+    } else if(queued){
       const left=Math.max(0,queued.t1-Date.now()/1000);
       h+="<div class='note'>Строится до "+nextLv+" ур., осталось "+fmtDur(left)+"</div>";
     } else if(nextLv>25){
@@ -9012,9 +9017,16 @@ function foMultiplayer(){
       h+="<div class='note'>До "+nextLv+" ур.: "+
          (RES.some(r=>c[r])?RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", "):"бесплатно")+
          " · "+fmtDur(t)+"</div>"+
-         "<button class='seal' data-mp='build' data-bk='"+bld+"'"+(mpState.loading?" disabled":"")+">"+(lv?"Улучшить":"Построить")+"</button>";
+         "<button class='seal' data-mp='build' data-bk='"+bld+"'"+(plotKey!=null?" data-plot='"+plotKey+"'":"")+(mpState.loading?" disabled":"")+">"+(lv?"Улучшить":"Построить")+"</button>";
     }
     h+="</div></div></div>";
+  };
+  BUILD_MP_BLDS.forEach(bld=>{
+    if(BUILD_MP_MULTI.has(bld)){
+      for(let plot=0;plot<4;plot++) renderPlotRow(bld,plot,mpBuildLvAt(bld,plot)," — участок "+(plot+1));
+    } else {
+      renderPlotRow(bld,null,mpBuildLv(bld),"");
+    }
   });
 
   h+=rubric("Набор войск","тир 1");
