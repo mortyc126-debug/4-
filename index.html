@@ -1771,10 +1771,20 @@ const RACE_EPOCHS = {
       mods:[{field:"mercy",kind:"frac",value:0.10}]},
     {title:"Погост пробуждается", desc:"Доля восстающих мертвецов растёт до 25% павших.",
       mods:[{field:"raise",kind:"frac",value:0.25}]},
+    // Раньше здесь тоже стояло {field:"raise",...} — то есть венец бустил долю
+    // подъёма от НАСТОЯЩИХ мертвецов при обороне. После того как raiseSkeletons
+    // стал считать raise только от реального hospitalSplit().deadUnits (см. ниже),
+    // при обороне настоящих мертвецов почти нет — большинство идёт в госпиталь,
+    // и любой % от них — это % от почти нуля, венец на практике почти не
+    // работал. По прямому запросу пользователя источник заменён: венец больше
+    // не трогает raise (обычный "от мертвецов" продолжает расти сам по себе от
+    // редких случаев переполненного лазарета), а поднимает часть ТЯЖЕЛОРАНЕНЫХ
+    // (тех, кто и так уходит в лазарет) — раз при обороне тяжелораненых
+    // действительно много, а не горстка, венец снова ощутим.
     {title:"Венец «Пробуждение кургана»",
-      desc:"При обороне города доля восстающих мертвецов растёт до 40% павших.",
+      desc:"При обороне города дополнительно 40% тяжелораненых поднимаются в строй скелетами на время боя (сами раненые при этом как обычно едут в лазарет — венец не отнимает их).",
       mods:[],
-      defMods:[{field:"raise",kind:"abs",value:0.40}]},
+      defMods:[{field:"raiseHurt",kind:"abs",value:0.40}]},
   ],
 };
 
@@ -2227,11 +2237,15 @@ const GENERALS = {
     { name:"Владислав фон Морвейн", role:"Несокрушимый",
       // Раньше флейвор объяснял бонус защиты через "не даёт лазарету поблажек" —
       // но лазарет тут ни при чём: это здание, его характеристики от выбора
-      // генерала не меняются. healSpeed=1 в apply() — реальный размен (см.
-      // stat ниже), просто не то, чем стоит объяснять ХАРАКТЕР персонажа —
-      // защита войск объясняется муштрой и строем, а не отношением к лазарету.
+      // генерала не меняются. healSpeed=1 в apply() отменяет расовую скидку
+      // нежити на лечение в лазарете (healSpeed:0.5 c эпохи 2, см. RACE_EPOCHS.
+      // undead) — размен "+10% защиты вместо вдвое быстрого лазарета" (реально
+      // работает только после починки healDuration(), раньше healSpeed=1 был
+      // холостым — дефолт и так уже был 1, см. комментарий у healDuration).
+      // Не то, чем стоит объяснять ХАРАКТЕР персонажа во flavor — защита войск
+      // объясняется муштрой и строем, а не отношением к лазарету.
       flavor:"Муштрует свою мёртвую рать без устали — дисциплина и отточенный строй значат для него больше, чем крепость доспеха.",
-      stat:"Защита войск +10%, подъём павших — обычной скорости.",
+      stat:"Защита войск +10%, лечение в лазарете — обычной скорости (без расовой скидки нежити).",
       apply:b=>{ b.def+=.10; b.healSpeed=1; } },
     { name:"Кармилла", role:"Некромантка",
       flavor:"Осторожна до расчётливости: предпочитает брать врага хитростью, а не числом, и просчётов себе почти не прощает.",
@@ -3545,7 +3559,7 @@ function logg(text,kind){ W.log.unshift({t:W.t,text,kind:kind||""}); if(W.log.le
 /* ---- Ленивая экономика ------------------------------------------------ */
 function bonuses(p, defending){
   const b={build:1, march:1, heal:1, healSpeed:1,
-    atk:0, def:0, hp:0, archer:0, raise:0, gather:0, load:0, hosp:0, cap:0,
+    atk:0, def:0, hp:0, archer:0, raise:0, raiseHurt:0, gather:0, load:0, hosp:0, cap:0,
     prodFW:0, prodSG:0, bandit:0, mercy:0,
     gatherAmber:0,   // скорость сбора янтаря (см. eco_amber0/1) — сам ресурс/сбор на карте ещё не заведён,
                       // поле уже считается наравне с остальными, чтобы не переделывать bonuses() задним числом
@@ -4194,14 +4208,24 @@ function hospitalSplit(p,loss,mode){
 // f.p может быть пуст (разбойничий гарнизон) — тогда госпиталю просто
 // неоткуда взяться, считаем всех выбывших мёртвыми (как и раньше; на деле
 // не важно — у разбойников raise всегда 0).
+//
+// raiseHurt (венец нежити «Пробуждение кургана», см. RACE_EPOCHS.undead) —
+// ОТДЕЛЬНЫЙ, параллельный источник: часть тяжелораненых (hurtUnits, те, кто
+// и так едет в лазарет как обычно, никуда не девается) тоже встаёт скелетами
+// на время боя. Копится в ТОТ ЖЕ f.risen/_raisedCum, что и raise — should
+// считается суммой обоих источников разом, поэтому не поднимает дважды одних
+// и тех же, даже если raise и raiseHurt активны одновременно.
 function raiseSkeletons(f,loss){
-  const rate=f.B.raise||0; if(rate<=0) return;
+  const rate=f.B.raise||0, rateHurt=f.B.raiseHurt||0;
+  if(rate<=0 && rateHurt<=0) return;
   if(!f._raisedCum) f._raisedCum=emptyUnits();
-  const dead=f.p ? hospitalSplit(f.p,loss,f.mode).deadUnits : loss;
+  let dead=loss, hurt=null;
+  if(f.p){ const hs=hospitalSplit(f.p,loss,f.mode); dead=hs.deadUnits; hurt=hs.hurtUnits; }
   TKEYS.forEach(t=>{
     for(let i=1;i<=5;i++){
-      const d=dead[t][i]||0; if(!d)continue;
-      const should=Math.floor(d*rate), already=f._raisedCum[t][i]||0;
+      const shouldDead=Math.floor((dead[t][i]||0)*rate);
+      const shouldHurt=(rateHurt>0 && hurt) ? Math.floor((hurt[t][i]||0)*rateHurt) : 0;
+      const should=shouldDead+shouldHurt, already=f._raisedCum[t][i]||0;
       if(should>already){ f.risen[t][i]=(f.risen[t][i]||0)+(should-already); f._raisedCum[t][i]=should; }
     }
   });
@@ -5355,6 +5379,12 @@ function startBuild(p,bk,plot){
   const plotKey = multi ? plot : null;
   if(p.queues.some(q=>q && q.b===bk && q.plot===plotKey))
     return {err:"Эта постройка уже в работе у одной из бригад"};
+  // Казармы/Стрельбище/Конюшня/Мастерская — пока в них идёт набор/переобучение
+  // (p.train[type]), улучшать само здание нельзя: набор либо шёл бы в старом
+  // здании, либо непонятно, по каким характеристикам считать уже оплаченный
+  // заказ. Симметричный запрет — в startTrain/startRetrain ниже.
+  const trainType=BLD_TRAIN[bk];
+  if(trainType && p.train[trainType]) return {err:"Здание занято набором войск — дождитесь окончания"};
   const cur = multi ? p.b[bk][plot] : p.b[bk];
   const lv=cur+1;
   if(lv>buildingMax(bk)) return {err:"Максимальный уровень"};
@@ -5381,6 +5411,9 @@ function trainMax(p,type,tier){
 }
 function startTrain(p,type,tier,n){
   if(p.train[type]) return {err:"Здание уже занято набором"};
+  // Симметрично startBuild выше: пока здание само улучшается (в очереди
+  // строительства), запускать в нём набор нельзя.
+  if(p.queues.some(q=>q && q.b===TRAIN_BLD[type])) return {err:"Здание сейчас улучшается — дождитесь окончания"};
   const cap=trainCap(p.b[TRAIN_BLD[type]]);
   n=Math.round(n);
   if(n<1) return {err:"Наберите хотя бы одного воина"};
@@ -5407,7 +5440,21 @@ function healMaxN(p,type,tier){
   return Math.max(0,Math.min(have,cap,afford));
 }
 function healDuration(p,type,tier,n){
-  return healUnitTime(type,tier)*n/((1+p.b.hall*0.06)*(1+bonuses(p).healSpeed));
+  // healSpeed — той же конвенции, что и heal (стоимость, см. healUnitCost
+  // выше): готовый МАСШТАБ времени, дефолт 1 = "как обычно", МЕНЬШЕ = быстрее
+  // (не конвенция trainSpeed/build, где поле — бонус сверху 1 в знаменателе).
+  // Поэтому — множитель в ЧИСЛИТЕЛЕ, а не добавка в знаменатель.
+  // Раньше стояло (1+bonuses(p).healSpeed) в знаменателе — при дефолте 1 это
+  // ВСЕГДА давало ×2 скорость лечения ВСЕМ расам без единого бонуса, а
+  // расовая способность нежити (healSpeed:0.5, заявлено "вдвое быстрее")
+  // с той же формулой давала (1+0.5)=1.5 в знаменателе — то есть МЕДЛЕННЕЕ
+  // бездефолтного случая у остальных рас, ровно наоборот заявленному.
+  // (Первая попытка чинить это здесь тоже была неверной — просто убрала "1+",
+  // оставив healSpeed в знаменателе: там меньшее значение делает время БОЛЬШЕ,
+  // то есть медленнее — снова не то направление. Числитель — правильное место.)
+  // По механике RoK лазарет стоит и лечит вдвое дешевле/быстрее полного
+  // набора, без скрытого допмножителя сверху (см. healUnitCost/healUnitTime).
+  return healUnitTime(type,tier)*n*bonuses(p).healSpeed/(1+p.b.hall*0.06);
 }
 function startHeal(p,type,tier,n){
   if(p.heal) return {err:"Лазарет уже занят лечением"};
@@ -5444,6 +5491,7 @@ function retrainMax(p,type,fromTier){
 }
 function startRetrain(p,type,fromTier,n){
   if(p.train[type]) return {err:"Здание уже занято набором"};
+  if(p.queues.some(q=>q && q.b===TRAIN_BLD[type])) return {err:"Здание сейчас улучшается — дождитесь окончания"};
   const maxT=tierUnlockedFor(p,type);
   if(fromTier<1||fromTier+1>maxT) return {err:"Следующий тир ещё не открыт"};
   n=Math.round(n);
