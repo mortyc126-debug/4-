@@ -152,6 +152,28 @@ const RACE_TROOP_MOD = {
   undead: { sie: { atk: 2.20 * 1.05, def: 1.05, hp: 1.05, speed: 1.20 } },
 };
 const troopMod = (race, t, stat) => (RACE_TROOP_MOD[race] && RACE_TROOP_MOD[race][t] && RACE_TROOP_MOD[race][t][stat]) || 1;
+// index.html:1305 WALL_TABLE — только колонка hp нужна для wallDefBonus.
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const WALL_TABLE = [
+  { hp: 15000 }, { hp: 15500 }, { hp: 16000 }, { hp: 16500 }, { hp: 17000 },
+  { hp: 17500 }, { hp: 18250 }, { hp: 19000 }, { hp: 19750 }, { hp: 20500 },
+  { hp: 21250 }, { hp: 22000 }, { hp: 22750 }, { hp: 23500 }, { hp: 24250 },
+  { hp: 25000 }, { hp: 26000 }, { hp: 27000 }, { hp: 28000 }, { hp: 29000 },
+  { hp: 30000 }, { hp: 31000 }, { hp: 32000 }, { hp: 33000 }, { hp: 40000 },
+];
+// index.html:2895 tableAt / index.html:2904 wallDefBonus — см. подробный
+// комментарий в _shared/rules.js (буквальная копия оттуда).
+function tableAt(tbl, lv, field) {
+  const i = clamp(lv, 1, tbl.length) - 1;
+  const lo = Math.floor(i), hi = Math.min(tbl.length - 1, lo + 1), f = i - lo;
+  const a = field ? tbl[lo][field] : tbl[lo], b = field ? tbl[hi][field] : tbl[hi];
+  return a + (b - a) * f;
+}
+function wallDefBonus(lv) {
+  if (lv <= 0) return 0;
+  const hp = tableAt(WALL_TABLE, lv, "hp"), hp1 = WALL_TABLE[0].hp, hpMax = WALL_TABLE[WALL_TABLE.length - 1].hp;
+  return 0.125 * (hp - hp1) / (hpMax - hp1);
+}
 const COUNTER_UP = 1.5, COUNTER_DOWN = 0.7;
 function counterMult(from, to) {
   const T = TROOP_TYPES[from];
@@ -180,7 +202,10 @@ function sideStats(units, race) {
   s.totalN = TKEYS.reduce((a, t) => a + s[t].n, 0);
   return s;
 }
-function dmgTo(attS, defS) {
+// defWallLv — уровень стены защитника (index.html:4142/4208, см. подробный
+// комментарий в _shared/rules.js). Умножает дробь def/70, не всё (1+...).
+function dmgTo(attS, defS, defWallLv = 0) {
+  const defWall = 1 + wallDefBonus(defWallLv) * (1 + 0);
   const out = {};
   TKEYS.forEach((dt) => {
     if (defS[dt].n <= 0) { out[dt] = 0; return; }
@@ -191,8 +216,8 @@ function dmgTo(attS, defS) {
       d += attS[at].atk * counterMult(at, dt) * share;
       dm += attS[at].matk * counterMult(at, dt) * share;
     });
-    const mitig = 1 + (defS[dt].def / Math.max(1, defS[dt].n)) / 70;
-    const mitigM = 1 + (defS[dt].mdef / Math.max(1, defS[dt].n)) / 70;
+    const mitig = 1 + (defS[dt].def / Math.max(1, defS[dt].n)) / 70 * defWall;
+    const mitigM = 1 + (defS[dt].mdef / Math.max(1, defS[dt].n)) / 70 * defWall;
     out[dt] = d / mitig + dm / mitigM;
   });
   return out;
@@ -214,9 +239,9 @@ function applyLosses(units, dmgByType, race) {
   });
   return { units: lost, hpLost };
 }
-function resolvePvp(attUnits, attRace, defUnits, defRace) {
+function resolvePvp(attUnits, attRace, defUnits, defRace, defWallLv = 0) {
   const attS = sideStats(attUnits, attRace), defS = sideStats(defUnits, defRace);
-  const dmgToDef = dmgTo(attS, defS), dmgToAtt = dmgTo(defS, attS);
+  const dmgToDef = dmgTo(attS, defS, defWallLv), dmgToAtt = dmgTo(defS, attS);
   const defLoss = applyLosses(defUnits, dmgToDef, defRace);
   const attLoss = applyLosses(attUnits, dmgToAtt, attRace);
   const defHpLeft = Math.max(0, defS.totalHp - defLoss.hpLost);
@@ -265,7 +290,8 @@ async function applyMarchArrive(admin, ev) {
   // случается, отряд просто разворачивается (как recallMarch без боя).
   if (defRow && !(defRow.shield_until > nowSec)) {
     const attP = attRow.state, defP = defRow.state;
-    const result = resolvePvp(m.units, attP.race, defP.troops, defP.race);
+    const defWallLv = (defP.b && typeof defP.b.wall === "number") ? defP.b.wall : 0;
+    const result = resolvePvp(m.units, attP.race, defP.troops, defP.race, defWallLv);
     defP.troops = unitsSub(defP.troops, result.defLoss);
     survivors = unitsSub(m.units, result.attLoss);
 

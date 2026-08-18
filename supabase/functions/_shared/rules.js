@@ -500,6 +500,23 @@ export const RACE_TROOP_MOD = {
   undead: { sie: { atk: 2.20 * 1.05, def: 1.05, hp: 1.05, speed: 1.20 } },
 };
 export const troopMod = (race, t, stat) => (RACE_TROOP_MOD[race] && RACE_TROOP_MOD[race][t] && RACE_TROOP_MOD[race][t][stat]) || 1;
+// index.html:2895 tableAt — дробный (интерполированный) поиск по уровню:
+// усредняет между соседними целыми уровнями по дробной части lv. Нужен для
+// wallDefBonus, который в index.html читает "непрерывный" HP-рост стены.
+export function tableAt(tbl, lv, field) {
+  const i = clamp(lv, 1, tbl.length) - 1;
+  const lo = Math.floor(i), hi = Math.min(tbl.length - 1, lo + 1), f = i - lo;
+  const a = field ? tbl[lo][field] : tbl[lo], b = field ? tbl[hi][field] : tbl[hi];
+  return a + (b - a) * f;
+}
+// index.html:2904 wallDefBonus — доля смягчения урона от уровня стены
+// защитника, по интерполированному росту HP стены между 1-м и последним
+// (25-м, WALL_TABLE.length-1) уровнем; 0 при отсутствии стены (lv<=0).
+export function wallDefBonus(lv) {
+  if (lv <= 0) return 0;
+  const hp = tableAt(WALL_TABLE, lv, "hp"), hp1 = WALL_TABLE[0].hp, hpMax = WALL_TABLE[WALL_TABLE.length - 1].hp;
+  return 0.125 * (hp - hp1) / (hpMax - hp1);
+}
 export const COUNTER_UP = 1.5, COUNTER_DOWN = 0.7;
 export function counterMult(from, to) {
   const T = TROOP_TYPES[from];
@@ -532,12 +549,20 @@ export function sideStats(units, race) {
   s.totalN = TKEYS.reduce((a, t) => a + s[t].n, 0);
   return s;
 }
-// index.html:4194 dmgTo — урон, наносимый attS стороне defS, по родам войск
-// защитника (доля по HP + контр-множитель + смягчение защитой), без стены
-// (defWall=1 всегда) и без CFG.BATTLE_PACE/шейка (это один обмен, не раунд
-// в цикле — масштаб урона другой, скидка на "раунд" тут не нужна).
-export function dmgTo(attS, defS) {
+// index.html:4194 dmgTo(att,attS,defS,defWall,shake) — урон, наносимый attS
+// стороне defS, по родам войск защитника (доля по HP + контр-множитель +
+// смягчение защитой×стеной). defWall — множитель index.html:4142
+// (1+wallDefBonus(lv)*(1+bonus)), где bonus (D.B.wallBonus, из bonuses())
+// временно заглушён нулём, как и все остальные bonuses()-члены в этом
+// файле; defWall умножает ИМЕННО дробь def/70 (мультипликативно внутри
+// mitig=1+x/70*defWall — не всё выражение (1+x)), в точности как в
+// index.html:4208. defWall=1, если стены нет (defWallLv<=0) или для урона
+// по атакующему (у него в бою своя стена не защищает). Без
+// CFG.BATTLE_PACE/шейка (это один обмен, не раунд в цикле — масштаб урона
+// другой, скидка на "раунд" тут не нужна).
+export function dmgTo(attS, defS, defWallLv = 0) {
   const TKEYS = ["inf", "arc", "cav", "sie"];
+  const defWall = 1 + wallDefBonus(defWallLv) * (1 + 0);
   const out = {};
   TKEYS.forEach((dt) => {
     if (defS[dt].n <= 0) { out[dt] = 0; return; }
@@ -548,8 +573,8 @@ export function dmgTo(attS, defS) {
       d += attS[at].atk * counterMult(at, dt) * share;
       dm += attS[at].matk * counterMult(at, dt) * share;
     });
-    const mitig = 1 + (defS[dt].def / Math.max(1, defS[dt].n)) / 70;
-    const mitigM = 1 + (defS[dt].mdef / Math.max(1, defS[dt].n)) / 70;
+    const mitig = 1 + (defS[dt].def / Math.max(1, defS[dt].n)) / 70 * defWall;
+    const mitigM = 1 + (defS[dt].mdef / Math.max(1, defS[dt].n)) / 70 * defWall;
     out[dt] = d / mitig + dm / mitigM;
   });
   return out;
@@ -582,9 +607,12 @@ export function applyLosses(units, dmgByType, race) {
 // разом (не в очередь, как в резолвBattle() — тут только один шаг). Все
 // живые войска защитника участвуют — марш-система (кто именно "дошёл")
 // ещё не перенесена, атака бьёт мгновенно по всему гарнизону защитника.
-export function resolvePvp(attUnits, attRace, defUnits, defRace) {
+// defWallLv — уровень стены защитника (p.b.wall), смягчает урон ТОЛЬКО по
+// защитнику (index.html:4218-4219: defWall=wallMul для dA, но 1 для dD —
+// стена защищает дом, а не марширующих в чужие земли атакующих).
+export function resolvePvp(attUnits, attRace, defUnits, defRace, defWallLv = 0) {
   const attS = sideStats(attUnits, attRace), defS = sideStats(defUnits, defRace);
-  const dmgToDef = dmgTo(attS, defS), dmgToAtt = dmgTo(defS, attS);
+  const dmgToDef = dmgTo(attS, defS, defWallLv), dmgToAtt = dmgTo(defS, attS);
   const defLoss = applyLosses(defUnits, dmgToDef, defRace);
   const attLoss = applyLosses(attUnits, dmgToAtt, attRace);
   const defHpLeft = Math.max(0, defS.totalHp - defLoss.hpLost);

@@ -8924,9 +8924,9 @@ function foMultiplayer(){
          "<div class='title'>"+(n.nick||"Безымянный лорд")+(n.is_bot?" <span class='note'>(бот)</span>":"")+"</div>"+
          "<div class='note'>"+RACES[n.race].name+" · "+n.x+", "+n.y+" · "+dist+" клет."+"</div>";
       if(mpState.attackTarget===n.id){
-        h+="<div class='note' style='color:#e08'>Бой честный, но упрощённый — без стены, полководцев и погоды "+
-           "(марш и время в пути уже настоящие — чем медленнее войска, тем дольше идти). "+dist+" клет. по прямой, "+
-           "см. supabase/README.md.</div>";
+        h+="<div class='note' style='color:#e08'>Бой честный, но упрощённый — без полководцев и погоды "+
+           "(стена защитника уже учитывается настоящей формулой; марш и время в пути тоже настоящие — "+
+           "чем медленнее войска, тем дольше идти). "+dist+" клет. по прямой, см. supabase/README.md.</div>";
         TKEYS.forEach(t=>{
           const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
           h+="<div class='note'>"+unitName(t,1,p.race)+" (T1, есть "+RU(have)+"): "+
