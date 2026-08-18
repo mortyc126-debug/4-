@@ -1,24 +1,27 @@
 // =============================================================================
-// mp-build — Фаза 5: постройка/улучшение зданий. Первый кусочек (barracks/
-// range/stable/siege) уже был; теперь добавлены hall/wall/store/academy/
-// hospital — все 5 из HALL_REQ плюс сама ратуша, без которых ратуша не
-// поднимается выше 1 уровня (см. hallRequire ниже), а без ратуши все
-// остальные здания упираются в "требуется ратуша N уровня". Оставшиеся
-// постройки (ферма/лесопилка/каменоломня/шахта/дозор/разведка/горн) —
-// следующие шаги переноса, каждая отдельно, тот же принцип.
-// Зеркало startBuild(p,bk,plot) из index.html:5712.
+// mp-build — Фаза 5: постройка/улучшение зданий. Все 15 зданий из BUILDINGS
+// (index.html) перенесены: barracks/range/stable/siege, hall + весь
+// HALL_REQ (wall/store/academy/hospital), farm/lumber/quarry/mine,
+// garrison/scout. Зеркало startBuild(p,bk,plot) из index.html:5712.
 //
-// hospital — единственное multi-здание среди перенесённых (BUILDINGS.
-// hospital.plots=4); портирован только участок 0 (у isMulti-зданий он
-// разблокирован всегда — см. plotUnlocked в index.html — и это ровно тот
-// участок, что нужен HALL_REQ). Участки 1-3 — следующий шаг, если
-// понадобятся отдельно от разблокировки ратуши.
+// hospital/farm/lumber/quarry/mine — multi-здания (BUILDINGS.*.plots=4 в
+// index.html), у каждого 4 независимых участка (0-3). Участок 0
+// разблокирован всегда (и это ровно тот участок, что нужен HALL_REQ у
+// hospital), участки 1-3 — по эпохе ратуши (epochOf/plotUnlocked, см.
+// _shared/rules.js): участок 1 с эпохи 2 (ратуша 7 ур.), участок 2 с эпохи
+// 3 (13 ур.), участок 3 с эпохи 4 (19 ур.) — все 4 участка строятся
+// отдельными заказами через отдельные вызовы этой функции с разным
+// body.plot; production()/plotFillCap() уже суммируют вклад всех
+// построенных участков (см. syncRes ниже), это не требует отдельного шага.
 //
 // bonuses(p).build/buildCostCut временно = 1/0 (без бонусов) — та же
 // заглушка, что и trainSpeed в mp-train, см. _shared/rules.js.
 //
 // Тело запроса: { bk: "barracks"|"range"|"stable"|"siege"|"hall"|"wall"|
-//                     "store"|"academy"|"hospital" }
+//                     "store"|"academy"|"hospital"|"farm"|"lumber"|
+//                     "quarry"|"mine"|"garrison"|"scout", plot?: 0-3 }
+//                (plot нужен только у multi-зданий hospital/farm/lumber/
+//                 quarry/mine, у остальных игнорируется; по умолчанию 0)
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // Вставлено буквально из ../_shared/cors.js и ../_shared/rules.js —
@@ -236,12 +239,11 @@ const BUILD_BLD_TABLE = {
 };
 const BUILD_MAX_LV = 25;
 // hospital/farm/lumber/quarry/mine — multi-здания (BUILDINGS.*.plots в
-// index.html); портирован только участок 0 у каждого (см. комментарий в
-// _shared/rules.js). Приток ресурсов от уровня фермы/лесопилки/каменоломни/
-// шахты (production(), тикает по реальному времени) ещё НЕ перенесён — эти
-// 4 здания пока можно строить/улучшать, но добыча сама по себе не идёт,
-// это отдельный следующий шаг (другой тип механики — непрерывное
-// накопление, а не разовое событие, как постройка/набор).
+// index.html), у каждого 4 участка (индексы 0-3). Участок 0 разблокирован
+// всегда, участки 1-3 — по эпохе ратуши (epochOf/plotUnlocked ниже,
+// index.html:2453/2854). Приток ресурсов сам по себе (production(),
+// тикает по реальному времени через resAt) уже перенесён отдельно — этот
+// файл только строит/улучшает участки, синкает баланс перед оплатой.
 const BUILD_MULTI = new Set(["hospital", "farm", "lumber", "quarry", "mine"]);
 const HALL_REQ = ["wall", "store", "academy", "barracks", "hospital"];
 const BUILD_BLD_RU_NAME = { wall: "Стена", store: "Склад", academy: "Академия", barracks: "Казармы", hospital: "Госпиталь" };
@@ -253,6 +255,18 @@ function buildCost(bk, lv, buildCostCut = 0) {
 function buildLv(p, bk) {
   const raw = p.b[bk];
   return BUILD_MULTI.has(bk) ? ((Array.isArray(raw) ? raw[0] : raw) || 0) : (raw || 0);
+}
+// index.html:2854 epochOf — эпоха ратуши (1..5).
+const epochOf = (hall) => (hall >= 25 ? 5 : hall >= 19 ? 4 : hall >= 13 ? 3 : hall >= 7 ? 2 : 1);
+// index.html:2453 plotUnlocked — участок 0 у multi-зданий открыт всегда,
+// участок N (1-3) — с эпохи N+1 (участок 1 → эпоха 2 → ратуша 7 ур.,
+// участок 2 → эпоха 3 → ратуша 13 ур., участок 3 → эпоха 4 → ратуша 19 ур.).
+const plotUnlocked = (bk, idx, hall) => !BUILD_MULTI.has(bk) || idx === 0 || epochOf(hall) >= idx + 1;
+// index.html:5724 cur — уровень КОНКРЕТНОГО участка multi-здания (buildLv
+// выше — только участок 0, годится для HALL_REQ, но не для стройки).
+function buildLvAt(p, bk, plot) {
+  const raw = p.b[bk];
+  return BUILD_MULTI.has(bk) ? ((Array.isArray(raw) ? raw[plot] : (plot === 0 ? raw : 0)) || 0) : (raw || 0);
 }
 const canPay = (res, c) => RES.every((r) => !c[r] || res[r] >= c[r]);
 const pay = (res, c) => RES.forEach((r) => { if (c[r]) res[r] -= c[r]; });
@@ -317,7 +331,7 @@ Deno.serve(async (req) => {
     try { body = await req.json(); } catch (_) { /* noop */ }
     const bk = body.bk;
     if (!BUILD_BLD_TABLE[bk])
-      return jsonResponse({ err: "Пока перенесены только казармы/стрельбище/конюшня/мастерская/ратуша/стена/склад/академия/госпиталь" }, 400);
+      return jsonResponse({ err: "Неизвестное здание (кузница пока не переносилась)" }, 400);
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
@@ -341,15 +355,22 @@ Deno.serve(async (req) => {
     const now = Date.now() / 1000;
     syncRes(p, now);
 
-    const isMulti = BUILD_MULTI.has(bk), plotKey = isMulti ? 0 : null;
+    const isMulti = BUILD_MULTI.has(bk);
+    // Участок передаётся телом запроса только у multi-зданий; у остальных
+    // всегда null (как и раньше). body.plot не число/вне 0-3 -> 0 (тот же
+    // единственный участок, что был единственным вариантом до этого шага).
+    const plotReq = isMulti ? (Number.isInteger(body.plot) ? clamp(body.plot, 0, 3) : 0) : null;
+    const plotKey = plotReq;
 
     // Дословно startBuild(p,bk,plot) из index.html:5712-5726.
+    if (isMulti && !plotUnlocked(bk, plotReq, buildLv(p, "hall")))
+      return jsonResponse({ err: "Участок откроется позже" }, 400);
     if (p.queues.some((q) => q && q.b === bk && q.plot === plotKey))
       return jsonResponse({ err: "Эта постройка уже в работе у одной из бригад" }, 400);
     const trainType = BLD_TRAIN[bk];
     if (trainType && p.train[trainType])
       return jsonResponse({ err: "Здание занято набором войск — дождитесь окончания" }, 400);
-    const cur = buildLv(p, bk);
+    const cur = isMulti ? buildLvAt(p, bk, plotReq) : buildLv(p, bk);
     const lv = cur + 1;
     if (lv > BUILD_MAX_LV) return jsonResponse({ err: "Максимальный уровень" }, 400);
     const hallLv = buildLv(p, "hall");

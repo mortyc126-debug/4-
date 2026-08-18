@@ -152,6 +152,51 @@ const RACE_TROOP_MOD = {
   undead: { sie: { atk: 2.20 * 1.05, def: 1.05, hp: 1.05, speed: 1.20 } },
 };
 const troopMod = (race, t, stat) => (RACE_TROOP_MOD[race] && RACE_TROOP_MOD[race][t] && RACE_TROOP_MOD[race][t][stat]) || 1;
+// index.html:1305 WALL_TABLE — только колонка hp нужна для wallDefBonus.
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const WALL_TABLE = [
+  { hp: 15000 }, { hp: 15500 }, { hp: 16000 }, { hp: 16500 }, { hp: 17000 },
+  { hp: 17500 }, { hp: 18250 }, { hp: 19000 }, { hp: 19750 }, { hp: 20500 },
+  { hp: 21250 }, { hp: 22000 }, { hp: 22750 }, { hp: 23500 }, { hp: 24250 },
+  { hp: 25000 }, { hp: 26000 }, { hp: 27000 }, { hp: 28000 }, { hp: 29000 },
+  { hp: 30000 }, { hp: 31000 }, { hp: 32000 }, { hp: 33000 }, { hp: 40000 },
+];
+// index.html:2895 tableAt / index.html:2904 wallDefBonus — см. подробный
+// комментарий в _shared/rules.js (буквальная копия оттуда).
+function tableAt(tbl, lv, field) {
+  const i = clamp(lv, 1, tbl.length) - 1;
+  const lo = Math.floor(i), hi = Math.min(tbl.length - 1, lo + 1), f = i - lo;
+  const a = field ? tbl[lo][field] : tbl[lo], b = field ? tbl[hi][field] : tbl[hi];
+  return a + (b - a) * f;
+}
+function wallDefBonus(lv) {
+  if (lv <= 0) return 0;
+  const hp = tableAt(WALL_TABLE, lv, "hp"), hp1 = WALL_TABLE[0].hp, hpMax = WALL_TABLE[WALL_TABLE.length - 1].hp;
+  return 0.125 * (hp - hp1) / (hpMax - hp1);
+}
+// index.html:1335 WATCH_TABLE — только колонка atk нужна для garrisonVolley.
+const tblRow = (tbl, lv) => tbl[clamp(Math.round(lv), 1, tbl.length) - 1];
+const WATCH_TABLE = [
+  { atk: 1000 }, { atk: 1500 }, { atk: 2000 }, { atk: 3000 }, { atk: 4000 },
+  { atk: 5000 }, { atk: 6000 }, { atk: 16000 }, { atk: 20000 }, { atk: 24000 },
+  { atk: 28000 }, { atk: 32000 }, { atk: 36000 }, { atk: 40000 }, { atk: 66000 },
+  { atk: 72000 }, { atk: 78000 }, { atk: 84000 }, { atk: 90000 }, { atk: 96000 },
+  { atk: 136000 }, { atk: 144000 }, { atk: 152000 }, { atk: 160000 }, { atk: 500000 },
+];
+// index.html:4057 garrisonVolley — см. подробный комментарий в
+// _shared/rules.js (буквальная копия оттуда).
+function garrisonVolley(defGarrisonLv, attS) {
+  if (defGarrisonLv <= 0) return null;
+  const dmg = tblRow(WATCH_TABLE, defGarrisonLv).atk;
+  const out = {};
+  TKEYS.forEach((t) => {
+    if (attS[t].n <= 0) { out[t] = 0; return; }
+    const share = dmg * (attS[t].hp / Math.max(1, attS.totalHp));
+    const mitig = 1 + (attS[t].def / Math.max(1, attS[t].n)) / 70;
+    out[t] = share / mitig;
+  });
+  return out;
+}
 const COUNTER_UP = 1.5, COUNTER_DOWN = 0.7;
 function counterMult(from, to) {
   const T = TROOP_TYPES[from];
@@ -180,7 +225,10 @@ function sideStats(units, race) {
   s.totalN = TKEYS.reduce((a, t) => a + s[t].n, 0);
   return s;
 }
-function dmgTo(attS, defS) {
+// defWallLv — уровень стены защитника (index.html:4142/4208, см. подробный
+// комментарий в _shared/rules.js). Умножает дробь def/70, не всё (1+...).
+function dmgTo(attS, defS, defWallLv = 0) {
+  const defWall = 1 + wallDefBonus(defWallLv) * (1 + 0);
   const out = {};
   TKEYS.forEach((dt) => {
     if (defS[dt].n <= 0) { out[dt] = 0; return; }
@@ -191,8 +239,8 @@ function dmgTo(attS, defS) {
       d += attS[at].atk * counterMult(at, dt) * share;
       dm += attS[at].matk * counterMult(at, dt) * share;
     });
-    const mitig = 1 + (defS[dt].def / Math.max(1, defS[dt].n)) / 70;
-    const mitigM = 1 + (defS[dt].mdef / Math.max(1, defS[dt].n)) / 70;
+    const mitig = 1 + (defS[dt].def / Math.max(1, defS[dt].n)) / 70 * defWall;
+    const mitigM = 1 + (defS[dt].mdef / Math.max(1, defS[dt].n)) / 70 * defWall;
     out[dt] = d / mitig + dm / mitigM;
   });
   return out;
@@ -214,15 +262,70 @@ function applyLosses(units, dmgByType, race) {
   });
   return { units: lost, hpLost };
 }
-function resolvePvp(attUnits, attRace, defUnits, defRace) {
+function resolvePvp(attUnits, attRace, defUnits, defRace, defWallLv = 0, defGarrisonLv = 0) {
   const attS = sideStats(attUnits, attRace), defS = sideStats(defUnits, defRace);
-  const dmgToDef = dmgTo(attS, defS), dmgToAtt = dmgTo(defS, attS);
+  const dmgToDef = dmgTo(attS, defS, defWallLv), dmgToAtt = dmgTo(defS, attS);
+  const openG = garrisonVolley(defGarrisonLv, attS);
+  if (openG) TKEYS.forEach((t) => { dmgToAtt[t] = (dmgToAtt[t] || 0) + (openG[t] || 0); });
   const defLoss = applyLosses(defUnits, dmgToDef, defRace);
   const attLoss = applyLosses(attUnits, dmgToAtt, attRace);
   const defHpLeft = Math.max(0, defS.totalHp - defLoss.hpLost);
   const attHpLeft = Math.max(0, attS.totalHp - attLoss.hpLost);
   const winner = defHpLeft <= 0 && attHpLeft > 0 ? "att" : attHpLeft <= 0 && defHpLeft > 0 ? "def" : (attHpLeft > defHpLeft ? "att" : "def");
   return { attLoss: attLoss.units, defLoss: defLoss.units, attHpLeft, defHpLeft, winner };
+}
+// index.html:2867 HOSPITAL_CAP_TABLE / hospitalCap / totalHospitalCap —
+// сколько раненых вмещает лазарет (сумма по всем 4 построенным участкам,
+// см. Фаза 5, пятый кусочек).
+const HOSPITAL_CAP_TABLE = [
+  7500, 8250, 9000, 10000, 11000, 12250, 13500, 15000, 16500,
+  18250, 20000, 22000, 24000, 26500, 29000, 32000, 35000, 38500, 42000, 46000, 50000,
+  54500, 59500, 65000, 75000,
+];
+const hospitalCap = (lv) => (lv <= 0 ? 0 : tblRow(HOSPITAL_CAP_TABLE, lv));
+function totalHospitalCap(p) {
+  const plots = p.b && p.b.hospital;
+  return (Array.isArray(plots) ? plots : [plots || 0]).reduce((s, lv) => s + hospitalCap(lv), 0);
+}
+// index.html:4340 SLIGHT_WOUND_FRAC / index.html:4351 hospitalSplit — часть
+// потерь (loss, уже вычтенных из активного войска резолвPvp) отделывается
+// лёгким испугом и НЕМЕДЛЕННО возвращается в строй (slight, 12%, лазарет не
+// нужен), часть едет в лазарет (hurt, копится в p.wounded — само лечение,
+// healUnit, ещё не перенесено на сервер, честная заглушка, раненые там и
+// остаются), остаток, что не влез в лазарет, гибнет насовсем (dead).
+// mode:"siege-attack" (штурмующий чужой город) — гибель насмерть без
+// исключений, той же логике, что index.html:4352-4359; в общем мире это
+// всегда атакующий марш — у защитника всегда обычный режим (лазарет свой,
+// дома). bonuses(p).hosp/mercy временно = 0, та же заглушка везде.
+const SLIGHT_WOUND_FRAC = 0.12;
+function hospitalSplit(p, loss, mode) {
+  if (mode === "siege-attack") {
+    const deadUnits = { inf: {}, arc: {}, cav: {}, sie: {} };
+    let dead = 0;
+    TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) { const n = (loss[t] && loss[t][i]) || 0; deadUnits[t][i] = n; dead += n; } });
+    return { dead, hurt: 0, slight: 0, slightUnits: { inf: {}, arc: {}, cav: {}, sie: {} }, deadUnits, hurtUnits: { inf: {}, arc: {}, cav: {}, sie: {} } };
+  }
+  const cap = Math.round(totalHospitalCap(p) * (1 + 0));
+  let inHosp = 0;
+  TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) inHosp += (p.wounded && p.wounded[t] && p.wounded[t][i]) || 0; });
+  let dead = 0, hurt = 0, slight = 0;
+  const slightUnits = { inf: {}, arc: {}, cav: {}, sie: {} }, deadUnits = { inf: {}, arc: {}, cav: {}, sie: {} }, hurtUnits = { inf: {}, arc: {}, cav: {}, sie: {} };
+  TKEYS.forEach((t) => {
+    for (let i = 1; i <= 5; i++) {
+      let n = (loss[t] && loss[t][i]) || 0;
+      slightUnits[t][i] = 0; hurtUnits[t][i] = 0; deadUnits[t][i] = 0;
+      if (!n) continue;
+      const sl = Math.round(n * SLIGHT_WOUND_FRAC);
+      if (sl > 0) { slightUnits[t][i] = sl; slight += sl; n -= sl; }
+      const room = Math.max(0, cap - inHosp);
+      const w = Math.min(n, room);
+      inHosp += w;
+      hurtUnits[t][i] = w; hurt += w;
+      const d = n - w;
+      deadUnits[t][i] = d; dead += d;
+    }
+  });
+  return { dead, hurt, slight, slightUnits, deadUnits, hurtUnits };
 }
 function unitsSub(units, loss) {
   const out = { inf: {}, arc: {}, cav: {}, sie: {} };
@@ -265,8 +368,21 @@ async function applyMarchArrive(admin, ev) {
   // случается, отряд просто разворачивается (как recallMarch без боя).
   if (defRow && !(defRow.shield_until > nowSec)) {
     const attP = attRow.state, defP = defRow.state;
-    const result = resolvePvp(m.units, attP.race, defP.troops, defP.race);
+    const defWallLv = (defP.b && typeof defP.b.wall === "number") ? defP.b.wall : 0;
+    const defGarrisonLv = (defP.b && typeof defP.b.garrison === "number") ? defP.b.garrison : 0;
+    const result = resolvePvp(m.units, attP.race, defP.troops, defP.race, defWallLv, defGarrisonLv);
     defP.troops = unitsSub(defP.troops, result.defLoss);
+    // Фаза 4, шестой кусочек: лазарет защитника (index.html:4351/4411-4423)
+    // — часть потерь не гибнет насмерть. Слегка раненые (12%) немедленно
+    // возвращаются в строй, тяжелораненые (в пределах вместимости лазарета)
+    // едут в p.wounded, и только сверх вместимости гибнут по-настоящему.
+    // Атакующий (mode:"siege-attack" по смыслу — марш к чужому городу) такой
+    // защиты не имеет, теряет войска насмерть целиком, как и раньше.
+    if (!defP.wounded) defP.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
+    TKEYS.forEach((t) => { if (!defP.wounded[t]) defP.wounded[t] = {}; });
+    const hs = hospitalSplit(defP, result.defLoss, "hospital");
+    defP.troops = unitsAdd(defP.troops, hs.slightUnits);
+    defP.wounded = unitsAdd(defP.wounded, hs.hurtUnits);
     survivors = unitsSub(m.units, result.attLoss);
 
     const { error: updD } = await admin.from("players").update({ state: defP, updated_at: new Date().toISOString() }).eq("id", defRow.id);
@@ -275,6 +391,7 @@ async function applyMarchArrive(admin, ev) {
     const summary = {
       winner: result.winner, sent: m.units, attLoss: result.attLoss, defLoss: result.defLoss,
       attHpLeft: Math.round(result.attHpLeft), defHpLeft: Math.round(result.defHpLeft),
+      defDead: hs.dead, defHurt: hs.hurt, defSlight: hs.slight,
     };
     const mailRows = [
       { world_id: m.world_id, player_id: attRow.id, kind: "battle", data: { role: "attacker", opponent_id: defRow.id, opponent_nick: defRow.nick, ...summary } },
