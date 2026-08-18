@@ -530,8 +530,13 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .rtree-nodes{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin-bottom:6px}
 .rtree-node{position:relative;width:46px;height:46px;border-radius:50%;cursor:pointer;
   background:rgba(90,69,48,.12);border:2px solid rgba(90,69,48,.35);
-  display:flex;align-items:center;justify-content:center;overflow:hidden}
-.rtree-node img{width:100%;height:100%;object-fit:cover;transform:scale(1.22)}
+  display:flex;align-items:center;justify-content:center}
+/* Круглая обрезка — на самой картинке, а не на .rtree-node: бейдж уровня
+   ниже (.rtree-node-lv) нарочно вылезает за край кружка своим нижним правым
+   углом (bottom:-2px;right:-2px — тот же "чип, торчащий из-под иконки" приём,
+   что и у amber-badge), а overflow:hidden на общем родителе резал бы и его
+   тоже — с реального скрина ("2/" без второй цифры) видно было именно так. */
+.rtree-node img{width:100%;height:100%;object-fit:cover;transform:scale(1.22);border-radius:50%}
 .rtree-node.open{border-color:#8a6d2c}
 .rtree-node.started{border-color:#3f6b3f;box-shadow:0 0 6px rgba(63,107,63,.5)}
 .rtree-node.maxed{border-color:#2c2114;background:rgba(138,109,44,.35)}
