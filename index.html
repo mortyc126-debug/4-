@@ -8486,6 +8486,8 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(recallBtn){ mpDoRecall(+recallBtn.dataset.id); return; }
   const shieldBtn=e.target.closest("[data-mp='shield']");
   if(shieldBtn){ mpDoShield(+shieldBtn.dataset.i); return; }
+  const relocateBtn=e.target.closest("[data-mp='relocate']");
+  if(relocateBtn){ mpDoRelocate(); return; }
 });
 
 // Двойной тап по чужой клетке в 3D сразу открывал лист похода (openLevy) —
@@ -8876,6 +8878,13 @@ async function mpDoShield(tier){
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
+// Фаза 4, одиннадцатый кусочек — перенос столицы (mp-relocate).
+async function mpDoRelocate(){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-relocate",{}); await mpRefreshPlayer(); await mpRefreshNeighbors(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
 // Фаза 4, второй кусочек — собственные марши (RLS marches_select_all из
 // миграции 0001 уже разрешает читать их напрямую, как и mail/players).
 async function mpRefreshMarches(){
@@ -8942,9 +8951,17 @@ function foMultiplayer(){
   }
 
   const p=mpState.player, st=p.state, pShim={race:p.race,b:st.b};
+  // Фаза 4, одиннадцатый кусочек — перенос столицы (mp-relocate) за
+  // золото, ровно как "tp" в index.html:8050-8054 (CFG.TELEPORT_BASE,
+  // тоже чистая формула без bonuses()). Новое место не выбирается игроком
+  // (общий мир не рисует карту для клика) — сервер сам ищет точку подальше
+  // от чужих городов, тем же способом, что и spawn нового игрока.
+  const tpCost=Math.round(CFG.TELEPORT_BASE*Math.pow(2.2,epochOf(st.b.hall||0)-1));
   h+="<div class='entry hot'><div class='line'><div class='fill'>"+
      "<div class='title'>"+(p.nick||"Безымянный лорд")+" · "+RACES[p.race].name+"</div>"+
-     "<div class='note'>Координаты в общем мире: "+p.x+", "+p.y+"</div></div></div></div>";
+     "<div class='note'>Координаты в общем мире: "+p.x+", "+p.y+"</div>"+
+     "<button class='seal' data-mp='relocate'"+(mpState.loading?" disabled":"")+">Перенести столицу за "+RU(tpCost)+" золота</button>"+
+     "</div></div></div>";
 
   // Фаза 4, десятый кусочек — щит мира (mp-shield). Три дня новичку уже
   // ставятся при первом входе (mp-join), тут можно продлить/поставить

@@ -25,6 +25,16 @@ export const SHIELD_COST = [
 // index.html:3299 — три дня "щита новичка" при первом входе (me.
 // shieldUntil=3*86400), см. mp-join.
 export const NEWBIE_SHIELD_SEC = 3 * 86400;
+// index.html:1726/7568 CFG.TELEPORT_BASE / tp — цена переноса столицы,
+// растёт с эпохой ратуши. Тоже чистая формула без единой bonuses()-
+// зависимости, см. mp-relocate (Фаза 4, одиннадцатый кусочек). Использует
+// epochOf, определённый ниже по файлу — это не проблема: сама функция тут
+// только ОБЪЯВЛЯЕТСЯ, epochOf разрешается уже при вызове teleportCost(),
+// когда весь модуль давно загружен.
+export const TELEPORT_BASE = 5000;
+export function teleportCost(hallLv) {
+  return Math.round(TELEPORT_BASE * Math.pow(2.2, epochOf(hallLv) - 1));
+}
 
 // index.html: TROOP_COST_COMBAT / TROOP_COST_SIEGE / troopCost
 export const TROOP_COST_COMBAT = [
