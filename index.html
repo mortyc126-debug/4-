@@ -8961,10 +8961,18 @@ function foMultiplayer(){
       const myLoss=mine?d.attLoss:d.defLoss, oppLoss=mine?d.defLoss:d.attLoss;
       const lostN=u=>TKEYS.reduce((s,t)=>s+[1,2,3,4,5].reduce((s2,i)=>s2+((u[t]&&u[t][i])||0),0),0);
       const won=(mine&&d.winner==="att")||(!mine&&d.winner==="def");
+      // Фаза 4, шестой кусочек: лазарет защитника — d.defDead/defHurt/
+      // defSlight описывают ВСЕГДА защитника (одна и та же сводка лежит в
+      // обоих письмах, и атакующему, и защитнику), поэтому это "наш" разбор
+      // при mine===false и "их" при mine===true. У атакующего своей защиты
+      // лазаретом нет (штурм чужого города — потери насмерть без остатка),
+      // разбирать нечего.
+      const hospNote=d.defHurt!=null?(" · "+(mine?"у противника":"у нас")+" в бою: легко отделались "+
+         RU(d.defSlight||0)+", в лазарете "+RU(d.defHurt||0)+", погибло насовсем "+RU(d.defDead||0)):"";
       h+="<div class='entry"+(won?" hot":" war")+"'><div class='line'><div class='fill'>"+
          "<div class='title'>"+(mine?"Напали на ":"Напали от ")+(d.opponent_nick||"Безымянный лорд")+
          " — "+(won?"победа":"поражение")+"</div>"+
-         "<div class='note'>Наши потери: "+RU(lostN(myLoss))+" · потери противника: "+RU(lostN(oppLoss))+"</div>"+
+         "<div class='note'>Наши потери: "+RU(lostN(myLoss))+" · потери противника: "+RU(lostN(oppLoss))+hospNote+"</div>"+
          "</div></div></div>";
     });
   }

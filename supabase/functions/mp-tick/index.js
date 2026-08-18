@@ -274,6 +274,59 @@ function resolvePvp(attUnits, attRace, defUnits, defRace, defWallLv = 0, defGarr
   const winner = defHpLeft <= 0 && attHpLeft > 0 ? "att" : attHpLeft <= 0 && defHpLeft > 0 ? "def" : (attHpLeft > defHpLeft ? "att" : "def");
   return { attLoss: attLoss.units, defLoss: defLoss.units, attHpLeft, defHpLeft, winner };
 }
+// index.html:2867 HOSPITAL_CAP_TABLE / hospitalCap / totalHospitalCap —
+// сколько раненых вмещает лазарет (сумма по всем 4 построенным участкам,
+// см. Фаза 5, пятый кусочек).
+const HOSPITAL_CAP_TABLE = [
+  7500, 8250, 9000, 10000, 11000, 12250, 13500, 15000, 16500,
+  18250, 20000, 22000, 24000, 26500, 29000, 32000, 35000, 38500, 42000, 46000, 50000,
+  54500, 59500, 65000, 75000,
+];
+const hospitalCap = (lv) => (lv <= 0 ? 0 : tblRow(HOSPITAL_CAP_TABLE, lv));
+function totalHospitalCap(p) {
+  const plots = p.b && p.b.hospital;
+  return (Array.isArray(plots) ? plots : [plots || 0]).reduce((s, lv) => s + hospitalCap(lv), 0);
+}
+// index.html:4340 SLIGHT_WOUND_FRAC / index.html:4351 hospitalSplit — часть
+// потерь (loss, уже вычтенных из активного войска резолвPvp) отделывается
+// лёгким испугом и НЕМЕДЛЕННО возвращается в строй (slight, 12%, лазарет не
+// нужен), часть едет в лазарет (hurt, копится в p.wounded — само лечение,
+// healUnit, ещё не перенесено на сервер, честная заглушка, раненые там и
+// остаются), остаток, что не влез в лазарет, гибнет насовсем (dead).
+// mode:"siege-attack" (штурмующий чужой город) — гибель насмерть без
+// исключений, той же логике, что index.html:4352-4359; в общем мире это
+// всегда атакующий марш — у защитника всегда обычный режим (лазарет свой,
+// дома). bonuses(p).hosp/mercy временно = 0, та же заглушка везде.
+const SLIGHT_WOUND_FRAC = 0.12;
+function hospitalSplit(p, loss, mode) {
+  if (mode === "siege-attack") {
+    const deadUnits = { inf: {}, arc: {}, cav: {}, sie: {} };
+    let dead = 0;
+    TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) { const n = (loss[t] && loss[t][i]) || 0; deadUnits[t][i] = n; dead += n; } });
+    return { dead, hurt: 0, slight: 0, slightUnits: { inf: {}, arc: {}, cav: {}, sie: {} }, deadUnits, hurtUnits: { inf: {}, arc: {}, cav: {}, sie: {} } };
+  }
+  const cap = Math.round(totalHospitalCap(p) * (1 + 0));
+  let inHosp = 0;
+  TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) inHosp += (p.wounded && p.wounded[t] && p.wounded[t][i]) || 0; });
+  let dead = 0, hurt = 0, slight = 0;
+  const slightUnits = { inf: {}, arc: {}, cav: {}, sie: {} }, deadUnits = { inf: {}, arc: {}, cav: {}, sie: {} }, hurtUnits = { inf: {}, arc: {}, cav: {}, sie: {} };
+  TKEYS.forEach((t) => {
+    for (let i = 1; i <= 5; i++) {
+      let n = (loss[t] && loss[t][i]) || 0;
+      slightUnits[t][i] = 0; hurtUnits[t][i] = 0; deadUnits[t][i] = 0;
+      if (!n) continue;
+      const sl = Math.round(n * SLIGHT_WOUND_FRAC);
+      if (sl > 0) { slightUnits[t][i] = sl; slight += sl; n -= sl; }
+      const room = Math.max(0, cap - inHosp);
+      const w = Math.min(n, room);
+      inHosp += w;
+      hurtUnits[t][i] = w; hurt += w;
+      const d = n - w;
+      deadUnits[t][i] = d; dead += d;
+    }
+  });
+  return { dead, hurt, slight, slightUnits, deadUnits, hurtUnits };
+}
 function unitsSub(units, loss) {
   const out = { inf: {}, arc: {}, cav: {}, sie: {} };
   TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) out[t][i] = Math.max(0, ((units[t] && units[t][i]) || 0) - ((loss[t] && loss[t][i]) || 0)); });
@@ -319,6 +372,17 @@ async function applyMarchArrive(admin, ev) {
     const defGarrisonLv = (defP.b && typeof defP.b.garrison === "number") ? defP.b.garrison : 0;
     const result = resolvePvp(m.units, attP.race, defP.troops, defP.race, defWallLv, defGarrisonLv);
     defP.troops = unitsSub(defP.troops, result.defLoss);
+    // Фаза 4, шестой кусочек: лазарет защитника (index.html:4351/4411-4423)
+    // — часть потерь не гибнет насмерть. Слегка раненые (12%) немедленно
+    // возвращаются в строй, тяжелораненые (в пределах вместимости лазарета)
+    // едут в p.wounded, и только сверх вместимости гибнут по-настоящему.
+    // Атакующий (mode:"siege-attack" по смыслу — марш к чужому городу) такой
+    // защиты не имеет, теряет войска насмерть целиком, как и раньше.
+    if (!defP.wounded) defP.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
+    TKEYS.forEach((t) => { if (!defP.wounded[t]) defP.wounded[t] = {}; });
+    const hs = hospitalSplit(defP, result.defLoss, "hospital");
+    defP.troops = unitsAdd(defP.troops, hs.slightUnits);
+    defP.wounded = unitsAdd(defP.wounded, hs.hurtUnits);
     survivors = unitsSub(m.units, result.attLoss);
 
     const { error: updD } = await admin.from("players").update({ state: defP, updated_at: new Date().toISOString() }).eq("id", defRow.id);
@@ -327,6 +391,7 @@ async function applyMarchArrive(admin, ev) {
     const summary = {
       winner: result.winner, sent: m.units, attLoss: result.attLoss, defLoss: result.defLoss,
       attHpLeft: Math.round(result.attHpLeft), defHpLeft: Math.round(result.defHpLeft),
+      defDead: hs.dead, defHurt: hs.hurt, defSlight: hs.slight,
     };
     const mailRows = [
       { world_id: m.world_id, player_id: attRow.id, kind: "battle", data: { role: "attacker", opponent_id: defRow.id, opponent_nick: defRow.nick, ...summary } },

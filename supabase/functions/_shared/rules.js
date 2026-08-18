@@ -665,6 +665,63 @@ export function resolvePvp(attUnits, attRace, defUnits, defRace, defWallLv = 0, 
   return { attLoss: attLoss.units, defLoss: defLoss.units, attHpLeft, defHpLeft, winner };
 }
 
+// index.html:2867 HOSPITAL_CAP_TABLE / hospitalCap / totalHospitalCap —
+// сколько раненых вмещает лазарет (сумма по всем 4 построенным участкам,
+// см. Фаза 5, пятый кусочек). Другая таблица, чем HOSPITAL_BUILD_TABLE
+// выше (та — стоимость/время постройки, эта — ёмкость лазарета).
+export const HOSPITAL_CAP_TABLE = [
+  7500, 8250, 9000, 10000, 11000, 12250, 13500, 15000, 16500,
+  18250, 20000, 22000, 24000, 26500, 29000, 32000, 35000, 38500, 42000, 46000, 50000,
+  54500, 59500, 65000, 75000,
+];
+export const hospitalCap = (lv) => (lv <= 0 ? 0 : tblRow(HOSPITAL_CAP_TABLE, lv));
+export function totalHospitalCap(p) {
+  const plots = p.b && p.b.hospital;
+  return (Array.isArray(plots) ? plots : [plots || 0]).reduce((s, lv) => s + hospitalCap(lv), 0);
+}
+// index.html:4340 SLIGHT_WOUND_FRAC / index.html:4351 hospitalSplit — Фаза
+// 4, шестой кусочек: часть потерь (loss, уже вычтенных из активного войска
+// resolvePvp'ом) отделывается лёгким испугом и НЕМЕДЛЕННО возвращается в
+// строй (slight, 12%, лазарет не нужен), часть едет в лазарет (hurt,
+// копится в p.wounded — само лечение, healUnit, ещё не перенесено на
+// сервер, честная заглушка, раненые там и остаются), остаток, что не влез
+// в лазарет, гибнет насовсем (dead). mode:"siege-attack" (штурмующий
+// чужой город) — гибель насмерть без исключений, той же логике, что
+// index.html:4352-4359; в общем мире это всегда атакующий марш — у
+// защитника всегда обычный режим (лазарет свой, дома). bonuses(p).hosp/
+// mercy временно = 0, та же заглушка везде.
+export const SLIGHT_WOUND_FRAC = 0.12;
+export function hospitalSplit(p, loss, mode) {
+  const TKEYS = ["inf", "arc", "cav", "sie"];
+  if (mode === "siege-attack") {
+    const deadUnits = { inf: {}, arc: {}, cav: {}, sie: {} };
+    let dead = 0;
+    TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) { const n = (loss[t] && loss[t][i]) || 0; deadUnits[t][i] = n; dead += n; } });
+    return { dead, hurt: 0, slight: 0, slightUnits: { inf: {}, arc: {}, cav: {}, sie: {} }, deadUnits, hurtUnits: { inf: {}, arc: {}, cav: {}, sie: {} } };
+  }
+  const cap = Math.round(totalHospitalCap(p) * (1 + 0));
+  let inHosp = 0;
+  TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) inHosp += (p.wounded && p.wounded[t] && p.wounded[t][i]) || 0; });
+  let dead = 0, hurt = 0, slight = 0;
+  const slightUnits = { inf: {}, arc: {}, cav: {}, sie: {} }, deadUnits = { inf: {}, arc: {}, cav: {}, sie: {} }, hurtUnits = { inf: {}, arc: {}, cav: {}, sie: {} };
+  TKEYS.forEach((t) => {
+    for (let i = 1; i <= 5; i++) {
+      let n = (loss[t] && loss[t][i]) || 0;
+      slightUnits[t][i] = 0; hurtUnits[t][i] = 0; deadUnits[t][i] = 0;
+      if (!n) continue;
+      const sl = Math.round(n * SLIGHT_WOUND_FRAC);
+      if (sl > 0) { slightUnits[t][i] = sl; slight += sl; n -= sl; }
+      const room = Math.max(0, cap - inHosp);
+      const w = Math.min(n, room);
+      inHosp += w;
+      hurtUnits[t][i] = w; hurt += w;
+      const d = n - w;
+      deadUnits[t][i] = d; dead += d;
+    }
+  });
+  return { dead, hurt, slight, slightUnits, deadUnits, hurtUnits };
+}
+
 // =============================================================================
 // Марш — Фаза 4, второй кусочек: настоящее время в пути вместо мгновенной
 // атаки. Зеркало marchSlots (index.html:2863) и marchSpeed/sendMarch
