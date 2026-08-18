@@ -11,10 +11,12 @@
 // "march_arrive"/"march_home" (зеркало EV.arrive->arriveMarch->battleCity
 // и EV.home, см. mp-attack — марш с настоящим временем в пути, Фаза 4) и
 // type:"heal" (зеркало EV.heal, index.html:4867-4873, см. mp-heal —
-// лечение раненых в лазарете, Фаза 4, седьмой кусочек). Остальные типы
-// событий (research/craft/gathered/scouted/...) будут добавляться сюда по
-// одному по мере переноса самих действий (Фаза 5), каждый — отдельным
-// case, по образцу ниже.
+// лечение раненых в лазарете, Фаза 4, седьмой кусочек) и type:
+// "scout_arrive" (зеркало EV.scouted, index.html:4877-4893, см. mp-scout —
+// разведка чужого города, Фаза 4, восьмой кусочек). Остальные типы
+// событий (research/craft/gathered/...) будут добавляться сюда по одному
+// по мере переноса самих действий (Фаза 5), каждый — отдельным case, по
+// образцу ниже.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // Вставлено буквально из ../_shared/cors.js — Dashboard-редактор Edge
@@ -75,6 +77,7 @@ Deno.serve(async (req) => {
         else if (ev.type === "march_arrive") await applyMarchArrive(admin, ev);
         else if (ev.type === "march_home") await applyMarchHome(admin, ev);
         else if (ev.type === "heal") await applyHeal(admin, ev);
+        else if (ev.type === "scout_arrive") await applyScoutArrive(admin, ev);
         // else: неизвестный/ещё не перенесённый тип — оставляем как есть,
         // не помечаем processed, чтобы не потерять событие молча; заберётся
         // следующим тиком после того, как для него появится case.
@@ -134,6 +137,58 @@ async function applyHeal(admin, ev) {
   const { error: updErr } = await admin
     .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
   if (updErr) throw updErr;
+}
+
+// Зеркало EV.scouted(d) из index.html:4877-4893 — Фаза 4, восьмой кусочек
+// (разведка чужого города, см. mp-scout). Лазутчик не возвращается домой —
+// марш удаляется сразу после снятия показаний, независимо от исхода
+// (совпадает с клиентом: "обратной дороги ему не рисуем, он один и
+// налегке, возвращать домой нечего"). se (глубина донесения, от
+// p.tech.mil_scout2) всегда 0 — исследования ещё не перенесены на сервер,
+// см. заголовок mp-scout; при se=0 донесение несёт ровно то же, что и в
+// index.html на этом тире — только общее число войск.
+async function applyScoutArrive(admin, ev) {
+  const marchId = ev.data && ev.data.march_id;
+  if (marchId == null) return;
+  const { data: m, error: mErr } = await admin.from("marches").select("*").eq("id", marchId).maybeSingle();
+  if (mErr) throw mErr;
+  if (!m || m.state !== "go") return; // уже разобрано/отменено
+  await admin.from("marches").delete().eq("id", m.id);
+
+  const { data: attRow, error: aErr } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
+  if (aErr) throw aErr;
+  if (!attRow) return; // хозяина нет — некому писать донесение
+
+  const defenderId = m.data && m.data.defender_id;
+  const { data: defRow, error: dErr } = defenderId == null
+    ? { data: null, error: null }
+    : await admin.from("players").select("*").eq("id", defenderId).maybeSingle();
+  if (dErr) throw dErr;
+  if (!defRow) {
+    // Цель пропала между отправкой и прибытием — зеркало "Лазутчик не нашёл
+    // города на месте" (index.html:4883), только письмо всё равно кладём
+    // (в клиенте это просто logg() без почты — но там игрок сам за столом,
+    // а здесь письмо единственный канал узнать об исходе вообще).
+    const { error: mailErr } = await admin.from("mail").insert({
+      world_id: m.world_id, player_id: attRow.id, kind: "scout", data: { found: false },
+    });
+    if (mailErr) throw mailErr;
+    return;
+  }
+
+  const defP = defRow.state;
+  const hallLv = Array.isArray(defP.b && defP.b.hall) ? Math.max(0, ...defP.b.hall) : ((defP.b && defP.b.hall) || 0);
+  const total = unitsTotal(defP.troops || {});
+  const nowSec = Date.now() / 1000;
+
+  const { error: mailErr } = await admin.from("mail").insert({
+    world_id: m.world_id, player_id: attRow.id, kind: "scout",
+    data: {
+      found: true, opponent_id: defRow.id, opponent_nick: defRow.nick,
+      hall: hallLv, shielded: defRow.shield_until > nowSec, total,
+    },
+  });
+  if (mailErr) throw mailErr;
 }
 
 // Зеркало EV.build(d) из index.html:4814-4819. plot!=null у hospital

@@ -374,19 +374,22 @@ export const WATCH_TABLE = [
   { food: 6100000, wood: 6100000, stone: 1300000, t: 324000, power: 151716, atk: 144000, hp: 36000 }, { food: 9100000, wood: 9100000, stone: 2000000, t: 453600, power: 212389, atk: 152000, hp: 38000 },
   { food: 13800000, wood: 13800000, stone: 3000000, t: 680400, power: 303649, atk: 160000, hp: 40000 }, { food: 20800000, wood: 20800000, stone: 4500000, t: 1234800, power: 495562, atk: 500000, hp: 50000 },
 ];
+// bonus (надбавка к скорости лазутчика от уровня здания, %) и scouts
+// (лимит одновременных вылазок, 1 на 1-4, 2 на 5-10, 3 на 11+) — нужны
+// mp-scout (Фаза 4, восьмой кусочек), не только постройке самого здания.
 export const SCOUT_TABLE = [
-  { food: 300, wood: 300, t: 4, power: 5 }, { food: 500, wood: 500, t: 15, power: 10 }, { food: 1000, wood: 1000, t: 60, power: 16 },
-  { food: 2000, wood: 2000, t: 210, power: 32 }, { food: 3800, wood: 3800, t: 850, power: 81 },
-  { food: 6500, wood: 6500, t: 2100, power: 191 }, { food: 9800, wood: 9800, t: 4200, power: 398 },
-  { food: 14800, wood: 14800, t: 7800, power: 769 }, { food: 22300, wood: 22300, t: 10380, power: 1274 },
-  { food: 31300, wood: 31300, t: 14280, power: 1971 }, { food: 42500, wood: 42500, t: 19380, power: 2916 },
-  { food: 52500, wood: 52500, t: 28980, power: 4286 }, { food: 60000, wood: 60000, t: 35760, power: 5956 },
-  { food: 67500, wood: 67500, t: 43560, power: 7969 }, { food: 75000, wood: 75000, t: 52020, power: 10350 },
-  { food: 82500, wood: 82500, t: 62760, power: 13191 }, { food: 92500, wood: 92500, t: 86400, power: 17149 },
-  { food: 102500, wood: 102500, t: 115200, power: 22223 }, { food: 115000, wood: 115000, t: 144000, power: 28423 },
-  { food: 127500, wood: 127500, t: 180000, power: 36109 }, { food: 142500, wood: 142500, t: 234000, power: 46007 },
-  { food: 157500, wood: 157500, t: 288000, power: 58118 }, { food: 250000, wood: 250000, t: 378000, power: 74187 },
-  { food: 500000, wood: 500000, t: 504000, power: 96279 }, { food: 650000, wood: 650000, t: 669600, power: 139023 },
+  { food: 300, wood: 300, t: 4, power: 5, bonus: 5, scouts: 1 }, { food: 500, wood: 500, t: 15, power: 10, bonus: 10, scouts: 1 }, { food: 1000, wood: 1000, t: 60, power: 16, bonus: 15, scouts: 1 },
+  { food: 2000, wood: 2000, t: 210, power: 32, bonus: 20, scouts: 1 }, { food: 3800, wood: 3800, t: 850, power: 81, bonus: 25, scouts: 2 },
+  { food: 6500, wood: 6500, t: 2100, power: 191, bonus: 30, scouts: 2 }, { food: 9800, wood: 9800, t: 4200, power: 398, bonus: 35, scouts: 2 },
+  { food: 14800, wood: 14800, t: 7800, power: 769, bonus: 40, scouts: 2 }, { food: 22300, wood: 22300, t: 10380, power: 1274, bonus: 45, scouts: 2 },
+  { food: 31300, wood: 31300, t: 14280, power: 1971, bonus: 50, scouts: 2 }, { food: 42500, wood: 42500, t: 19380, power: 2916, bonus: 60, scouts: 3 },
+  { food: 52500, wood: 52500, t: 28980, power: 4286, bonus: 70, scouts: 3 }, { food: 60000, wood: 60000, t: 35760, power: 5956, bonus: 80, scouts: 3 },
+  { food: 67500, wood: 67500, t: 43560, power: 7969, bonus: 90, scouts: 3 }, { food: 75000, wood: 75000, t: 52020, power: 10350, bonus: 90, scouts: 3 },
+  { food: 82500, wood: 82500, t: 62760, power: 13191, bonus: 100, scouts: 3 }, { food: 92500, wood: 92500, t: 86400, power: 17149, bonus: 100, scouts: 3 },
+  { food: 102500, wood: 102500, t: 115200, power: 22223, bonus: 110, scouts: 3 }, { food: 115000, wood: 115000, t: 144000, power: 28423, bonus: 110, scouts: 3 },
+  { food: 127500, wood: 127500, t: 180000, power: 36109, bonus: 115, scouts: 3 }, { food: 142500, wood: 142500, t: 234000, power: 46007, bonus: 115, scouts: 3 },
+  { food: 157500, wood: 157500, t: 288000, power: 58118, bonus: 120, scouts: 3 }, { food: 250000, wood: 250000, t: 378000, power: 74187, bonus: 120, scouts: 3 },
+  { food: 500000, wood: 500000, t: 504000, power: 96279, bonus: 120, scouts: 3 }, { food: 650000, wood: 650000, t: 669600, power: 139023, bonus: 125, scouts: 3 },
 ];
 export const BUILD_BLD_TABLE = {
   barracks: BARRACKS_TABLE, range: BARRACKS_TABLE, stable: BARRACKS_TABLE, siege: SIEGE_TABLE,
@@ -777,4 +780,21 @@ export function marchSpeed(units, race, marchBonus = 1) {
 export function travelSeconds(dist, units, race, marchBonus, minSec) {
   const spd = marchSpeed(units, race, marchBonus);
   return Math.max(minSec, (dist / spd) * 60);
+}
+
+// index.html:4696/4722 SCOUT_SPEED_MULT/scoutSpeed — лазутчик налегке,
+// заметно быстрее армии (SCOUT_SPEED_MULT=2.2), плюс надбавка от уровня
+// самого здания Разведки (SCOUT_TABLE.bonus). marchSpeed(p,emptyUnits()) в
+// клиенте с пустым отрядом всегда падает на запасной случай s=1 (см.
+// marchSpeed выше) — лазутчик не тянет расовые модификаторы скорости
+// конкретных родов войск, отправляется налегке.
+export const SCOUT_SPEED_MULT = 2.2;
+export function scoutSpeed(scoutLv, marchBonus = 1) {
+  const speedMult = SCOUT_SPEED_MULT * (1 + tblRow(SCOUT_TABLE, scoutLv).bonus / 100);
+  return 1 * MARCH_SPEED_SCALE * marchBonus * speedMult; // клеток в минуту
+}
+// index.html:4723 — минимум 15с (не 20с, как у боевого марша) — та же
+// нижняя граница, что и в клиенте.
+export function scoutTravelSeconds(dist, scoutLv, marchBonus = 1) {
+  return Math.max(15, (dist / scoutSpeed(scoutLv, marchBonus)) * 60);
 }
