@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Проверка общего мира — Фаза 2</title>
+<style>
+  body{font:16px/1.5 system-ui,sans-serif;max-width:640px;margin:0 auto;padding:16px;background:#111;color:#eee}
+  button{font-size:18px;padding:14px 20px;border-radius:10px;border:0;background:#3d7;color:#111;font-weight:700;width:100%;margin:8px 0}
+  button:disabled{opacity:.5}
+  pre{white-space:pre-wrap;word-break:break-word;background:#1b1b1b;padding:12px;border-radius:8px;font-size:13px;line-height:1.4}
+  .ok{color:#7f7}
+  .bad{color:#f77}
+  .warn{color:#fc7}
+  h1{font-size:20px}
+</style>
+</head>
+<body>
+<h1>Проверка общего мира — Фаза 2 (набор войск)</h1>
+<p>Этой страницы не будет в самой игре — она только чтобы один раз проверить,
+что серверный тикер (mp-join/mp-train/mp-tick) реально работает. Можно
+удалить файл mp-test.html из репозитория, когда убедитесь, что всё ок.</p>
+<button id="go">Запустить проверку</button>
+<pre id="log">Нажмите кнопку — тест сам войдёт анонимно, закажет 5 пехотинцев и проверит,
+что сервер сам их дообучит через минуту-другую, даже если закрыть эту
+страницу.</pre>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const SUPABASE_URL="https://xzuwqgpwzlmpglnuijio.supabase.co";
+const SUPABASE_ANON_KEY="sb_publishable_OOPvf-dpPbzy4kqC4a88jg_kwgpqkQz";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const logEl = document.getElementById("log");
+const btn = document.getElementById("go");
+function line(s, cls){
+  const span = document.createElement("div");
+  if(cls) span.className = cls;
+  span.textContent = s;
+  logEl.appendChild(span);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+async function call(fn, jwt, body){
+  const r = await fetch(SUPABASE_URL + "/functions/v1/" + fn, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + jwt, "apikey": SUPABASE_ANON_KEY },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => ({}));
+  return { status: r.status, body: j };
+}
+
+btn.addEventListener("click", async () => {
+  btn.disabled = true;
+  logEl.textContent = "";
+  try {
+    line("Вхожу анонимно...");
+    const { data: authData, error: authErr } = await sb.auth.signInAnonymously();
+    if (authErr) { line("❌ Anon sign-in не удался: " + authErr.message, "bad"); return; }
+    line("✅ Вошёл, uid: " + authData.user.id, "ok");
+    const jwt = authData.session.access_token;
+
+    line("Вызываю mp-join...");
+    const join = await call("mp-join", jwt, { race: "human", nick: "Тестер" });
+    line(JSON.stringify(join));
+    if (!join.body.ok) { line("❌ mp-join не удался — смотри JSON выше.", "bad"); return; }
+    line("✅ Игрок в общем мире, id=" + join.body.player.id, "ok");
+    const playerId = join.body.player.id;
+    const before = join.body.player.state.troops.inf[1];
+    line("До набора: пехоты T1 = " + before);
+
+    line("Вызываю mp-train (5 пехотинцев T1)...");
+    const train = await call("mp-train", jwt, { type: "inf", tier: 1, n: 5 });
+    line(JSON.stringify(train));
+    if (!train.body.ok) { line("❌ mp-train не удался — смотри JSON выше.", "bad"); return; }
+    const waitSec = Math.ceil(train.body.eta) + 90;
+    line("⏳ Жду " + waitSec + " сек (время набора + запас на тик pg_cron)...");
+
+    await new Promise((res) => setTimeout(res, waitSec * 1000));
+
+    line("Перечитываю игрока из базы...");
+    const { data: p, error } = await sb.from("players").select("*").eq("id", playerId).single();
+    if (error) { line("❌ Не смог перечитать игрока: " + error.message, "bad"); return; }
+    const after = p.state.troops.inf[1];
+    line("После: пехоты T1 = " + after + " | слот набора = " + JSON.stringify(p.state.train.inf));
+
+    if (after > before && p.state.train.inf === null) {
+      line("✅✅✅ ФАЗА 2 РАБОТАЕТ: сервер сам достроил войска без открытой страницы.", "ok");
+    } else {
+      line("⚠️ Похоже, тикер ещё не сработал. Подождите ещё минуту и нажмите кнопку снова — она безопасно перезапустит тест на том же игроке.", "warn");
+    }
+  } catch (e) {
+    line("❌ Ошибка: " + (e && e.message || e), "bad");
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
