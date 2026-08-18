@@ -8484,6 +8484,10 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(scoutBtn){ mpDoScout(+scoutBtn.dataset.id); return; }
   const recallBtn=e.target.closest("[data-mp='recall']");
   if(recallBtn){ mpDoRecall(+recallBtn.dataset.id); return; }
+  const rschTabBtn=e.target.closest("[data-mp='rschtab']");
+  if(rschTabBtn){ mpState.rschTab=rschTabBtn.dataset.t; mpRerender(); return; }
+  const researchBtn=e.target.closest("[data-mp='research']");
+  if(researchBtn){ mpDoResearch(researchBtn.dataset.id); return; }
 });
 
 // Двойной тап по чужой клетке в 3D сразу открывал лист похода (openLevy) —
@@ -8708,7 +8712,7 @@ async function claimChronicle(){
    восполняются со временem — серверное производство ещё не перенесено,
    стартовых 100000 хватает на несколько заказов набора для проверки.
    ========================================================================= */
-let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[] };
+let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco" };
 let mpPollTimer = null;
 // Все 15 зданий (кроме Горна — max:1, без реальной механики крафта в общем
 // мире) перенесены на сервер (mp-build): 4 разблокируют mp-train (barracks/
@@ -8867,6 +8871,14 @@ async function mpDoRecall(marchId){
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
+// Фаза 5, Академия — дерево исследований (mp-research). См. рубрику
+// «Академия» в foMultiplayer.
+async function mpDoResearch(id){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-research",{id}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
 // Фаза 4, второй кусочек — собственные марши (RLS marches_select_all из
 // миграции 0001 уже разрешает читать их напрямую, как и mail/players).
 async function mpRefreshMarches(){
@@ -8917,9 +8929,9 @@ function foMultiplayer(){
      "<div class='note'>Один настоящий мир на всех, кто сюда заходит — не отдельная копия для "+
      "каждого браузера. Все постройки (кроме Горна), набор войск (тир 1), добыча ресурсов по "+
      "времени, атака с настоящим маршем и боем (стена/башня/лазарет уже настоящие), лечение "+
-     "раненых и разведка — всё уже здесь, честно упрощённое (см. подсказки на месте и "+
-     "supabase/README.md); исследования и полный многораундовый бой (полководцы, погода) из "+
-     "одиночной игры — следующие шаги.</div></div></div></div>";
+     "раненых, разведка и дерево исследований Академии — всё уже здесь, честно упрощённое (см. "+
+     "подсказки на месте и supabase/README.md); сами бонусы от исследований и полный "+
+     "многораундовый бой (полководцы, погода) из одиночной игры — следующие шаги.</div></div></div></div>";
 
   if(!mpState.joined){
     h+="<div class='entry'><div class='line'><div class='fill'>"+
@@ -9170,6 +9182,58 @@ function foMultiplayer(){
            " · вдвое дешевле и быстрее набора · максимум за раз: "+mpHealCap+"</div>"+
            "<input id='mp-heal-n-"+t+"' type='number' min='1' max='"+maxN+"' value='"+Math.min(maxN,10)+"'> "+
            "<button class='seal' data-mp='heal' data-t='"+t+"'"+(mpState.loading?" disabled":"")+">Лечить</button>";
+      }
+      h+="</div></div></div>";
+    });
+  }
+
+  // Фаза 5, Академия — дерево исследований (ACADEMY_TREE, зеркало
+  // startResearch(p,id) из index.html:5848-5863, см. mp-research). Честно
+  // переиспользует те же самые глобальные ACADEMY_TREE/researchLocked/
+  // lockReason/nodeVisibleFor/findNode/nodeTitle/researchCost/researchTime,
+  // что и одиночная игра — это ОДИН И ТОТ ЖЕ файл, отдельной копии не
+  // заводим (как buildCost/buildTime/troopCost выше в этой же панели).
+  // pShim2 (в отличие от pShim выше) уже несёт race/b/gen/tech — этого
+  // достаточно nodeVisibleFor/researchLocked/rowGate, но НЕ полноценный
+  // игрок для bonuses(p) — как и everywhere else в общем мире,
+  // bonuses(p).researchSpeed здесь не подключена: researchTime(n,lv)
+  // показывается как есть, без деления, та же честная заглушка, что и на
+  // сервере (см. supabase/README.md). Сами ЭФФЕКТЫ исследований (надбавки
+  // к добыче/бою через bonuses()) тоже не подключены — только сама
+  // механика набора уровней, p.tech заполняется настоящими значениями.
+  const academyLv=st.b.academy||0;
+  if(academyLv>0){
+    h+=rubric("Академия","дерево исследований");
+    const pShim2={race:p.race,b:st.b,gen:st.gen||{id:null},tech:st.tech||{}};
+    const rsch=st.rsch;
+    if(rsch){
+      const rn=findNode(rsch.id);
+      const left=Math.max(0,rsch.t1-Date.now()/1000);
+      h+="<div class='entry hot'><div class='line'><div class='fill'>"+
+         "<div class='title'>Исследуется: "+(rn?nodeTitle(rn):rsch.id)+" ур. "+rsch.lv+"</div>"+
+         "<div class='note'>Осталось: "+fmtDur(left)+"</div></div></div></div>";
+    }
+    h+="<div class='entry'><div class='line'><div class='fill'><div id='ac-tabs'>"+
+       "<button class='"+(mpState.rschTab==="mil"?"on":"")+"' data-mp='rschtab' data-t='mil'>Военные</button>"+
+       "<button class='"+(mpState.rschTab!=="mil"?"on":"")+"' data-mp='rschtab' data-t='eco'>Экономические</button>"+
+       "</div></div></div></div>";
+    const branch=mpState.rschTab==="mil"?"mil":"eco";
+    ACADEMY_TREE[branch].filter(n=>nodeVisibleFor(n,pShim2)).forEach(n=>{
+      const lv=(st.tech&&st.tech[n.id])||0, maxed=lv>=n.max;
+      h+="<div class='entry'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+nodeTitle(n)+" — "+lv+"/"+n.max+"</div>";
+      if(maxed){
+        h+="<div class='note'>Максимальный уровень.</div>";
+      } else if(researchLocked(n,pShim2)){
+        h+="<div class='note'>"+lockReason(n,pShim2)+"</div>";
+      } else if(rsch){
+        h+="<div class='note'>Академия уже занята другим исследованием.</div>";
+      } else {
+        const nlv=lv+1, c=researchCost(n,nlv), t=researchTime(n,nlv);
+        h+="<div class='note'>До "+nlv+" ур.: "+
+           (RES.some(r=>c[r])?RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", "):"бесплатно")+
+           " · "+fmtDur(t)+"</div>"+
+           "<button class='seal' data-mp='research' data-id='"+n.id+"'"+(mpState.loading?" disabled":"")+">Исследовать</button>";
       }
       h+="</div></div></div>";
     });

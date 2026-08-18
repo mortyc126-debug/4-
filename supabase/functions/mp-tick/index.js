@@ -11,12 +11,13 @@
 // "march_arrive"/"march_home" (зеркало EV.arrive->arriveMarch->battleCity
 // и EV.home, см. mp-attack — марш с настоящим временем в пути, Фаза 4) и
 // type:"heal" (зеркало EV.heal, index.html:4867-4873, см. mp-heal —
-// лечение раненых в лазарете, Фаза 4, седьмой кусочек) и type:
+// лечение раненых в лазарете, Фаза 4, седьмой кусочек), type:
 // "scout_arrive" (зеркало EV.scouted, index.html:4877-4893, см. mp-scout —
-// разведка чужого города, Фаза 4, восьмой кусочек). Остальные типы
-// событий (research/craft/gathered/...) будут добавляться сюда по одному
-// по мере переноса самих действий (Фаза 5), каждый — отдельным case, по
-// образцу ниже.
+// разведка чужого города, Фаза 4, восьмой кусочек) и type:"research"
+// (зеркало EV.research, index.html:4840-4844, см. mp-research — дерево
+// исследований Академии, Фаза 5). Остальные типы событий (craft/gathered/
+// ...) будут добавляться сюда по одному по мере переноса самих действий,
+// каждый — отдельным case, по образцу ниже.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // Вставлено буквально из ../_shared/cors.js — Dashboard-редактор Edge
@@ -78,6 +79,7 @@ Deno.serve(async (req) => {
         else if (ev.type === "march_home") await applyMarchHome(admin, ev);
         else if (ev.type === "heal") await applyHeal(admin, ev);
         else if (ev.type === "scout_arrive") await applyScoutArrive(admin, ev);
+        else if (ev.type === "research") await applyResearch(admin, ev);
         // else: неизвестный/ещё не перенесённый тип — оставляем как есть,
         // не помечаем processed, чтобы не потерять событие молча; заберётся
         // следующим тиком после того, как для него появится case.
@@ -134,6 +136,27 @@ async function applyHeal(admin, ev) {
   p.wounded[H.type][H.tier] = (p.wounded[H.type][H.tier] || 0) - n;
   p.troops[H.type][H.tier] = (p.troops[H.type][H.tier] || 0) + n;
   p.heal = null;
+  const { error: updErr } = await admin
+    .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
+  if (updErr) throw updErr;
+}
+
+// Зеркало EV.research(d) из index.html:4840-4844 — Фаза 5, Академия. Просто
+// переносит уровень из p.rsch в p.tech и освобождает очередь — сами эффекты
+// исследования (n.field/n.effects через bonuses()) сюда не входят, см.
+// заголовок mp-research.
+async function applyResearch(admin, ev) {
+  const playerId = ev.data && ev.data.player_id;
+  if (playerId == null) return;
+  const { data: row, error } = await admin.from("players").select("*").eq("id", playerId).maybeSingle();
+  if (error) throw error;
+  if (!row) return;
+  const p = row.state;
+  const R = p.rsch;
+  if (!R) return; // уже разобрано/отменено
+  if (!p.tech) p.tech = {};
+  p.tech[R.id] = R.lv;
+  p.rsch = null;
   const { error: updErr } = await admin
     .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
   if (updErr) throw updErr;
