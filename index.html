@@ -639,6 +639,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .mail-side .co{font-size:10.5px;color:#8a6d2c;font-family:var(--data)}
 .mail-side .pw{font-size:11px;color:#5a4530;margin-top:2px}
 .mail-side .gen{font-size:11px;color:#5a4530;margin-top:3px}
+.mail-side .gen-tal{font-size:9.5px;color:#8a6d2c;margin-top:1px;line-height:1.4}
 .mail-vmid{flex:0 0 auto;font-size:20px;color:#8a2f22;margin-top:14px}
 .mail-stamp{text-align:center;font-variant:small-caps;letter-spacing:.15em;font-size:22px;font-weight:bold;
   margin:2px 0 16px;padding:4px;border:3px solid;border-radius:4px;transform:rotate(-3deg)}
@@ -3732,6 +3733,12 @@ function armyPower(units,B,race){
 }
 function countUnits(u){let n=0;TKEYS.forEach(t=>{for(let i=1;i<=5;i++)n+=(u[t]&&u[t][i])||0});return n}
 function emptyUnits(){const u={};TKEYS.forEach(t=>{u[t]={};for(let i=1;i<=5;i++)u[t][i]=0});return u}
+// Складывает src в dst на месте (dst[t][i]+=src[t][i]) — нужна splitLosses,
+// чтобы вернуть легкораненых (см. SLIGHT_WOUND_FRAC) обратно в строй ровно
+// в ту сторону, которая переживает бой (m.units у похода/D.units у
+// обороны), а не в p.troops напрямую — иначе более поздняя перезапись
+// p.troops «после боя» стёрла бы их (см. battleCity/arriveMarch).
+function addUnitsInto(dst,src){ TKEYS.forEach(t=>{for(let i=1;i<=5;i++) dst[t][i]=(dst[t][i]||0)+(src[t][i]||0)}); }
 // Кривая — регрессия по табличке "Ратуша" из оригинала (Troop Capacity, ур.17-25):
 // cap = 145.98 * ур^2.1443 (степенной закон, лог-лог МНК), ошибка ~0.1-3%.
 const marchCapacityBase = hall => 145.98*Math.pow(hall,2.1443);
@@ -3807,6 +3814,26 @@ function sideStats(f){
   s.totalHp=TKEYS.reduce((a,t)=>a+s[t].hp,0);
   s.totalN =TKEYS.reduce((a,t)=>a+s[t].n,0);
   return s;
+}
+// Итоговые проценты бонусов по роду войск на секунду боя — та же пара
+// модификаторов (TYPE_ATK/TYPE_DEF + archer), что sideStats() выше уже
+// сворачивает в абсолютную силу юнитов, только НЕ свёрнутая, а как
+// проценты сверху расовой базы — то, что в отчёте о бое реально хочется
+// прочитать ("почему я продул размен"), а не абсолютная мощь стороны.
+// Здоровье в нашей модели не завязано на род войск (нет defInf/hpArc и
+// т.п.), поэтому одно общее число на всю армию, не по каждому роду.
+function battleBuffSnapshot(f){
+  const B=f.B||{};
+  const TYPE_ATK={inf:"atkInf",arc:"atkArc",cav:"atkCav",sie:"atkSie"};
+  const TYPE_DEF={inf:"defInf",arc:"defArc",cav:"defCav",sie:"defSie"};
+  const out={hp:B.hp||0};
+  TKEYS.forEach(t=>{
+    let atk=(1+(B.atk||0))*(1+(B[TYPE_ATK[t]]||0))-1;
+    if(t==="arc") atk=(1+atk)*(1+(B.archer||0))-1;
+    const def=(1+(B.def||0))*(1+(B[TYPE_DEF[t]]||0))-1;
+    out[t]={atk,def};
+  });
+  return out;
 }
 function counterMult(from,to){
   const T=TROOP_TYPES[from];
@@ -4117,22 +4144,40 @@ function raiseSkeletons(f,loss){
    чужого города (mode="siege-attack"), без формул и госпиталя. Во всех прочих случаях
    (оборона города, полевые стычки с разбойниками) потери сперва целиком идут в госпиталь
    и гибнут только сверх его вместимости. */
+// Доля потерь, что отделывается лёгким испугом и сама возвращается в
+// строй тут же, лазарет им не нужен вовсе — третья корзина отчёта о бое
+// (RoK: Remaining/Slightly Wounded/Severely Wounded/Dead, у нас раньше
+// было только hurt+dead, т.е. "тяжелораненые"+"убитые" без "легкораненых").
+// Точной цифры разброса из источника нет (пользователь дал только СПИСОК
+// категорий, не проценты) — 12% подобрано на глаз как заметная, но не
+// доминирующая доля: не обесценивает лазарет как механику, но и не ноль.
+const SLIGHT_WOUND_FRAC = 0.12;
 function splitLosses(p,loss,mode){
   if(mode==="siege-attack"){
+    // Штурм чужого города/лагеря/крепости — потери насмерть без исключений,
+    // ни лазарета, ни "легкого испуга": в RoK это тоже единственный случай
+    // безвозвратной гибели войск (см. комментарий выше у mode).
     let dead=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) dead+=loss[t][i]||0});
-    return {dead,hurt:0};
+    return {dead,hurt:0,slight:0,slightUnits:emptyUnits()};
   }
   const B=bonuses(p);
   const cap=Math.round(totalHospitalCap(p)*(1+B.hosp+B.mercy));
   let inHosp=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) inHosp+=p.wounded[t][i]});
-  let dead=0, hurt=0;
+  let dead=0, hurt=0, slight=0;
+  const slightUnits=emptyUnits();
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++){
-    const n=loss[t][i]; if(!n)continue;
+    let n=loss[t][i]; if(!n)continue;
+    const sl=Math.round(n*SLIGHT_WOUND_FRAC);
+    if(sl>0){ slightUnits[t][i]=sl; slight+=sl; n-=sl; }
     const room=Math.max(0,cap-inHosp);
     const w=Math.min(n,room); inHosp+=w;
     p.wounded[t][i]+=w; hurt+=w; dead+=n-w;
   }});
-  return {dead,hurt};
+  // slightUnits НЕ добавлен в p.troops/p.wounded здесь — вызывающий код сам
+  // решает, куда именно вернуть этих бойцов (в живой поход, что ещё идёт
+  // домой, или в гарнизон, который вот-вот перезапишется post-боем), см.
+  // battleCity/arriveMarch и addUnitsInto выше.
+  return {dead,hurt,slight,slightUnits};
 }
 
 /* =========================================================================
@@ -4677,6 +4722,9 @@ function arriveMarch(m){
     A.B.atk += B.bandit;
     const r=resolveBattle(A,D,{startA:countUnits(m.units)});
     const sp=splitLosses(p,r.lossA,"hospital");   // полевая стычка — потери идут в госпиталь, не насмерть
+    // Легкораненые возвращаются в САМ ПОХОД (A.units), а не сразу в p.troops —
+    // отряд ещё физически в поле и топает домой (см. m.units=A.units ниже).
+    addUnitsInto(A.units, sp.slightUnits);
     if(r.win==="A"){
       const i=clamp(cell.lv,1,CFG.MAX_LEVEL), xp=BANDIT_XP[i-1];
       addXp(p,xp);
@@ -4801,7 +4849,14 @@ function menuBadges(){
   };
 }
 function genInfo(p){
-  return (p.gen&&p.gen.id!=null) ? {name:GENERALS[p.race][p.gen.id].name, lv:p.gen.lv} : null;
+  if(!(p.gen&&p.gen.id!=null)) return null;
+  // stars — та же формула, что и в foGen() (1 звезда ~10 уровней, всего 6).
+  // talents — ветка, что реально была активна В МОМЕНТ боя (тот же разбор,
+  // что и в разведке, см. talentBranchSpent) — RoK показывает в отчёте
+  // именно билд командира на секунду столкновения, не текущий "как сейчас".
+  return {name:GENERALS[p.race][p.gen.id].name, lv:p.gen.lv,
+    stars:Math.min(6,1+Math.floor(p.gen.lv/10)),
+    talents:talentBranchSpent(p)};
 }
 // Слепок разведданных на момент разведки (та же градация по эпохе разведки,
 // что и в живой панели cartouche) — снимок, а не ссылка на живые войска q,
@@ -4882,7 +4937,12 @@ function scoutSnapshot(p,q){
 // что и у существующего logMsg): у атакующего и защитника разные потери и
 // разный исход одного и того же боя, поэтому это не одна запись с двумя
 // углами обзора, а две независимые.
-function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords,weather,log){
+// A/D — те же боевые силы (см. makeForce), что resolveBattle уже отыграл:
+// A.B/D.B несут ИМЕННО тот профиль бонусов, что участвовал в бою (гарнизон
+// защитника — с учётом defending:true и стены, см. battleCity), пересчитывать
+// bonuses(att)/bonuses(def) заново здесь было бы неверно — вышел бы другой
+// (атакующий по умолчанию) профиль для защитника.
+function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords,weather,log,A,D){
   // Погода одна на бой и одинаково касается обеих сторон, поэтому в оба отчёта
   // уходит одна и та же строка (см. BATTLE_WEATHER). Ясную не пишем вовсе —
   // "погода не мешала" не новость, строка бы просто зашумляла каждый отчёт.
@@ -4893,6 +4953,7 @@ function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords,weath
   // battleLogHtml). Погодную строку из хроники убираем — она уже отдельной
   // плашкой над таблицей, дублировать незачем.
   const chron = (log||[]).filter(e=>e.kind!=="weather");
+  const buffsA=battleBuffSnapshot(A), buffsD=battleBuffSnapshot(D);
   if(!att.isBot) pushMail({
     cat:"report", kind:"battle", win: win==="A", weather:wx, log:chron,
     selfNick:att.nick||"Безымянный лорд", oppNick:def.nick||"Безымянный лорд",
@@ -4900,10 +4961,13 @@ function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords,weath
     selfCoords:{x:att.x,y:att.y}, oppCoords:{x:def.x,y:def.y}, fightCoords:coords,
     selfPower:powA, oppPower:powD,
     selfGen:genInfo(att), oppGen:genInfo(def),
+    selfBuffs:buffsA, oppBuffs:buffsD,
     selfAvatar:playerAvatarSrc(att), oppAvatar:playerAvatarSrc(def),
     selfStart:startA, oppStart:startD,
-    selfDead:la.dead, selfHurt:la.hurt, selfRemain:Math.max(0,startA-la.dead-la.hurt),
-    oppDead:ld.dead, oppHurt:ld.hurt, oppRemain:Math.max(0,startD-ld.dead-ld.hurt),
+    selfDead:la.dead, selfHurt:la.hurt, selfSlight:la.slight,
+    selfRemain:Math.max(0,startA-la.dead-la.hurt-la.slight),
+    oppDead:ld.dead, oppHurt:ld.hurt, oppSlight:ld.slight,
+    oppRemain:Math.max(0,startD-ld.dead-ld.hurt-ld.slight),
     attacker:true,
   });
   if(!def.isBot) pushMail({
@@ -4913,10 +4977,13 @@ function pushBattleReport(att,def,startA,startD,powA,powD,la,ld,win,coords,weath
     selfCoords:{x:def.x,y:def.y}, oppCoords:{x:att.x,y:att.y}, fightCoords:coords,
     selfPower:powD, oppPower:powA,
     selfGen:genInfo(def), oppGen:genInfo(att),
+    selfBuffs:buffsD, oppBuffs:buffsA,
     selfAvatar:playerAvatarSrc(def), oppAvatar:playerAvatarSrc(att),
     selfStart:startD, oppStart:startA,
-    selfDead:ld.dead, selfHurt:ld.hurt, selfRemain:Math.max(0,startD-ld.dead-ld.hurt),
-    oppDead:la.dead, oppHurt:la.hurt, oppRemain:Math.max(0,startA-la.dead-la.hurt),
+    selfDead:ld.dead, selfHurt:ld.hurt, selfSlight:ld.slight,
+    selfRemain:Math.max(0,startD-ld.dead-ld.hurt-ld.slight),
+    oppDead:la.dead, oppHurt:la.hurt, oppSlight:la.slight,
+    oppRemain:Math.max(0,startA-la.dead-la.hurt-la.slight),
     attacker:false,
   });
 }
@@ -4935,6 +5002,9 @@ function battleCity(att,def,m){
   const wx=(r.weather&&r.weather.id!=="clear")?" ("+r.weather.name.toLowerCase()+")":"";
   const la=splitLosses(att,r.lossA,"siege-attack");   // штурмующий теряет войска насмерть, без госпиталя
   const ld=splitLosses(def,r.lossD,"hospital");
+  // Легкораненые защитники — назад в D.units ДО перезаписи def.troops ниже,
+  // иначе перезапись их просто стёрла бы (см. addUnitsInto/splitLosses).
+  addUnitsInto(D.units, ld.slightUnits);
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++)def.troops[t][i]=D.units[t][i]});
   m.units=A.units;
 
@@ -4963,7 +5033,7 @@ function battleCity(att,def,m){
     logMsg(att,def,"Штурм "+def.name+wx+" провалился. Убито "+la.dead+", ранено "+la.hurt+".",
                    "Отражена атака "+att.name+wx+". Убито "+ld.dead+", ранено "+ld.hurt+".");
   }
-  pushBattleReport(att,def,startA,startD,powA,powD,la,ld,r.win,{x:m.tx,y:m.ty},r.weather,r.log);
+  pushBattleReport(att,def,startA,startD,powA,powD,la,ld,r.win,{x:m.tx,y:m.ty},r.weather,r.log,A,D);
   recallMarch(m);
 }
 function logMsg(att,def,forAtt,forDef){
@@ -6481,6 +6551,32 @@ function mailRowHtml(m){
 const BATTLE_LOG_ICON={weather:"&#9730;",volley:"&#10148;",tower:"&#9819;",panic:"&#9888;",
   counter:"&#8634;",raise:"&#9760;",general:"&#9876;",mark:"&#9873;",round:"&#8226;",
   rout:"&#8617;",end:"&#9873;"};
+// Проценты бонуса — со знаком (+12.3% / −4.0%), тем же округлением, что и
+// остальные проценты в игре (одна десятая, как у snap talents/statTxt).
+function pctTxt(v){ return (v>=0?"+":"")+(v*100).toFixed(1)+"%"; }
+// Строки "Статистика войск" отчёта — по родам войск атака/защита у обеих
+// сторон рядом (та же таблица .mail-stats, что и у потерь выше), плюс
+// общее здоровье последней строкой (см. комментарий у battleBuffSnapshot —
+// в нашей модели оно не зависит от рода войск).
+function battleStatsRows(sb,ob){
+  let h="";
+  TKEYS.forEach(t=>{
+    h+="<tr><td>"+TROOP_TYPES[t].name+" · атака</td><td>"+pctTxt(sb[t].atk)+"</td><td>"+pctTxt(ob[t].atk)+"</td></tr>";
+    h+="<tr><td>"+TROOP_TYPES[t].name+" · защита</td><td>"+pctTxt(sb[t].def)+"</td><td>"+pctTxt(ob[t].def)+"</td></tr>";
+  });
+  h+="<tr><td>Здоровье</td><td>"+pctTxt(sb.hp)+"</td><td>"+pctTxt(ob.hp)+"</td></tr>";
+  return h;
+}
+// Полководец в шапке отчёта — имя/уровень уже были, добавились звёзды (та
+// же формула, что и в foGen()) и ветка талантов, что реально была активна
+// в момент боя (не "как сейчас" — билд после боя мог уже смениться).
+function battleGenHtml(g){
+  if(!g) return "";
+  const stars="&#9733;".repeat(g.stars)+"&#9734;".repeat(6-g.stars);
+  const tal=g.talents?TALENT_BRANCHES.map(([key,br])=>br.name+" "+(g.talents[key]||0)).join(" · "):"";
+  return "<div class='gen'>"+g.name+" (ур. "+g.lv+") "+stars+"</div>"+
+    (tal?"<div class='gen-tal'>"+tal+"</div>":"");
+}
 function battleLogHtml(m){
   const log=m.log||[];
   if(!log.length) return "";
@@ -6609,25 +6705,35 @@ function mailDetailHtml(m){
        "<div class='mail-side'>"+mailAvatarHtml(m.selfAvatar,m.selfRace,52)+
          "<div class='nm'>"+m.selfNick+"</div><div class='co'>X:"+m.selfCoords.x+" Y:"+m.selfCoords.y+"</div>"+
          "<div class='pw'>Мощь "+RU(m.selfPower)+"</div>"+
-         (m.selfGen?"<div class='gen'>"+m.selfGen.name+" (ур. "+m.selfGen.lv+")</div>":"")+
+         battleGenHtml(m.selfGen)+
        "</div>"+
        "<div class='mail-vmid'>&#9876;</div>"+
        "<div class='mail-side'>"+mailAvatarHtml(m.oppAvatar,m.oppRace,52)+
          "<div class='nm'>"+m.oppNick+"</div><div class='co'>X:"+m.oppCoords.x+" Y:"+m.oppCoords.y+"</div>"+
          "<div class='pw'>Мощь "+RU(m.oppPower)+"</div>"+
-         (m.oppGen?"<div class='gen'>"+m.oppGen.name+" (ур. "+m.oppGen.lv+")</div>":"")+
+         battleGenHtml(m.oppGen)+
        "</div></div>"+
        "<div class='mail-stamp "+(m.win?"win":"lose")+"'>"+(m.win?"Победа":"Поражение")+"</div>"+
        // Погода была общей для обеих сторон — в отчёте она стоит НАД таблицей
        // потерь, потому что объясняет её цифры (см. BATTLE_WEATHER). В ясную
        // погоду поля weather нет вовсе, и строка не рисуется.
        (m.weather?"<div class='mail-weather'><b>"+m.weather.name+"</b><span>"+m.weather.desc+"</span></div>":"")+
+       // Порядок строк — от лучшего исхода к худшему (как в самом RoK):
+       // осталось нетронутыми -> легкораненые (сами вылечились) ->
+       // тяжелораненые (заняли лазарет) -> убитые (безвозвратно).
        "<table class='mail-stats'><tr><th></th><th>"+m.selfNick+"</th><th>"+m.oppNick+"</th></tr>"+
        "<tr><td>Войск</td><td>"+RU(m.selfStart)+"</td><td>"+RU(m.oppStart)+"</td></tr>"+
-       "<tr><td>Убито</td><td>"+RU(m.selfDead)+"</td><td>"+RU(m.oppDead)+"</td></tr>"+
-       "<tr><td>Ранено</td><td>"+RU(m.selfHurt)+"</td><td>"+RU(m.oppHurt)+"</td></tr>"+
        "<tr><td>Осталось</td><td>"+RU(m.selfRemain)+"</td><td>"+RU(m.oppRemain)+"</td></tr>"+
+       "<tr><td>Легкораненые</td><td>"+RU(m.selfSlight||0)+"</td><td>"+RU(m.oppSlight||0)+"</td></tr>"+
+       "<tr><td>Тяжелораненые</td><td>"+RU(m.selfHurt)+"</td><td>"+RU(m.oppHurt)+"</td></tr>"+
+       "<tr><td>Убито</td><td>"+RU(m.selfDead)+"</td><td>"+RU(m.oppDead)+"</td></tr>"+
        "</table>"+
+       // Статистика войск — итоговые проценты бонусов на секунду боя (см.
+       // battleBuffSnapshot): не просто "кто победил", а почему — та же
+       // логика, что и в настоящем RoK ("Здоровье — самый ценный стат").
+       (m.selfBuffs&&m.oppBuffs?"<div class='mail-chron'><div class='mail-chron-hd'>Статистика войск</div>"+
+         "<table class='mail-stats'><tr><th></th><th>"+m.selfNick+"</th><th>"+m.oppNick+"</th></tr>"+
+         battleStatsRows(m.selfBuffs,m.oppBuffs)+"</table></div>":"")+
        "<div class='mail-note'>Место боя: X:"+m.fightCoords.x+" Y:"+m.fightCoords.y+"</div>"+
        battleLogHtml(m);
   } else if(m.kind==="barbarian"){
