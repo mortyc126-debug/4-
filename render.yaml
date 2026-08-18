@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: chetyre-znameni
+    name: pravo-pravitelya
     runtime: static
     # Раньше здесь стояла заглушка "true" — то есть на деплое НИЧЕГО не
     # собиралось, а отдавался закоммиченный engine/dist. Правки в engine/src/*.ts
