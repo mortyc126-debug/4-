@@ -6,11 +6,11 @@
 // разбирает W.events — только это происходит НЕЗАВИСИМО от того, открыт ли
 // у кого-то браузер, что и было целью Фазы 2 ("сервер сам считает время").
 //
-// Пока умеет только type:"train" (зеркало EV.train, index.html:4821-4826) —
-// единственное действие, перенесённое в Фазе 2 (см. mp-train). Остальные
-// типы событий (build/research/craft/heal/arrive/scouted/...) будут
-// добавляться сюда по одному по мере переноса самих действий (Фаза 5),
-// каждый — отдельным case, по образцу ниже.
+// Умеет type:"train" (зеркало EV.train, index.html:4821-4826) и
+// type:"build" (зеркало EV.build, index.html:4814-4819, см. mp-build) —
+// перенесённые действия. Остальные типы событий (research/craft/heal/
+// arrive/scouted/...) будут добавляться сюда по одному по мере переноса
+// самих действий (Фаза 5), каждый — отдельным case, по образцу ниже.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // Вставлено буквально из ../_shared/cors.js — Dashboard-редактор Edge
@@ -67,6 +67,7 @@ Deno.serve(async (req) => {
     for (const ev of due) {
       try {
         if (ev.type === "train") await applyTrain(admin, ev);
+        else if (ev.type === "build") await applyBuild(admin, ev);
         // else: неизвестный/ещё не перенесённый тип — оставляем как есть,
         // не помечаем processed, чтобы не потерять событие молча; заберётся
         // следующим тиком после того, как для него появится case.
@@ -96,6 +97,25 @@ async function applyTrain(admin, ev) {
   if (!T) return; // уже разобрано/отменено
   p.troops[T.type][T.tier] = (p.troops[T.type][T.tier] || 0) + T.n;
   p.train[type] = null;
+  const { error: updErr } = await admin
+    .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
+  if (updErr) throw updErr;
+}
+
+// Зеркало EV.build(d) из index.html:4814-4819. plot всегда null у зданий,
+// перенесённых в mp-build (barracks/range/stable/siege — ни одно не multi).
+async function applyBuild(admin, ev) {
+  const playerId = ev.data && ev.data.player_id;
+  const slot = ev.data && ev.data.slot;
+  if (playerId == null || slot == null) return;
+  const { data: row, error } = await admin.from("players").select("*").eq("id", playerId).maybeSingle();
+  if (error) throw error;
+  if (!row) return;
+  const p = row.state;
+  const q = p.queues[slot];
+  if (!q) return; // уже разобрано/отменено
+  if (q.plot != null) p.b[q.b][q.plot] = q.lv; else p.b[q.b] = q.lv;
+  p.queues[slot] = null;
   const { error: updErr } = await admin
     .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
   if (updErr) throw updErr;

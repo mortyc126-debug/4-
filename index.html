@@ -8470,6 +8470,8 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(joinBtn){ const nickInp=$("#mp-nick"); mpState.nick=nickInp?nickInp.value:""; mpDoJoin(); return; }
   const trainBtn=e.target.closest("[data-mp='train']");
   if(trainBtn){ mpDoTrain(trainBtn.dataset.t); return; }
+  const buildBtn=e.target.closest("[data-mp='build']");
+  if(buildBtn){ mpDoBuild(buildBtn.dataset.bk); return; }
 });
 
 // Двойной тап по чужой клетке в 3D сразу открывал лист похода (openLevy) —
@@ -8696,6 +8698,10 @@ async function claimChronicle(){
    ========================================================================= */
 let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"" };
 let mpPollTimer = null;
+// Ровно эти 4 здания перенесены на сервер (mp-build) — разблокируют
+// mp-train. Остальные постройки (ратуша, стена, ферма и т.д.) — следующие
+// шаги, каждое отдельным переносом (см. supabase/README.md).
+const BUILD_MP_BLDS = ["barracks","range","stable","siege"];
 
 async function mpEnsureAuth(){
   // Переиспользуем уже сохранённую supabase-клиентом anon-сессию, если она
@@ -8762,6 +8768,12 @@ async function mpDoTrain(type){
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
+async function mpDoBuild(bk){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-build",{bk}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
 function mpRaceCardsHtml(){
   return "<div class='mp-races'>"+RACE_KEYS.map(r=>
     "<button class='mp-race"+(mpState.race===r?" on":"")+"' data-mp='race' data-r='"+r+"' style='--rc:"+RACES[r].color+"'>"+
@@ -8771,8 +8783,9 @@ function foMultiplayer(){
   let h=rubric("Общий мир","бета");
   h+="<div class='entry'><div class='line'><div class='fill'>"+
      "<div class='note'>Один настоящий мир на всех, кто сюда заходит — не отдельная копия для "+
-     "каждого браузера. Пока перенесён только набор войск (тир 1); постройки, исследования, "+
-     "походы и бой всё ещё считаются локально в одиночной игре — это следующие шаги.</div>"+
+     "каждого браузера. Пока перенесены казармы/стрельбище/конюшня/мастерская и набор войск "+
+     "(тир 1); остальные постройки, исследования, походы и бой всё ещё считаются локально в "+
+     "одиночной игре — это следующие шаги.</div>"+
      "</div></div></div>";
 
   if(!mpState.joined){
@@ -8796,6 +8809,29 @@ function foMultiplayer(){
      "<div class='note'>Пока не восполняются сами — производство ещё не перенесено на сервер.</div>"+
      "</div></div></div>";
 
+  const hallLv=st.b.hall||0;
+  h+=rubric("Постройки","казармы и мастерские");
+  BUILD_MP_BLDS.forEach(bld=>{
+    const lv=st.b[bld]||0, nextLv=lv+1, queued=st.queues.find(q=>q&&q.b===bld);
+    h+="<div class='entry'><div class='line'><div class='fill'>"+
+       "<div class='title'>"+buildingName(bld,pShim)+" — уровень "+lv+"</div>";
+    if(queued){
+      const left=Math.max(0,queued.t1-Date.now()/1000);
+      h+="<div class='note'>Строится до "+nextLv+" ур., осталось "+fmtDur(left)+"</div>";
+    } else if(nextLv>25){
+      h+="<div class='note'>Максимальный уровень.</div>";
+    } else if(nextLv>hallLv){
+      h+="<div class='note'>Требуется ратуша "+nextLv+" уровня (сейчас "+hallLv+") — постройка ратуши в общем мире появится на следующем шаге переноса.</div>";
+    } else {
+      const c=buildCost(bld,nextLv), t=buildTime(bld,nextLv);
+      h+="<div class='note'>До "+nextLv+" ур.: "+
+         (RES.some(r=>c[r])?RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", "):"бесплатно")+
+         " · "+fmtDur(t)+"</div>"+
+         "<button class='seal' data-mp='build' data-bk='"+bld+"'"+(mpState.loading?" disabled":"")+">"+(lv?"Улучшить":"Построить")+"</button>";
+    }
+    h+="</div></div></div>";
+  });
+
   h+=rubric("Набор войск","тир 1");
   TKEYS.forEach(t=>{
     const bld=TRAIN_BLD[t], lv=st.b[bld]||0, cap=trainCap(lv);
@@ -8807,7 +8843,7 @@ function foMultiplayer(){
       const left=Math.max(0,training.t1-Date.now()/1000);
       h+="<div class='note'>В наборе: ×"+RU(training.n)+", осталось "+fmtDur(left)+"</div>";
     } else if(cap<=0){
-      h+="<div class='note'>Нужно здание ("+buildingName(bld,pShim)+") — постройки в общем мире появятся на следующем шаге переноса.</div>";
+      h+="<div class='note'>Нужно здание ("+buildingName(bld,pShim)+") — постройте его выше.</div>";
     } else {
       const c=troopCost(t,1);
       h+="<div class='note'>Цена за штуку: "+RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", ")+
