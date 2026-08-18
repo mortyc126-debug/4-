@@ -8900,20 +8900,26 @@ async function mpRefreshIncoming(){
     .eq("data->>defender_id", String(mpState.player.id)).eq("state","go").order("t1");
   if(!error && data){ mpState.incoming=data; mpRerender(); }
 }
-// Превью добычи/час для панели — НЕ настоящий клиентский production() (тот
-// зовёт bonuses(p), которая ждёт полный игровой объект — gen.tal/tech/race
-// и т.д., а тут только урезанный снимок из players.state); используем
-// уже глобальный prodRate (та же PROD_TABLE, без всяких бонусов — ровно то
-// же приближение, что и сервер, см. supabase/functions/_shared/rules.js).
-const MP_PROD_BLD={food:"farm",wood:"lumber",stone:"quarry",gold:"mine"};
-const MP_PROD_MULT={food:1,wood:1,stone:.75,gold:.5};
-function mpProdPerHour(st){
-  const out={};
-  RES.forEach(r=>{
-    const plots=st.b[MP_PROD_BLD[r]];
-    let base=0; (Array.isArray(plots)?plots:[plots||0]).forEach(lv=>{ if(lv>0) base+=prodRate(lv) });
-    out[r]=Math.round(base*MP_PROD_MULT[r]);
-  });
+// Превью добычи/час для панели — Фаза 6: теперь зовёт НАСТОЯЩИЙ клиентский
+// production(p) (тот самый, единый файл, никакой копии) через тот же приём
+// pShim, что и у Академии ниже (pShim2) — {race,b,gen,tech}. p.gen.tal у
+// игрока общего мира всегда {} (система вложения очков таланта в MP не
+// заведена), поэтому талантовые и GENERAL_TREE-слагаемые bonuses() дают
+// ровно 0 вклада — то же самое честное подмножество, что и на сервере
+// (_shared/rules.js, Фаза 6), просто получено настоящей функцией, а не
+// её портированной копией: числа гарантированно совпадают 1-в-1.
+// race — из САМОЙ строки игрока (p.race), а не st.race: st (players.state)
+// у записей ДО Фазы 6 могло не нести race вовсе (сервер сам самоисцеляется
+// при следующем действии, но эта функция получает состояние "как есть" в
+// текущем сеансе клиента).
+function mpProdPerHour(p){
+  // portal:0 — Портал не входит в постройки общего мира (см. заголовок
+  // bonuses() в _shared/rules.js); без явного 0 portalMarchBonus(undefined)
+  // внутри настоящего bonuses() уходит в NaN (не влияет на саму добычу,
+  // production() не читает B.march, но лучше не оставлять NaN в объекте).
+  const pShim={race:p.race, b:Object.assign({portal:0},p.state.b), gen:p.state.gen, tech:p.state.tech};
+  const pr=production(pShim), out={};
+  RES.forEach(r=>{ out[r]=Math.round(pr[r]); });
   return out;
 }
 // index.html:2863 marchSlots — сколько отрядов можно держать в поле разом.
@@ -8930,8 +8936,10 @@ function foMultiplayer(){
      "каждого браузера. Все постройки (кроме Горна), набор войск (тир 1), добыча ресурсов по "+
      "времени, атака с настоящим маршем и боем (стена/башня/лазарет уже настоящие), лечение "+
      "раненых, разведка и дерево исследований Академии — всё уже здесь, честно упрощённое (см. "+
-     "подсказки на месте и supabase/README.md); сами бонусы от исследований и полный "+
-     "многораундовый бой (полководцы, погода) из одиночной игры — следующие шаги.</div></div></div></div>";
+     "подсказки на месте и supabase/README.md); раса/эпоха расы/дефолтный генерал/дерево "+
+     "исследований теперь реально влияют на добычу, набор, стройку и лазарет — но полный "+
+     "многораундовый бой (полководцы, погода) и вложение очков таланта генерала из одиночной "+
+     "игры — следующие шаги.</div></div></div></div>";
 
   if(!mpState.joined){
     h+="<div class='entry'><div class='line'><div class='fill'>"+
@@ -9064,7 +9072,7 @@ function foMultiplayer(){
     });
   }
 
-  const perHour=mpProdPerHour(st);
+  const perHour=mpProdPerHour(p);
   h+="<div class='entry'><div class='line'><div class='fill'><div class='title'>Ресурсы</div>"+
      "<div class='note'>"+RES.map(r=>RES_NAME[r]+": "+RU(st.res[r])).join(" · ")+"</div>"+
      "<div class='note'>Добыча/час: "+RES.map(r=>RES_NAME[r]+" "+RU(perHour[r])).join(" · ")+
