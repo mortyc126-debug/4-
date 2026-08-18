@@ -859,6 +859,28 @@ function unitsTotal(units) {
 // не забывчивость.
 const BANDIT_TROOPS = [20000,23000,26000,29000,32000,35000,38000,42000,46000,50000,55000,60000,66000,73000,80000,88000,96000,105000,115000,125000,135000,145000,157000,170000,185000,200000,215000,230000,245000,260000];
 const banditTier = (lv) => (lv <= 5 ? 1 : lv <= 12 ? 2 : lv <= 20 ? 3 : 4);
+// Фаза 10, кусочек 1 — опыт и уровень генерала. Дословно из index.html:
+// 2848-2849 (GEN_XP_NEED/genXpNeed) и 5136-5147 (addXp) — тот же
+// суммарный ~50.12 млн опыта к 60 уровню, интерполированный по контрольным
+// точкам легендарного командира. BANDIT_XP — index.html:3188, опыт за
+// победу над лагерем разбойников, тот же индекс (уровень лагеря 1..30), что
+// у BANDIT_TROOPS выше.
+const GEN_XP_NEED=[210,210,276,483,846,1482,2594,4541,7950,7950,7950,7950,8449,10471,12978,16084,19935,24707,30621,30621,33942,40093,47360,55943,66083,78060,92207,108919,128659,128659,142186,163193,187303,214974,246734,283186,323079,370524,424937,424937,478776,540017,609091,687001,774876,873992,985786,1111879,1254102,1660595,1909956,2196763,2526638,2906048,3921926,4612964,5425762,6381774,7506234];
+const genXpNeed = (lv) => GEN_XP_NEED[lv - 1] || GEN_XP_NEED[GEN_XP_NEED.length - 1];
+const BANDIT_XP=[100,120,140,160,180,200,220,240,260,300,330,360,390,420,450,480,510,540,570,600,640,680,720,760,800,840,880,920,960,1000];
+// Только уровень/опыт/очки — САМА трата очков (mp-talent) и эффект уже
+// вложенных талантов в bonuses() — отдельные следующие кусочки (см.
+// supabase/README.md): p.gen.tal остаётся {} до тех пор, добавленные тут
+// очки честно копятся неистраченными, как и стартовые 5 из Фазы 7.
+function addXp(p, xp) {
+  if (!p.gen) p.gen = { lv: 1, xp: 0, pts: 5, tal: {}, id: null, away: null }; // самоисцеление легаси-записей
+  p.gen.xp = (p.gen.xp || 0) + xp;
+  const cap = Math.min(60, epochOf(p.b && p.b.hall) * 12);
+  while (p.gen.xp >= genXpNeed(p.gen.lv) && p.gen.lv < cap) {
+    p.gen.xp -= genXpNeed(p.gen.lv);
+    p.gen.lv++; p.gen.pts = (p.gen.pts || 0) + 1;
+  }
+}
 function banditArmy(lv) {
   const u = { inf: {}, arc: {}, cav: {}, sie: {} };
   TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) u[t][i] = 0; });
@@ -958,6 +980,15 @@ async function applyMarchArrive(admin, ev) {
     defP.wounded = unitsAdd(defP.wounded, hs.hurtUnits);
     survivors = unitsSub(m.units, result.attLoss);
 
+    // Фаза 10, кусочек 1 — опыт генерала за победу над игроком (только
+    // атакующему, зеркало addXp(att,...) в battleCity, index.html:5093 —
+    // защитник опыта за отражение штурма не получает, как и в клиенте).
+    // Раньше эта функция вообще не писала обратно строку атакующего (его
+    // войска возвращались только через марш домой) — теперь нужно, чтобы
+    // сохранить level/xp/pts.
+    if (result.winner === "att") addXp(attP, Math.round(200 + (defP.b && defP.b.hall || 0) * 60));
+    const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
+    if (updA) throw updA;
     const { error: updD } = await admin.from("players").update({ state: defP, updated_at: new Date().toISOString() }).eq("id", defRow.id);
     if (updD) throw updD;
 
@@ -1123,6 +1154,7 @@ async function applyRaidArrive(admin, m) {
 
     if (result.winner === "att") {
       carry = banditLoot(campLv);
+      addXp(attP, BANDIT_XP[Math.max(1, Math.min(30, campLv)) - 1]); // Фаза 10, кусочек 1
       await admin.from("map_cells").delete().eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY);
       // Фаза 8, кусочек 3 — зеркало mapDelete+schedule(CFG.RESPAWN_CAMP,
       // "respawn",...) из index.html (arriveMarch, camp/fort-ветка,

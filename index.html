@@ -9395,10 +9395,13 @@ function foMultiplayer(){
   // одиночная игра — один файл, отдельной копии не заводим. Одноразово,
   // бесплатно, необратимо: как только st.gen.id не null, кнопка выбора
   // больше не показывается вообще (переиграть нельзя, ровно как в клиенте).
-  // Уровни/опыт/очки таланта генерала (p.gen.lv/xp/pts/tal) НЕ перенесены —
-  // общий мир не начисляет генералу опыт нигде (ни один mp-* эндпоинт не
-  // трогает p.gen.xp), поэтому дальше плоского apply() выбранного генерала
-  // здесь пока нечему появиться; см. supabase/README.md.
+  // Фаза 10, кусочек 1 — уровень/опыт генерала наконец начисляются
+  // (addXp в mp-tick, на победу над лагерем/игроком) — переиспользует те
+  // же самые genXpNeed/epochOf, что и одиночная игра (тот же файл, приём
+  // как у mpProdPerHour ниже). Очки таланта (p.gen.pts) уже копятся
+  // по-настоящему, но тратить их пока негде — mp-talent и подключение
+  // самих бонусов в bonuses() отдельными следующими кусочками, см.
+  // supabase/README.md.
   h+=rubric("Полководец","решение окончательное");
   if(!st.gen||st.gen.id==null){
     GENERALS[p.race].forEach((g,i)=>{
@@ -9410,10 +9413,14 @@ function foMultiplayer(){
     });
   } else {
     const g=GENERALS[p.race][st.gen.id];
+    const lv=st.gen.lv||1, xp=st.gen.xp||0, pts=st.gen.pts||0;
+    const lvCap=Math.min(60,epochOf(st.b.hall||0)*12), need=genXpNeed(lv);
     h+="<div class='entry'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
       genPortraitHtml(p.race,st.gen.id)+shieldSvg(p.race,26)+"</div><div class='fill'>"+
-      "<div class='title'>"+g.name+"<span class='tag gilt'>"+g.role+"</span></div>"+
-      "<div class='note'>"+g.flavor+"<span class='gen-stat'>"+g.stat+"</span></div></div></div></div>";
+      "<div class='title'>"+g.name+"<span class='tag gilt'>"+g.role+"</span> · "+lv+" ур."+"</div>"+
+      "<div class='note'>"+g.flavor+"<span class='gen-stat'>"+g.stat+"</span></div>"+
+      "<div class='note'>Опыт: "+RU(xp)+" / "+RU(need)+(lv>=lvCap?" · потолок эпохи":"")+
+      (pts>0?" · очков таланта: "+pts+" (тратить пока негде)":"")+"</div></div></div></div>";
   }
 
   // Фаза 5, Академия — дерево исследований (ACADEMY_TREE, зеркало
