@@ -737,9 +737,47 @@ const SIDE_TYPE_ATK = { inf: "atkInf", arc: "atkArc", cav: "atkCav", sie: "atkSi
 const SIDE_TYPE_DEF = { inf: "defInf", arc: "defArc", cav: "defCav", sie: "defSie" };
 const SIDE_TYPE_MATK = { inf: "matkInf", arc: "matkArc", cav: "matkCav", sie: "matkSie" };
 const SIDE_TYPE_MDEF = { inf: "mdefInf", arc: "mdefArc", cav: "mdefCav", sie: "mdefSie" };
+// index.html:2603-2614 DISCIPLINE/RACE_DISCIPLINE_BONUS/disciplineThreshold
+// — дословно. Доля потерь ТИПА-ТИРА войск (от его стартового числа В ЭТОМ
+// БОЮ, не за раунд) — после превышения порога тир "дрогнул" на весь
+// оставшийся бой (атака/защита −30%, не смертельно и не навсегда снаружи
+// боя). Порог растёт по тирам (элита держится дольше) и у каждой расы
+// свой род войск держится чуть дольше остальных; нежить не ломается по
+// осадным вообще ("immune").
+const DISCIPLINE = {
+  inf: [65, 72, 78, 84, 90], arc: [40, 48, 55, 62, 70], cav: [55, 60, 65, 70, 78], sie: [75, 78, 81, 84, 88],
+};
+const RACE_DISCIPLINE_BONUS = { dwarf: { inf: 15 }, human: { cav: 15 }, elf: { arc: 15 }, undead: { sie: "immune" } };
+function disciplineThreshold(t, i, race) {
+  const bonus = RACE_DISCIPLINE_BONUS[race] && RACE_DISCIPLINE_BONUS[race][t];
+  if (bonus === "immune") return Infinity;
+  return (DISCIPLINE[t][i - 1] + (bonus || 0)) / 100;
+}
+// index.html:4317-4328 checkDiscipline — дословно, но БЕЗ хроники (broke
+// список имён нигде не читается в MP — тут нет боевого лога). start —
+// СТАРТОВЫЙ состав стороны на начало всего боя (не текущий, не за раунд);
+// lossTotal — накопленные потери с начала боя (attLossTotal/defLossTotal
+// в resolvePvp/resolveBanditRaid ниже — они уже считались, просто раньше
+// никем не читались); broken — мутируется на месте, тот же объект и до, и
+// после вызова, ровно как f.broken в источнике.
+function checkDiscipline(start, lossTotal, race, broken) {
+  TKEYS.forEach((t) => {
+    for (let i = 1; i <= 5; i++) {
+      if (broken[t][i]) continue;
+      const startN = (start[t] && start[t][i]) || 0; if (!startN) continue;
+      const thr = disciplineThreshold(t, i, race); if (thr === Infinity) continue;
+      const lostN = (lossTotal[t] && lossTotal[t][i]) || 0;
+      if (lostN / startN > thr) broken[t][i] = 1;
+    }
+  });
+}
 // index.html:3974 sideStats — Фаза 6: принимает готовый B (bonuses(p) или
 // bonuses(p,true) для защитника), см. подробный комментарий в _shared/rules.js.
-function sideStats(units, race, B) {
+// broken — Фаза 9, кусочек 3: необязательный четвёртый параметр (index.html:
+// 3987 f.broken) — если тир сломлен, его вклад в atk/def/matk/mdef (НЕ в
+// hp — дисциплина не убивает, только бьёт хуже) умножается на 0.70, тем же
+// способом, что и остальные модификаторы этого же цикла.
+function sideStats(units, race, B, broken) {
   const s = {};
   TKEYS.forEach((t) => {
     let atk = 0, def = 0, matk = 0, mdef = 0, hp = 0, n = 0;
@@ -748,14 +786,15 @@ function sideStats(units, race, B) {
     for (let i = 1; i <= 5; i++) {
       const c = (units[t] && units[t][i]) || 0;
       if (!c) continue;
+      const brk = broken && broken[t] && broken[t][i] ? 0.70 : 1;
       const w = TIER_MULT[i - 1];
       let a = TROOP_TYPES[t].atk * w * troopMod(race, t, "atk") * atkMod;
       if (t === "arc") a *= 1 + (B.archer || 0);
       const d = TROOP_TYPES[t].def * w * troopMod(race, t, "def") * defMod;
       const ma = TROOP_TYPES[t].magicAtk * w * troopMod(race, t, "atk") * matkMod;
       const md = TROOP_TYPES[t].magicDef * w * troopMod(race, t, "def") * mdefMod;
-      atk += c * a * (1 + B.atk); def += c * d * (1 + B.def);
-      matk += c * ma * (1 + B.matk); mdef += c * md * (1 + B.mdef);
+      atk += c * a * brk * (1 + B.atk); def += c * d * brk * (1 + B.def);
+      matk += c * ma * brk * (1 + B.matk); mdef += c * md * brk * (1 + B.mdef);
       hp += c * TROOP_TYPES[t].hp * w * troopMod(race, t, "hp") * (1 + B.hp);
       n += c;
     }
@@ -863,16 +902,21 @@ function applyLosses(units, dmgByType, race, hpBonus = 0) {
 // разброс (roll(), шире в грозу) — и найден/исправлен честный баг
 // кусочка 1: не было множителя BATTLE_PACE (index.html:4210), из-за чего
 // бои решались быстрее источника (см. заголовок BATTLE_PACE выше).
+// Кусочек 3: слом дисциплины (checkDiscipline/sideStats(...,broken), см.
+// их заголовки выше) — тир, потерявший в этом бою больше своего порога
+// (растёт по тирам, у своей расы свой род войск держится дольше), бьётся
+// −30% атаки/защиты до конца боя. Проверяется КАЖДЫЙ раунд по накопленным
+// потерям (attLossTotal/defLossTotal, которые уже считались и раньше —
+// просто раньше никто их не читал для этого), как и в источнике.
 // Честно ЕЩЁ НЕ входит (см. supabase/README.md, каждое — отдельный
-// следующий кусочек): слом дисциплины (checkDiscipline), урон по/от
-// полководцам в бою (generalDamage/damageToGeneral), поднятие нежити
-// прямо в бою (raiseSkeletons — раз в момент прибытия оно уже применяется
-// отдельно, здесь речь о ПОРАУНДОВОМ подъёме), контрудар гарнизона (dwarf
-// B.counter), первый залп лучников без ответа (elf firstStrike,
-// index.html:4176-4181 — сейчас есть только залп СТОРОЖЕВОЙ БАШНИ
-// защитника, он был и раньше), досрочное отступление атакующего при 72%
-// потерь (rout), ничья по armyPower при исчерпании ROUND_CAP раундов
-// (сейчас ничья — по остатку totalHp, как и раньше).
+// следующий кусочек): урон по/от полководцам в бою (generalDamage/
+// damageToGeneral), поднятие нежити прямо в бою (raiseSkeletons — раз в
+// момент прибытия оно уже применяется отдельно, здесь речь о ПОРАУНДОВОМ
+// подъёме), контрудар гарнизона (dwarf B.counter), первый залп лучников
+// без ответа (elf firstStrike, index.html:4176-4181 — сейчас есть только
+// залп СТОРОЖЕВОЙ БАШНИ защитника, он был и раньше), досрочное отступление
+// атакующего при 72% потерь (rout), ничья по armyPower при исчерпании
+// ROUND_CAP раундов (сейчас ничья — по остатку totalHp, как и раньше).
 // Фаза 6: attP/defP теперь полные объекты игрока (race+b+gen+tech), не
 // голые строки расы — нужны для bonuses(attP)/bonuses(defP,true) (defP
 // считается С defending=true — 5-я эпоха, defMods). См. подробный
@@ -884,6 +928,7 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
   const attB = bonuses(attP), defB = bonuses(defP, true);
   let attU = attUnits, defU = defUnits;
   let attLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} }, defLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} };
+  const attBroken = { inf: {}, arc: {}, cav: {}, sie: {} }, defBroken = { inf: {}, arc: {}, cav: {}, sie: {} };
   const rnd = battleRngMp(marchId);
   const weather = pickWeather(rnd);
   const wMod = (t) => (weather.mod && weather.mod[t]) || 1;
@@ -897,10 +942,14 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
   if (openG) {
     const l = applyLosses(attU, openG, attP.race, attB.hp);
     attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
+    // index.html:4186-4188 brk0A/brk0D — дисциплина проверяется и до общей
+    // схватки, по потерям от одних лишь стартовых залпов (тут — только
+    // залп башни защитника, у нас нет ни firstStrike, ни залпа A по D).
+    checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
   }
   let round = 0;
   while (round < ROUND_CAP) {
-    const attS = sideStats(attU, attP.race, attB), defS = sideStats(defU, defP.race, defB);
+    const attS = sideStats(attU, attP.race, attB, attBroken), defS = sideStats(defU, defP.race, defB, defBroken);
     if (attS.totalN <= 0 || defS.totalN <= 0) break;
     round++;
     const dmgToDef = dmgTo(attS, defS, defWallLv, defB.wallBonus, wMod, roll());
@@ -909,6 +958,8 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
     const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp);
     defU = unitsSub(defU, defLoss.units); defLossTotal = unitsAdd(defLossTotal, defLoss.units);
     attU = unitsSub(attU, attLoss.units); attLossTotal = unitsAdd(attLossTotal, attLoss.units);
+    checkDiscipline(defUnits, defLossTotal, defP.race, defBroken);
+    checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
   }
   const attHpLeft = sideStats(attU, attP.race, attB).totalHp;
   const defHpLeft = sideStats(defU, defP.race, defB).totalHp;
@@ -1032,15 +1083,21 @@ const BANDIT_B = { atk: 0, def: 0, hp: 0, matk: 0, mdef: 0, archer: 0 };
 // resolvePvp выше), а тот же однообменный resolvePvp, что и у PvP —
 // честная общая упрощённая боевая модель общего мира, не два разных стиля
 // боя под одной крышей.
-// Фаза 9, кусочки 1-2 — тот же переход на раундовый цикл + погоду, что и у
-// resolvePvp выше (см. её заголовок насчёт честных пробелов, здесь те же
-// самые: без дисциплины/полководцев-в-бою/контрудара/первого залпа — у
-// разбойников и так нет ни стены, ни башни, ни первого залпа лучников,
-// поэтому кроме погоды им ничего из залповых механик и не полагалось).
+// Фаза 9, кусочки 1-3 — тот же переход на раундовый цикл + погоду +
+// дисциплину, что и у resolvePvp выше (см. её заголовок насчёт честных
+// пробелов, здесь те же самые: без урона по/от полководцам/контрудара/
+// первого залпа — у разбойников и так нет ни стены, ни башни, ни первого
+// залпа лучников, поэтому кроме погоды и дисциплины им ничего из
+// залповых механик и не полагалось). attP.race=null для лагеря (banditArmy)
+// — disciplineThreshold(t,i,null) просто не находит расового бонуса
+// (RACE_DISCIPLINE_BONUS[null]===undefined), даёт голый порог без надбавки,
+// ровно как и было задумано для "разбойников и т.п." в источнике.
 function resolveBanditRaid(attUnits, attP, campLv, marchId = 0) {
   const attB = bonuses(attP);
-  let attU = attUnits, bandU = banditArmy(campLv);
-  let attLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} };
+  const bandStart = banditArmy(campLv);
+  let attU = attUnits, bandU = bandStart;
+  let attLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} }, bandLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} };
+  const attBroken = { inf: {}, arc: {}, cav: {}, sie: {} }, bandBroken = { inf: {}, arc: {}, cav: {}, sie: {} };
   const rnd = battleRngMp(marchId);
   const weather = pickWeather(rnd);
   const wMod = (t) => (weather.mod && weather.mod[t]) || 1;
@@ -1048,15 +1105,17 @@ function resolveBanditRaid(attUnits, attP, campLv, marchId = 0) {
   const roll = () => 1 + (rnd() * 2 - 1) * jit;
   let round = 0;
   while (round < ROUND_CAP) {
-    const attS = sideStats(attU, attP.race, attB), bandS = sideStats(bandU, null, BANDIT_B);
+    const attS = sideStats(attU, attP.race, attB, attBroken), bandS = sideStats(bandU, null, BANDIT_B, bandBroken);
     if (attS.totalN <= 0 || bandS.totalN <= 0) break;
     round++;
     const dmgToBand = dmgTo(attS, bandS, 0, 0, wMod, roll()); // лагерь без стены/башни
     const dmgToAtt = dmgTo(bandS, attS, 0, 0, wMod, roll());
     const bandLoss = applyLosses(bandU, dmgToBand, null, 0);
     const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp);
-    bandU = unitsSub(bandU, bandLoss.units);
+    bandU = unitsSub(bandU, bandLoss.units); bandLossTotal = unitsAdd(bandLossTotal, bandLoss.units);
     attU = unitsSub(attU, attLoss.units); attLossTotal = unitsAdd(attLossTotal, attLoss.units);
+    checkDiscipline(bandStart, bandLossTotal, null, bandBroken);
+    checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
   }
   const attHpLeft = sideStats(attU, attP.race, attB).totalHp;
   const bandHpLeft = sideStats(bandU, null, BANDIT_B).totalHp;
