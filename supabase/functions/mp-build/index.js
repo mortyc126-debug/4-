@@ -1,8 +1,11 @@
 // =============================================================================
-// mp-build — Фаза 5: постройка/улучшение зданий. Все 15 зданий из BUILDINGS
+// mp-build — Фаза 5: постройка/улучшение зданий. Все здания из BUILDINGS
 // (index.html) перенесены: barracks/range/stable/siege, hall + весь
 // HALL_REQ (wall/store/academy/hospital), farm/lumber/quarry/mine,
-// garrison/scout. Зеркало startBuild(p,bk,plot) из index.html:5712.
+// garrison/scout, forge (Фаза 11, кусочек 1), portal (см. отдельный
+// кусочек ниже — единственное здание без своей ценовой кривой в
+// источнике, работает через общую BUILD_TABLE). Зеркало
+// startBuild(p,bk,plot) из index.html:5712.
 //
 // hospital/farm/lumber/quarry/mine — multi-здания (BUILDINGS.*.plots=4 в
 // index.html), у каждого 4 независимых участка (0-3). Участок 0
@@ -20,7 +23,8 @@
 //
 // Тело запроса: { bk: "barracks"|"range"|"stable"|"siege"|"hall"|"wall"|
 //                     "store"|"academy"|"hospital"|"farm"|"lumber"|
-//                     "quarry"|"mine"|"garrison"|"scout", plot?: 0-3 }
+//                     "quarry"|"mine"|"garrison"|"scout"|"forge"|"portal",
+//                     plot?: 0-3 }
 //                (plot нужен только у multi-зданий hospital/farm/lumber/
 //                 quarry/mine, у остальных игнорируется; по умолчанию 0)
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -237,11 +241,44 @@ const SCOUT_TABLE = [
 // ниже). Фаза 11, кусочек 1 — до сих пор нигде не деплоилось (mp-build
 // сам об этом честно предупреждал: "кузница пока не переносилась").
 const FORGE_TABLE = [{ food: 1000, wood: 1000, stone: 1000, t: 11, power: 5 }];
+// index.html:1262-1288 BUILD_TABLE — общая "кривая Ратуши", запасной вариант
+// для зданий БЕЗ собственной таблицы (buildCost/buildTime в источнике:
+// tblRow(BUILDING_TABLE[bk]||BUILD_TABLE, lv)). Из всех зданий этого модуля
+// в такое положение попадает только Портал — у него, в отличие от Горна,
+// нет прообраза в RoK вообще, поэтому и отдельной кривой стоимости/времени
+// в источнике никогда не было — только эта общая.
+const BUILD_TABLE = [
+  { t: 0, food: 0, wood: 0, stone: 0 },
+  { t: 2, food: 3500, wood: 3500, stone: 0 },
+  { t: 300, food: 6500, wood: 6500, stone: 0 },
+  { t: 1200, food: 11800, wood: 11800, stone: 0 },
+  { t: 3600, food: 21300, wood: 21300, stone: 0 },
+  { t: 7200, food: 36300, wood: 36300, stone: 12000 },
+  { t: 18000, food: 54400, wood: 54400, stone: 19200 },
+  { t: 36000, food: 81800, wood: 81800, stone: 30800 },
+  { t: 54000, food: 122800, wood: 122800, stone: 49200 },
+  { t: 79200, food: 184300, wood: 184300, stone: 78700 },
+  { t: 108000, food: 277500, wood: 277500, stone: 120000 },
+  { t: 144000, food: 417500, wood: 417500, stone: 180000 },
+  { t: 180000, food: 627500, wood: 627500, stone: 270000 },
+  { t: 216000, food: 942500, wood: 942500, stone: 405000 },
+  { t: 252000, food: 1400000, wood: 1400000, stone: 607500 },
+  { t: 345600, food: 2100000, wood: 2100000, stone: 912500 },
+  { t: 417600, food: 3200000, wood: 3200000, stone: 1400000 },
+  { t: 504000, food: 4800000, wood: 4800000, stone: 2100000 },
+  { t: 604800, food: 7200000, wood: 7200000, stone: 3100000 },
+  { t: 712800, food: 10800000, wood: 10800000, stone: 4700000 },
+  { t: 950400, food: 16200000, wood: 16200000, stone: 7000000 },
+  { t: 1483200, food: 24300000, wood: 24300000, stone: 10600000 },
+  { t: 2070000, food: 36500000, wood: 36500000, stone: 15900000 },
+  { t: 3110400, food: 54800000, wood: 54800000, stone: 24000000 },
+  { t: 10915200, food: 82200000, wood: 82200000, stone: 36000000 },
+];
 const BUILD_BLD_TABLE = {
   barracks: BARRACKS_TABLE, range: BARRACKS_TABLE, stable: BARRACKS_TABLE, siege: SIEGE_TABLE,
   hall: HALL_TABLE, wall: WALL_TABLE, store: STORE_BUILD_TABLE, academy: ACADEMY_BUILD_TABLE, hospital: HOSPITAL_BUILD_TABLE,
   farm: FARM_TABLE, lumber: LUMBER_TABLE, quarry: QUARRY_TABLE, mine: MINE_TABLE,
-  garrison: WATCH_TABLE, scout: SCOUT_TABLE, forge: FORGE_TABLE,
+  garrison: WATCH_TABLE, scout: SCOUT_TABLE, forge: FORGE_TABLE, portal: BUILD_TABLE,
 };
 const BUILD_MAX_LV = 25;
 // index.html:2777 buildingMax — потолок здания — .max конкретного здания
@@ -448,10 +485,10 @@ const ACADEMY_TREE = {
 //      (mp-pickgen) — p.gen.id больше не всегда null, GENERALS ниже несёт
 //      ОБЕ записи на расу (не только index 0), apply() читается по
 //      реальному p.gen.id||0, как в клиенте.
-//   4. portalMarchBonus(p.b.portal) — Портал не входит в постройки общего
-//      мира (нет в BUILD_MP_BLDS/BKEYS этого модуля), поэтому p.b.portal
-//      всегда отсутствует — передаётся 0 явно (portalMarchBonus(0)=0), это
-//      не заглушка отдельного бонуса, а честный факт "здания ещё нет".
+//   4. portalMarchBonus(p.b.portal) — Портал теперь настоящее здание общего
+//      мира (mp-build, отдельный кусочек после Фазы 11 — единственное
+//      здание без собственной ценовой кривой и в источнике, работает через
+//      общую BUILD_TABLE), p.b.portal — реальный уровень, не всегда 0.
 //   5. Бонусы дерева исследований (ACADEMY_TREE[*].field/effects, по
 //      p.tech) — уже перенесено в Фазе 5, здесь наконец подключается.
 //

@@ -8744,18 +8744,20 @@ async function claimChronicle(){
    ========================================================================= */
 let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[] };
 let mpPollTimer = null;
-// Все 15 зданий (кроме Горна — max:1, без реальной механики крафта в общем
-// мире) перенесены на сервер (mp-build): 4 разблокируют mp-train (barracks/
-// range/stable/siege), ещё 5 — это HALL_REQ плюс сама ратуша (wall/store/
-// academy/hospital + hall), без которых ратуша не растёт выше 1 уровня,
-// farm/lumber/quarry/mine дают реальную добычу по времени (production(),
-// см. mpProdPerHour ниже), garrison бьёт настоящим залпом в бою (Фаза 4,
-// пятый кусочек), scout разведывает соседей (mp-scout, Фаза 4, восьмой
-// кусочек — глубина донесения от исследований, se всегда 0, см. заголовок
-// mp-scout). Порядок в списке — тот, в котором здания реально нужны
-// игроку (сначала HALL_REQ, потом ратуша, потом казармы/мастерские/
-// хозяйство).
-const BUILD_MP_BLDS = ["wall","store","academy","hospital","hall","barracks","range","stable","siege","farm","lumber","quarry","mine","garrison","scout","forge"];
+// Все здания BUILDINGS (index.html) перенесены на сервер (mp-build): 4
+// разблокируют mp-train (barracks/range/stable/siege), ещё 5 — это
+// HALL_REQ плюс сама ратуша (wall/store/academy/hospital + hall), без
+// которых ратуша не растёт выше 1 уровня, farm/lumber/quarry/mine дают
+// реальную добычу по времени (production(), см. mpProdPerHour ниже),
+// garrison бьёт настоящим залпом в бою (Фаза 4, пятый кусочек), scout
+// разведывает соседей (mp-scout, Фаза 4, восьмой кусочек — глубина
+// донесения от исследований, se всегда 0, см. заголовок mp-scout), forge —
+// добыча/ковка снаряжения (Фаза 11), portal — реальный marchBonus во всех
+// действиях с маршем (отдельный кусочек после Фазы 11 — до него p.b.portal
+// был честно всегда 0, здания было негде построить). Порядок в списке —
+// тот, в котором здания реально нужны игроку (сначала HALL_REQ, потом
+// ратуша, потом казармы/мастерские/хозяйство).
+const BUILD_MP_BLDS = ["wall","store","academy","hospital","hall","barracks","range","stable","siege","farm","lumber","quarry","mine","garrison","scout","forge","portal"];
 // hospital/farm/lumber/quarry/mine — multi-здания (plots:4 у каждого), все
 // 4 участка (0-3) строятся отдельно — см. renderPlotRow/mpBuildLvAt в
 // foMultiplayer, зеркало plotUnlocked/epochOf.
