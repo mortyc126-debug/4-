@@ -7629,6 +7629,20 @@ function mpBuildingModalHtml(idx){
   const actionLabel=lv<=0?"Построить":"Улучшить";
   h+="<button id='bm-btn' data-mp='build' data-bk='"+bld+"' "+(plot!=null?"data-plot='"+plot+"' ":"")+
      (canGo&&!mpState.loading?"":"disabled")+">"+(maxed?"Предел уровня":queued?"Уже строится":canGo?actionLabel:"Недоступно")+"</button>";
+  // Фаза 19, кусочек 4 — Ратуша/Склад: раньше клик по ним в модалке
+  // показывал ТОЛЬКО базовую карточку (арт/уровень/мощь/цена) — hallInfoHtml
+  // (эпоха, отряды в поле, вместимость марша, черты расы, список эпох
+  // открыто/закрыто) и storeInfoHtml (защищено ресурсов по каждому виду)
+  // не звались вовсе, хотя обе функции ЧИСТЫЕ (принимают p параметром) и
+  // безопасны для прямого переиспользования — не копируем, зовём как есть.
+  // Нужен mpFullShim (не голый pShim=mpCityShim(), там только race/b) —
+  // marchCapacity/capacity внутри дергают bonuses(p), которой нужны
+  // p.gen.tal/p.tech/p.b.portal, отсутствующие в mpCityShim().
+  if(bld==="hall"){
+    if(epochOf(nextLv)>epochOf(lv)) h+="<div id='bm-opens'>Открывает: "+RACE_EPOCHS[pShim.race][epochOf(nextLv)-1].title+"</div>";
+    h+=hallInfoHtml(mpFullShim(mpState.player,st));
+  }
+  if(bld==="store") h+=storeInfoHtml(mpFullShim(mpState.player,st));
   h+=mpTrainInfoHtml(bld,pShim,st);
   if(bld==="hospital") h+=mpHospitalInfoHtml(pShim,st);
   if(bld==="forge" && lv>0) h+=mpCellForgeHtml(st);
