@@ -711,6 +711,20 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #onboard{position:fixed;inset:0;z-index:70;display:none;align-items:stretch;justify-content:center;
   padding:0;background:rgba(8,5,2,.86)}
 #onboard.open{display:flex}
+/* Фаза 14, кусочек 9 — экран загрузки общего мира. z-index выше #onboard
+   (70) — накрывает и его: пока mpOpen() ещё не решил "авто-резюме или
+   визард", под накидкой могла бы на кадр мелькнуть недорисованная сцена.
+   display управляется только через JS (mpShowLoading/mpHideLoading) —
+   никакой CSS-класс не открывает/не закрывает её саму. */
+#mp-loading{position:fixed;inset:0;z-index:90;display:none;
+  flex-direction:column;align-items:center;justify-content:center;gap:18px;
+  background:radial-gradient(ellipse at center,rgba(28,21,13,.97),rgba(8,5,2,.99));}
+.mp-loading-ring{width:56px;height:56px;border-radius:50%;
+  border:3px solid rgba(194,153,60,.22);border-top-color:var(--gilt-hi);
+  animation:mp-loading-spin 1s linear infinite}
+@keyframes mp-loading-spin{to{transform:rotate(360deg)}}
+.mp-loading-txt{font-variant:small-caps;letter-spacing:.14em;font-size:14px;
+  color:var(--vellum-dim)}
 #onboard .ob-card{position:relative;width:100%;max-width:720px;
   overflow-y:auto;-webkit-overflow-scrolling:touch;
   background-image:url(images/ui/mail-parchment.jpg);background-size:cover;background-position:center;
@@ -1265,6 +1279,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 
 <div id="veil"><div id="scroll"></div></div>
 <div id="herald"></div>
+
+<!-- Фаза 14, кусочек 9 — автор указал: 3D-мир/шапка/меню на несколько
+     секунд видны В ПРОЦЕССЕ загрузки (WebGPU+.glb — секунды, не миллисекунды,
+     см. баг-фикс камеры выше; mp-join — сетевой круг) — выглядит как
+     зависание/баг, а не загрузка. Полноэкранная накидка поверх ВСЕГО (даже
+     поверх #onboard, z-index 70) — до явного mpHideLoading() снизу. -->
+<div id="mp-loading">
+  <div class="mp-loading-ring"></div>
+  <div class="mp-loading-txt">Загрузка мира…</div>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
@@ -6740,7 +6764,14 @@ function mpCellPanelHtml(idx){
   const c=CITY_CELLS[idx]; if(!c || !c.bk) return "";
   const st=mpState.player.state, pShim=mpCityShim();
   const bld=c.bk, isMultiBld=BUILD_MP_MULTI.has(bld), plot=isMultiBld?c.pl:null;
-  const lv=cityCellLevel(pShim,c), nextLv=lv+1, hallLv=st.b.hall||0;
+  // lv||0 — та же защита, что и у mpPower() выше: forge/portal не входят в
+  // BKEYS newPlayerState (mp-join), st.b.forge/st.b.portal ровно undefined
+  // у большинства игроков, а не 0 — cityCellLevel() тут дословно одиночная
+  // функция (p.b[bk]), без собственной защиты (в одиночке она и не нужна,
+  // там все здания инициализированы). Без ||0 nextLv=NaN — buildCost/
+  // buildTime с NaN уже реальный кандидат на такое же падение, что и было
+  // в mpPower() (см. её комментарий).
+  const lv=cityCellLevel(pShim,c)||0, nextLv=lv+1, hallLv=st.b.hall||0;
   const queued=st.queues.find(q=>q&&q.b===bld&&q.plot===plot);
   let body="<div class='title'>"+buildingName(bld,pShim)+(isMultiBld?" — участок "+(plot+1):"")+" — уровень "+lv+"</div>";
   if(isMultiBld && !plotUnlocked(bld,plot,hallLv)){
@@ -6958,10 +6989,28 @@ function mpRenderFolio(){
 // генерал (genPowerOf) + снаряжение (gearPowerOf)) — отличие ровно одно:
 // войска "в походах" берутся из mpState.marches (свои реальные марши с
 // сервера), а не из глобального W.marches (столицы НЕВИДИМОЙ одиночки).
+//
+// НАЙДЕН реальный баг (автор сообщил "нет аватарки/мощи, меню будто не
+// дорисовывается совсем"): BKEYS тут — одиночный Object.keys(BUILDINGS),
+// в котором есть "forge"/"portal" (Фаза 11+). Но BKEYS у mp-join
+// (newPlayerState) СПИСОК КОРОЧЕ — forge/portal туда не входят, потому что
+// участок под них выделяется отдельно только когда игрок реально что-то
+// строит там впервые (см. mp-build/applyBuild). Значит p.b.forge/p.b.portal
+// у большинства игроков ПРОСТО undefined, а не 0. buildingPower(bk,lv) с
+// lv=undefined НЕ считает это "<=0" (undefined<=0 это false, не true — тот
+// же класс ошибки, что и NaN-сравнения) и падает в tblRow() на
+// undefined.power — необработанное исключение прямо внутри mpRenderTop().
+// Дальше это не тихо гаснет: mpRenderTop() зовётся из mpRerender(), а та —
+// без единого try/catch — из КАЖДОГО mpRefreshXxx() в цепочке mpPollTick()/
+// mpOpen(), так что одно упавшее число мощи обрывало ВЕСЬ хвост опроса
+// (почта/марши/точки/лагеря так и не обновлялись) — отсюда и "как будто
+// всё не дорисовалось", не только сама мощь. Чинится тем же приёмом,
+// что уже используется в mpBuildLv/renderPlotRow чуть ниже (foMultiplayer)
+// — `||0`, а не голое чтение p.b[k].
 function mpPower(p){
   let v=0; BKEYS.forEach(k=>{
-    const lv=p.b[k];
-    if(Array.isArray(lv)) lv.forEach(l=>v+=buildingPower(k,l)); else v+=buildingPower(k,lv);
+    const lv=p.b[k]||0;
+    if(Array.isArray(lv)) lv.forEach(l=>v+=buildingPower(k,l||0)); else v+=buildingPower(k,lv);
   });
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++) v+=((p.troops[t]&&p.troops[t][i])||0)*unitPower(i)});
   mpState.marches.forEach(m=>TKEYS.forEach(t=>{for(let i=1;i<=5;i++)v+=((m.units&&m.units[t]&&m.units[t][i])||0)*unitPower(i)}));
@@ -9197,12 +9246,24 @@ function mpWorldSnapshot(){
 // создаст свою камеру, а потом брать данные заново из mpState.player
 // (не из замыкания — на момент повторной попытки они могут уже
 // обновиться опросом).
+// Фаза 14, кусочек 9 — экран загрузки (mpShowLoading/mpHideLoading): по тому
+// же наблюдению, что и у самого бага выше — WebGPU+.glb занимают секунды, и
+// эти секунды пользователь раньше видел недорисованную сцену (что выглядит
+// как зависание, не как загрузка). #world3d создаёт cam ПОСЛЕ того, как
+// начальная партия моделей (Promise.allSettled в main.ts) уже догрузилась —
+// значит "камера готова" на практике означает и "сцена готова", не только
+// "можно двигать камеру". Поэтому готовность камеры — тот же самый момент,
+// когда стоит снять накидку, никакого отдельного сигнала от движка заводить
+// не пришлось.
+function mpShowLoading(){ const el=$("#mp-loading"); if(el) el.style.display="flex"; }
+function mpHideLoading(){ const el=$("#mp-loading"); if(el) el.style.display="none"; }
 function mpFocusWorld3D(){
   const apply=(w)=>{
     const p=mpState.player; if(!p) return false;
     w.cam.tx=p.x; w.cam.tz=p.y;
     if(typeof w.H==="function") w.cam.ty=w.H(p.x,p.y)+2;
     w.cam.dist=40; w.cam.pitch=0.5;
+    mpHideLoading();
     return true;
   };
   const w=world3dWin();
@@ -9211,7 +9272,14 @@ function mpFocusWorld3D(){
   const iv=setInterval(()=>{
     tries++;
     const w2=world3dWin();
-    if((w2 && apply(w2)) || tries>50) clearInterval(iv);
+    // succeeded — apply() уже сама сняла накидку (см. выше), тут только
+    // остановить таймер. tries>50 — движок так и не поднялся за ~5с
+    // (WebGPU недоступен и т.п.): снимаем накидку всё равно сами, а не
+    // оставляем пользователя перед вечным спиннером — честнее показать
+    // что есть (тот самый частично готовый экран), чем застрять на
+    // "Загрузка мира…" навсегда.
+    const succeeded=w2 && apply(w2);
+    if(succeeded || tries>50){ clearInterval(iv); if(!succeeded) mpHideLoading(); }
   },100);
 }
 $("#t-in").onclick=()=>zoomAt(1.35);
@@ -9656,6 +9724,13 @@ async function mpOpen(){
     // foMultiplayer) остаётся честным быстрым путём, не первым
     // впечатлением от игры.
     if(!SP_UNLOCKED && !wasJoined && /Нужна раса/.test(e.message)){
+      // Фаза 14, кусочек 9 — визард сам по себе уже готовый экран (не
+      // "загрузка"), снимаем накидку ДО его показа: иначе игрок с новым
+      // anon-uid смотрел бы на спиннер вместо формы регистрации, пока сам
+      // не заполнит её — mpFocusWorld3D() ниже (внутри mpDoJoin) снимет
+      // накидку ЕЩЁ раз, когда 3D будет готово, но к тому моменту она уже
+      // должна быть снята ради самого визарда.
+      mpHideLoading();
       const pick=await runMpOnboarding();
       mpState.race=pick.race; mpState.nick=pick.nick;
       await mpDoJoin();
@@ -9666,6 +9741,10 @@ async function mpOpen(){
       // ошибкой куда более информативную ошибку самого join).
       if(mpState.joined) await mpDoPickGen(pick.genId);
     } else {
+      // Настоящий сбой (сеть/500) — тоже не "загрузка", а конечное
+      // состояние: накидку долой, панель честно покажет mpState.err (см.
+      // foMultiplayer), не оставляем пользователя перед вечным спиннером.
+      mpHideLoading();
       mpState.err=e.message;
     }
   }
@@ -10643,6 +10722,11 @@ function foMultiplayer(embedded){
   // openMenuModal("mp") ДО загрузки одиночки (чтобы не отстать от
   // зависшего await) тоже больше нет.
   if(!SP_UNLOCKED){
+    // Фаза 14, кусочек 9 — экран загрузки на всё время, пока не готова 3D-
+    // сцена ИЛИ не готова форма регистрации/ошибка (см. mpOpen() ниже —
+    // она сама снимает накидку в нужный момент, до этого места накидка
+    // просто должна успеть появиться раньше первого кадра).
+    mpShowLoading();
     // Фаза 14, кусочек 1 — объёмная карта общего мира видна и в
     // gate-режиме, не только при ?sp=1. #app.view-world прячет #ledger
     // (одиночные вкладки) и показывает #chart (#world3d/#tools/
