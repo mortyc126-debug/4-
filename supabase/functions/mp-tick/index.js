@@ -893,6 +893,49 @@ function applyLosses(units, dmgByType, race, hpBonus = 0) {
   });
   return { units: lost, hpLost };
 }
+// index.html:3706 genStats — эфемерный боевой снимок полководца (atk/def/
+// hp), НЕ p.gen (постоянная запись игрока: lv/xp/pts/tal). Строится заново
+// на каждый вызов resolvePvp/resolveBanditRaid из p.gen.lv — как и в
+// источнике, полководец не "лечится между боями" и не "умирает навсегда":
+// каждый следующий бой начинается с полным HP независимо от исхода
+// предыдущего. Честное упрощение: БЕЗ gearBonus(p) (index.html:3709) — в
+// общем мире нет ни кузницы, ни снаряжения вообще (Фаза 11, 0% перенесено,
+// см. supabase/README.md), gear-вклад в источнике был бы 0 для абсолютно
+// любого игрока прямо сейчас, добавлять его тут значило бы копировать код,
+// который гарантированно ничего не считает.
+function genStats(p) {
+  if (!p.gen || p.gen.id == null) return null;
+  const B = bonuses(p), lv = p.gen.lv || 1, g = Math.pow(lv, 1.15);
+  return {
+    hp: Math.round((250 + 30 * g) * (1 + B.genHpMod)),
+    atk: Math.round((200 + 40 * g) * (1 + B.genAtkMod)),
+    def: Math.round((170 + 30 * g) * (1 + B.genDefMod)),
+  };
+}
+// index.html:4070 generalDamage — полководец бьёт по всем родам войск
+// сразу, вне треугольника контр (не считается ни "пехотой", ни "лучником").
+// gen — снимок genStats() выше, а не p.gen; hp<=0 просто гасит урон до
+// конца ЭТОГО боя, не убивает полководца навсегда.
+function generalDamage(gen, defS) {
+  if (!gen || gen.hp <= 0) return null;
+  const out = {};
+  TKEYS.forEach((dt) => {
+    if (defS[dt].n <= 0) { out[dt] = 0; return; }
+    const share = gen.atk * (defS[dt].hp / Math.max(1, defS.totalHp));
+    const mitig = 1 + (defS[dt].def / Math.max(1, defS[dt].n)) / 70;
+    out[dt] = share * BATTLE_PACE / mitig;
+  });
+  return out;
+}
+// index.html:4082 damageToGeneral — получает урон от ВСЕХ родов войск
+// противника усреднённо (под прикрытием собственной армии — не тонет в
+// общем количестве вражеских ударов, как тонул бы обычный боец).
+function damageToGeneral(gen, enemyS) {
+  if (!gen || gen.hp <= 0 || enemyS.totalN <= 0) return 0;
+  const avgAtk = TKEYS.reduce((s, t) => s + enemyS[t].atk, 0) / enemyS.totalN;
+  const mitig = 1 + gen.def / 70;
+  return avgAtk * BATTLE_PACE * 0.4 / mitig;
+}
 // index.html:4129 resolveBattle — Фаза 9, кусочек 1: настоящий раундовый
 // бой (до ROUND_CAP схваток подряд, войска тают постепенно) вместо
 // единственного обмена ударами, которым эта функция была с Фазы 4.
@@ -908,9 +951,11 @@ function applyLosses(units, dmgByType, race, hpBonus = 0) {
 // −30% атаки/защиты до конца боя. Проверяется КАЖДЫЙ раунд по накопленным
 // потерям (attLossTotal/defLossTotal, которые уже считались и раньше —
 // просто раньше никто их не читал для этого), как и в источнике.
+// Кусочек 4: урон по/от полководцам в бою (generalDamage/damageToGeneral/
+// genStats выше) — только если игрок вообще выбрал полководца (mp-pickgen,
+// Фаза 7); без него f.gen===null и оба урона тихо гасятся, как и в SP.
 // Честно ЕЩЁ НЕ входит (см. supabase/README.md, каждое — отдельный
-// следующий кусочек): урон по/от полководцам в бою (generalDamage/
-// damageToGeneral), поднятие нежити прямо в бою (raiseSkeletons — раз в
+// следующий кусочек): поднятие нежити прямо в бою (raiseSkeletons — раз в
 // момент прибытия оно уже применяется отдельно, здесь речь о ПОРАУНДОВОМ
 // подъёме), контрудар гарнизона (dwarf B.counter), первый залп лучников
 // без ответа (elf firstStrike, index.html:4176-4181 — сейчас есть только
@@ -948,6 +993,10 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
     checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
   }
   let round = 0;
+  // index.html:3958-3964 f.gen — эфемерный, строится один раз на бой (не
+  // за раунд), полководец без выбора (p.gen.id==null) даёт null и просто
+  // не участвует, как и в источнике.
+  let attGen = genStats(attP), defGen = genStats(defP);
   while (round < ROUND_CAP) {
     const attS = sideStats(attU, attP.race, attB, attBroken), defS = sideStats(defU, defP.race, defB, defBroken);
     if (attS.totalN <= 0 || defS.totalN <= 0) break;
@@ -958,6 +1007,21 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
     const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp);
     defU = unitsSub(defU, defLoss.units); defLossTotal = unitsAdd(defLossTotal, defLoss.units);
     attU = unitsSub(attU, attLoss.units); attLossTotal = unitsAdd(attLossTotal, attLoss.units);
+    // index.html:4222-4228 — полководцы бьют/получают на тех же attS/defS,
+    // что и основной обмен этого раунда (снятые ДО применения урона выше —
+    // тот же порядок, что и в источнике).
+    const genDmgToDef = generalDamage(attGen, defS);
+    if (genDmgToDef) {
+      const l = applyLosses(defU, genDmgToDef, defP.race, defB.hp);
+      defU = unitsSub(defU, l.units); defLossTotal = unitsAdd(defLossTotal, l.units);
+    }
+    const genDmgToAtt = generalDamage(defGen, attS);
+    if (genDmgToAtt) {
+      const l = applyLosses(attU, genDmgToAtt, attP.race, attB.hp);
+      attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
+    }
+    if (attGen) attGen.hp = Math.max(0, attGen.hp - damageToGeneral(attGen, defS));
+    if (defGen) defGen.hp = Math.max(0, defGen.hp - damageToGeneral(defGen, attS));
     checkDiscipline(defUnits, defLossTotal, defP.race, defBroken);
     checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
   }
@@ -1083,15 +1147,16 @@ const BANDIT_B = { atk: 0, def: 0, hp: 0, matk: 0, mdef: 0, archer: 0 };
 // resolvePvp выше), а тот же однообменный resolvePvp, что и у PvP —
 // честная общая упрощённая боевая модель общего мира, не два разных стиля
 // боя под одной крышей.
-// Фаза 9, кусочки 1-3 — тот же переход на раундовый цикл + погоду +
-// дисциплину, что и у resolvePvp выше (см. её заголовок насчёт честных
-// пробелов, здесь те же самые: без урона по/от полководцам/контрудара/
-// первого залпа — у разбойников и так нет ни стены, ни башни, ни первого
-// залпа лучников, поэтому кроме погоды и дисциплины им ничего из
-// залповых механик и не полагалось). attP.race=null для лагеря (banditArmy)
-// — disciplineThreshold(t,i,null) просто не находит расового бонуса
+// Фаза 9, кусочки 1-4 — тот же переход на раундовый цикл + погоду +
+// дисциплину + урон полководца, что и у resolvePvp выше (см. её заголовок
+// насчёт честных пробелов, здесь те же самые: без контрудара/первого
+// залпа — у разбойников и так нет ни стены, ни башни, ни первого залпа
+// лучников). attP.race=null для лагеря (banditArmy) — disciplineThreshold
+// (t,i,null) просто не находит расового бонуса
 // (RACE_DISCIPLINE_BONUS[null]===undefined), даёт голый порог без надбавки,
-// ровно как и было задумано для "разбойников и т.п." в источнике.
+// ровно как и было задумано для "разбойников и т.п." в источнике. У самого
+// лагеря НЕТ полководца (banditArmy — просто гарнизон, не игрок) — бьёт и
+// получает удары только полководец АТАКУЮЩЕГО, если тот его выбрал.
 function resolveBanditRaid(attUnits, attP, campLv, marchId = 0) {
   const attB = bonuses(attP);
   const bandStart = banditArmy(campLv);
@@ -1104,6 +1169,7 @@ function resolveBanditRaid(attUnits, attP, campLv, marchId = 0) {
   const jit = weather.jitter || 0.05;
   const roll = () => 1 + (rnd() * 2 - 1) * jit;
   let round = 0;
+  let attGen = genStats(attP);
   while (round < ROUND_CAP) {
     const attS = sideStats(attU, attP.race, attB, attBroken), bandS = sideStats(bandU, null, BANDIT_B, bandBroken);
     if (attS.totalN <= 0 || bandS.totalN <= 0) break;
@@ -1114,6 +1180,12 @@ function resolveBanditRaid(attUnits, attP, campLv, marchId = 0) {
     const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp);
     bandU = unitsSub(bandU, bandLoss.units); bandLossTotal = unitsAdd(bandLossTotal, bandLoss.units);
     attU = unitsSub(attU, attLoss.units); attLossTotal = unitsAdd(attLossTotal, attLoss.units);
+    const genDmgToBand = generalDamage(attGen, bandS);
+    if (genDmgToBand) {
+      const l = applyLosses(bandU, genDmgToBand, null, 0);
+      bandU = unitsSub(bandU, l.units); bandLossTotal = unitsAdd(bandLossTotal, l.units);
+    }
+    if (attGen) attGen.hp = Math.max(0, attGen.hp - damageToGeneral(attGen, bandS));
     checkDiscipline(bandStart, bandLossTotal, null, bandBroken);
     checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
   }
