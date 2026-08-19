@@ -8968,20 +8968,23 @@ function runOnboarding(demo){
   });
 }
 
-// Фаза 13, продолжение — тот же экран летописи (#onboard/#ob-body/.ob-*),
-// что и у runOnboarding() выше, но для регистрации в общем мире: всего
-// два шага (народ → имя), БЕЗ выбора полководца — тот выбирается позже,
-// уже в игре (рубрика «Полководец», mp-pickgen, Фаза 7), mp-join
-// полководца вообще не принимает. Отдельная функция, а не runOnboarding
-// с новым параметром — там шаг генерала вплетён прямо в render()/клики
-// (step===2 читает GENERALS[pick.race][pick.genId] и т.д.), городить
-// условный пропуск шага внутри и так плотной функции рискованнее, чем
-// написать свою короче на два шага. Не демо: результат реально уходит на
-// сервер (mp-join), поэтому баннера "Предпросмотр" здесь нет.
+// Фаза 13, продолжение (4) — тот же экран летописи (#onboard/#ob-body/
+// .ob-*), что и у runOnboarding() выше, и с тем же составом шагов (народ
+// → полководец → имя) — регистрация в общем мире не должна казаться
+// урезанной версией одиночной. mp-join сам по себе полководца НЕ
+// принимает (его тело — только race/nick), поэтому genId, выбранный на
+// шаге 2, применяется отдельным вызовом mp-pickgen (Фаза 7) сразу после
+// успешного mp-join — см. mpOpen(). Отдельная функция, а не runOnboarding
+// с новым параметром: та либо демо (без сети), либо настоящее одиночное
+// заведение партии (claimChronicle) — здесь третий, MP-путь дописывать
+// внутрь и так плотной функции веткой на каждый шаг рискованнее, чем
+// иметь свою копию, которая просто устроена ТОЧНО ТАК ЖЕ. Не демо:
+// результат реально уходит на сервер, поэтому баннера "Предпросмотр"
+// здесь нет.
 function runMpOnboarding(){
   return new Promise(resolve=>{
     const wrap=$("#onboard"), body=$("#ob-body");
-    const pick={race:null, nick:""};
+    const pick={race:null, genId:null, nick:""};
     let step=1;
     function render(){
       let h="";
@@ -9000,17 +9003,36 @@ function runMpOnboarding(){
              "<div class='mn'><b>Слабость</b><br>"+R.minus.desc+"</div></div>";
         }
         h+="<button class='ob-go' data-ob='next'"+(pick.race?"":" disabled")+">Далее</button>";
-      } else {
+      } else if(step===2){
+        // Тот же шаг, что и в runOnboarding() (одиночка) — GENERALS/
+        // avatar-<race><i+1> те же самые данные и картинки, mp-pickgen
+        // (Фаза 7) принимает ровно этот genId сразу после mp-join.
         const R=RACES[pick.race];
         h+="<div id='ob-hd'>"+R.name+"</div>"+
+           "<div id='ob-title'>Кто поведёт войско</div>"+
+           "<div id='ob-lede'>Полководец тоже выбирается один раз и до конца партии. Один из двух "+
+           "обычно усиливает то, в чём народ и так силён, другой платит своим даром за слабость расы.</div>";
+        h+="<div class='ob-gens'>"+GENERALS[pick.race].map((g,i)=>
+          "<div class='ob-gen"+(pick.genId===i?" on":"")+"' data-ob='gen' data-i='"+i+"' "+
+          "style='--rc:"+R.color+"'>"+
+          "<img src='images/ui/avatar-"+pick.race+(i+1)+".png' alt='' onerror=\"this.style.visibility='hidden'\">"+
+          "<div><div class='nm'>"+g.name+"</div><div class='rl'>"+g.role+"</div>"+
+          "<div class='bn'>"+g.flavor+"</div><div class='gen-stat'>"+g.stat+"</div></div></div>").join("")+"</div>";
+        h+="<button class='ob-go' data-ob='next'"+(pick.genId!=null?"":" disabled")+">Далее</button>"+
+           "<button class='ob-back' data-ob='back'>Назад к выбору народа</button>";
+      } else {
+        const R=RACES[pick.race], G=GENERALS[pick.race][pick.genId];
+        h+="<div id='ob-hd'>Летопись нового правителя</div>"+
            "<div class='ob-sum' style='--rc:"+R.color+"'>"+shieldSvg(pick.race)+
-             "<div><div class='nm'>"+R.name+"</div></div></div>"+
+             "<img src='images/ui/avatar-"+pick.race+(pick.genId+1)+".png' alt='' "+
+             "onerror=\"this.style.visibility='hidden'\">"+
+             "<div><div class='nm'>"+R.name+"</div><div class='gn'>"+G.name+"</div></div></div>"+
            "<div id='ob-title'>Внесите своё имя</div>"+
            "<div id='ob-lede'>Под этим именем вас запомнят соседи.</div>"+
            "<input id='ob-name' maxlength='24' placeholder='Имя правителя' autocomplete='off'>"+
-           "<div class='ob-note'>Имя можно будет сменить позже. Народ — нет. Полководца выберете уже в игре.</div>"+
+           "<div class='ob-note'>Имя можно будет сменить позже. Народ и полководец — нет.</div>"+
            "<button class='ob-go' data-ob='done'>Начать</button>"+
-           "<button class='ob-back' data-ob='back'>Назад к выбору народа</button>";
+           "<button class='ob-back' data-ob='back'>Назад к полководцу</button>";
       }
       body.innerHTML=h;
       const inp=$("#ob-name");
@@ -9019,9 +9041,10 @@ function runMpOnboarding(){
     body.onclick=e=>{
       const el=e.target.closest("[data-ob]"); if(!el) return;
       const a=el.dataset.ob;
-      if(a==="race"){ pick.race=el.dataset.r; render(); }
-      else if(a==="next"){ if(step===1&&pick.race) step=2; render(); }
-      else if(a==="back"){ const inp=$("#ob-name"); if(inp) pick.nick=inp.value; step=1; render(); }
+      if(a==="race"){ pick.race=el.dataset.r; pick.genId=null; render(); }
+      else if(a==="gen"){ pick.genId=+el.dataset.i; render(); }
+      else if(a==="next"){ if(step===1&&pick.race) step=2; else if(step===2&&pick.genId!=null) step=3; render(); }
+      else if(a==="back"){ const inp=$("#ob-name"); if(inp) pick.nick=inp.value; step--; render(); }
       else if(a==="done"){
         const inp=$("#ob-name");
         pick.nick=((inp&&inp.value)||"").trim().slice(0,24)||"Безымянный лорд";
@@ -9190,6 +9213,12 @@ async function mpOpen(){
       const pick=await runMpOnboarding();
       mpState.race=pick.race; mpState.nick=pick.nick;
       await mpDoJoin();
+      // Полководец выбран в визарде (шаг 2), но mp-join его не принимает
+      // (тело только race/nick) — mp-pickgen (Фаза 7) отдельным вызовом
+      // сразу следом, только если сам join реально удался (иначе mpState.
+      // player ещё нет, mp-pickgen закономерно откажет — и затрёт своей
+      // ошибкой куда более информативную ошибку самого join).
+      if(mpState.joined) await mpDoPickGen(pick.genId);
     } else {
       mpState.err=e.message;
     }
