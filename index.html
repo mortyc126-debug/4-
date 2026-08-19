@@ -8470,10 +8470,26 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(joinBtn){ const nickInp=$("#mp-nick"); mpState.nick=nickInp?nickInp.value:""; mpDoJoin(); return; }
   const trainBtn=e.target.closest("[data-mp='train']");
   if(trainBtn){ mpDoTrain(trainBtn.dataset.t); return; }
+  const retrainBtn=e.target.closest("[data-mp='retrain']");
+  if(retrainBtn){ mpDoRetrain(retrainBtn.dataset.t,+retrainBtn.dataset.from); return; }
   const healBtn=e.target.closest("[data-mp='heal']");
   if(healBtn){ mpDoHeal(healBtn.dataset.t); return; }
   const buildBtn=e.target.closest("[data-mp='build']");
   if(buildBtn){ mpDoBuild(buildBtn.dataset.bk, buildBtn.dataset.plot==null?null:+buildBtn.dataset.plot); return; }
+  const forgeBtn=e.target.closest("[data-mp='forge']");
+  if(forgeBtn){ mpDoForge(forgeBtn.dataset.mat); return; }
+  const matupBtn=e.target.closest("[data-mp='matup']");
+  if(matupBtn){ mpDoUpgrade(matupBtn.dataset.mat,+matupBtn.dataset.tier); return; }
+  const craftBtn=e.target.closest("[data-mp='craft']");
+  if(craftBtn){ mpDoCraft(craftBtn.dataset.slot); return; }
+  const usetomeBtn=e.target.closest("[data-mp='usetome']");
+  if(usetomeBtn){ mpDoUsetome(+usetomeBtn.dataset.v); return; }
+  const equipBtn=e.target.closest("[data-mp='equip']");
+  if(equipBtn){ mpDoEquip(equipBtn.dataset.slot,equipBtn.dataset.order,+equipBtn.dataset.rarity); return; }
+  const unequipBtn=e.target.closest("[data-mp='unequip']");
+  if(unequipBtn){ mpDoUnequip(unequipBtn.dataset.slot); return; }
+  const dismantleBtn=e.target.closest("[data-mp='dismantle']");
+  if(dismantleBtn){ mpDoDismantle(dismantleBtn.dataset.slot,dismantleBtn.dataset.order,+dismantleBtn.dataset.rarity); return; }
   const attackPickBtn=e.target.closest("[data-mp='attackpick']");
   if(attackPickBtn){ mpState.attackTarget=+attackPickBtn.dataset.id; mpRerender(); return; }
   const attackCancelBtn=e.target.closest("[data-mp='attackcancel']");
@@ -8730,18 +8746,20 @@ async function claimChronicle(){
    ========================================================================= */
 let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[] };
 let mpPollTimer = null;
-// Все 15 зданий (кроме Горна — max:1, без реальной механики крафта в общем
-// мире) перенесены на сервер (mp-build): 4 разблокируют mp-train (barracks/
-// range/stable/siege), ещё 5 — это HALL_REQ плюс сама ратуша (wall/store/
-// academy/hospital + hall), без которых ратуша не растёт выше 1 уровня,
-// farm/lumber/quarry/mine дают реальную добычу по времени (production(),
-// см. mpProdPerHour ниже), garrison бьёт настоящим залпом в бою (Фаза 4,
-// пятый кусочек), scout разведывает соседей (mp-scout, Фаза 4, восьмой
-// кусочек — глубина донесения от исследований, se всегда 0, см. заголовок
-// mp-scout). Порядок в списке — тот, в котором здания реально нужны
-// игроку (сначала HALL_REQ, потом ратуша, потом казармы/мастерские/
-// хозяйство).
-const BUILD_MP_BLDS = ["wall","store","academy","hospital","hall","barracks","range","stable","siege","farm","lumber","quarry","mine","garrison","scout"];
+// Все здания BUILDINGS (index.html) перенесены на сервер (mp-build): 4
+// разблокируют mp-train (barracks/range/stable/siege), ещё 5 — это
+// HALL_REQ плюс сама ратуша (wall/store/academy/hospital + hall), без
+// которых ратуша не растёт выше 1 уровня, farm/lumber/quarry/mine дают
+// реальную добычу по времени (production(), см. mpProdPerHour ниже),
+// garrison бьёт настоящим залпом в бою (Фаза 4, пятый кусочек), scout
+// разведывает соседей (mp-scout, Фаза 4, восьмой кусочек — глубина
+// донесения от исследований, se всегда 0, см. заголовок mp-scout), forge —
+// добыча/ковка снаряжения (Фаза 11), portal — реальный marchBonus во всех
+// действиях с маршем (отдельный кусочек после Фазы 11 — до него p.b.portal
+// был честно всегда 0, здания было негде построить). Порядок в списке —
+// тот, в котором здания реально нужны игроку (сначала HALL_REQ, потом
+// ратуша, потом казармы/мастерские/хозяйство).
+const BUILD_MP_BLDS = ["wall","store","academy","hospital","hall","barracks","range","stable","siege","farm","lumber","quarry","mine","garrison","scout","forge","portal"];
 // hospital/farm/lumber/quarry/mine — multi-здания (plots:4 у каждого), все
 // 4 участка (0-3) строятся отдельно — см. renderPlotRow/mpBuildLvAt в
 // foMultiplayer, зеркало plotUnlocked/epochOf.
@@ -8841,9 +8859,78 @@ async function mpDoTrain(type){
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
+// Новый кусочек (после Фазы 11) — переобучение войск в следующий тир
+// (mp-retrain), см. рубрику «Переобучение» в foMultiplayer. Читает
+// количество из <input id='mp-rt-n-<type>-<fromTier>'>, тот же приём, что
+// у mp-n-<t> в наборе войск.
+async function mpDoRetrain(type,fromTier){
+  const inp=document.getElementById("mp-rt-n-"+type+"-"+fromTier);
+  const n=Math.max(1,+((inp&&inp.value)||1));
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-retrain",{type,fromTier,n}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
 async function mpDoBuild(bk,plot){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-build",plot==null?{bk}:{bk,plot}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+// Фаза 11, кусочек 1 — добыча материалов в Горне (mp-forge), см. рубрику
+// «Горн» в foMultiplayer.
+async function mpDoForge(mat){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-forge",{mat}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+// Фаза 11, кусочек 2 — слияние 4 материалов в 1 более редкий (mp-upgrade),
+// см. рубрику «Горн» в foMultiplayer.
+async function mpDoUpgrade(mat,tier){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-upgrade",{mat,tier}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+// Фаза 11, кусочек 3 — ковка снаряжения (mp-craft), см. рубрику «Ковка
+// снаряжения» в foMultiplayer. Читает выбор школы/редкости из <select>
+// (id='mp-craft-order-<slot>'/'mp-craft-rarity-<slot>'), тот же приём, что
+// и у полей набора войск (mp-n-<t>).
+async function mpDoCraft(slot){
+  const orderEl=document.getElementById("mp-craft-order-"+slot);
+  const rarityEl=document.getElementById("mp-craft-rarity-"+slot);
+  const order=orderEl?orderEl.value:"bastion", rarity=rarityEl?+rarityEl.value:1;
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-craft",{slot,order,rarity}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+// Фаза 11, кусочек 4 — надеть/снять/разобрать (mp-equip/mp-unequip/
+// mp-dismantle), см. рубрику «Снаряжение» в foMultiplayer.
+// Новый кусочек (после Портала) — потратить книгу опыта (mp-usetome), см.
+// рубрику «Книги опыта» в foMultiplayer.
+async function mpDoUsetome(v){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-usetome",{v}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+async function mpDoEquip(slot,order,rarity){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-equip",{slot,order,rarity}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+async function mpDoUnequip(slot){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-unequip",{slot}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+async function mpDoDismantle(slot,order,rarity){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-dismantle",{slot,order,rarity}); await mpRefreshPlayer(); }
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -8864,9 +8951,10 @@ async function mpDoHeal(type){
 async function mpDoAttack(defenderId){
   const units={};
   TKEYS.forEach(t=>{ const inp=$("#mp-atk-"+t); units[t]={1:Math.max(0,Math.round(+((inp&&inp.value)||0)))}; });
+  const genInp=$("#mp-atk-gen"), withGen=!!(genInp&&genInp.checked);
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
-    await mpCall("mp-attack",{defender_id:defenderId,units});
+    await mpCall("mp-attack",{defender_id:defenderId,units,with_gen:withGen});
     mpState.attackTarget=null;
     await mpRefreshPlayer(); await mpRefreshMarches();
   }catch(e){ mpState.err=e.message; }
@@ -8888,9 +8976,10 @@ async function mpDoGather(x,y){
 async function mpDoRaid(x,y){
   const units={};
   TKEYS.forEach(t=>{ const inp=$("#mp-rd-"+t); units[t]={1:Math.max(0,Math.round(+((inp&&inp.value)||0)))}; });
+  const genInp=$("#mp-rd-gen"), withGen=!!(genInp&&genInp.checked);
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
-    await mpCall("mp-raid",{x,y,units});
+    await mpCall("mp-raid",{x,y,units,with_gen:withGen});
     mpState.raidTarget=null;
     await mpRefreshPlayer(); await mpRefreshMarches(); await mpRefreshCamps();
   }catch(e){ mpState.err=e.message; }
@@ -9018,13 +9107,13 @@ function foMultiplayer(){
   let h=rubric("Общий мир","бета");
   h+="<div class='entry'><div class='line'><div class='fill'>"+
      "<div class='note'>Один настоящий мир на всех, кто сюда заходит — не отдельная копия для "+
-     "каждого браузера. Все постройки (кроме Горна), набор войск (тир 1), добыча ресурсов по "+
-     "времени, атака с настоящим маршем и боем (стена/башня/лазарет уже настоящие), лечение "+
-     "раненых, разведка и дерево исследований Академии — всё уже здесь, честно упрощённое (см. "+
-     "подсказки на месте и supabase/README.md); раса/эпоха расы/дефолтный генерал/дерево "+
-     "исследований теперь реально влияют на добычу, набор, стройку и лазарет — но полный "+
-     "многораундовый бой (полководцы, погода) и вложение очков таланта генерала из одиночной "+
-     "игры — следующие шаги.</div></div></div></div>";
+     "каждого браузера. Все постройки (включая Горн и Портал), набор и переобучение войск, "+
+     "добыча ресурсов и материалов по времени, ковка и надевание снаряжения, полноценный "+
+     "раундовый бой (погода, дисциплина, полководцы — теперь по-настоящему в одном месте за "+
+     "раз, венцы рас, грабёж склада при победе), лечение раненых, разведка, дерево исследований "+
+     "Академии, опыт/уровень/таланты/книги опыта генерала, точки сбора и лагеря варваров на "+
+     "карте — всё уже здесь, честно упрощённое (см. подсказки на месте и supabase/README.md). "+
+     "Щит мира и перенос столицы намеренно не переносятся вовсе.</div></div></div></div>";
 
   if(!mpState.joined){
     h+="<div class='entry'><div class='line'><div class='fill'>"+
@@ -9038,6 +9127,15 @@ function foMultiplayer(){
   }
 
   const p=mpState.player, st=p.state, pShim={race:p.race,b:st.b};
+  // Новый кусочек — полководец теперь физически один (index.html:4655
+  // takeGen), участвует только в марше, куда его реально взяли. Чекбокс
+  // появляется у атаки/рейда только когда генерал реально доступен —
+  // выбран (st.gen.id!=null) и не в пути с другим маршем (st.gen.away==null).
+  const mpGenTakeCheckboxHtml=(id)=>{
+    if(!(st.gen&&st.gen.id!=null)) return "";
+    if(st.gen.away!=null) return "<div class='note'>Полководец сейчас в другом походе — недоступен.</div>";
+    return "<div class='note'><label><input type='checkbox' id='"+id+"'> Взять полководца (боевые бонусы, риск попасть под удар в этом бою)</label></div>";
+  };
   h+="<div class='entry hot'><div class='line'><div class='fill'>"+
      "<div class='title'>"+(p.nick||"Безымянный лорд")+" · "+RACES[p.race].name+"</div>"+
      "<div class='note'>Координаты в общем мире: "+p.x+", "+p.y+"</div></div></div></div>";
@@ -9074,14 +9172,15 @@ function foMultiplayer(){
          "<div class='title'>"+(n.nick||"Безымянный лорд")+(n.is_bot?" <span class='note'>(бот)</span>":"")+"</div>"+
          "<div class='note'>"+RACES[n.race].name+" · "+n.x+", "+n.y+" · "+dist+" клет."+"</div>";
       if(mpState.attackTarget===n.id){
-        h+="<div class='note' style='color:#e08'>Бой честный, но упрощённый — без полководцев и погоды "+
-           "(стена защитника уже учитывается настоящей формулой; марш и время в пути тоже настоящие — "+
-           "чем медленнее войска, тем дольше идти). "+dist+" клет. по прямой, см. supabase/README.md.</div>";
+        h+="<div class='note' style='color:#e08'>Бой честный (стена защитника, погода и полководец — "+
+           "настоящие; марш и время в пути тоже настоящие — чем медленнее войска, тем дольше идти). "+
+           dist+" клет. по прямой, см. supabase/README.md.</div>";
         TKEYS.forEach(t=>{
           const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
           h+="<div class='note'>"+unitName(t,1,p.race)+" (T1, есть "+RU(have)+"): "+
              "<input id='mp-atk-"+t+"' type='number' min='0' max='"+have+"' value='0'></div>";
         });
+        h+=mpGenTakeCheckboxHtml("mp-atk-gen");
         h+="<button class='seal' data-mp='attack' data-id='"+n.id+"'"+(mpState.loading?" disabled":"")+">В поход</button> "+
            "<button class='seal' data-mp='attackcancel'>Отмена</button>";
       } else {
@@ -9149,13 +9248,14 @@ function foMultiplayer(){
          "<div class='note'>"+c.x+", "+c.y+" · "+dist+" клет.</div>";
       if(mpState.raidTarget===key){
         h+="</div>";
-        h+="<div class='note' style='color:#e08'>Бой честный, но упрощённый — без полководцев и погоды. "+
+        h+="<div class='note' style='color:#e08'>Бой честный (погода и полководец — настоящие). "+
            "Часть потерь отправится в лазарет, часть погибнет насовсем — как при штурме города, но без разграбления вашего дома.</div>";
         TKEYS.forEach(t=>{
           const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
           h+="<div class='note'>"+unitName(t,1,p.race)+" (T1, есть "+RU(have)+"): "+
              "<input id='mp-rd-"+t+"' type='number' min='0' max='"+have+"' value='0'></div>";
         });
+        h+=mpGenTakeCheckboxHtml("mp-rd-gen");
         h+="<button class='seal' data-mp='raid' data-x='"+c.x+"' data-y='"+c.y+"'"+(mpState.loading?" disabled":"")+">В поход</button> "+
            "<button class='seal' data-mp='raidcancel'>Отмена</button>";
       } else {
@@ -9181,13 +9281,12 @@ function foMultiplayer(){
          "<div class='note'>Осталось: "+fmtDur(left)+"</div>";
       // Фаза 4, девятый кусочек — отзыв похода на полпути (mp-recall):
       // разворачивает отряд ОТ ТЕКУЩЕЙ ТОЧКИ, а не мгновенно из дома — чем
-      // дальше он уже прошёл, тем дольше идти назад. Только для ещё идущих
-      // (state:"go") — уже возвращающихся отзывать нечего. Пока действует
-      // только на боевые марши на игрока (mp-recall сам проверяет
-      // mode==="attack") — для gather/raid нужен отдельный разбор "что
-      // делать с уже забронированной добычей"/"с уже начавшимся боем" — не
-      // в этом кусочке, см. supabase/README.md.
-      if(going && !isGather && !isRaid) h+="<button class='seal' data-mp='recall' data-id='"+m.id+"'"+(mpState.loading?" disabled":"")+">Отозвать</button>";
+      // дальше он уже прошёл, тем дольше идти назад. Фаза 9 (мелкий
+      // пробел): mp-recall теперь понимает и gather/raid, не только
+      // attack — кнопка доступна, пока отряд ещё идёт (state:"go", любой
+      // режим) ИЛИ уже стоит на точке сбора (state:"gather" — тогда сбор
+      // засчитывается целиком, см. заголовок mp-recall/index.js).
+      if(going || (gathering && isGather)) h+="<button class='seal' data-mp='recall' data-id='"+m.id+"'"+(mpState.loading?" disabled":"")+">Отозвать</button>";
       h+="</div></div></div>";
     });
   }
@@ -9211,8 +9310,14 @@ function foMultiplayer(){
       h+="<div class='entry"+(won?" hot":" war")+"'><div class='line'><div class='fill'>"+
          "<div class='title'>"+(mine?"Напали на ":"Напали от ")+(d.opponent_nick||"Безымянный лорд")+
          " — "+(won?"победа":"поражение")+"</div>"+
-         "<div class='note'>Наши потери: "+RU(lostN(myLoss))+" · потери противника: "+RU(lostN(oppLoss))+hospNote+"</div>"+
-         "</div></div></div>";
+         "<div class='note'>Наши потери: "+RU(lostN(myLoss))+" · потери противника: "+RU(lostN(oppLoss))+hospNote+"</div>";
+      // Грабёж склада — то же поле d.loot, что и у мока mp-tick, лежит в
+      // обоих письмах (атакующему и защитнику), но реально ненулевое
+      // только когда won && mine (штурм чужого города удался).
+      const lootTxt=d.loot&&RES.filter(r=>d.loot[r]).map(r=>RES_NAME[r]+" "+RU(d.loot[r])).join(" · ");
+      if(mine&&won&&lootTxt) h+="<div class='note'>Захвачено: "+lootTxt+"</div>";
+      else if(!mine&&!won&&lootTxt) h+="<div class='note'>Разграблено: "+lootTxt+"</div>";
+      h+="</div></div></div>";
     });
   }
 
@@ -9270,7 +9375,11 @@ function foMultiplayer(){
          "<div class='title'>Лагерь "+d.camp_lv+" ур. — "+(d.win?"разгромлен":"отряд разбит")+"</div>"+
          "<div class='note'>Потери: легкораненые "+RU(d.slight||0)+", тяжелораненые "+RU(d.hurt||0)+
          ", убито "+RU(d.dead||0)+" (из "+RU(lostN(d.attLoss))+" пострадавших)</div>";
-      if(d.win) h+="<div class='note'>Добыча: "+RES.filter(r=>d.loot&&d.loot[r]).map(r=>RES_NAME[r]+" "+RU(d.loot[r])).join(" · ")+"</div>";
+      if(d.win){
+        h+="<div class='note'>Добыча: "+RES.filter(r=>d.loot&&d.loot[r]).map(r=>RES_NAME[r]+" "+RU(d.loot[r])).join(" · ")+"</div>";
+        const tomesTxt=Object.keys(d.tomes||{}).map(v=>TOME_NAME[v]+" ×"+d.tomes[v]).join(", ");
+        if(tomesTxt) h+="<div class='note'>Книги опыта: "+tomesTxt+"</div>";
+      }
       h+="</div></div></div>";
     });
   }
@@ -9303,7 +9412,7 @@ function foMultiplayer(){
     } else if(queued){
       const left=Math.max(0,queued.t1-Date.now()/1000);
       h+="<div class='note'>Строится до "+nextLv+" ур., осталось "+fmtDur(left)+"</div>";
-    } else if(nextLv>25){
+    } else if(nextLv>buildingMax(bld)){
       h+="<div class='note'>Максимальный уровень.</div>";
     } else if(bld==="hall"){
       const need=HALL_REQ.filter(k=>mpBuildLv(k)<hallLv);
@@ -9335,6 +9444,122 @@ function foMultiplayer(){
     }
   });
 
+  // Фаза 11: кусочек 1 — Горн, добыча сырых материалов (mp-forge, только
+  // kind:"material"); кусочек 2 — слияние 4-в-1 на более редкое качество
+  // (mp-upgrade); кусочек 3 — ковка снаряжения (mp-craft, kind:"item"),
+  // предмет при удаче доезжает до склада (p.inventory) — надеть его
+  // (equipItem) пока нельзя, отдельный следующий кусочек.
+  h+=rubric("Горн","добыча и слияние материалов");
+  if(!(mpBuildLv("forge")>0)){
+    h+="<div class='entry'><div class='line'><div class='fill'>"+
+       "<div class='note'>Нужно построить Горн (см. «Постройки» выше).</div></div></div></div>";
+  } else {
+    const craft=st.craft;
+    if(craft && craft.kind==="material"){
+      const left=Math.max(0,craft.t1-Date.now()/1000);
+      h+="<div class='entry'><div class='line'><div class='fill'>"+
+         "<div class='title'>Добывается: "+MATERIALS[craft.mat].name+" ×"+craft.n+"</div>"+
+         "<div class='note'>Осталось: "+fmtDur(left)+"</div></div></div></div>";
+    } else if(craft && craft.kind==="item"){
+      const left=Math.max(0,craft.t1-Date.now()/1000);
+      const orderName=craft.order==="storm"?"Буря":"Бастион";
+      h+="<div class='entry'><div class='line'><div class='fill'>"+
+         "<div class='title'>Куётся: "+GEAR_NAMES[craft.slot][craft.order][craft.rarity-1]+"</div>"+
+         "<div class='note'>"+orderName+", "+RARITY_NAMES[craft.rarity-1]+" · осталось "+fmtDur(left)+"</div></div></div></div>";
+    } else {
+      Object.keys(MATERIALS).forEach(mat=>{
+        const stock=(st.materials&&st.materials[mat])||[0,0,0,0,0];
+        h+="<div class='entry'><div class='line'><div class='fill'>"+
+           "<div class='title'>"+MATERIALS[mat].name+"</div>"+
+           "<div class='note'>"+RARITY_NAMES.map((rn,i)=>rn+": "+RU(stock[i]||0)).join(" · ")+"</div>"+
+           "<button class='seal' data-mp='forge' data-mat='"+mat+"'"+(mpState.loading?" disabled":"")+">Добыть обычного (×3 · 100 золота · "+fmtDur(2400)+")</button> "+
+           [0,1,2,3].map(t=>
+             "<button class='seal' data-mp='matup' data-mat='"+mat+"' data-tier='"+t+"'"+
+             (mpState.loading||(stock[t]||0)<4?" disabled":"")+">4×"+RARITY_NAMES[t]+" → "+RARITY_NAMES[t+1]+"</button>"
+           ).join(" ")+
+           "</div></div></div>";
+      });
+    }
+  }
+
+  if(mpBuildLv("forge")>0){
+    h+=rubric("Ковка снаряжения","Горн");
+    if(st.craft){
+      h+="<div class='entry'><div class='line'><div class='fill'>"+
+         "<div class='note'>Горн занят — дождитесь окончания текущей работы выше.</div></div></div></div>";
+    } else {
+      const hallLvFull=Array.isArray(st.b.hall)?Math.max(0,...st.b.hall):(st.b.hall||0);
+      const maxRarity=Math.min(5,epochOf(hallLvFull));
+      GEAR_SLOTS.forEach(s=>{
+        const matStock=(st.materials&&st.materials[s.mat])||[0,0,0,0,0];
+        h+="<div class='entry'><div class='line'><div class='fill'>"+
+           "<div class='title'>"+s.name+" ("+MATERIALS[s.mat].name+")</div>"+
+           "<select id='mp-craft-order-"+s.id+"'><option value='bastion'>Бастион</option><option value='storm'>Буря</option></select> "+
+           "<select id='mp-craft-rarity-"+s.id+"'>"+
+             Array.from({length:maxRarity},(_,i)=>i+1).map(r=>{
+               const need=CRAFT_MAT_NEED[r-1], have=matStock[r-1]||0, c=craftCost(s.mat,r-1,r);
+               return "<option value='"+r+"'"+(have<need?" disabled":"")+">"+RARITY_NAMES[r-1]+" — нужно "+need+"× ("+have+" есть) · "+RU(c.gold)+" золота · "+fmtDur(1800*r*r)+"</option>";
+             }).join("")+
+           "</select> "+
+           "<button class='seal' data-mp='craft' data-slot='"+s.id+"'"+(mpState.loading?" disabled":"")+">Ковать</button>"+
+           "</div></div></div>";
+      });
+    }
+  }
+
+  // Новый кусочек (после Портала) — книги опыта генерала (mp-usetome),
+  // зеркало клиентского "usetome" (index.html:7943-7950). Появляются с
+  // разгрома лагерей разбойников (mp-tick, applyRaidArrive — bookDrop
+  // тем же коммитом наконец подключён, раньше честно не переносился).
+  {
+    const owned=TOME_VALUES.filter(v=>(st.tomes&&st.tomes[v])||0);
+    const hallLvT=Array.isArray(st.b.hall)?Math.max(0,...st.b.hall):(st.b.hall||0);
+    const lvCap=Math.min(60,epochOf(hallLvT)*12);
+    const genLv=(st.gen&&st.gen.lv)||1;
+    if(owned.length){
+      h+=rubric("Книги опыта","+"+RU(genLv)+" ур. генерала из "+lvCap);
+      owned.forEach(v=>{
+        const cnt=st.tomes[v];
+        h+="<div class='entry'><div class='line'><div class='fill'>"+
+           "<div class='title'>"+TOME_NAME[v]+" ×"+RU(cnt)+"</div>"+
+           "<div class='note'>+"+RU(v)+" опыта генералу"+(genLv>=lvCap?" (генерал уже на максимуме эпохи)":"")+"</div>"+
+           "<button class='seal' data-mp='usetome' data-v='"+v+"'"+(mpState.loading||genLv>=lvCap?" disabled":"")+">Использовать</button>"+
+           "</div></div></div>";
+      });
+    }
+  }
+
+  // Фаза 11, кусочек 4 — надеть/снять/разобрать. Зеркало equipItem/
+  // unequipItem/dismantleItem (index.html:5895-5917). Показываем 9 слотов
+  // GEAR_SLOTS: что надето сейчас (с бонусом через statTxt+gearItemStats,
+  // как в SP genGearHtml) и что лежит на складе (st.inventory[slot][order][r-1]).
+  h+=rubric("Снаряжение","надето и склад");
+  GEAR_SLOTS.forEach(s=>{
+    const cur=st.gear&&st.gear[s.id];
+    h+="<div class='entry'><div class='line'><div class='fill'>"+
+       "<div class='title'>"+s.name+"</div>";
+    if(cur){
+      const stat=gearItemStats(s.cat,cur.order,cur.rarity);
+      h+="<div class='note'>"+GEAR_NAMES[s.id][cur.order][cur.rarity-1]+" · "+RARITY_NAMES[cur.rarity-1]+" · "+statTxt(stat)+"</div>"+
+         "<button class='seal' data-mp='unequip' data-slot='"+s.id+"'"+(mpState.loading?" disabled":"")+">Снять</button>";
+    } else {
+      h+="<div class='note'>Пусто</div>";
+    }
+    const inv=(st.inventory&&st.inventory[s.id])||{};
+    ["bastion","storm"].forEach(order=>{
+      const stock=inv[order]||[0,0,0,0,0];
+      stock.forEach((n,i)=>{
+        if(!n) return;
+        const rarity=i+1, orderName=order==="storm"?"Буря":"Бастион";
+        h+="<div class='note'>"+GEAR_NAMES[s.id][order][i]+" ("+orderName+", "+RARITY_NAMES[i]+") ×"+RU(n)+" — "+
+           "<button class='seal' data-mp='equip' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+rarity+"'"+(mpState.loading?" disabled":"")+">Надеть</button> "+
+           "<button class='seal' data-mp='dismantle' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+rarity+"'"+(mpState.loading?" disabled":"")+">Разобрать ("+RU(Math.round(200*rarity*rarity*0.5))+" золота)</button>"+
+           "</div>";
+      });
+    });
+    h+="</div></div></div>";
+  });
+
   h+=rubric("Набор войск","тир 1");
   TKEYS.forEach(t=>{
     const bld=TRAIN_BLD[t], lv=st.b[bld]||0, cap=trainCap(lv);
@@ -9356,6 +9581,41 @@ function foMultiplayer(){
     }
     h+="</div></div></div>";
   });
+
+  // Новый кусочек (после Фазы 11) — переобучение в следующий тир (mp-retrain),
+  // зеркало startRetrain(p,type,fromTier,n) (index.html:5828-5847). Строка
+  // появляется на каждый тип войск, у которого есть хоть один воин тира
+  // fromTier И следующий тир уже открыт исследованием (tierUnlockedFor,
+  // используем ту же функцию, что и в академии выше — pShim2 там строится
+  // позже по тексту, поэтому здесь свой минимальный {tech:st.tech||{}}).
+  h+=rubric("Переобучение","в следующий тир");
+  { const techShim={tech:st.tech||{}};
+    let any=false;
+    TKEYS.forEach(t=>{
+      const maxT=tierUnlockedFor(techShim,t);
+      for(let fromTier=1; fromTier<maxT; fromTier++){
+        const have=(st.troops[t]&&st.troops[t][fromTier])||0;
+        if(!have) continue;
+        any=true;
+        const bld=TRAIN_BLD[t], cap=trainCap(Array.isArray(st.b[bld])?Math.max(0,...st.b[bld]):(st.b[bld]||0));
+        const training=st.train&&st.train[t];
+        h+="<div class='entry'><div class='line'><div class='fill'>"+
+           "<div class='title'>"+unitName(t,fromTier,p.race)+" → "+unitName(t,fromTier+1,p.race)+" — есть "+RU(have)+"</div>";
+        if(training){
+          h+="<div class='note'>Здание занято набором/переобучением.</div>";
+        } else {
+          const c=retrainCost(t,fromTier,1), n=Math.min(have,cap);
+          h+="<div class='note'>Цена за штуку (сверх уже вложенного): "+RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", ")+
+             " · максимум за раз: "+cap+"</div>"+
+             "<input id='mp-rt-n-"+t+"-"+fromTier+"' type='number' min='1' max='"+n+"' value='"+n+"'> "+
+             "<button class='seal' data-mp='retrain' data-t='"+t+"' data-from='"+fromTier+"'"+(mpState.loading?" disabled":"")+">Переобучить</button>";
+        }
+        h+="</div></div></div>";
+      }
+    });
+    if(!any) h+="<div class='entry'><div class='line'><div class='fill'>"+
+       "<div class='note'>Нет войск, готовых к переобучению — либо всё уже в высшем открытом тире, либо следующий тир ещё не изучен в Академии.</div></div></div></div>";
+  }
 
   // Фаза 4, седьмой кусочек — лазарет: тяжелораненые (Фаза 4, шестой
   // кусочек) больше не застревают в p.wounded навсегда, их можно вылечить
@@ -9429,7 +9689,9 @@ function foMultiplayer(){
       "<div class='title'>"+g.name+"<span class='tag gilt'>"+g.role+"</span> · "+lv+" ур."+"</div>"+
       "<div class='note'>"+g.flavor+"<span class='gen-stat'>"+g.stat+"</span></div>"+
       "<div class='note'>Опыт: "+RU(xp)+" / "+RU(need)+(lv>=lvCap?" · потолок эпохи":"")+
-      (pts>0?" · очков таланта: "+pts:"")+"</div></div></div></div>";
+      (pts>0?" · очков таланта: "+pts:"")+"</div>"+
+      "<div class='note'>"+(st.gen.away!=null?"В походе — недоступен для другого марша и обороны города.":"Дома — доступен для похода и обороны города.")+"</div>"+
+      "</div></div></div>";
   }
 
   // Фаза 10, кусочек 2 — трата очков таланта (mp-talent). Честно
@@ -9437,8 +9699,8 @@ function foMultiplayer(){
   // (тот же файл, как и GENERALS выше) — пять веток (Город/Армия/Война/
   // Развитие/Сбор), максимум узла — n.max у GENERAL_TREE, ||5 у голых
   // TALENTS (там своего max нет, тот же приём, что findTalentNode в
-  // index.html:7935). Сам ЭФФЕКТ вложенных очков в bonuses() ещё не
-  // подключён (см. supabase/README.md) — здесь только распределение.
+  // index.html:7935). Сам эффект вложенных очков в bonuses() подключён
+  // кусочком 3 той же Фазы 10 (см. supabase/README.md).
   if(st.gen && st.gen.id!=null){
     h+=rubric("Таланты",(st.gen.pts||0)+" очков свободно");
     TALENT_BRANCHES.forEach(([key,br])=>{

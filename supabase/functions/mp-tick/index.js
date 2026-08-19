@@ -80,6 +80,7 @@ Deno.serve(async (req) => {
         else if (ev.type === "heal") await applyHeal(admin, ev);
         else if (ev.type === "scout_arrive") await applyScoutArrive(admin, ev);
         else if (ev.type === "research") await applyResearch(admin, ev);
+        else if (ev.type === "craft") await applyCraft(admin, ev);
         else if (ev.type === "gathered") await applyGathered(admin, ev);
         else if (ev.type === "node_respawn") await applyNodeRespawn(admin, ev);
         else if (ev.type === "camp_respawn") await applyCampRespawn(admin, ev);
@@ -160,6 +161,48 @@ async function applyResearch(admin, ev) {
   if (!p.tech) p.tech = {};
   p.tech[R.id] = R.lv;
   p.rsch = null;
+  const { error: updErr } = await admin
+    .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
+  if (updErr) throw updErr;
+}
+
+// index.html:2246 CRAFT_CHANCE — шанс успеха ковки по редкости 1..5, тот
+// же порядок величин, что и CRAFT_MAT_NEED в mp-craft (дословная копия,
+// эти два файла не импортируют друг друга — тот же принцип self-contained
+// копий, что и везде в этом наборе функций).
+const CRAFT_CHANCE = [1.0, 0.9, 0.75, 0.55, 0.35];
+// Фаза 11: кусочек 1 — Горн, добыча материалов (kind:"material"); кусочек
+// 3 — ковка снаряжения (kind:"item"). Зеркало EV.craft(d) (index.html:
+// 4845-4861) целиком теперь здесь. Экипировка/снятие/разбор скованного —
+// отдельные следующие кусочки, эта функция только доводит предмет до
+// склада (p.inventory) при удаче.
+async function applyCraft(admin, ev) {
+  const playerId = ev.data && ev.data.player_id;
+  if (playerId == null) return;
+  const { data: row, error } = await admin.from("players").select("*").eq("id", playerId).maybeSingle();
+  if (error) throw error;
+  if (!row) return;
+  const p = row.state;
+  const c = p.craft;
+  if (!c) return; // уже разобрано/отменено
+  if (c.kind === "material") {
+    if (!p.materials) p.materials = { ore: [0, 0, 0, 0, 0], leather: [0, 0, 0, 0, 0], bone: [0, 0, 0, 0, 0], ebony: [0, 0, 0, 0, 0] };
+    if (!p.materials[c.mat]) p.materials[c.mat] = [0, 0, 0, 0, 0];
+    p.materials[c.mat][0] = (p.materials[c.mat][0] || 0) + c.n;
+  } else if (c.kind === "item") {
+    // index.html:4852-4858 — удача решает Math.random() (см. заголовок
+    // mp-craft/index.js насчёт выбора не-seeded PRNG для разовой ковки).
+    // Неудача — материал и золото уже списаны на отправке (mp-craft),
+    // здесь просто ничего не прибавляется, как и в источнике ("материал и
+    // время утрачены").
+    if (Math.random() < CRAFT_CHANCE[c.rarity - 1]) {
+      if (!p.inventory) p.inventory = {};
+      if (!p.inventory[c.slot]) p.inventory[c.slot] = {};
+      if (!p.inventory[c.slot][c.order]) p.inventory[c.slot][c.order] = [0, 0, 0, 0, 0];
+      p.inventory[c.slot][c.order][c.rarity - 1] = (p.inventory[c.slot][c.order][c.rarity - 1] || 0) + 1;
+    }
+  }
+  p.craft = null;
   const { error: updErr } = await admin
     .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
   if (updErr) throw updErr;
@@ -328,11 +371,14 @@ async function applyCampRespawn(admin, ev) {
   if (error) throw error;
 }
 const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];
+// load — index.html:2583-2588 TROOP_TYPES (там же атк/защ/хп/скорость/магия,
+// но load не переносился в этот файл раньше — combat-математике он не
+// нужен, добавлен здесь ради carryCap в PvP-грабеже, см. applyMarchArrive.
 const TROOP_TYPES = {
-  inf: { atk: 34, def: 46, hp: 44, speed: 1.00, magicAtk: 8, magicDef: 18, beats: "arc", losesTo: "cav" },
-  arc: { atk: 50, def: 30, hp: 36, speed: 1.10, magicAtk: 20, magicDef: 8, beats: "cav", losesTo: "inf" },
-  cav: { atk: 46, def: 34, hp: 40, speed: 1.70, magicAtk: 12, magicDef: 12, beats: "inf", losesTo: "arc" },
-  sie: { atk: 24, def: 20, hp: 60, speed: 0.60, magicAtk: 26, magicDef: 6, beats: null, losesTo: null },
+  inf: { atk: 34, def: 46, hp: 44, load: 6, speed: 1.00, magicAtk: 8, magicDef: 18, beats: "arc", losesTo: "cav" },
+  arc: { atk: 50, def: 30, hp: 36, load: 8, speed: 1.10, magicAtk: 20, magicDef: 8, beats: "cav", losesTo: "inf" },
+  cav: { atk: 46, def: 34, hp: 40, load: 5, speed: 1.70, magicAtk: 12, magicDef: 12, beats: "inf", losesTo: "arc" },
+  sie: { atk: 24, def: 20, hp: 60, load: 30, speed: 0.60, magicAtk: 26, magicDef: 6, beats: null, losesTo: null },
 };
 const RACE_TROOP_MOD = {
   dwarf: { inf: { atk: 1.05, def: 1.05, hp: 1.05 } },
@@ -498,10 +544,10 @@ const ACADEMY_TREE = {
 //      (mp-pickgen) — p.gen.id больше не всегда null, GENERALS ниже несёт
 //      ОБЕ записи на расу (не только index 0), apply() читается по
 //      реальному p.gen.id||0, как в клиенте.
-//   4. portalMarchBonus(p.b.portal) — Портал не входит в постройки общего
-//      мира (нет в BUILD_MP_BLDS/BKEYS этого модуля), поэтому p.b.portal
-//      всегда отсутствует — передаётся 0 явно (portalMarchBonus(0)=0), это
-//      не заглушка отдельного бонуса, а честный факт "здания ещё нет".
+//   4. portalMarchBonus(p.b.portal) — Портал теперь настоящее здание общего
+//      мира (mp-build, отдельный кусочек после Фазы 11 — единственное
+//      здание без собственной ценовой кривой и в источнике, работает через
+//      общую BUILD_TABLE), p.b.portal — реальный уровень, не всегда 0.
 //   5. Бонусы дерева исследований (ACADEMY_TREE[*].field/effects, по
 //      p.tech) — уже перенесено в Фазе 5, здесь наконец подключается.
 //
@@ -663,6 +709,20 @@ function bonuses(p, defending = false) {
 // вместо голых PROD_TABLE-чисел (тот же самый B, что течёт и в trainSpeed/
 // build/heal у остальных функций этого файла). handicap (p.isBot) в общем
 // мире не нужен — ботов здесь нет (см. syncRes выше).
+// PROD_BLD/PROD_MULT/PROD_TABLE/prodRate/plotCap — до этого кусочка
+// отсутствовали в файле целиком (production() ссылалась на них и упала бы
+// ReferenceError'ом при первом же реальном вызове — а вызовов не было,
+// функция была мёртвым кодом с самого своего появления). Нужны здесь для
+// syncRes/capacity ниже — грабёж при победе в PvP должен видеть актуальный
+// склад защитника и уважать его защиту от разграбления, как в источнике.
+const PROD_BLD = { food: "farm", wood: "lumber", stone: "quarry", gold: "mine" };
+const PROD_MULT = { food: 1, wood: 1, stone: 0.75, gold: 0.5 };
+const PROD_TABLE = [
+  400, 430, 470, 520, 580, 650, 730, 830, 950, 1100, 1300, 1550, 1850, 2200, 2700,
+  3200, 3700, 4300, 5000, 5800, 6700, 7800, 9000, 10400, 20800,
+];
+const prodRate = (lv) => (lv <= 0 ? 0 : tblRow(PROD_TABLE, lv));
+const plotCap = (lv) => (lv <= 0 ? 0 : tblRow(PROD_TABLE, lv) * 10);
 function production(p) {
   const B = bonuses(p), out = {};
   RES.forEach((r) => {
@@ -676,6 +736,48 @@ function production(p) {
     out[r] = v;
   });
   return out;
+}
+function plotFillCap(p) {
+  const out = {};
+  RES.forEach((r) => {
+    const plots = p.b[PROD_BLD[r]];
+    let extra = 0;
+    (Array.isArray(plots) ? plots : [plots || 0]).forEach((lv) => { extra += plotCap(lv) * PROD_MULT[r]; });
+    out[r] = Math.round(extra);
+  });
+  return out;
+}
+// index.html:1293-1295/2798 STORE_TABLE/storeCap — защита Склада от
+// разграбления. index.html:3820-3826 capacity(p) — своя вместимость на
+// каждый ресурс (склад + защита участков), используется ДВАЖДы в
+// источнике: как потолок для syncRes (добыча не копится сверх него) и как
+// защищённый минимум при грабеже (battleCity — грабить можно только то,
+// что выше этой планки). Оба смысла ниже, как и в источнике.
+const STORE_TABLE = [
+  300000, 320000, 350000, 380000, 410000, 450000, 500000, 550000, 600000,
+  650000, 700000, 750000, 800000, 850000, 900000, 1000000, 1100000, 1200000, 1300000, 1400000,
+  1500000, 1600000, 1800000, 2000000, 2500000,
+];
+const storeCap = (lv) => tblRow(STORE_TABLE, Math.max(1, lv));
+function capacity(p) {
+  const B = bonuses(p), base = Math.round(storeCap((p.b && p.b.store) || 0) * (1 + B.cap));
+  const extra = plotFillCap(p);
+  const out = {};
+  RES.forEach((r) => { out[r] = base + extra[r]; });
+  return out;
+}
+// index.html:3838-3844 syncRes(p) — довести p.res до текущего момента
+// перед грабежом (иначе атакующий видел бы устаревший снимок склада с
+// момента последнего ДЕЙСТВИЯ защитника, а не реальный на секунду боя).
+function syncRes(p, nowSec) {
+  const dt = (nowSec - (p.resAt || 0)) / 3600;
+  if (dt <= 0) { p.resAt = nowSec; return; }
+  const pr = production(p), cap = plotFillCap(p);
+  RES.forEach((r) => {
+    const add = Math.min(pr[r] * dt, cap[r]);
+    p.res[r] = Math.max(0, (p.res[r] || 0) + add);
+  });
+  p.resAt = nowSec;
 }
 // index.html:1305 WALL_TABLE — только колонка hp нужна для wallDefBonus.
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -733,6 +835,33 @@ function counterMult(from, to) {
   if (T.losesTo === to) return COUNTER_DOWN;
   return 1;
 }
+// index.html:4041 volleyDamage — венец эльфов (firstStrike, epoch 5):
+// досрочный залп ВСЕХ лучников до начала общей схватки, без ответа со
+// стороны обычного боя (защитник получает удар раньше, чем успевает
+// ударить сам). attUnits/attRace/attB — стреляющая сторона (используются
+// её живые лучники и её собственные atk/archer-бонусы), defS — снимок
+// цели (её HP-доли решают, кому именно из родов войск достанется залп),
+// defWallLv/wallBonus — стена цели (0/0, если целится по чистому полю).
+function volleyDamage(attUnits, attRace, attB, defS, defWallLv = 0, wallBonus = 0) {
+  if (!attB.firstStrike) return null;
+  const c = attUnits.arc || {};
+  let atk = 0, n = 0;
+  for (let i = 1; i <= 5; i++) {
+    const cnt = c[i] || 0; if (!cnt) continue;
+    atk += cnt * TROOP_TYPES.arc.atk * TIER_MULT[i - 1] * troopMod(attRace, "arc", "atk") * (1 + (attB.archer || 0)) * (1 + attB.atk);
+    n += cnt;
+  }
+  if (n <= 0) return null;
+  const defWall = 1 + wallDefBonus(defWallLv) * (1 + wallBonus);
+  const out = {};
+  TKEYS.forEach((dt) => {
+    if (defS[dt].n <= 0) { out[dt] = 0; return; }
+    const d = atk * counterMult("arc", dt) * (defS[dt].hp / Math.max(1, defS.totalHp));
+    const mitig = 1 + (defS[dt].def / Math.max(1, defS[dt].n)) / 70 * defWall;
+    out[dt] = d * BATTLE_PACE / mitig;
+  });
+  return out;
+}
 const SIDE_TYPE_ATK = { inf: "atkInf", arc: "atkArc", cav: "atkCav", sie: "atkSie" };
 const SIDE_TYPE_DEF = { inf: "defInf", arc: "defArc", cav: "defCav", sie: "defSie" };
 const SIDE_TYPE_MATK = { inf: "matkInf", arc: "matkArc", cav: "matkCav", sie: "matkSie" };
@@ -777,7 +906,13 @@ function checkDiscipline(start, lossTotal, race, broken) {
 // 3987 f.broken) — если тир сломлен, его вклад в atk/def/matk/mdef (НЕ в
 // hp — дисциплина не убивает, только бьёт хуже) умножается на 0.70, тем же
 // способом, что и остальные модификаторы этого же цикла.
-function sideStats(units, race, B, broken) {
+// risen — Фаза 9, кусочек 7: необязательный пятый параметр (index.html:
+// 3998-4007 f.risen) — поднятые скелеты (undead, см. applyRaise ниже):
+// дерутся на ПОЛОВИНУ статов своего рода/тира, НЕ подчиняются discipline
+// brk (в источнике брейк тоже не трогает risen-ветку — своя нежить не
+// "дрогнет", она уже мертва), но добавляются в HP-пул и в n наравне с
+// живыми, поэтому и достаются противнику как цель, и добавляют силы удара.
+function sideStats(units, race, B, broken, risen) {
   const s = {};
   TKEYS.forEach((t) => {
     let atk = 0, def = 0, matk = 0, mdef = 0, hp = 0, n = 0;
@@ -785,24 +920,58 @@ function sideStats(units, race, B, broken) {
     const matkMod = 1 + (B[SIDE_TYPE_MATK[t]] || 0), mdefMod = 1 + (B[SIDE_TYPE_MDEF[t]] || 0);
     for (let i = 1; i <= 5; i++) {
       const c = (units[t] && units[t][i]) || 0;
-      if (!c) continue;
-      const brk = broken && broken[t] && broken[t][i] ? 0.70 : 1;
       const w = TIER_MULT[i - 1];
-      let a = TROOP_TYPES[t].atk * w * troopMod(race, t, "atk") * atkMod;
-      if (t === "arc") a *= 1 + (B.archer || 0);
-      const d = TROOP_TYPES[t].def * w * troopMod(race, t, "def") * defMod;
-      const ma = TROOP_TYPES[t].magicAtk * w * troopMod(race, t, "atk") * matkMod;
-      const md = TROOP_TYPES[t].magicDef * w * troopMod(race, t, "def") * mdefMod;
-      atk += c * a * brk * (1 + B.atk); def += c * d * brk * (1 + B.def);
-      matk += c * ma * brk * (1 + B.matk); mdef += c * md * brk * (1 + B.mdef);
-      hp += c * TROOP_TYPES[t].hp * w * troopMod(race, t, "hp") * (1 + B.hp);
-      n += c;
+      if (c) {
+        const brk = broken && broken[t] && broken[t][i] ? 0.70 : 1;
+        let a = TROOP_TYPES[t].atk * w * troopMod(race, t, "atk") * atkMod;
+        if (t === "arc") a *= 1 + (B.archer || 0);
+        const d = TROOP_TYPES[t].def * w * troopMod(race, t, "def") * defMod;
+        const ma = TROOP_TYPES[t].magicAtk * w * troopMod(race, t, "atk") * matkMod;
+        const md = TROOP_TYPES[t].magicDef * w * troopMod(race, t, "def") * mdefMod;
+        atk += c * a * brk * (1 + B.atk); def += c * d * brk * (1 + B.def);
+        matk += c * ma * brk * (1 + B.matk); mdef += c * md * brk * (1 + B.mdef);
+        hp += c * TROOP_TYPES[t].hp * w * troopMod(race, t, "hp") * (1 + B.hp);
+        n += c;
+      }
+      const rc = (risen && risen[t] && risen[t][i]) || 0;
+      if (rc) {
+        let ra = TROOP_TYPES[t].atk * w * troopMod(race, t, "atk") * atkMod * 0.5;
+        if (t === "arc") ra *= 1 + (B.archer || 0);
+        atk += rc * ra * (1 + B.atk);
+        def += rc * TROOP_TYPES[t].def * w * troopMod(race, t, "def") * defMod * 0.5 * (1 + B.def);
+        matk += rc * TROOP_TYPES[t].magicAtk * w * troopMod(race, t, "atk") * matkMod * 0.5 * (1 + B.matk);
+        mdef += rc * TROOP_TYPES[t].magicDef * w * troopMod(race, t, "def") * mdefMod * 0.5 * (1 + B.mdef);
+        hp += rc * TROOP_TYPES[t].hp * w * troopMod(race, t, "hp") * 0.5 * (1 + B.hp);
+        n += rc;
+      }
     }
     s[t] = { atk, def, matk, mdef, hp, n };
   });
   s.totalHp = TKEYS.reduce((a, t) => a + s[t].hp, 0);
   s.totalN = TKEYS.reduce((a, t) => a + s[t].n, 0);
   return s;
+}
+// index.html:3902-3918 armyPower — дословно: та же взвешенная сумма всех
+// пяти статов (не только HP), что и в клиентском "силе войска" везде
+// по игре. Нужна здесь для честной ничьей (см. заголовок resolvePvp) —
+// раньше (Фаза 6-9.1) ничья решалась по остатку totalHp, что ближе, но не
+// то же самое, что и в источнике (_shared/rules.js честно отмечал это
+// приближение отдельным комментарием — он теперь устарел, см. правку там же).
+function armyPower(units, B, race) {
+  let v = 0;
+  TKEYS.forEach((t) => {
+    for (let i = 1; i <= 5; i++) {
+      const n = (units[t] && units[t][i]) || 0; if (!n) continue;
+      let a = TROOP_TYPES[t].atk * TIER_MULT[i - 1] * troopMod(race, t, "atk") * (1 + ((B && B[SIDE_TYPE_ATK[t]]) || 0));
+      if (t === "arc") a *= 1 + ((B && B.archer) || 0);
+      const d = TROOP_TYPES[t].def * TIER_MULT[i - 1] * troopMod(race, t, "def") * (1 + ((B && B[SIDE_TYPE_DEF[t]]) || 0));
+      const ma = TROOP_TYPES[t].magicAtk * TIER_MULT[i - 1] * troopMod(race, t, "magicAtk") * (1 + ((B && B[SIDE_TYPE_MATK[t]]) || 0));
+      const md = TROOP_TYPES[t].magicDef * TIER_MULT[i - 1] * troopMod(race, t, "magicDef") * (1 + ((B && B[SIDE_TYPE_MDEF[t]]) || 0));
+      const hp = TROOP_TYPES[t].hp * TIER_MULT[i - 1] * troopMod(race, t, "hp");
+      v += n * (a * (1 + (B ? B.atk : 0)) + d * (1 + (B ? B.def : 0)) + ma * (1 + (B ? B.matk : 0)) + md * (1 + (B ? B.mdef : 0)) + hp * (1 + (B ? B.hp : 0)));
+    }
+  });
+  return Math.round(v / 150); // T1 пехота без бонусов = 150 суммарных статов -> ~1 сила за юнита T1
 }
 // index.html:1716 CFG.BATTLE_PACE — общий множитель, замедляющий урон ОДНОГО
 // раунда, чтобы бой из Фазы 9, кусочек 1 реально растягивался на несколько
@@ -876,40 +1045,86 @@ function dmgTo(attS, defS, defWallLv = 0, wallBonus = 0, wMod = null, shake = 1)
 // hpBonus — сырой B.hp, тот же множитель, что sideStats уже применила к
 // totalHp (см. _shared/rules.js) — держит hpTotal (знаменатель доли потерь)
 // согласованным с тем пулом HP, из которого dmgTo() реально считал урон.
-function applyLosses(units, dmgByType, race, hpBonus = 0) {
+// risen — Фаза 9, кусочек 7: необязательный пятый параметр (по умолчанию
+// null — все существующие вызовы, кроме основного обмена уроном в
+// resolvePvp/resolveBanditRaid, ведут себя ровно как раньше). ЧЕСТНОЕ
+// ДОПОЛНИТЕЛЬНОЕ УПРОЩЕНИЕ поверх уже принятого в Фазе 6 (доля-от-HP вместо
+// поштучного точного урона, как в applyDamage источника): источник сперва
+// добивает живых, и только когда живых не остаётся — поднятых (index.html:
+// 4293-4316 applyDamage, два последовательных цикла). Здесь оба пула
+// (живые и поднятые, у поднятых — половина HP тира) складываются в ОДИН
+// общий HP-пул и тают одной и той же долей `frac` — раздельной очерёдности
+// "сначала живые" нет, оба пула убывают вместе пропорционально.
+function applyLosses(units, dmgByType, race, hpBonus = 0, risen = null) {
   const lost = { inf: {}, arc: {}, cav: {}, sie: {} };
+  const lostRisen = { inf: {}, arc: {}, cav: {}, sie: {} };
   let hpLost = 0;
   TKEYS.forEach((t) => {
-    let hpTotal = 0;
+    let hpTotal = 0, hpRisenTotal = 0;
     for (let i = 1; i <= 5; i++) hpTotal += ((units[t] && units[t][i]) || 0) * TROOP_TYPES[t].hp * TIER_MULT[i - 1] * troopMod(race, t, "hp") * (1 + hpBonus);
-    if (hpTotal <= 0 || !dmgByType[t]) { for (let i = 1; i <= 5; i++) lost[t][i] = 0; return; }
-    const dmg = Math.min(dmgByType[t], hpTotal);
+    if (risen) for (let i = 1; i <= 5; i++) hpRisenTotal += ((risen[t] && risen[t][i]) || 0) * TROOP_TYPES[t].hp * TIER_MULT[i - 1] * troopMod(race, t, "hp") * 0.5 * (1 + hpBonus);
+    const combinedTotal = hpTotal + hpRisenTotal;
+    if (combinedTotal <= 0 || !dmgByType[t]) {
+      for (let i = 1; i <= 5; i++) { lost[t][i] = 0; lostRisen[t][i] = 0; }
+      return;
+    }
+    const dmg = Math.min(dmgByType[t], combinedTotal);
     hpLost += dmg;
-    const frac = dmg / hpTotal;
+    const frac = dmg / combinedTotal;
     for (let i = 1; i <= 5; i++) {
       const c = (units[t] && units[t][i]) || 0;
       lost[t][i] = Math.min(c, Math.round(c * frac));
+      const rc = (risen && risen[t] && risen[t][i]) || 0;
+      lostRisen[t][i] = Math.min(rc, Math.round(rc * frac));
     }
   });
-  return { units: lost, hpLost };
+  return { units: lost, risen: lostRisen, hpLost };
+}
+// index.html:2187-2263 GEAR_SLOTS/GEAR_PCT_*/gearItemStats/gearBonus —
+// дословно. Фаза 11, кусочек 4: снаряжение теперь можно надеть (mp-equip),
+// поэтому p.gear[slot] больше не гарантированно пусто — gearBonus(p)
+// наконец считает не только ноль. Только cat нужен здесь (какой стат
+// первичный/вторичный/третичный по типу предмета) — имя/материал слота
+// сюда не относятся.
+const GEAR_SLOT_CAT = {
+  helmet: "armor", chest: "armor", gloves: "armor", pants: "armor", boots: "armor",
+  handL: "weapon", handR: "weapon", acc1: "acc", acc2: "acc",
+};
+const GEAR_PCT_PRIMARY = [0.010, 0.025, 0.040, 0.075, 0.11];
+const GEAR_PCT_SECONDARY = [0.005, 0.012, 0.022, 0.045, 0.075];
+const GEAR_PCT_TERTIARY = [0.0025, 0.006, 0.011, 0.0225, 0.0375];
+function gearItemStats(cat, order, r) {
+  const P = GEAR_PCT_PRIMARY[r - 1], S = GEAR_PCT_SECONDARY[r - 1], T = GEAR_PCT_TERTIARY[r - 1];
+  if (cat === "armor") return order === "bastion" ? { def: P, hp: S } : { hp: P, def: S };
+  if (cat === "weapon") {
+    if (order === "storm") return { atk: r === 5 ? 0.15 : P };
+    return { atk: P, def: S };
+  }
+  return order === "bastion" ? { hp: P, def: S, atk: T } : { atk: P, hp: S, def: T };
+}
+function gearBonus(p) {
+  const out = { atk: 0, def: 0, hp: 0 };
+  Object.keys(GEAR_SLOT_CAT).forEach((slotId) => {
+    const it = p.gear && p.gear[slotId]; if (!it) return;
+    const st = gearItemStats(GEAR_SLOT_CAT[slotId], it.order, it.rarity);
+    out.atk += st.atk || 0; out.def += st.def || 0; out.hp += st.hp || 0;
+  });
+  return out;
 }
 // index.html:3706 genStats — эфемерный боевой снимок полководца (atk/def/
 // hp), НЕ p.gen (постоянная запись игрока: lv/xp/pts/tal). Строится заново
 // на каждый вызов resolvePvp/resolveBanditRaid из p.gen.lv — как и в
 // источнике, полководец не "лечится между боями" и не "умирает навсегда":
 // каждый следующий бой начинается с полным HP независимо от исхода
-// предыдущего. Честное упрощение: БЕЗ gearBonus(p) (index.html:3709) — в
-// общем мире нет ни кузницы, ни снаряжения вообще (Фаза 11, 0% перенесено,
-// см. supabase/README.md), gear-вклад в источнике был бы 0 для абсолютно
-// любого игрока прямо сейчас, добавлять его тут значило бы копировать код,
-// который гарантированно ничего не считает.
+// предыдущего.
 function genStats(p) {
   if (!p.gen || p.gen.id == null) return null;
   const B = bonuses(p), lv = p.gen.lv || 1, g = Math.pow(lv, 1.15);
+  const gear = gearBonus(p); // теперь проценты — умножаем, а не прибавляем флэтом
   return {
-    hp: Math.round((250 + 30 * g) * (1 + B.genHpMod)),
-    atk: Math.round((200 + 40 * g) * (1 + B.genAtkMod)),
-    def: Math.round((170 + 30 * g) * (1 + B.genDefMod)),
+    hp: Math.round((250 + 30 * g) * (1 + B.genHpMod) * (1 + gear.hp)),
+    atk: Math.round((200 + 40 * g) * (1 + B.genAtkMod) * (1 + gear.atk)),
+    def: Math.round((170 + 30 * g) * (1 + B.genDefMod) * (1 + gear.def)),
   };
 }
 // index.html:4070 generalDamage — полководец бьёт по всем родам войск
@@ -952,16 +1167,33 @@ function damageToGeneral(gen, enemyS) {
 // потерям (attLossTotal/defLossTotal, которые уже считались и раньше —
 // просто раньше никто их не читал для этого), как и в источнике.
 // Кусочек 4: урон по/от полководцам в бою (generalDamage/damageToGeneral/
-// genStats выше) — только если игрок вообще выбрал полководца (mp-pickgen,
-// Фаза 7); без него f.gen===null и оба урона тихо гасятся, как и в SP.
-// Честно ЕЩЁ НЕ входит (см. supabase/README.md, каждое — отдельный
-// следующий кусочек): поднятие нежити прямо в бою (raiseSkeletons — раз в
-// момент прибытия оно уже применяется отдельно, здесь речь о ПОРАУНДОВОМ
-// подъёме), контрудар гарнизона (dwarf B.counter), первый залп лучников
-// без ответа (elf firstStrike, index.html:4176-4181 — сейчас есть только
-// залп СТОРОЖЕВОЙ БАШНИ защитника, он был и раньше), досрочное отступление
-// атакующего при 72% потерь (rout), ничья по armyPower при исчерпании
-// ROUND_CAP раундов (сейчас ничья — по остатку totalHp, как и раньше).
+// genStats выше) — изначально работало на условии "игрок вообще выбрал
+// полководца" (mp-pickgen, Фаза 7); отдельным более поздним кусочком
+// исправлено на честное "выбрал И привёз именно в ЭТОТ бой" (attHasGen/
+// defP.gen.away — см. заголовок resolvePvp ниже) — раньше полководец
+// участвовал одновременно везде, где угодно, без реального перемещения.
+// Кусочек 5: первый залп лучников без ответа (elf firstStrike, эпоха 5,
+// volleyDamage выше) — до общей схватки, наравне с уже существовавшим
+// залпом Сторожевой башни; и контрудар гарнизона (dwarf, эпоха 5, ТОЛЬКО
+// при обороне) — доля урона, нанесённого атакующим в этом раунде, летит
+// обратно в него же по HP-долям его войск (см. комментарий у if(defB.counter)
+// внутри цикла).
+// Кусочек 6: досрочное отступление атакующего (rout, index.html:4260-4265)
+// — потеряв больше 72% состава, с которым вошёл в ЭТОТ бой, атакующий
+// уходит, не дожидаясь ROUND_CAP и не добивая защитника. И честная ничья
+// по armyPower (index.html:3902-3918/4267-4275) вместо приближения по
+// остатку totalHp — если обе стороны уцелели (round cap или rout), решает
+// взвешенная сила оставшихся войск, а не просто HP; полное истребление
+// стороны по-прежнему решает исход напрямую, тут не изменилось ничего.
+// Кусочек 7 (последний в Фазе 9): поднятие нежити прямо в бою
+// (raiseSkeletons/applyRaise выше) — только undead. ЧЕСТНОЕ ДОПОЛНИТЕЛЬНОЕ
+// упрощение поверх уже принятого в Фазе 6: sideStats/applyLosses получили
+// пятый параметр risen (см. их заголовки) — поднятые скелеты дерутся на
+// половину статов и делят с живыми ОДИН общий HP-пул, тающий одной долей,
+// а не "сперва живые, потом поднятые" двумя последовательными циклами,
+// как applyDamage источника. Урон от контрудара/полководцев/залпов
+// по-прежнему бьёт только по живым — risen расходует только основной
+// обмен урона каждого раунда.
 // Фаза 6: attP/defP теперь полные объекты игрока (race+b+gen+tech), не
 // голые строки расы — нужны для bonuses(attP)/bonuses(defP,true) (defP
 // считается С defending=true — 5-я эпоха, defMods). См. подробный
@@ -969,16 +1201,40 @@ function damageToGeneral(gen, enemyS) {
 // marchId — Фаза 9, кусочек 2: сеет battleRngMp (см. её заголовок), без
 // него дефолт 0 — детерминированная (но не менее честная) погода на бой.
 const ROUND_CAP = 60; // index.html:4190 while(round<60) — то же число
-function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv = 0, marchId = 0) {
+function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv = 0, marchId = 0, attHasGen = false) {
   const attB = bonuses(attP), defB = bonuses(defP, true);
   let attU = attUnits, defU = defUnits;
   let attLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} }, defLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} };
   const attBroken = { inf: {}, arc: {}, cav: {}, sie: {} }, defBroken = { inf: {}, arc: {}, cav: {}, sie: {} };
+  // index.html:4396-4410 raiseSkeletons — Фаза 9, кусочек 7: attRisen/
+  // defRisen — активные поднятые скелеты (см. заголовок sideStats/
+  // applyLosses/applyRaise). attRaisedCum/defRaisedCum — сколько всего
+  // поднято с начала боя (бюджет, не даёт поднять дважды одних и тех же).
+  const attRisen = { inf: {}, arc: {}, cav: {}, sie: {} }, defRisen = { inf: {}, arc: {}, cav: {}, sie: {} };
+  const attRaisedCum = { inf: {}, arc: {}, cav: {}, sie: {} }, defRaisedCum = { inf: {}, arc: {}, cav: {}, sie: {} };
   const rnd = battleRngMp(marchId);
   const weather = pickWeather(rnd);
   const wMod = (t) => (weather.mod && weather.mod[t]) || 1;
   const jit = weather.jitter || 0.05;
   const roll = () => 1 + (rnd() * 2 - 1) * jit;
+  // index.html:4169-4188 первый залп лучников без ответа (elf firstStrike,
+  // эпоха 5) — оба, если у обеих сторон подходящая раса/эпоха: атакующий
+  // бьёт первым по защитнику (через его стену), затем защитник отвечает
+  // своим залпом (без стены — по чистому полю). Погоду ловит через
+  // wMod("arc") (залп — чисто лучный урон) и свой roll(), как в источнике
+  // (index.html:4176/4179 — scale(volleyDamage(...), wMod("arc")*roll())).
+  const openA = volleyDamage(attU, attP.race, attB, sideStats(defU, defP.race, defB), defWallLv, defB.wallBonus);
+  if (openA) {
+    const scaled = {}; TKEYS.forEach((t) => { scaled[t] = (openA[t] || 0) * wMod("arc") * roll(); });
+    const l = applyLosses(defU, scaled, defP.race, defB.hp);
+    defU = unitsSub(defU, l.units); defLossTotal = unitsAdd(defLossTotal, l.units);
+  }
+  const openD = volleyDamage(defU, defP.race, defB, sideStats(attU, attP.race, attB));
+  if (openD) {
+    const scaled = {}; TKEYS.forEach((t) => { scaled[t] = (openD[t] || 0) * wMod("arc") * roll(); });
+    const l = applyLosses(attU, scaled, attP.race, attB.hp);
+    attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
+  }
   // Залп Сторожевой башни защитника — до общей схватки (Фаза 4, шестой
   // кусочек), теперь перед раундовым циклом, а не влит в единственный
   // обмен. Погоду НЕ ловит (index.html:4183 тоже вызывает его без wMod) —
@@ -987,26 +1243,62 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
   if (openG) {
     const l = applyLosses(attU, openG, attP.race, attB.hp);
     attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
-    // index.html:4186-4188 brk0A/brk0D — дисциплина проверяется и до общей
-    // схватки, по потерям от одних лишь стартовых залпов (тут — только
-    // залп башни защитника, у нас нет ни firstStrike, ни залпа A по D).
-    checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
   }
+  // index.html:4186-4188 brk0A/brk0D — дисциплина проверяется и один раз
+  // после ВСЕХ стартовых залпов разом (не после каждого по отдельности).
+  checkDiscipline(defUnits, defLossTotal, defP.race, defBroken);
+  checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
   let round = 0;
   // index.html:3958-3964 f.gen — эфемерный, строится один раз на бой (не
   // за раунд), полководец без выбора (p.gen.id==null) даёт null и просто
-  // не участвует, как и в источнике.
-  let attGen = genStats(attP), defGen = genStats(defP);
+  // не участвует, как и в источнике. Раньше genStats(attP)/genStats(defP)
+  // вызывались БЕЗУСЛОВНО (единственная проверка внутри genStats — выбран
+  // ли генерал вообще), из-за чего полководец фактически участвовал
+  // ОДНОВРЕМЕННО в любом числе боёв сразу — и в каждом марше атакующего, и
+  // в обороне города, всегда, если был хоть раз выбран. Полководец в
+  // источнике физически один: attHasGen — привезён ли он именно ЭТИМ
+  // маршем (m.data.has_gen, index.html:4655/4666 takeGen); у защитника
+  // отдельного флага не нужно — он либо дома (p.gen.away==null), либо в
+  // пути с каким-то СВОИМ маршем, и тогда defP уже целиком читается как
+  // "дома нет" (index.html:5373 withGen:!!(def.gen&&def.gen.away==null)).
+  let attGen = attHasGen ? genStats(attP) : null;
+  let defGen = (defP.gen && defP.gen.away == null) ? genStats(defP) : null;
+  // index.html:5066/5374 ctx.startA — состав похода на момент ВХОДА в этот
+  // бой (не изначальный набор при отправке — если что-то уже отбилось
+  // раньше по дороге, отступать он будет от уже уменьшенного числа, как и
+  // в источнике). ctx.toDeath нигде в SP не выставлен в true — отступление
+  // всегда активно, отдельный флаг сюда не переносим, он был бы мёртвым
+  // кодом и там, и тут.
+  const attStartN = unitsTotal(attUnits);
   while (round < ROUND_CAP) {
-    const attS = sideStats(attU, attP.race, attB, attBroken), defS = sideStats(defU, defP.race, defB, defBroken);
+    const attS = sideStats(attU, attP.race, attB, attBroken, attRisen), defS = sideStats(defU, defP.race, defB, defBroken, defRisen);
     if (attS.totalN <= 0 || defS.totalN <= 0) break;
     round++;
     const dmgToDef = dmgTo(attS, defS, defWallLv, defB.wallBonus, wMod, roll());
     const dmgToAtt = dmgTo(defS, attS, 0, 0, wMod, roll());
-    const defLoss = applyLosses(defU, dmgToDef, defP.race, defB.hp);
-    const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp);
+    // risen — Фаза 9, кусочек 7: только основной обмен ударами этого
+    // раунда его расходует (см. заголовок applyLosses); контрудар/урон
+    // полководцев/залпы ниже по-прежнему бьют только по живым.
+    const defLoss = applyLosses(defU, dmgToDef, defP.race, defB.hp, defRisen);
+    const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp, attRisen);
     defU = unitsSub(defU, defLoss.units); defLossTotal = unitsAdd(defLossTotal, defLoss.units);
     attU = unitsSub(attU, attLoss.units); attLossTotal = unitsAdd(attLossTotal, attLoss.units);
+    TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) { defRisen[t][i] = Math.max(0, (defRisen[t][i] || 0) - (defLoss.risen[t][i] || 0)); attRisen[t][i] = Math.max(0, (attRisen[t][i] || 0) - (attLoss.risen[t][i] || 0)); } });
+    // index.html:4229-4238 контрудар гарнизона (dwarf, эпоха 5, ТОЛЬКО при
+    // обороне — defB.counter приходит из bonuses(defP, true), которая уже
+    // применяет defMods лишь defending-стороне). Доля от урона, который
+    // атакующий только что нанёс защитнику (dmgToDef ЭТОГО раунда, не
+    // накопленного), возвращается атакующему по HP-долям его родов войск.
+    if (defB.counter) {
+      const totalDmgToDef = TKEYS.reduce((s, t) => s + (dmgToDef[t] || 0), 0);
+      const extra = totalDmgToDef * defB.counter;
+      if (extra > 0) {
+        const reflect = {};
+        TKEYS.forEach((t) => { if (attS[t].n > 0) reflect[t] = extra * (attS[t].hp / Math.max(1, attS.totalHp)); });
+        const l = applyLosses(attU, reflect, attP.race, attB.hp);
+        attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
+      }
+    }
     // index.html:4222-4228 — полководцы бьют/получают на тех же attS/defS,
     // что и основной обмен этого раунда (снятые ДО применения урона выше —
     // тот же порядок, что и в источнике).
@@ -1024,10 +1316,30 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
     if (defGen) defGen.hp = Math.max(0, defGen.hp - damageToGeneral(defGen, attS));
     checkDiscipline(defUnits, defLossTotal, defP.race, defBroken);
     checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
+    // index.html:4396-4410 raiseSkeletons — Фаза 9, кусочек 7. Атакующий в
+    // PvP всегда mode:"siege-attack" (гибель насмерть без исключений — тот
+    // же режим, что уже применяется к нему в applyMarchArrive), поэтому
+    // hurt у него всегда 0 и B.raiseHurt для атакующего эффекта не даёт —
+    // честно, не баг: штурмующий чужой город лазарета не имеет вообще, и
+    // "Пробуждение кургана" ему буквально нечего поднимать. Защитник —
+    // обычный "hospital", как и в его собственном итоговом hospitalSplit.
+    applyRaise(defP, defB, "hospital", defLossTotal, defRisen, defRaisedCum);
+    applyRaise(attP, attB, "siege-attack", attLossTotal, attRisen, attRaisedCum);
+    // index.html:4260-4265 rout — атакующий отступает, потеряв больше 72%
+    // состава, с которым вошёл в этот бой (attStartN выше), не дожидаясь
+    // ROUND_CAP и не добивая защитника. Проверяется раз в конце раунда,
+    // после всего урона этого раунда (включая контрудар/полководцев).
+    if (unitsTotal(attU) / Math.max(1, attStartN) < 0.28) break;
   }
   const attHpLeft = sideStats(attU, attP.race, attB).totalHp;
   const defHpLeft = sideStats(defU, defP.race, defB).totalHp;
-  const winner = defHpLeft <= 0 && attHpLeft > 0 ? "att" : attHpLeft <= 0 && defHpLeft > 0 ? "def" : (attHpLeft > defHpLeft ? "att" : "def");
+  // index.html:4267-4275 — если обе стороны уцелели (упёрлись в ROUND_CAP
+  // или атакующий отступил по rout выше), победа по armyPower ОСТАВШИХСЯ
+  // войск, не по HP. Полное истребление одной из сторон по-прежнему решает
+  // исход напрямую, тут ничего не поменялось.
+  const attAlive = unitsTotal(attU), defAlive = unitsTotal(defU);
+  const powA = armyPower(attU, attB, attP.race), powD = armyPower(defU, defB, defP.race);
+  const winner = attAlive > 0 && defAlive <= 0 ? "att" : defAlive > 0 && attAlive <= 0 ? "def" : (powA > powD ? "att" : "def");
   return { attLoss: attLossTotal, defLoss: defLossTotal, attHpLeft, defHpLeft, winner, rounds: round, weather: weather.id, weatherName: weather.name };
 }
 // index.html:2867 HOSPITAL_CAP_TABLE / hospitalCap / totalHospitalCap —
@@ -1085,6 +1397,35 @@ function hospitalSplit(p, loss, mode) {
     }
   });
   return { dead, hurt, slight, slightUnits, deadUnits, hurtUnits };
+}
+// index.html:4396-4410 raiseSkeletons — Фаза 9, кусочек 7: только undead
+// (B.raise/B.raiseHurt ненулевые — обе расовые эпохи 1/4 + Кармилла, у
+// остальных трёх рас всегда 0, функция тут же выходит). rate — доля
+// НАСМЕРТЬ погибших (dead), которая встаёт скелетами; rateHurt (венец
+// "Пробуждение кургана") — ОТДЕЛЬНЫЙ параллельный источник: часть
+// тяжелораненых (hurt, которые и так едут в лазарет как обычно, никуда не
+// деваются) тоже встаёт на время боя. lossTotal — НАКОПЛЕННЫЕ потери с
+// начала боя (attLossTotal/defLossTotal), не только этого раунда — тем же
+// принципом, что и checkDiscipline. raisedCum — сколько уже поднято
+// суммарно (по этому же tотal), чтобы не поднимать дважды один и тот же
+// "бюджет" мертвецов: раз в раунд считаем ДОЛЖНО-БЫТЬ-ПОДНЯТО от текущего
+// lossTotal и добавляем в risen только РАЗНИЦУ с уже поднятым.
+function applyRaise(p, B, mode, lossTotal, risen, raisedCum) {
+  const rate = B.raise || 0, rateHurt = B.raiseHurt || 0;
+  if (rate <= 0 && rateHurt <= 0) return;
+  const hs = hospitalSplit(p, lossTotal, mode);
+  TKEYS.forEach((t) => {
+    for (let i = 1; i <= 5; i++) {
+      const shouldDead = Math.floor((hs.deadUnits[t][i] || 0) * rate);
+      const shouldHurt = rateHurt > 0 ? Math.floor((hs.hurtUnits[t][i] || 0) * rateHurt) : 0;
+      const should = shouldDead + shouldHurt;
+      const already = raisedCum[t][i] || 0;
+      if (should > already) {
+        risen[t][i] = (risen[t][i] || 0) + (should - already);
+        raisedCum[t][i] = should;
+      }
+    }
+  });
 }
 function unitsSub(units, loss) {
   const out = { inf: {}, arc: {}, cav: {}, sie: {} };
@@ -1149,37 +1490,60 @@ const BANDIT_B = { atk: 0, def: 0, hp: 0, matk: 0, mdef: 0, archer: 0 };
 // боя под одной крышей.
 // Фаза 9, кусочки 1-4 — тот же переход на раундовый цикл + погоду +
 // дисциплину + урон полководца, что и у resolvePvp выше (см. её заголовок
-// насчёт честных пробелов, здесь те же самые: без контрудара/первого
-// залпа — у разбойников и так нет ни стены, ни башни, ни первого залпа
-// лучников). attP.race=null для лагеря (banditArmy) — disciplineThreshold
-// (t,i,null) просто не находит расового бонуса
-// (RACE_DISCIPLINE_BONUS[null]===undefined), даёт голый порог без надбавки,
-// ровно как и было задумано для "разбойников и т.п." в источнике. У самого
-// лагеря НЕТ полководца (banditArmy — просто гарнизон, не игрок) — бьёт и
-// получает удары только полководец АТАКУЮЩЕГО, если тот его выбрал.
-function resolveBanditRaid(attUnits, attP, campLv, marchId = 0) {
+// насчёт честных пробелов). Контрудара гарнизона нет — BANDIT_B не считает
+// bonuses(...,true), у лагеря попросту не может взяться B.counter. Но
+// собственный первый залп АТАКУЮЩЕГО (elf firstStrike) — не завязан на
+// защитника: эльф стреляет первым по любой цели, лагерь варваров не
+// исключение (сам лагерь ответным первым залпом не бьёт — у BANDIT_B нет
+// поля firstStrike, volleyDamage тихо вернёт null). attP.race=null для
+// лагеря (banditArmy) — disciplineThreshold(t,i,null) просто не находит
+// расового бонуса (RACE_DISCIPLINE_BONUS[null]===undefined), даёт голый
+// порог без надбавки, ровно как и было задумано для "разбойников и т.п."
+// в источнике. У самого лагеря НЕТ полководца (banditArmy — просто
+// гарнизон, не игрок) — бьёт и получает удары только полководец
+// АТАКУЮЩЕГО, если тот его выбрал. Кусочек 6 (см. заголовок resolvePvp) —
+// rout и честная ничья по armyPower — распространены и на лагеря
+// (index.html:5066 тоже отправляет resolveBattle без toDeath, то есть с
+// тем же rout, что и обычный поход на игрока).
+function resolveBanditRaid(attUnits, attP, campLv, marchId = 0, attHasGen = false) {
   const attB = bonuses(attP);
   const bandStart = banditArmy(campLv);
   let attU = attUnits, bandU = bandStart;
   let attLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} }, bandLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} };
   const attBroken = { inf: {}, arc: {}, cav: {}, sie: {} }, bandBroken = { inf: {}, arc: {}, cav: {}, sie: {} };
+  // Фаза 9, кусочек 7 — только у атакующего может быть risen (undead
+  // игрок); у BANDIT_B нет полей raise/raiseHurt вообще, лагерь никогда не
+  // поднимает своих. См. заголовок resolvePvp насчёт risen в целом.
+  const attRisen = { inf: {}, arc: {}, cav: {}, sie: {} }, attRaisedCum = { inf: {}, arc: {}, cav: {}, sie: {} };
   const rnd = battleRngMp(marchId);
   const weather = pickWeather(rnd);
   const wMod = (t) => (weather.mod && weather.mod[t]) || 1;
   const jit = weather.jitter || 0.05;
   const roll = () => 1 + (rnd() * 2 - 1) * jit;
+  const openA = volleyDamage(attU, attP.race, attB, sideStats(bandU, null, BANDIT_B));
+  if (openA) {
+    const scaled = {}; TKEYS.forEach((t) => { scaled[t] = (openA[t] || 0) * wMod("arc") * roll(); });
+    const l = applyLosses(bandU, scaled, null, 0);
+    bandU = unitsSub(bandU, l.units); bandLossTotal = unitsAdd(bandLossTotal, l.units);
+    checkDiscipline(bandStart, bandLossTotal, null, bandBroken);
+  }
   let round = 0;
-  let attGen = genStats(attP);
+  // attHasGen — тот же смысл, что и в resolvePvp выше (m.data.has_gen):
+  // генерал физически один, участвует только там, куда его реально
+  // отправили этим маршем, а не в каждом бою автоматически.
+  let attGen = attHasGen ? genStats(attP) : null;
+  const attStartN = unitsTotal(attUnits); // Фаза 9, кусочек 6 — см. заголовок resolvePvp
   while (round < ROUND_CAP) {
-    const attS = sideStats(attU, attP.race, attB, attBroken), bandS = sideStats(bandU, null, BANDIT_B, bandBroken);
+    const attS = sideStats(attU, attP.race, attB, attBroken, attRisen), bandS = sideStats(bandU, null, BANDIT_B, bandBroken);
     if (attS.totalN <= 0 || bandS.totalN <= 0) break;
     round++;
     const dmgToBand = dmgTo(attS, bandS, 0, 0, wMod, roll()); // лагерь без стены/башни
     const dmgToAtt = dmgTo(bandS, attS, 0, 0, wMod, roll());
     const bandLoss = applyLosses(bandU, dmgToBand, null, 0);
-    const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp);
+    const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp, attRisen);
     bandU = unitsSub(bandU, bandLoss.units); bandLossTotal = unitsAdd(bandLossTotal, bandLoss.units);
     attU = unitsSub(attU, attLoss.units); attLossTotal = unitsAdd(attLossTotal, attLoss.units);
+    TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) attRisen[t][i] = Math.max(0, (attRisen[t][i] || 0) - (attLoss.risen[t][i] || 0)); });
     const genDmgToBand = generalDamage(attGen, bandS);
     if (genDmgToBand) {
       const l = applyLosses(bandU, genDmgToBand, null, 0);
@@ -1188,20 +1552,39 @@ function resolveBanditRaid(attUnits, attP, campLv, marchId = 0) {
     if (attGen) attGen.hp = Math.max(0, attGen.hp - damageToGeneral(attGen, bandS));
     checkDiscipline(bandStart, bandLossTotal, null, bandBroken);
     checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
+    // index.html:5061 A.mode="hospital" — рейд на лагерь не штурм чужого
+    // города, у атакующего лазарет работает как обычно (в отличие от PvP,
+    // где он "siege-attack"), поэтому и raiseHurt тут для него реален.
+    applyRaise(attP, attB, "hospital", attLossTotal, attRisen, attRaisedCum);
+    if (unitsTotal(attU) / Math.max(1, attStartN) < 0.28) break; // rout, index.html:5066 — тоже roundует с бандитами
   }
   const attHpLeft = sideStats(attU, attP.race, attB).totalHp;
   const bandHpLeft = sideStats(bandU, null, BANDIT_B).totalHp;
-  const winner = bandHpLeft <= 0 && attHpLeft > 0 ? "att" : attHpLeft <= 0 && bandHpLeft > 0 ? "band" : (attHpLeft > bandHpLeft ? "att" : "band");
+  const attAlive = unitsTotal(attU), bandAlive = unitsTotal(bandU);
+  const powA = armyPower(attU, attB, attP.race), powBand = armyPower(bandU, BANDIT_B, null);
+  const winner = attAlive > 0 && bandAlive <= 0 ? "att" : bandAlive > 0 && attAlive <= 0 ? "band" : (powA > powBand ? "att" : "band");
   return { attLoss: attLossTotal, winner, rounds: round, weather: weather.id, weatherName: weather.name };
 }
 // index.html:5148-5150 — та же добыча с разгромленного лагеря, что и в
-// одиночной игре (книги опыта генерала — bookDrop — не перенесены по той
-// же причине, что и BANDIT_XP выше).
+// одиночной игре.
 function banditLoot(campLv) {
   const base = Math.round(1800 * Math.pow(1.28, campLv - 1));
   const loot = {};
   RES.forEach((r) => { loot[r] = Math.round(base * (r === "gold" ? 0.25 : r === "stone" ? 0.6 : 1)); });
   return loot;
+}
+// index.html:5113-5123 — книги опыта генерала: выпадают с разгромленных
+// лагерей разбойников СВЕРХ обычного опыта (bookDrop уже перенесённого
+// addXp/BANDIT_XP выше), суммарная ценность = уровень_лагеря*100,
+// разбивается жадно от крупного номинала к мелкому. Раньше честно не
+// переносилось "по той же причине, что и BANDIT_XP" — причина исчезла в
+// Фазе 10, кусочек 1 (addXp/BANDIT_XP там уже перенесены), а bookDrop
+// саму так и не подключили следом — закрывается здесь.
+const TOME_VALUES = [20000, 10000, 5000, 1000, 500, 100];
+function bookDrop(total) {
+  const drops = {};
+  TOME_VALUES.forEach((v) => { while (total >= v) { drops[v] = (drops[v] || 0) + 1; total -= v; } });
+  return drops;
 }
 
 // Зеркало arriveMarch->battleCity (index.html:5018/5363) для mode:"attack" —
@@ -1238,7 +1621,7 @@ async function applyMarchArrive(admin, ev) {
   if (dErr) throw dErr;
 
   const nowSec = Date.now() / 1000;
-  let survivors = m.units;
+  let survivors = m.units, carry = {};
   // Цель пропала или встала под щит уже после отправки марша — бой не
   // случается, отряд просто разворачивается (как recallMarch без боя).
   if (defRow && !(defRow.shield_until > nowSec)) {
@@ -1248,7 +1631,8 @@ async function applyMarchArrive(admin, ev) {
     defP.race = defP.race || defRow.race;
     const defWallLv = (defP.b && typeof defP.b.wall === "number") ? defP.b.wall : 0;
     const defGarrisonLv = (defP.b && typeof defP.b.garrison === "number") ? defP.b.garrison : 0;
-    const result = resolvePvp(m.units, attP, defP.troops, defP, defWallLv, defGarrisonLv, m.id);
+    const attHasGen = !!(m.data && m.data.has_gen);
+    const result = resolvePvp(m.units, attP, defP.troops, defP, defWallLv, defGarrisonLv, m.id, attHasGen);
     defP.troops = unitsSub(defP.troops, result.defLoss);
     // Фаза 4, шестой кусочек: лазарет защитника (index.html:4351/4411-4423)
     // — часть потерь не гибнет насмерть. Слегка раненые (12%) немедленно
@@ -1269,7 +1653,38 @@ async function applyMarchArrive(admin, ev) {
     // Раньше эта функция вообще не писала обратно строку атакующего (его
     // войска возвращались только через марш домой) — теперь нужно, чтобы
     // сохранить level/xp/pts.
-    if (result.winner === "att") addXp(attP, Math.round(200 + (defP.b && defP.b.hall || 0) * 60));
+    if (result.winner === "att") {
+      addXp(attP, Math.round(200 + (defP.b && defP.b.hall || 0) * 60));
+      // index.html:5385-5391 battleCity — грабёж склада защитника, ранее
+      // честно отсутствовавший в MP целиком (carry никогда не выставлялся,
+      // defP.res никогда не трогался). syncRes(defP) сначала — иначе
+      // грабился бы устаревший снимок с момента последнего ДЕЙСТВИЯ
+      // защитника, а не реальный на секунду боя.
+      syncRes(defP, nowSec);
+      let carryCap = 0;
+      TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) carryCap += (survivors[t][i] || 0) * TROOP_TYPES[t].load * TIER_MULT[i - 1] * troopMod(attP.race, t, "load"); });
+      const prot = capacity(defP);
+      RES.forEach((r) => {
+        const take = Math.min(Math.max(0, (defP.res[r] || 0) - prot[r]), carryCap / 4);
+        carry[r] = Math.round(take);
+        defP.res[r] = (defP.res[r] || 0) - take;
+      });
+      // index.html:5393-5403 — полный разгром бьёт по прочности стены и
+      // при обнулении переносит столицу защитника (relocate). Сознательно
+      // НЕ переносится — щит мира и перенос столицы исключены из общего
+      // мира ещё раньше в этой миграции (не были закончены даже в
+      // одиночной игре), тот же принцип, что и у wallHp вообще.
+    }
+    // index.html:4950-4957 EV.home — генерал возвращается домой вместе с
+    // отрядом НЕЗАВИСИМО от исхода похода; там это происходит при обычном
+    // возвращении. Если же весь посланный отряд полёг (survivors пуст),
+    // applyMarchArrive удаляет марш немедленно, минуя домашний путь и
+    // applyMarchHome (см. ниже) — той развязки, что освобождает away,
+    // тогда не будет вовсе, поэтому освобождаем прямо здесь, пока ещё
+    // знаем survivors. Проверка на attP.gen.away===m.id — та же
+    // защитная, что и в источнике (не отобрать генерала у НОВОГО похода
+    // из-за завершения старого).
+    if (attHasGen && unitsTotal(survivors) <= 0 && attP.gen && attP.gen.away === m.id) attP.gen.away = null;
     const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
     if (updA) throw updA;
     const { error: updD } = await admin.from("players").update({ state: defP, updated_at: new Date().toISOString() }).eq("id", defRow.id);
@@ -1280,6 +1695,7 @@ async function applyMarchArrive(admin, ev) {
       attHpLeft: Math.round(result.attHpLeft), defHpLeft: Math.round(result.defHpLeft),
       defDead: hs.dead, defHurt: hs.hurt, defSlight: hs.slight,
       rounds: result.rounds, // Фаза 9, кусочек 1 — теперь бой честно может занять не один обмен
+      loot: carry, // {} при поражении/ничьей — RES.forEach выше не заполнил ни рубля
     };
     const mailRows = [
       { world_id: m.world_id, player_id: attRow.id, kind: "battle", data: { role: "attacker", opponent_id: defRow.id, opponent_nick: defRow.nick, ...summary } },
@@ -1297,7 +1713,7 @@ async function applyMarchArrive(admin, ev) {
   const dist = (m.data && m.data.dist) || 0, spd = (m.data && m.data.spd) || 1;
   const travelBack = Math.max(15, (dist / spd) * 60);
   const { error: updM } = await admin.from("marches")
-    .update({ state: "back", t0: nowSec, t1: nowSec + travelBack, units: survivors }).eq("id", m.id);
+    .update({ state: "back", t0: nowSec, t1: nowSec + travelBack, units: survivors, data: { ...m.data, carry } }).eq("id", m.id);
   if (updM) throw updM;
   const { error: evErr } = await admin.from("events").insert({
     world_id: m.world_id, fire_at: new Date((nowSec + travelBack) * 1000).toISOString(),
@@ -1321,12 +1737,22 @@ async function applyMarchHome(admin, ev) {
     const p = row.state;
     p.troops = unitsAdd(p.troops, m.units);
     // Фаза 8, кусочек 1 — зеркало gain(p,m.carry) из EV.home (index.html:
-    // 4959-4964). Только gather-марши несут m.data.carry (см. applyGathered
-    // ниже) — у атакующих маршей этого поля никогда не было и не будет,
-    // для них ничего не меняется.
+    // 4959-4964). gather/raid-марши несут m.data.carry с самого начала
+    // (см. applyGathered/applyRaidArrive); PvP-марши — с грабежа склада
+    // при победе (см. applyMarchArrive выше, добыча/отсутствие добычи
+    // одним и тем же полем carry). Если поля нет вовсе (m.data.carry
+    // undefined) — ничего не меняется, как и раньше.
     if (m.data && m.data.carry) {
       RES.forEach((r) => { if (m.data.carry[r]) p.res[r] = (p.res[r] || 0) + m.data.carry[r]; });
     }
+    // index.html:4950-4957 EV.home — генерал возвращается вместе с
+    // отрядом независимо от того, как поход закончился (дошёл сам, был
+    // отозван, или это выжившие после боя — applyMarchArrive/
+    // applyRaidArrive добираются сюда обычным путём марша "back", только
+    // полный ноль выживших освобождает away раньше, см. их заголовки).
+    // Проверка на p.gen.away===m.id, а не просто m.data.has_gen — не
+    // отобрать генерала у НОВОГО похода из-за возврата старого.
+    if (m.data && m.data.has_gen && p.gen && p.gen.away === m.id) p.gen.away = null;
     const { error: updErr } = await admin.from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
     if (updErr) throw updErr;
   }
@@ -1425,20 +1851,26 @@ async function applyRaidArrive(admin, m) {
 
   const nowSec = Date.now() / 1000;
   let survivors = m.units, carry = {};
+  const attHasGen = !!(m.data && m.data.has_gen);
   // Лагерь уже разгромлен кем-то другим, пока отряд шёл — бой не
   // случается, отряд просто разворачивается пустым (как gather на
   // истощённую точку, как attack на пропавшего защитника).
   if (cell && (cell.t === "camp" || cell.t === "fort")) {
     const campLv = (m.data && m.data.camp_lv) || 1;
-    const result = resolveBanditRaid(m.units, attP, campLv, m.id);
+    const result = resolveBanditRaid(m.units, attP, campLv, m.id, attHasGen);
     const hs = hospitalSplit(attP, result.attLoss, "hospital");
     attP.troops = unitsAdd(attP.troops, hs.slightUnits);
     attP.wounded = unitsAdd(attP.wounded, hs.hurtUnits);
     survivors = unitsSub(m.units, result.attLoss);
 
+    let tomeDrops = {};
     if (result.winner === "att") {
       carry = banditLoot(campLv);
       addXp(attP, BANDIT_XP[Math.max(1, Math.min(30, campLv)) - 1]); // Фаза 10, кусочек 1
+      // index.html:5074-5077 — книги опыта СВЕРХ обычного addXp выше.
+      tomeDrops = bookDrop(campLv * 100);
+      if (!attP.tomes) attP.tomes = {};
+      for (const v in tomeDrops) attP.tomes[v] = (attP.tomes[v] || 0) + tomeDrops[v];
       await admin.from("map_cells").delete().eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY);
       // Фаза 8, кусочек 3 — зеркало mapDelete+schedule(CFG.RESPAWN_CAMP,
       // "respawn",...) из index.html (arriveMarch, camp/fort-ветка,
@@ -1452,11 +1884,15 @@ async function applyRaidArrive(admin, m) {
 
     const { error: mailErr } = await admin.from("mail").insert({
       world_id: m.world_id, player_id: attRow.id, kind: "raid",
-      data: { camp_lv: campLv, win: result.winner === "att", loot: carry, attLoss: result.attLoss, dead: hs.dead, hurt: hs.hurt, slight: hs.slight, rounds: result.rounds },
+      data: { camp_lv: campLv, win: result.winner === "att", loot: carry, tomes: tomeDrops, attLoss: result.attLoss, dead: hs.dead, hurt: hs.hurt, slight: hs.slight, rounds: result.rounds },
     });
     if (mailErr) throw mailErr;
   }
 
+  // index.html:4950-4957 — та же логика, что и в applyMarchArrive выше
+  // (см. её заголовок): если весь отряд полёг, домашнего пути и
+  // applyMarchHome не будет, освобождаем away прямо здесь.
+  if (attHasGen && unitsTotal(survivors) <= 0 && attP.gen && attP.gen.away === m.id) attP.gen.away = null;
   const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
   if (updA) throw updA;
 

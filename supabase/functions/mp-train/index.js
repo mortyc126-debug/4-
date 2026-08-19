@@ -65,6 +65,19 @@ const pay = (res, c) => RES.forEach((r) => { if (c[r]) res[r] -= c[r]; });
 function trainDuration(hallLv, type, tier, n, trainSpeedBonus = 0) {
   return (TRAIN_TIME[tier - 1] * n) / ((1 + hallLv * 0.06) * (1 + trainSpeedBonus));
 }
+// index.html:2154-2158 tierUnlockedFor — какой максимальный тир открыт
+// исследованием mil_tier_<type><N>. Честная добавка к источнику: startTrain
+// сам по себе НЕ проверяет это (в SP только UI прячет тир-выбор выше
+// открытого) — найдено при переносе mp-retrain (кусочек, добавляющий
+// собственно способ получить войска тира 2+), тем же коммитом закрыто и
+// здесь: без этой проверки прямой вызов mp-train с tier>1 обошёл бы
+// исследование полностью, тот же принцип "сервер не доверяет UI-гейтингу",
+// что и в mp-forge/mp-upgrade/mp-craft.
+function tierUnlockedFor(tech, type) {
+  let mx = 1;
+  for (let t = 2; t <= 5; t++) { if ((tech["mil_tier_" + type + t] || 0) >= 1) mx = t; else break; }
+  return mx;
+}
 // Добыча ресурсов по времени (index.html:3790/3813/3838, см. _shared/rules.js)
 // — дергаем перед canPay/pay, чтобы цена набора списывалась с актуального
 // баланса, а не с того, что был на момент последнего join/действия.
@@ -233,10 +246,10 @@ const ACADEMY_TREE = {
 //      (mp-pickgen) — p.gen.id больше не всегда null, GENERALS ниже несёт
 //      ОБЕ записи на расу (не только index 0), apply() читается по
 //      реальному p.gen.id||0, как в клиенте.
-//   4. portalMarchBonus(p.b.portal) — Портал не входит в постройки общего
-//      мира (нет в BUILD_MP_BLDS/BKEYS этого модуля), поэтому p.b.portal
-//      всегда отсутствует — передаётся 0 явно (portalMarchBonus(0)=0), это
-//      не заглушка отдельного бонуса, а честный факт "здания ещё нет".
+//   4. portalMarchBonus(p.b.portal) — Портал теперь настоящее здание общего
+//      мира (mp-build, отдельный кусочек после Фазы 11 — единственное
+//      здание без собственной ценовой кривой и в источнике, работает через
+//      общую BUILD_TABLE), p.b.portal — реальный уровень, не всегда 0.
 //   5. Бонусы дерева исследований (ACADEMY_TREE[*].field/effects, по
 //      p.tech) — уже перенесено в Фазе 5, здесь наконец подключается.
 //
@@ -480,6 +493,8 @@ Deno.serve(async (req) => {
     if (p.train[type]) return jsonResponse({ err: "Здание уже занято набором" }, 400);
     if (p.queues.some((q) => q && q.b === bld))
       return jsonResponse({ err: "Здание сейчас улучшается — дождитесь окончания" }, 400);
+    if (tier > tierUnlockedFor(p.tech || {}, type))
+      return jsonResponse({ err: "Этот тир ещё не открыт исследованием" }, 400);
     const cap = trainCap(Array.isArray(p.b[bld]) ? Math.max(0, ...p.b[bld]) : p.b[bld]);
     if (n < 1) return jsonResponse({ err: "Наберите хотя бы одного воина" }, 400);
     if (n > cap) return jsonResponse({ err: "За раз можно набрать не больше " + cap }, 400);

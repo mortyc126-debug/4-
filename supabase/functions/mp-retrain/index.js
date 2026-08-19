@@ -1,54 +1,26 @@
 // =============================================================================
-// mp-recall — Фаза 4, девятый кусочек: отзыв похода на полпути. Зеркало
-// recallMarch(m) из index.html:4770-4780 — до сих пор поход, однажды
-// отправленный, нельзя было ни отменить, ни развернуть раньше срока:
-// оставалось либо ждать исхода, либо просто закрыть вкладку.
+// mp-retrain — переобучение уже набранных войск в следующий тир (Пехота T1 →
+// T2 и т.д.), зеркало startRetrain(p,type,fromTier,n) (index.html:5828-5847).
+// Файл — почти буквальная копия mp-train (тот же canPay/pay/bonuses/
+// trainDuration-инфраструктура и тот же общий "станок" — казарма/etc. заняты
+// либо набором, либо переобучением одновременно, никогда обоими сразу), но
+// endpoint внизу отличается: списывает существующих воинов тира fromTier
+// (не платит с нуля — retrainCost — это РАЗНИЦА между ценой tier+1 и tier),
+// использует retrainDuration/retrainMax вместо trainDuration/trainCap-only.
 //
-// Фаза 9 (мелкий пробел, не часть боя как такового), продолжение этого же
-// кусочка: раньше отозвать можно было ТОЛЬКО mode:"attack" — источник
-// (index.html:4770-4780) такого ограничения не знает вообще, recallMarch(m)
-// одинаково разворачивает поход ЛЮБОГО режима, единственная проверка —
-// if(m.state==="back")return (уже возвращается — отзывать нечего). Теперь
-// mode:"gather"/"raid" тоже отзываются:
-// - "raid" структурно как "attack" — марш либо ещё в пути (state:"go"),
-//   либо бой уже разрешился (марш пришёл/удалён), отдельного "стоит на
-//   месте" состояния нет — та же формула, никаких новых полей.
-// - "gather" — у него ЕСТЬ промежуточное состояние (state:"gather", отряд
-//   уже стоит на точке и отсчитывает время сбора). marchPos(m) в источнике
-//   (index.html:4783) для state:"gather"|"siege" возвращает координаты
-//   ЦЕЛИ напрямую, без интерполяции по t0/t1 — здесь то же самое (t0/t1 в
-//   этом состоянии означают длительность СБОРА, не дорогу, интерполировать
-//   по ним позицию было бы неверно).
-// - Честная ДОБАВКА к экономике: mp-gather резервирует ресурс узла
-//   (data.take) уже на отправке (Фаза 8, кусочек 1), а не при завершении
-//   сбора — значит, отозванный НА ПОДХОДЕ (state:"go") марш должен вернуть
-//   резерв узлу (иначе ресурс пропадает в никуда — ни игроку, ни узлу).
-//   Отозванный УЖЕ НА ТОЧКЕ (state:"gather") — наоборот, признаём сбор
-//   состоявшимся и сразу простреливаем data.carry той же формулой, что и
-//   applyGathered (mp-tick) в конце таймера — честное упрощение: без
-//   расчёта частичной добычи по доле прошедшего времени, отряд либо ещё в
-//   пути (ничего), либо уже стоял на месте (всё целиком).
+// Завершение — та же ветка applyTrain в mp-tick, никаких изменений там не
+// нужно: она уже кредитует p.troops[T.type][T.tier] по T.n, а T.tier у
+// переобучения — это просто fromTier+1 (число, откуда взялось — ей всё
+// равно). retrain:true в p.train[type] — чисто для отображения в панели,
+// mp-tick его не читает.
 //
-// Честное упрощение, продолжающее то же, что и в mp-attack: путь по прямой
-// (Math.hypot), не waterPath() — клетки местности (map_cells) в общем
-// мире не сгенерированы. Текущая точка на маршруте (для state:"go") —
-// линейная интерполяция между домом отправителя и целью по доле пройденного
-// времени (marchPos(m) в клиенте делает то же самое покадрово вдоль
-// настоящего path[], здесь то же самое, просто по прямой).
-//
-// Поход, уже возвращающийся (state:"back"), отзывать нечего — в клиенте
-// recallMarch(m) тут просто молча выходит (if(m.state==="back") return),
-// но там это фоновый вызов без ответа пользователю; здесь это прямое
-// действие по кнопке — честнее вернуть ошибку, чтобы кнопка не выглядела
-// нерабочей.
-//
-// Тело запроса: { march_id: number }
+// Тело запроса: { type:"inf"|"arc"|"cav"|"sie", fromTier:1..4, n:number }
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// Вставлено буквально из ../_shared/cors.js — Dashboard-редактор Edge
-// Functions не подтягивает относительные импорты на общую папку, поэтому
-// здесь код самодостаточен (копия, а не импорт). При деплое через Supabase
-// CLI можно вернуть импорт как в репозитории.
+// Вставлено буквально из ../_shared/cors.js и ../_shared/rules.js —
+// Dashboard-редактор Edge Functions не подтягивает относительные импорты на
+// общую папку, поэтому здесь код самодостаточен (копия, а не импорт). При
+// деплое через Supabase CLI можно вернуть импорты как в репозитории.
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -65,11 +37,69 @@ function handleOptions(req) {
   return null;
 }
 
-const TKEYS = ["inf", "arc", "cav", "sie"];
-const TROOP_SPEED = { inf: 1.00, arc: 1.10, cav: 1.70, sie: 0.60 };
-const RACE_SPEED_MOD = { undead: { sie: 1.20 } }; // index.html RACE_TROOP_MOD — только нежить меняет скорость (осада)
-const troopSpeedMod = (race, t) => (RACE_SPEED_MOD[race] && RACE_SPEED_MOD[race][t]) || 1;
-const MARCH_SPEED_SCALE = 32;
+const RES = ["food", "wood", "stone", "gold"];
+const TROOP_COST_COMBAT = [
+  { food: 10, wood: 10, stone: 0, gold: 0 },
+  { food: 40, wood: 40, stone: 0, gold: 0 },
+  { food: 100, wood: 100, stone: 20, gold: 0 },
+  { food: 200, wood: 200, stone: 150, gold: 0 },
+  { food: 350, wood: 350, stone: 350, gold: 80 },
+];
+const TROOP_COST_SIEGE = [
+  { food: 0, wood: 20, stone: 0, gold: 0 },
+  { food: 0, wood: 50, stone: 30, gold: 0 },
+  { food: 0, wood: 100, stone: 40, gold: 0 },
+  { food: 0, wood: 250, stone: 100, gold: 0 },
+  { food: 0, wood: 400, stone: 300, gold: 80 },
+];
+const troopCost = (type, tier) => (type === "sie" ? TROOP_COST_SIEGE : TROOP_COST_COMBAT)[tier - 1];
+const TRAIN_TIME = [3.6, 7.2, 12, 24, 48];
+const TRAIN_BLD = { inf: "barracks", arc: "range", cav: "stable", sie: "siege" };
+const TRAIN_CAP = [
+  20, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 550, 600, 700, 800,
+  900, 1000, 1100, 1200, 1300, 1400, 1500, 1600, 1700, 2000,
+];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const tblRow = (tbl, lv) => tbl[clamp(Math.round(lv), 1, tbl.length) - 1];
+const trainCap = (lv) => (lv <= 0 ? 0 : tblRow(TRAIN_CAP, lv));
+const canPay = (res, c) => RES.every((r) => !c[r] || res[r] >= c[r]);
+const pay = (res, c) => RES.forEach((r) => { if (c[r]) res[r] -= c[r]; });
+// trainSpeedBonus — bonuses(p).trainSpeed (Фаза 6, см. ниже), реальный
+// подсчёт по расе/эпохе/дефолтному генералу/дереву исследований.
+function trainDuration(hallLv, type, tier, n, trainSpeedBonus = 0) {
+  return (TRAIN_TIME[tier - 1] * n) / ((1 + hallLv * 0.06) * (1 + trainSpeedBonus));
+}
+// index.html:5813-5821 — retrainCost платит только РАЗНИЦУ цены между
+// tier(fromTier) и tier(fromTier+1) за штуку (уже выученный воин не
+// оплачивается заново целиком); retrainDuration — та же формула, что и
+// trainDuration, но по разнице времени обучения между тирами.
+function retrainCost(type, fromTier, n) {
+  const from = troopCost(type, fromTier), to = troopCost(type, fromTier + 1), tot = {};
+  RES.forEach((r) => { tot[r] = Math.max(0, Math.round(((to[r] || 0) - (from[r] || 0)) * n)); });
+  return tot;
+}
+function retrainDuration(hallLv, type, fromTier, n, trainSpeedBonus = 0) {
+  const delta = Math.max(1, TRAIN_TIME[fromTier] - TRAIN_TIME[fromTier - 1]);
+  return (delta * n) / ((1 + hallLv * 0.06) * (1 + trainSpeedBonus));
+}
+// index.html:2154-2158 tierUnlockedFor — какой максимальный тир открыт
+// исследованием mil_tier_<type><N> (mil_tier_inf2/3/4/5 и т.д.).
+function tierUnlockedFor(tech, type) {
+  let mx = 1;
+  for (let t = 2; t <= 5; t++) { if ((tech["mil_tier_" + type + t] || 0) >= 1) mx = t; else break; }
+  return mx;
+}
+// Добыча ресурсов по времени (index.html:3790/3813/3838, см. _shared/rules.js)
+// — дергаем перед canPay/pay, чтобы цена набора списывалась с актуального
+// баланса, а не с того, что был на момент последнего join/действия.
+const PROD_TABLE = [
+  400, 430, 470, 520, 580, 650, 730, 830, 950, 1100, 1300, 1550, 1850, 2200, 2700,
+  3200, 3700, 4300, 5000, 5800, 6700, 7800, 9000, 10400, 20800,
+];
+const prodRate = (lv) => (lv <= 0 ? 0 : tblRow(PROD_TABLE, lv));
+const plotCap = (lv) => (lv <= 0 ? 0 : tblRow(PROD_TABLE, lv) * 10);
+const PROD_BLD = { food: "farm", wood: "lumber", stone: "quarry", gold: "mine" };
+const PROD_MULT = { food: 1, wood: 1, stone: 0.75, gold: 0.5 };
 // index.html:2854 epochOf — эпоха ратуши (1..5), нужна для bonuses() ниже
 // (расовые эпохальные способности).
 const epochOf = (hall) => (hall >= 25 ? 5 : hall >= 19 ? 4 : hall >= 13 ? 3 : hall >= 7 ? 2 : 1);
@@ -208,6 +238,7 @@ const ACADEMY_TREE = {
     }))),
   ],
 };
+// =============================================================================
 // bonuses(p, defending) — Фаза 6. Честная (не упрощённая) часть центрального
 // агрегатора бонусов клиента (index.html:3731-3789). Порядок и формулы —
 // дословно оттуда, но перенесена НЕ вся функция целиком: часть слагаемых
@@ -405,19 +436,26 @@ function production(p) {
   });
   return out;
 }
-
-// marchBonus — bonuses(p).march (Фаза 6, настоящий подсчёт), см. bonuses() ниже.
-function marchSpeed(units, race, marchBonus = 1) {
-  let s = 99;
-  TKEYS.forEach((t) => {
-    for (let i = 1; i <= 5; i++) {
-      if ((units[t] && units[t][i]) > 0) s = Math.min(s, TROOP_SPEED[t] * troopSpeedMod(race, t));
-    }
+function plotFillCap(p) {
+  const out = {};
+  RES.forEach((r) => {
+    const plots = p.b[PROD_BLD[r]];
+    let extra = 0;
+    (Array.isArray(plots) ? plots : [plots || 0]).forEach((lv) => { extra += plotCap(lv) * PROD_MULT[r]; });
+    out[r] = Math.round(extra);
   });
-  if (s > 90) s = 1;
-  return s * MARCH_SPEED_SCALE * marchBonus;
+  return out;
 }
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+function syncRes(p, nowSec) {
+  const dt = (nowSec - (p.resAt || 0)) / 3600;
+  if (dt <= 0) { p.resAt = nowSec; return; }
+  const pr = production(p), cap = plotFillCap(p);
+  RES.forEach((r) => {
+    const add = Math.min(pr[r] * dt, cap[r]);
+    p.res[r] = Math.max(0, p.res[r] + add);
+  });
+  p.resAt = nowSec;
+}
 
 Deno.serve(async (req) => {
   const pre = handleOptions(req);
@@ -436,8 +474,11 @@ Deno.serve(async (req) => {
 
     let body = {};
     try { body = await req.json(); } catch (_) { /* noop */ }
-    const marchId = Number(body.march_id);
-    if (!Number.isFinite(marchId)) return jsonResponse({ err: "Не указан поход" }, 400);
+    const type = body.type;
+    const fromTier = Math.round(body.fromTier);
+    let n = Math.round(Number(body.n));
+    if (!TRAIN_BLD[type]) return jsonResponse({ err: "Неизвестный тип войск" }, 400);
+    if (!(fromTier >= 1 && fromTier <= 4)) return jsonResponse({ err: "Неверный тир (1..4)" }, 400);
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
@@ -445,77 +486,55 @@ Deno.serve(async (req) => {
       .from("worlds").select("id").order("created_at", { ascending: true }).limit(1).maybeSingle();
     if (wErr || !world) return jsonResponse({ err: "Мир ещё не создан — сначала mp-join" }, 400);
 
-    const { data: attRow, error: aErr } = await admin
+    const { data: row, error: pErr } = await admin
       .from("players").select("*").eq("world_id", world.id).eq("auth_uid", user.id).maybeSingle();
-    if (aErr) return jsonResponse({ err: aErr.message }, 500);
-    if (!attRow) return jsonResponse({ err: "Игрок не найден — сначала mp-join" }, 400);
+    if (pErr) return jsonResponse({ err: pErr.message }, 500);
+    if (!row) return jsonResponse({ err: "Игрок не найден — сначала mp-join" }, 400);
 
-    const { data: m, error: mErr } = await admin
-      .from("marches").select("*").eq("id", marchId).eq("player_id", attRow.id).maybeSingle();
-    if (mErr) return jsonResponse({ err: mErr.message }, 500);
-    if (!m) return jsonResponse({ err: "Поход не найден" }, 400);
-    if (!["attack", "gather", "raid"].includes(m.mode)) return jsonResponse({ err: "Этот поход нельзя отозвать" }, 400);
-    if (m.state === "back") return jsonResponse({ err: "Отряд уже возвращается" }, 400);
-    // "go" — в пути, отзывается всегда; "gather" — уже стоит на точке сбора,
-    // отзывается ТОЛЬКО у mode:"gather" (у attack/raid такого состояния нет
-    // вообще). Любое другое сочетание сюда дойти не должно.
-    if (m.state !== "go" && !(m.mode === "gather" && m.state === "gather")) {
-      return jsonResponse({ err: "Отряд уже возвращается" }, 400);
-    }
+    const p = row.state;
+    // Самоисцеление легаси-записей — race теперь дублируется в state ещё
+    // при mp-join (Фаза 6), но у записей до этой правки её там нет; bonuses()
+    // ниже читает p.race как единый объект, а не state+row по отдельности.
+    p.race = p.race || row.race;
+    if (!p.tech) p.tech = {};
+    if (!p.troops[type]) p.troops[type] = {};
+    const bld = TRAIN_BLD[type];
+    const now = Date.now() / 1000;
+    syncRes(p, now);
 
-    const nowSec = Date.now() / 1000;
-    let curX, curY, newData = m.data || {};
-    if (m.mode === "gather" && m.state === "gather") {
-      // index.html:4783 marchPos — на точке сбора координаты цели напрямую,
-      // без интерполяции (t0/t1 в этом состоянии — длительность СБОРА, не
-      // дорога). Отозван уже на месте — признаём сбор состоявшимся и
-      // простреливаем carry той же формулой, что и applyGathered в конце
-      // таймера (см. заголовок файла — без частичной добычи по времени).
-      curX = m.tx; curY = m.ty;
-      const carry = {};
-      if (m.data && m.data.res) carry[m.data.res] = m.data.take || 0;
-      newData = { ...(m.data || {}), carry };
-    } else {
-      // Дословно marchPos(m)/recallMarch(m) из index.html:4770-4784, по
-      // прямой вместо настоящего path[] (см. заголовок файла).
-      const f = clamp((nowSec - m.t0) / Math.max(1, m.t1 - m.t0), 0, 1);
-      curX = attRow.x + (m.tx - attRow.x) * f;
-      curY = attRow.y + (m.ty - attRow.y) * f;
-      // Отозван ещё на подходе — если это gather-марш, резерв узла
-      // (data.take) возвращаем узлу: доехать он так и не успел, добывать
-      // нечего, но ресурс уже списан на отправке (Фаза 8, кусочек 1) — без
-      // возврата он бы пропал в никуда, ни игроку, ни узлу.
-      if (m.mode === "gather" && m.data && m.data.cell_x != null && m.data.cell_y != null && m.data.take > 0) {
-        const { data: cell } = await admin.from("map_cells")
-          .select("data").eq("world_id", world.id).eq("x", m.data.cell_x).eq("y", m.data.cell_y).maybeSingle();
-        // Точка могла успеть исчезнуть (истощилась начисто кем-то другим,
-        // respawn ещё не подоспел) — тогда возвращать резерв некуда, честно
-        // теряется, тот же исход, что и опоздавший на пустую точку игрок.
-        if (cell) {
-          await admin.from("map_cells")
-            .update({ data: { ...(cell.data || {}), amount: ((cell.data && cell.data.amount) || 0) + m.data.take } })
-            .eq("world_id", world.id).eq("x", m.data.cell_x).eq("y", m.data.cell_y);
-        }
-      }
-    }
-    const dist = Math.hypot(attRow.x - curX, attRow.y - curY);
-    const attP = attRow.state;
-    attP.race = attP.race || attRow.race; // самоисцеление легаси-записей, см. mp-attack/mp-train
-    const B = bonuses(attP);
-    const spd = marchSpeed(m.units, attRow.race, B.march);
-    const travel = Math.max(15, (dist / spd) * 60);
+    // Дословно startRetrain(p,type,fromTier,n) из index.html:5828-5847.
+    if (p.train[type]) return jsonResponse({ err: "Здание уже занято набором" }, 400);
+    if (p.queues.some((q) => q && q.b === bld))
+      return jsonResponse({ err: "Здание сейчас улучшается — дождитесь окончания" }, 400);
+    const maxT = tierUnlockedFor(p.tech, type);
+    if (fromTier < 1 || fromTier + 1 > maxT) return jsonResponse({ err: "Следующий тир ещё не открыт" }, 400);
+    if (n < 1) return jsonResponse({ err: "Выберите хотя бы одного воина" }, 400);
+    const have = p.troops[type][fromTier] || 0;
+    if (n > have) return jsonResponse({ err: "Недостаточно воинов этого тира" }, 400);
+    const cap = trainCap(Array.isArray(p.b[bld]) ? Math.max(0, ...p.b[bld]) : p.b[bld]);
+    if (n > cap) return jsonResponse({ err: "За раз можно переобучить не больше " + cap }, 400);
+    const tot = retrainCost(type, fromTier, n);
+    if (!canPay(p.res, tot)) return jsonResponse({ err: "Не хватает ресурсов" }, 400);
+    pay(p.res, tot);
+    p.troops[type][fromTier] -= n;
 
-    const { error: updM } = await admin.from("marches")
-      .update({ state: "back", t0: nowSec, t1: nowSec + travel, data: newData }).eq("id", m.id);
-    if (updM) return jsonResponse({ err: updM.message }, 500);
+    const B = bonuses(p);
+    const hallLv = Array.isArray(p.b.hall) ? Math.max(0, ...p.b.hall) : p.b.hall;
+    const t = retrainDuration(hallLv, type, fromTier, n, B.trainSpeed);
+    p.train[type] = { type, tier: fromTier + 1, n, t0: now, t1: now + t, retrain: true };
 
+    const { error: updErr } = await admin
+      .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
+    if (updErr) return jsonResponse({ err: updErr.message }, 500);
+
+    const fireAt = new Date(Date.now() + t * 1000).toISOString();
     const { error: evErr } = await admin.from("events").insert({
-      world_id: world.id, fire_at: new Date((nowSec + travel) * 1000).toISOString(),
-      type: "march_home", data: { march_id: m.id },
+      world_id: world.id, fire_at: fireAt, type: "train",
+      data: { player_id: row.id, type },
     });
     if (evErr) return jsonResponse({ err: evErr.message }, 500);
 
-    return jsonResponse({ ok: true, eta: travel });
+    return jsonResponse({ ok: true, eta: t, fire_at: fireAt });
   } catch (e) {
     return jsonResponse({ err: String(e && e.message || e) }, 500);
   }
