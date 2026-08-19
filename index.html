@@ -7295,6 +7295,61 @@ function mpTomesPanelHtml(st,lvCap){
       "</div></div>";
   }).join("")+"</div>";
 }
+// ===== Фаза 19, кусочек 7 — Инвентарь: абсолютная копия одиночной foInv()
+// (index.html, чуть ниже по файлу) — отдельный экран-каталог с тремя
+// вкладками (Ресурсы/Материалы/Снаряжение), ПОЛНОСТЬЮ read-only: надеть
+// снаряжение — у генерала (вкладка "Экипировка" внутри mpGenHtml, кусочек
+// 6), сковать — в горне (mpForgeInfoHtml, кусочек 5), у самого каталога ни
+// одной кнопки действия — ровно как и у одиночного foInv().
+// Раньше (в кусочке 6) "Инвентарь" в общем мире был просто ярлыком,
+// скроллящим прямо к вкладке "Экипировка" внутри карточки генерала —
+// рабочий, но не структурно идентичный компромисс: та вкладка ДЕЙСТВУЕТ
+// (надеть/снять), а одиночный foInv() только ПОКАЗЫВАЕТ. Автор явно
+// попросил "всё как в одиночной" — теперь оба существуют раздельно, как и
+// там: mpGenHtml's "Экипировка" остаётся действием, mpInvHtml() — свой
+// отдельный каталог, с собственными вкладками и якорем.
+let mpInvTab="res";
+function mpInvHtml(pShim,st){
+  const tabsHtml="<div id='inv-tabs'>"+
+    [["res","Ресурсы"],["mat","Материалы"],["gear","Снаряжение"]].map(([k,label])=>
+      "<button class='"+(mpInvTab===k?"on":"")+"' data-mp='invtab' data-t='"+k+"'>"+label+"</button>").join("")+
+    "</div>";
+
+  if(mpInvTab==="res"){
+    let h=tabsHtml+rubric("Ресурсы");
+    h+=hollow("&#9884;","Пока нет ни одного предмета, дающего ресурсы.");
+    return h;
+  }
+
+  if(mpInvTab==="mat"){
+    let h=tabsHtml+rubric("Материалы","добываются и куются в горне");
+    Object.keys(MATERIALS).forEach(mat=>{
+      const stock=(st.materials&&st.materials[mat])||[0,0,0,0,0];
+      h+="<div class='entry'><div class='line'><div class='fill'>"+
+        "<div class='title'>"+MATERIALS[mat].name+"</div>"+
+        "<div class='note'>"+RARITY_NAMES.map((rn,i)=>rn.slice(0,3)+": "+(stock[i]||0)).join(" · ")+"</div></div></div></div>";
+    });
+    return h;
+  }
+
+  // Снаряжение: только каталог того, что есть (надето и на складе) — рядом иконками, как в RoK.
+  let h=tabsHtml+rubric("Снаряжение","каталог; надеть — у генерала, сковать — в горне");
+  const cells=[];
+  GEAR_SLOTS.forEach(s=>{
+    const it=st.gear&&st.gear[s.id];
+    if(it) cells.push("<div class='gear-cell equipped' style='--pc:"+RARITY_COLOR[it.rarity-1]+"' title='"+GEAR_NAMES[s.id][it.order][it.rarity-1]+" ("+s.name+", надето)'>"+
+      "<img src='"+gearIconSrc(s.id,it.order)+"' alt=''><span class='eq'>&#9733;</span></div>");
+    ["bastion","storm"].forEach(order=>{
+      for(let r=1;r<=5;r++){
+        const cnt=(st.inventory&&st.inventory[s.id]&&st.inventory[s.id][order]&&st.inventory[s.id][order][r-1])||0; if(!cnt) continue;
+        cells.push("<div class='gear-cell' style='--pc:"+RARITY_COLOR[r-1]+"' title='"+GEAR_NAMES[s.id][order][r-1]+" ("+s.name+")'>"+
+          "<img src='"+gearIconSrc(s.id,order)+"' alt=''><span class='cnt'>×"+cnt+"</span></div>");
+      }
+    });
+  });
+  h+= cells.length ? "<div class='gear-grid'>"+cells.join("")+"</div>" : hollow("&#9884;","Пока нет ни одного предмета — куйте в горне.");
+  return h;
+}
 // Фаза 17, кусочек 1 — дословная копия buildingStatDeltaHtml() (index.html,
 // см. её же комментарий чуть ниже по файлу), но БЕЗ обращения к me(): та
 // функция почти целиком чистая (bk/lv/nx + глобальные таблицы), кроме ОДНОЙ
@@ -9963,12 +10018,6 @@ function openMenuModal(t){
   // открытии. У почты и генерала гасить нечего: метка сама пропадёт, когда
   // письма прочитаны, а очки таланта вложены.
   if(t==="inv") me().invNew=false;
-  // Фаза 19, кусочек 6 — при .mp-gated экипировка теперь живёт вкладкой
-  // "Экипировка" внутри объединённой карточки генерала (mpGenHtml), а не
-  // отдельным разделом страницы — открывая "Инвентарь" со стороны, сразу
-  // переключаем эту вкладку, чтобы после прокрутки к mp-anchor-inv (см.
-  // ниже) была видна нужная сетка снаряжения, а не "Обзор" по умолчанию.
-  if(!SP_UNLOCKED && t==="inv") mpGenTab="gear";
   // Общий мир — отдельная вкладка со своим опросом сервера (см. mpStartPolling
   // ниже): уходя с неё, глушим таймер, чтобы не дёргать Supabase впустую,
   // пока игрок смотрит другую вкладку. Только в одиночке (SP_UNLOCKED) —
@@ -10243,6 +10292,10 @@ function handleMpAct(e){
   if(genTabBtn){ mpGenTab=genTabBtn.dataset.t; mpRerender(); return; }
   const toggleGenTomesBtn=e.target.closest("[data-mp='togglegentomes']");
   if(toggleGenTomesBtn){ mpGenTomesOpen=!mpGenTomesOpen; mpRerender(); return; }
+  // Фаза 19, кусочек 7 — Инвентарь (абсолютная копия одиночного invtab, см.
+  // её же ветку в handleAct()).
+  const invTabBtn=e.target.closest("[data-mp='invtab']");
+  if(invTabBtn){ mpInvTab=invTabBtn.dataset.t; mpRerender(); return; }
 }
 $("#menu-modal-body").addEventListener("click",e=>{
   if($("#menu-modal").dataset.tab!=="mp") return;
@@ -11688,14 +11741,17 @@ function foMultiplayer(embedded){
   // одиночного foGen() (портрет/фигура/кольцо опыта/звёзды/вкладки
   // Обзор-Таланты-Экипировка), см. её собственный комментарий у объявления
   // чуть выше по файлу.
-  // <span id='mp-anchor-inv'> — отдельный, почти нулевой якорь для иконки
-  // "Инвентарь" бокового меню (Фаза 17, кусочек 2): экипировка теперь живёт
-  // ВНУТРИ карточки генерала (вкладка "Экипировка"), а не отдельной
-  // рубрикой со своим собственным id — но openMenuModal() всё ещё должен
-  // куда-то прокрутить страницу по клику на "инвентарь" (см. её же правку,
-  // переключающую заодно mpGenTab="gear", чтобы после прокрутки сразу была
-  // видна нужная вкладка, а не "Обзор").
-  h+="<span id='mp-anchor-inv'></span>";
+  // Фаза 19, кусочек 7 — Инвентарь: отдельный read-only каталог-экран, та
+  // же абсолютная копия одиночного foInv(), что и mpGenHtml/mpForgeInfoHtml
+  // выше — см. её собственный комментарий у объявления mpInvHtml() выше по
+  // файлу. mp-anchor-inv — тот же голый якорь-обёртка, что и раньше (сама
+  // mpInvHtml() ведёт свои вкладки через rubric() без id, id ставить некуда
+  // вглубь функции), только теперь стоит перед настоящим разделом, а не
+  // пустышкой: страница снова структурно как в одиночке — "Инвентарь"
+  // ПОКАЗЫВАЕТ, "Экипировка" у генерала ДЕЙСТВУЕТ.
+  h+="<div id='mp-anchor-inv'></div>";
+  h+=mpInvHtml(mpFullShim(p,st),st);
+
   h+=rubric("Полководец","решение окончательное","mp-anchor-gen");
   h+=mpGenHtml(mpFullShim(p,st),st);
 
