@@ -8671,6 +8671,21 @@ function handleAct(e){
 $("#folio").addEventListener("click",handleAct);
 $("#fieldarmy-world").addEventListener("click",handleAct);
 $("#cartouche").addEventListener("click",handleAct);
+// Фаза 16 — аварийный откат в город. Зовётся из движка (engine/src/main.ts,
+// см. её же комментарий у device.lost) через window.parent.forceCityView(),
+// когда WebGPU-устройство теряется НЕСКОЛЬКО раз подряд (нестабильный
+// драйвер/старое железо/софтверный рендер — на part устройств WebGPU до сих
+// пор "экспериментальный", это честно написано движком же в консоли) —
+// вместо бесконечного цикла "потеряли устройство → перезагрузили страницу →
+// потеряли снова" пользователь стабильно попадает на 2D-карту города,
+// которая от WebGPU вообще не зависит. Идемпотентна и безопасна звать в
+// любой момент (даже если город и так уже открыт) — просто ставит те же
+// классы/иконку, что и клик по #view-toggle из city.
+function forceCityView(){
+  const app=$("#app"), img=$("#view-toggle img");
+  app.classList.remove("view-world"); app.classList.add("view-city");
+  if(img){ img.src="images/ui/icon-world.png"; img.alt="Мир"; }
+}
 function toggleView(){
   const app=$("#app"), img=$("#view-toggle img");
   const showingCity=app.classList.contains("view-city");
