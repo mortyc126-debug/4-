@@ -1021,23 +1021,51 @@ function applyLosses(units, dmgByType, race, hpBonus = 0, risen = null) {
   });
   return { units: lost, risen: lostRisen, hpLost };
 }
+// index.html:2187-2263 GEAR_SLOTS/GEAR_PCT_*/gearItemStats/gearBonus —
+// дословно. Фаза 11, кусочек 4: снаряжение теперь можно надеть (mp-equip),
+// поэтому p.gear[slot] больше не гарантированно пусто — gearBonus(p)
+// наконец считает не только ноль. Только cat нужен здесь (какой стат
+// первичный/вторичный/третичный по типу предмета) — имя/материал слота
+// сюда не относятся.
+const GEAR_SLOT_CAT = {
+  helmet: "armor", chest: "armor", gloves: "armor", pants: "armor", boots: "armor",
+  handL: "weapon", handR: "weapon", acc1: "acc", acc2: "acc",
+};
+const GEAR_PCT_PRIMARY = [0.010, 0.025, 0.040, 0.075, 0.11];
+const GEAR_PCT_SECONDARY = [0.005, 0.012, 0.022, 0.045, 0.075];
+const GEAR_PCT_TERTIARY = [0.0025, 0.006, 0.011, 0.0225, 0.0375];
+function gearItemStats(cat, order, r) {
+  const P = GEAR_PCT_PRIMARY[r - 1], S = GEAR_PCT_SECONDARY[r - 1], T = GEAR_PCT_TERTIARY[r - 1];
+  if (cat === "armor") return order === "bastion" ? { def: P, hp: S } : { hp: P, def: S };
+  if (cat === "weapon") {
+    if (order === "storm") return { atk: r === 5 ? 0.15 : P };
+    return { atk: P, def: S };
+  }
+  return order === "bastion" ? { hp: P, def: S, atk: T } : { atk: P, hp: S, def: T };
+}
+function gearBonus(p) {
+  const out = { atk: 0, def: 0, hp: 0 };
+  Object.keys(GEAR_SLOT_CAT).forEach((slotId) => {
+    const it = p.gear && p.gear[slotId]; if (!it) return;
+    const st = gearItemStats(GEAR_SLOT_CAT[slotId], it.order, it.rarity);
+    out.atk += st.atk || 0; out.def += st.def || 0; out.hp += st.hp || 0;
+  });
+  return out;
+}
 // index.html:3706 genStats — эфемерный боевой снимок полководца (atk/def/
 // hp), НЕ p.gen (постоянная запись игрока: lv/xp/pts/tal). Строится заново
 // на каждый вызов resolvePvp/resolveBanditRaid из p.gen.lv — как и в
 // источнике, полководец не "лечится между боями" и не "умирает навсегда":
 // каждый следующий бой начинается с полным HP независимо от исхода
-// предыдущего. Честное упрощение: БЕЗ gearBonus(p) (index.html:3709) — в
-// общем мире нет ни кузницы, ни снаряжения вообще (Фаза 11, 0% перенесено,
-// см. supabase/README.md), gear-вклад в источнике был бы 0 для абсолютно
-// любого игрока прямо сейчас, добавлять его тут значило бы копировать код,
-// который гарантированно ничего не считает.
+// предыдущего.
 function genStats(p) {
   if (!p.gen || p.gen.id == null) return null;
   const B = bonuses(p), lv = p.gen.lv || 1, g = Math.pow(lv, 1.15);
+  const gear = gearBonus(p); // теперь проценты — умножаем, а не прибавляем флэтом
   return {
-    hp: Math.round((250 + 30 * g) * (1 + B.genHpMod)),
-    atk: Math.round((200 + 40 * g) * (1 + B.genAtkMod)),
-    def: Math.round((170 + 30 * g) * (1 + B.genDefMod)),
+    hp: Math.round((250 + 30 * g) * (1 + B.genHpMod) * (1 + gear.hp)),
+    atk: Math.round((200 + 40 * g) * (1 + B.genAtkMod) * (1 + gear.atk)),
+    def: Math.round((170 + 30 * g) * (1 + B.genDefMod) * (1 + gear.def)),
   };
 }
 // index.html:4070 generalDamage — полководец бьёт по всем родам войск

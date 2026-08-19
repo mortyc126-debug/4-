@@ -8480,6 +8480,12 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(matupBtn){ mpDoUpgrade(matupBtn.dataset.mat,+matupBtn.dataset.tier); return; }
   const craftBtn=e.target.closest("[data-mp='craft']");
   if(craftBtn){ mpDoCraft(craftBtn.dataset.slot); return; }
+  const equipBtn=e.target.closest("[data-mp='equip']");
+  if(equipBtn){ mpDoEquip(equipBtn.dataset.slot,equipBtn.dataset.order,+equipBtn.dataset.rarity); return; }
+  const unequipBtn=e.target.closest("[data-mp='unequip']");
+  if(unequipBtn){ mpDoUnequip(unequipBtn.dataset.slot); return; }
+  const dismantleBtn=e.target.closest("[data-mp='dismantle']");
+  if(dismantleBtn){ mpDoDismantle(dismantleBtn.dataset.slot,dismantleBtn.dataset.order,+dismantleBtn.dataset.rarity); return; }
   const attackPickBtn=e.target.closest("[data-mp='attackpick']");
   if(attackPickBtn){ mpState.attackTarget=+attackPickBtn.dataset.id; mpRerender(); return; }
   const attackCancelBtn=e.target.closest("[data-mp='attackcancel']");
@@ -8879,6 +8885,26 @@ async function mpDoCraft(slot){
   const order=orderEl?orderEl.value:"bastion", rarity=rarityEl?+rarityEl.value:1;
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-craft",{slot,order,rarity}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+// Фаза 11, кусочек 4 — надеть/снять/разобрать (mp-equip/mp-unequip/
+// mp-dismantle), см. рубрику «Снаряжение» в foMultiplayer.
+async function mpDoEquip(slot,order,rarity){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-equip",{slot,order,rarity}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+async function mpDoUnequip(slot){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-unequip",{slot}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+async function mpDoDismantle(slot,order,rarity){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-dismantle",{slot,order,rarity}); await mpRefreshPlayer(); }
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -9431,6 +9457,37 @@ function foMultiplayer(){
       });
     }
   }
+
+  // Фаза 11, кусочек 4 — надеть/снять/разобрать. Зеркало equipItem/
+  // unequipItem/dismantleItem (index.html:5895-5917). Показываем 9 слотов
+  // GEAR_SLOTS: что надето сейчас (с бонусом через statTxt+gearItemStats,
+  // как в SP genGearHtml) и что лежит на складе (st.inventory[slot][order][r-1]).
+  h+=rubric("Снаряжение","надето и склад");
+  GEAR_SLOTS.forEach(s=>{
+    const cur=st.gear&&st.gear[s.id];
+    h+="<div class='entry'><div class='line'><div class='fill'>"+
+       "<div class='title'>"+s.name+"</div>";
+    if(cur){
+      const stat=gearItemStats(s.cat,cur.order,cur.rarity);
+      h+="<div class='note'>"+GEAR_NAMES[s.id][cur.order][cur.rarity-1]+" · "+RARITY_NAMES[cur.rarity-1]+" · "+statTxt(stat)+"</div>"+
+         "<button class='seal' data-mp='unequip' data-slot='"+s.id+"'"+(mpState.loading?" disabled":"")+">Снять</button>";
+    } else {
+      h+="<div class='note'>Пусто</div>";
+    }
+    const inv=(st.inventory&&st.inventory[s.id])||{};
+    ["bastion","storm"].forEach(order=>{
+      const stock=inv[order]||[0,0,0,0,0];
+      stock.forEach((n,i)=>{
+        if(!n) return;
+        const rarity=i+1, orderName=order==="storm"?"Буря":"Бастион";
+        h+="<div class='note'>"+GEAR_NAMES[s.id][order][i]+" ("+orderName+", "+RARITY_NAMES[i]+") ×"+RU(n)+" — "+
+           "<button class='seal' data-mp='equip' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+rarity+"'"+(mpState.loading?" disabled":"")+">Надеть</button> "+
+           "<button class='seal' data-mp='dismantle' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+rarity+"'"+(mpState.loading?" disabled":"")+">Разобрать ("+RU(Math.round(200*rarity*rarity*0.5))+" золота)</button>"+
+           "</div>";
+      });
+    });
+    h+="</div></div></div>";
+  });
 
   h+=rubric("Набор войск","тир 1");
   TKEYS.forEach(t=>{
