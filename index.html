@@ -304,8 +304,26 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    светлым — все внутренние цвета текста (были подобраны под тёмный
    .plate) переопределены здесь же на тёмные чернила, тот же приём и те же
    цвета, что и у #bm-sheet/.mail-detail. */
+/* Фаза 16, кусочек 3 — display:none по умолчанию. Раньше его тут не было:
+   пустой <div id="cartouche" class="plate"></div> (см. разметку) без
+   собственного display — браузер сам подставляет block, а put() (см.
+   renderCartouche()/renderCartoucheMp()) выставляет "" (снять инлайн-
+   переопределение) для непустой панели и "none" для пустой. Но "снять
+   инлайн-переопределение" без display:none в самой таблице стилей означало
+   "вернуться к тому же браузерному block" — а renderCartouche()/
+   renderCartoucheMp() вызываются только РЕАКТИВНО, на тап/смену выбора, ни
+   разу не при самом входе на объёмную карту. Пока игрок ни разу ничего не
+   тапнул, панель так и висела пустым бежевым пергаментным прямоугольником
+   (только padding+border+фон, без единой буквы) ровно в центре экрана —
+   автор сообщил именно это: "пиксель", который "перемещается вместе с
+   камерой" (на самом деле никуда не двигается — это #cartouche родительской
+   страницы поверх iframe'а, всегда по центру экрана; кажется движущимся,
+   потому что камера 3D всегда смотрит именно в центр своей же цели).
+   Теперь панель по умолчанию честно скрыта, а put() ниже выставляет "block"
+   явно (не пустую строку) — так и непустая панель гарантированно покажется
+   независимо от этого default. */
 #cartouche{left:50%;top:50%;transform:translate(-50%,-50%);max-width:270px;
-  padding:11px 13px;font-size:13.5px;
+  padding:11px 13px;font-size:13.5px;display:none;
   background:none;background-image:url(images/ui/mail-parchment.jpg);background-size:cover;
   background-position:center;border-color:rgba(90,69,48,.4);
   box-shadow:0 4px 18px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.25)}
@@ -6475,7 +6493,7 @@ function renderCartouche(){
   // ветки ничего не знают про кнопку закрытия.
   const put=h=>{
     const full=h?"<button class='cart-close' data-act='closecartouche' title='Закрыть' aria-label='Закрыть'>&times;</button>"+h:h;
-    if(full!==lastCart){ lastCart=full; el.innerHTML=full } el.style.display=full?"":"none";
+    if(full!==lastCart){ lastCart=full; el.innerHTML=full } el.style.display=full?"block":"none";
   };
   if(selMarch!=null){
     const m=W.marches.find(x=>x.id===selMarch);
@@ -6626,7 +6644,7 @@ function renderCartoucheMp(){
   const el=$("#cartouche");
   const put=h=>{
     const full=h?"<button class='cart-close' data-act='closecartouche' title='Закрыть' aria-label='Закрыть'>&times;</button>"+h:h;
-    if(full!==lastCart){ lastCart=full; el.innerHTML=full } el.style.display=full?"":"none";
+    if(full!==lastCart){ lastCart=full; el.innerHTML=full } el.style.display=full?"block":"none";
   };
   const snap=mpWorldSnapshot();
   if(!snap){ put(""); return; } // гонка: joined уже true, но mpState.player ещё не подгружен
