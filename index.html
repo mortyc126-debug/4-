@@ -7095,6 +7095,138 @@ function mpBuildingStatDeltaHtml(bk,lv,nx,hallLv){
   }
   return "";
 }
+// Фаза 18, кусочек 1 — дословная копия renderTreeMap() (index.html, чуть
+// ниже по файлу) БЕЗ одной детали: узлы сетки там несут data-act='rtreejump'
+// (клик открывает openResearchCarousel() — читает me()/W, полноценная
+// одиночная карусель выбора уровня исследования). В общем мире это чужая,
+// невидимая партия, а самой карусели для общего мира не заведено (см.
+// mpAcademyHtml() ниже — настоящее действие там уже есть, в карточках
+// .rnode под сеткой, той же data-mp='research', что была и в плоском
+// списке раньше). Сетка тут ПОЛНОСТЬЮ визуальная (ориентир "что где", какие
+// узлы открыты/заперты/докачаны) — без клика, чтобы случайно не задеть
+// одиночный rtreejump. computeRows/researchLocked/nodeImgSrc/nodeTitle —
+// те же чистые функции, что уже вызывает существующий плоский список ниже
+// (bonuses(pShim2) и т.п.) — ничего не дублирует, кроме самой этой разметки.
+function mpRenderTreeMap(arr,p){
+  const rows=computeRows(arr,p);
+  let h="<div class='rtree'>";
+  rows.forEach((row,ri)=>{
+    if(ri>0) h+="<div class='rtree-link'></div>";
+    h+="<div class='rtree-row'><div class='rtree-nodes'>"+
+      row.map(n=>{
+        const lv=p.tech[n.id]||0, maxed=lv>=n.max, locked=researchLocked(n,p);
+        const state=maxed?"maxed":locked?"locked":lv>0?"started":"open";
+        return "<div class='rtree-node "+state+"' title='"+nodeTitle(n)+"'>"+
+          "<img src='"+nodeImgSrc(n,p)+"'"+(n.unlock?" style='object-position:"+unitHeadPos(p.race,n.unlock.type,n.unlock.tier)+"'":"")+" alt='' onerror=\"this.style.display='none'\">"+
+          "<span class='rtree-node-lv'>"+lv+"/"+n.max+"</span></div>";
+      }).join("")+
+      "</div></div>";
+  });
+  h+="</div>";
+  return h;
+}
+// Фаза 18, кусочек 1 — общее тело раздела "Академия" для общего мира:
+// раньше это была плоская рубрика прямо внутри foMultiplayer() (см. её же
+// комментарий там — переносится сюда дословно, ничего в логике/цифрах не
+// меняется), теперь заведена отдельной функцией и используется В ДВУХ
+// местах — там же (foMultiplayer(), полная страница) И внутри
+// иллюстрированного меню здания (mpBuildingModalHtml(), клик по ячейке
+// Академии на карте) — автор попросил дерево исследований именно там же,
+// где и остальные постройки. Визуальная сетка (mpRenderTreeMap) сверху —
+// сразу узнаваемо "это дерево", как в одиночке; сами действия — карточки
+// .rnode ниже (та же цена/время/кнопка "Исследовать", что была и в плоском
+// списке, только оформление под стиль остальных #bm-tree разделов —
+// hallInfoHtml/forgeInfoHtml и т.п. в одиночке используют те же классы).
+function mpAcademyHtml(pShim2,st){
+  const rschB=bonuses(pShim2);
+  const rsch=st.rsch;
+  let h="<div id='bm-tree'>";
+  if(rsch){
+    const rn=findNode(rsch.id);
+    const left=Math.max(0,rsch.t1-Date.now()/1000);
+    const f=Math.min(1,1-left/Math.max(1,rsch.t1-rsch.t0));
+    h+="<div class='rgroup'>Исследуется</div>"+
+       "<div class='rnode'><div class='rnode-hd'><b>"+(rn?nodeTitle(rn):rsch.id)+" &rarr; ур. "+rsch.lv+"</b></div>"+
+       "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div>"+
+       "<div class='rnode-eff'>Готово через <em>"+fmtDur(left)+"</em></div></div>";
+  }
+  h+="<div id='ac-tabs'>"+
+     "<button class='"+(mpState.rschTab==="mil"?"on":"")+"' data-mp='rschtab' data-t='mil'>Военные</button>"+
+     "<button class='"+(mpState.rschTab!=="mil"?"on":"")+"' data-mp='rschtab' data-t='eco'>Экономические</button>"+
+     "</div>";
+  const branch=mpState.rschTab==="mil"?"mil":"eco";
+  h+=mpRenderTreeMap(ACADEMY_TREE[branch],pShim2);
+  ACADEMY_TREE[branch].filter(n=>nodeVisibleFor(n,pShim2)).forEach(n=>{
+    const lv=(st.tech&&st.tech[n.id])||0, maxed=lv>=n.max;
+    h+="<div class='rnode'><div class='rnode-hd'><b>"+nodeTitle(n)+"</b><span class='rnode-lv"+(maxed?" maxed":"")+"'>"+lv+"/"+n.max+"</span></div>";
+    if(maxed){
+      h+="<div class='rnode-eff'>Максимальный уровень.</div>";
+    } else if(researchLocked(n,pShim2)){
+      h+="<div class='rnode-eff'>"+lockReason(n,pShim2)+"</div>";
+    } else if(rsch){
+      h+="<div class='rnode-eff'>Академия уже занята другим исследованием.</div>";
+    } else {
+      const nlv=lv+1, c=researchCost(n,nlv), t=researchTime(n,nlv)/(1+rschB.researchSpeed);
+      h+="<div class='rnode-eff'>До "+nlv+" ур.: "+
+         (RES.some(r=>c[r])?RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", "):"бесплатно")+
+         " · "+fmtDur(t)+"</div>"+
+         "<button class='rnode-go' data-mp='research' data-id='"+n.id+"'"+(mpState.loading?" disabled":"")+">Исследовать</button>";
+    }
+    h+="</div>";
+  });
+  h+="</div>";
+  return h;
+}
+// Фаза 18, кусочек 1 — Госпиталь для иллюстрированного меню здания: та же
+// информация, что и mpCellHealHtml() (Фаза 14, кусочек 6 — та функция
+// НЕ трогается, остаётся как была: используется старой mpCellPanelHtml(),
+// сейчас нигде не вызываемой, но по-прежнему тестируемой, см. её
+// комментарий), только оформлена карточками .rnode/unitThumb() — тот же
+// визуальный язык, что и у hospitalInfoHtml()/trainInfoHtml() в одиночке
+// (портрет юнита + rnode-hd/rnode-eff), а не голым текстом "title"/"note".
+// Форма набора количества/кнопка "Лечить" — та же самая (id='mp-heal-n-<t>'
+// + data-mp='heal'), функционал не менялся, только карточка вокруг неё.
+function mpHospitalHtml(pShim,st){
+  const hospLv=Array.isArray(st.b.hospital)?Math.max(0,...st.b.hospital):(st.b.hospital||0);
+  const healCap=trainCap(hospLv);
+  const healing=st.heal;
+  const anyWounded=TKEYS.some(t=>(st.wounded&&st.wounded[t]&&st.wounded[t][1])||0);
+  let h="<div id='bm-tree'>";
+  if(healing){
+    const left=Math.max(0,healing.t1-Date.now()/1000);
+    h+="<div class='rgroup'>Идёт лечение</div>"+
+       "<div class='rnode'><div class='rnode-hd'>"+unitThumb(pShim,healing.type,healing.tier)+"<b>"+unitName(healing.type,healing.tier,pShim.race)+"</b>"+
+       "<span class='rnode-lv'>&times;"+RU(healing.n)+"</span></div>"+
+       "<div class='rnode-eff'>Готовы через <em>"+fmtDur(left)+"</em></div></div>";
+  }
+  if(!anyWounded && !healing){
+    h+="<div class='rgroup'>Раненых нет</div></div>";
+    return h;
+  }
+  TKEYS.forEach(t=>{
+    const wounded=(st.wounded&&st.wounded[t]&&st.wounded[t][1])||0;
+    const healingThis=healing&&healing.type===t&&healing.tier===1;
+    if(!wounded || healingThis) return; // уже занятый лечением род войск показан отдельной карточкой выше
+    h+="<div class='rnode'><div class='rnode-hd'>"+unitThumb(pShim,t,1)+"<b>"+unitName(t,1,pShim.race)+"</b>"+
+       "<span class='rnode-lv'>ранено "+RU(wounded)+"</span></div>";
+    if(healing){
+      h+="<div class='rnode-eff'>Лазарет занят лечением другого рода войск.</div>";
+    } else if(healCap<=0){
+      h+="<div class='rnode-eff'>Нужен построенный госпиталь.</div>";
+    } else {
+      const tc=troopCost(t,1);
+      const c={food:Math.round((tc.food||0)/2),wood:Math.round((tc.wood||0)/2),stone:Math.round((tc.stone||0)/2),gold:0};
+      const maxN=Math.min(wounded,healCap);
+      h+="<div class='rnode-eff'>Цена за штуку: "+(RES.some(r=>c[r])?RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", "):"бесплатно")+
+         " · максимум за раз: "+healCap+"</div>"+
+         "<input id='mp-heal-n-"+t+"' type='number' min='1' max='"+maxN+"' value='"+Math.min(maxN,10)+"'> "+
+         "<button class='rnode-go' data-mp='heal' data-t='"+t+"'"+(mpState.loading?" disabled":"")+">Лечить</button>";
+    }
+    h+="</div>";
+  });
+  h+="</div>";
+  return h;
+}
 // Фаза 17, кусочек 1 — иллюстрированное меню здания в общем мире: та же
 // разметка/CSS-классы, что и у одиночного #building-modal/buildingModalHtml()
 // чуть ниже по файлу (#bm-art/#bm-title/#bm-sub/#bm-desc/#bm-stats/#bm-reqs/
@@ -7163,8 +7295,18 @@ function mpBuildingModalHtml(idx){
   h+="<button id='bm-btn' data-mp='build' data-bk='"+bld+"' "+(plot!=null?"data-plot='"+plot+"' ":"")+
      (canGo&&!mpState.loading?"":"disabled")+">"+(maxed?"Предел уровня":queued?"Уже строится":canGo?actionLabel:"Недоступно")+"</button>";
   h+=mpCellTrainHtml(bld,pShim,st);
-  if(bld==="hospital") h+=mpCellHealHtml(pShim,st);
+  if(bld==="hospital") h+=mpHospitalHtml(pShim,st);
   if(bld==="forge" && lv>0) h+=mpCellForgeHtml(st);
+  // Фаза 18, кусочек 1 — Академия на карте города: та же mpAcademyHtml(),
+  // что и в полной странице "Общий мир" (см. её комментарий) — раньше клик
+  // по ячейке Академии показывал только базовую карточку (арт/уровень/
+  // мощь/цена), дерево исследований было доступно лишь через длинную
+  // прокручиваемую страницу. pShim2 — тот же набор полей (race/b/gen/tech),
+  // что и там же, portal:0 по той же причине (см. её комментарий).
+  if(bld==="academy" && lv>0){
+    const pShim2={race:pShim.race,b:Object.assign({portal:0},st.b),gen:st.gen||{id:null},tech:st.tech||{}};
+    h+=mpAcademyHtml(pShim2,st);
+  }
   return h;
 }
 // Фаза 17, кусочек 1 — открыть/закрыть иллюстрированное меню здания общего
@@ -10944,6 +11086,11 @@ function foMultiplayer(embedded){
   // нужно, включая настоящий bonuses(pShim2) (Фаза 6): предпросмотр времени
   // исследования теперь совпадает с тем, что реально спишет сервер
   // (researchTime(n,lv)/(1+B.researchSpeed), см. mp-research).
+  // Фаза 18, кусочек 1 — само тело раздела вынесено в mpAcademyHtml() (см.
+  // её комментарий чуть выше по файлу): теперь используется и здесь, и
+  // внутри иллюстрированного меню здания (клик по ячейке Академии на карте
+  // города) — раньше дерево исследований было доступно ТОЛЬКО через эту
+  // длинную страницу, без визуальной сетки (просто плоский список).
   const academyLv=st.b.academy||0;
   if(academyLv>0){
     h+=rubric("Академия","дерево исследований");
@@ -10951,39 +11098,7 @@ function foMultiplayer(embedded){
     // постройки общего мира, без явного 0 portalMarchBonus(undefined) внутри
     // bonuses() уходит в NaN — не влияет на B.researchSpeed, но так чище).
     const pShim2={race:p.race,b:Object.assign({portal:0},st.b),gen:st.gen||{id:null},tech:st.tech||{}};
-    const rschB=bonuses(pShim2);
-    const rsch=st.rsch;
-    if(rsch){
-      const rn=findNode(rsch.id);
-      const left=Math.max(0,rsch.t1-Date.now()/1000);
-      h+="<div class='entry hot'><div class='line'><div class='fill'>"+
-         "<div class='title'>Исследуется: "+(rn?nodeTitle(rn):rsch.id)+" ур. "+rsch.lv+"</div>"+
-         "<div class='note'>Осталось: "+fmtDur(left)+"</div></div></div></div>";
-    }
-    h+="<div class='entry'><div class='line'><div class='fill'><div id='ac-tabs'>"+
-       "<button class='"+(mpState.rschTab==="mil"?"on":"")+"' data-mp='rschtab' data-t='mil'>Военные</button>"+
-       "<button class='"+(mpState.rschTab!=="mil"?"on":"")+"' data-mp='rschtab' data-t='eco'>Экономические</button>"+
-       "</div></div></div></div>";
-    const branch=mpState.rschTab==="mil"?"mil":"eco";
-    ACADEMY_TREE[branch].filter(n=>nodeVisibleFor(n,pShim2)).forEach(n=>{
-      const lv=(st.tech&&st.tech[n.id])||0, maxed=lv>=n.max;
-      h+="<div class='entry'><div class='line'><div class='fill'>"+
-         "<div class='title'>"+nodeTitle(n)+" — "+lv+"/"+n.max+"</div>";
-      if(maxed){
-        h+="<div class='note'>Максимальный уровень.</div>";
-      } else if(researchLocked(n,pShim2)){
-        h+="<div class='note'>"+lockReason(n,pShim2)+"</div>";
-      } else if(rsch){
-        h+="<div class='note'>Академия уже занята другим исследованием.</div>";
-      } else {
-        const nlv=lv+1, c=researchCost(n,nlv), t=researchTime(n,nlv)/(1+rschB.researchSpeed);
-        h+="<div class='note'>До "+nlv+" ур.: "+
-           (RES.some(r=>c[r])?RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", "):"бесплатно")+
-           " · "+fmtDur(t)+"</div>"+
-           "<button class='seal' data-mp='research' data-id='"+n.id+"'"+(mpState.loading?" disabled":"")+">Исследовать</button>";
-      }
-      h+="</div></div></div>";
-    });
+    h+=mpAcademyHtml(pShim2,st);
   }
 
   if(mpState.err) h+="<div class='entry'><div class='line'><div class='fill'><div class='note' style='color:#e08'>"+mpState.err+"</div></div></div></div>";
