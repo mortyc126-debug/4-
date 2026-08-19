@@ -437,6 +437,20 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #menu-modal-close{position:fixed;top:14px;right:14px;z-index:26;width:38px;height:38px;
   border-radius:50%;background:rgba(22,17,11,.9);border:1px solid var(--gilt-dim);
   color:var(--gilt-hi);font-size:22px;line-height:1}
+/* Фаза 13 — .mp-gated (см. SP_UNLOCKED в самом начале скрипта): прячет
+   ВСЮ одиночную обвязку (сама партия по-прежнему грузится и существует в
+   памяти, см. комментарий у SP_UNLOCKED — просто невидима и не запускает
+   рендер-цикл), оставляя видимым только #menu-modal с общим миром.
+   #onboard — отдельно и с !important: её собственное .open-правило
+   (z-index:70, выше #menu-modal) иначе перебивало бы этот сброс и экран
+   летописи всплывал бы поверх регистрации в общем мире у совсем нового
+   посетителя (claimChronicle() в start() всё равно вызывается в фоне —
+   ей нужен валидный W, как и всему остальному коду). Крестик закрытия
+   модалки скрыт тоже — закрывать её в этом режиме некуда, под ней ничего
+   нет. */
+.mp-gated #app,.mp-gated #view-toggle,.mp-gated #menu-btn,.mp-gated #side-menu{display:none}
+.mp-gated #onboard{display:none!important}
+.mp-gated #menu-modal-close{display:none}
 #menu-modal-close:hover{border-color:var(--gilt-hi)}
 
 /* ─────────────── Модалка здания (пергамент) ─────────────── */
@@ -1224,6 +1238,19 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 "use strict";
+// Фаза 13 — общий мир как единственная точка входа. По умолчанию (обычная
+// ссылка на прод, без параметров) посетитель сразу видит регистрацию в
+// общем мире (вход по расе/нику, foMultiplayer) — не одиночную партию.
+// Одиночка НЕ удалена и не сломана: она по-прежнему полностью грузится
+// (см. start() ниже — W/me()/save() должны существовать валидными, на них
+// молча полагается уйма кода по всему файлу, от бэджей до
+// visibilitychange), просто спрятана классом .mp-gated (см. CSS у
+// #menu-modal) и не запускает свой рендер-цикл/боты (requestAnimationFrame
+// (frame) — тратить CPU на невидимую партию для каждого гостя незачем).
+// ?sp=1 в адресной строке возвращает всё как было — для собственного
+// тестирования автора, без пересборки/отдельной ветки/редеплоя.
+const SP_UNLOCKED = new URLSearchParams(location.search).get("sp")==="1";
+if(!SP_UNLOCKED) document.body.classList.add("mp-gated");
 /* =========================================================================
    БЛОК НАСТРОЕК. Всё, что влияет на баланс, собрано здесь.
    Раньше построечная/ресурсная кривая была геометрическим приближением
@@ -5183,6 +5210,12 @@ function pushMail(entry){
    который ставится в момент пополнения и гаснет при открытии раздела. */
 function markInvNew(p){ if(p && !p.isBot) p.invNew=true; }
 function menuBadges(){
+  // Фаза 13 — при .mp-gated (см. SP_UNLOCKED) openMenuModal("mp") зовётся
+  // ДО того, как одиночная W вообще успевает создаться (нарочно — иначе
+  // регистрация в общем мире ждала бы одиночную загрузку) — честный ноль
+  // вместо падения на W.mail: одиночных уведомлений действительно нет,
+  // пока самой одиночной партии в этот момент ещё не существует.
+  if(!W) return { mail:0, gen:0, inv:0, army:0 };
   const p=me();
   return {
     mail: W.mail.filter(m=>!m.read).length,
@@ -8518,7 +8551,12 @@ function renderBadges(){
   const mb=$("#nb-menu");
   if(mb){ mb.classList.toggle("on", any>0); mb.setAttribute("data-n",""); }
 }
-function closeMenuModal(){ $("#menu-modal").classList.remove("open"); mpStopPolling(); }
+// Фаза 13 — при .mp-gated закрывать модалку некуда (под ней спрятана
+// одиночка, не рабочий экран) — крестик и клик по подложке уже скрыты/
+// не заведены в этом режиме, но это ЕДИНСТВЕННОЕ место, которое реально
+// снимает .open и глушит опрос — второй барьер на случай другого пути
+// вызова (например, будущей кнопки), а не просто украшение.
+function closeMenuModal(){ if(!SP_UNLOCKED) return; $("#menu-modal").classList.remove("open"); mpStopPolling(); }
 /* ---- Живое обновление открытых окошек раз в секунду, без переоткрытия ---- */
 function refreshOpenModal(){
   if($("#building-modal").classList.contains("open")){
@@ -10007,16 +10045,32 @@ function foMultiplayer(){
 
 /* ---- Запуск ---- */
 (async function start(){
+  // Фаза 13 — общий мир открывается СРАЗУ, первой же строкой, а не после
+  // одиночной загрузки: у совсем нового посетителя (без сейва) ниже всё
+  // равно вызовется claimChronicle() — она реально ждёт клика по экрану
+  // летописи, а тот теперь спрятан .mp-gated CSS-ом и никогда не будет
+  // нажат. Если бы регистрация в общем мире стояла ПОСЛЕ этой строки, она
+  // никогда бы не открылась — весь start() навсегда завис бы на невидимом
+  // экране. mpOpen() внутри openMenuModal("mp") сам решит: авто-резюме уже
+  // существующего игрока или анкета выбора расы для нового.
+  if(!SP_UNLOCKED) openMenuModal("mp");
   const ok=await load();
   if(!ok) genWorld(Date.now()&0xffffff);
   // Старые сохранения флага не несут вовсе, поэтому у них экран не появится —
   // они остаются как были, и выбор полководца у них живёт во вкладке «Генерал».
   if(W.pendingSetup) await claimChronicle();
-  const p=me();
-  centerOn(p.x,p.y); sel={x:p.x,y:p.y};
-  syncRibbons(); renderTop(); renderFolio(); renderCartouche();
-  lastReal=Date.now();
-  requestAnimationFrame(frame);
+  // Одиночная партия (W/me()) должна СУЩЕСТВОВАТЬ валидной и при .mp-gated
+  // (см. menuBadges/visibilitychange и другой код по всему файлу, молча на
+  // это рассчитывающий) — но раз она в этом режиме никому не видна, гонять
+  // ради неё рендер-цикл/боты каждый кадр для каждого невидимого посетителя
+  // незачем, чистая трата CPU. Дальше — только при ?sp=1.
+  if(SP_UNLOCKED){
+    const p=me();
+    centerOn(p.x,p.y); sel={x:p.x,y:p.y};
+    syncRibbons(); renderTop(); renderFolio(); renderCartouche();
+    lastReal=Date.now();
+    requestAnimationFrame(frame);
+  }
 })();
 </script>
 </body>
