@@ -8482,6 +8482,8 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(matupBtn){ mpDoUpgrade(matupBtn.dataset.mat,+matupBtn.dataset.tier); return; }
   const craftBtn=e.target.closest("[data-mp='craft']");
   if(craftBtn){ mpDoCraft(craftBtn.dataset.slot); return; }
+  const usetomeBtn=e.target.closest("[data-mp='usetome']");
+  if(usetomeBtn){ mpDoUsetome(+usetomeBtn.dataset.v); return; }
   const equipBtn=e.target.closest("[data-mp='equip']");
   if(equipBtn){ mpDoEquip(equipBtn.dataset.slot,equipBtn.dataset.order,+equipBtn.dataset.rarity); return; }
   const unequipBtn=e.target.closest("[data-mp='unequip']");
@@ -8906,6 +8908,14 @@ async function mpDoCraft(slot){
 }
 // Фаза 11, кусочек 4 — надеть/снять/разобрать (mp-equip/mp-unequip/
 // mp-dismantle), см. рубрику «Снаряжение» в foMultiplayer.
+// Новый кусочек (после Портала) — потратить книгу опыта (mp-usetome), см.
+// рубрику «Книги опыта» в foMultiplayer.
+async function mpDoUsetome(v){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-usetome",{v}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
 async function mpDoEquip(slot,order,rarity){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-equip",{slot,order,rarity}); await mpRefreshPlayer(); }
@@ -9346,7 +9356,11 @@ function foMultiplayer(){
          "<div class='title'>Лагерь "+d.camp_lv+" ур. — "+(d.win?"разгромлен":"отряд разбит")+"</div>"+
          "<div class='note'>Потери: легкораненые "+RU(d.slight||0)+", тяжелораненые "+RU(d.hurt||0)+
          ", убито "+RU(d.dead||0)+" (из "+RU(lostN(d.attLoss))+" пострадавших)</div>";
-      if(d.win) h+="<div class='note'>Добыча: "+RES.filter(r=>d.loot&&d.loot[r]).map(r=>RES_NAME[r]+" "+RU(d.loot[r])).join(" · ")+"</div>";
+      if(d.win){
+        h+="<div class='note'>Добыча: "+RES.filter(r=>d.loot&&d.loot[r]).map(r=>RES_NAME[r]+" "+RU(d.loot[r])).join(" · ")+"</div>";
+        const tomesTxt=Object.keys(d.tomes||{}).map(v=>TOME_NAME[v]+" ×"+d.tomes[v]).join(", ");
+        if(tomesTxt) h+="<div class='note'>Книги опыта: "+tomesTxt+"</div>";
+      }
       h+="</div></div></div>";
     });
   }
@@ -9469,6 +9483,28 @@ function foMultiplayer(){
              }).join("")+
            "</select> "+
            "<button class='seal' data-mp='craft' data-slot='"+s.id+"'"+(mpState.loading?" disabled":"")+">Ковать</button>"+
+           "</div></div></div>";
+      });
+    }
+  }
+
+  // Новый кусочек (после Портала) — книги опыта генерала (mp-usetome),
+  // зеркало клиентского "usetome" (index.html:7943-7950). Появляются с
+  // разгрома лагерей разбойников (mp-tick, applyRaidArrive — bookDrop
+  // тем же коммитом наконец подключён, раньше честно не переносился).
+  {
+    const owned=TOME_VALUES.filter(v=>(st.tomes&&st.tomes[v])||0);
+    const hallLvT=Array.isArray(st.b.hall)?Math.max(0,...st.b.hall):(st.b.hall||0);
+    const lvCap=Math.min(60,epochOf(hallLvT)*12);
+    const genLv=(st.gen&&st.gen.lv)||1;
+    if(owned.length){
+      h+=rubric("Книги опыта","+"+RU(genLv)+" ур. генерала из "+lvCap);
+      owned.forEach(v=>{
+        const cnt=st.tomes[v];
+        h+="<div class='entry'><div class='line'><div class='fill'>"+
+           "<div class='title'>"+TOME_NAME[v]+" ×"+RU(cnt)+"</div>"+
+           "<div class='note'>+"+RU(v)+" опыта генералу"+(genLv>=lvCap?" (генерал уже на максимуме эпохи)":"")+"</div>"+
+           "<button class='seal' data-mp='usetome' data-v='"+v+"'"+(mpState.loading||genLv>=lvCap?" disabled":"")+">Использовать</button>"+
            "</div></div></div>";
       });
     }

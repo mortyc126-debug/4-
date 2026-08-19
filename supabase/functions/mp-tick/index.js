@@ -1491,13 +1491,25 @@ function resolveBanditRaid(attUnits, attP, campLv, marchId = 0) {
   return { attLoss: attLossTotal, winner, rounds: round, weather: weather.id, weatherName: weather.name };
 }
 // index.html:5148-5150 — та же добыча с разгромленного лагеря, что и в
-// одиночной игре (книги опыта генерала — bookDrop — не перенесены по той
-// же причине, что и BANDIT_XP выше).
+// одиночной игре.
 function banditLoot(campLv) {
   const base = Math.round(1800 * Math.pow(1.28, campLv - 1));
   const loot = {};
   RES.forEach((r) => { loot[r] = Math.round(base * (r === "gold" ? 0.25 : r === "stone" ? 0.6 : 1)); });
   return loot;
+}
+// index.html:5113-5123 — книги опыта генерала: выпадают с разгромленных
+// лагерей разбойников СВЕРХ обычного опыта (bookDrop уже перенесённого
+// addXp/BANDIT_XP выше), суммарная ценность = уровень_лагеря*100,
+// разбивается жадно от крупного номинала к мелкому. Раньше честно не
+// переносилось "по той же причине, что и BANDIT_XP" — причина исчезла в
+// Фазе 10, кусочек 1 (addXp/BANDIT_XP там уже перенесены), а bookDrop
+// саму так и не подключили следом — закрывается здесь.
+const TOME_VALUES = [20000, 10000, 5000, 1000, 500, 100];
+function bookDrop(total) {
+  const drops = {};
+  TOME_VALUES.forEach((v) => { while (total >= v) { drops[v] = (drops[v] || 0) + 1; total -= v; } });
+  return drops;
 }
 
 // Зеркало arriveMarch->battleCity (index.html:5018/5363) для mode:"attack" —
@@ -1732,9 +1744,14 @@ async function applyRaidArrive(admin, m) {
     attP.wounded = unitsAdd(attP.wounded, hs.hurtUnits);
     survivors = unitsSub(m.units, result.attLoss);
 
+    let tomeDrops = {};
     if (result.winner === "att") {
       carry = banditLoot(campLv);
       addXp(attP, BANDIT_XP[Math.max(1, Math.min(30, campLv)) - 1]); // Фаза 10, кусочек 1
+      // index.html:5074-5077 — книги опыта СВЕРХ обычного addXp выше.
+      tomeDrops = bookDrop(campLv * 100);
+      if (!attP.tomes) attP.tomes = {};
+      for (const v in tomeDrops) attP.tomes[v] = (attP.tomes[v] || 0) + tomeDrops[v];
       await admin.from("map_cells").delete().eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY);
       // Фаза 8, кусочек 3 — зеркало mapDelete+schedule(CFG.RESPAWN_CAMP,
       // "respawn",...) из index.html (arriveMarch, camp/fort-ветка,
@@ -1748,7 +1765,7 @@ async function applyRaidArrive(admin, m) {
 
     const { error: mailErr } = await admin.from("mail").insert({
       world_id: m.world_id, player_id: attRow.id, kind: "raid",
-      data: { camp_lv: campLv, win: result.winner === "att", loot: carry, attLoss: result.attLoss, dead: hs.dead, hurt: hs.hurt, slight: hs.slight, rounds: result.rounds },
+      data: { camp_lv: campLv, win: result.winner === "att", loot: carry, tomes: tomeDrops, attLoss: result.attLoss, dead: hs.dead, hurt: hs.hurt, slight: hs.slight, rounds: result.rounds },
     });
     if (mailErr) throw mailErr;
   }
