@@ -1,16 +1,20 @@
 // =============================================================================
-// mp-train — Фаза 2, пилотное действие №1: набор войск в общем мире.
-// Фаза 6 подключила настоящий bonuses(p).trainSpeed (раса/эпоха рас/дефолтный
-// генерал/дерево исследований — mil_trainspd/eco_rsch* и т.д., см. заголовок
-// bonuses() ниже) — раньше здесь было временно 0.
+// mp-retrain — переобучение уже набранных войск в следующий тир (Пехота T1 →
+// T2 и т.д.), зеркало startRetrain(p,type,fromTier,n) (index.html:5828-5847).
+// Файл — почти буквальная копия mp-train (тот же canPay/pay/bonuses/
+// trainDuration-инфраструктура и тот же общий "станок" — казарма/etc. заняты
+// либо набором, либо переобучением одновременно, никогда обоими сразу), но
+// endpoint внизу отличается: списывает существующих воинов тира fromTier
+// (не платит с нуля — retrainCost — это РАЗНИЦА между ценой tier+1 и tier),
+// использует retrainDuration/retrainMax вместо trainDuration/trainCap-only.
 //
-// Зеркало startTrain(p,type,tier,n) из index.html:5735 — та же проверка
-// порядка, тот же canPay/pay, тот же trainDuration. Разница: здесь пишем
-// не в объект в памяти браузера, а в players.state (JSONB) через
-// service-role, и вместо schedule(t,"train",{...}) — INSERT в events,
-// которую потом разберёт mp-tick (см. соседнюю функцию).
+// Завершение — та же ветка applyTrain в mp-tick, никаких изменений там не
+// нужно: она уже кредитует p.troops[T.type][T.tier] по T.n, а T.tier у
+// переобучения — это просто fromTier+1 (число, откуда взялось — ей всё
+// равно). retrain:true в p.train[type] — чисто для отображения в панели,
+// mp-tick его не читает.
 //
-// Тело запроса: { type:"inf"|"arc"|"cav"|"sie", tier:1..5, n:number }
+// Тело запроса: { type:"inf"|"arc"|"cav"|"sie", fromTier:1..4, n:number }
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // Вставлено буквально из ../_shared/cors.js и ../_shared/rules.js —
@@ -65,14 +69,21 @@ const pay = (res, c) => RES.forEach((r) => { if (c[r]) res[r] -= c[r]; });
 function trainDuration(hallLv, type, tier, n, trainSpeedBonus = 0) {
   return (TRAIN_TIME[tier - 1] * n) / ((1 + hallLv * 0.06) * (1 + trainSpeedBonus));
 }
+// index.html:5813-5821 — retrainCost платит только РАЗНИЦУ цены между
+// tier(fromTier) и tier(fromTier+1) за штуку (уже выученный воин не
+// оплачивается заново целиком); retrainDuration — та же формула, что и
+// trainDuration, но по разнице времени обучения между тирами.
+function retrainCost(type, fromTier, n) {
+  const from = troopCost(type, fromTier), to = troopCost(type, fromTier + 1), tot = {};
+  RES.forEach((r) => { tot[r] = Math.max(0, Math.round(((to[r] || 0) - (from[r] || 0)) * n)); });
+  return tot;
+}
+function retrainDuration(hallLv, type, fromTier, n, trainSpeedBonus = 0) {
+  const delta = Math.max(1, TRAIN_TIME[fromTier] - TRAIN_TIME[fromTier - 1]);
+  return (delta * n) / ((1 + hallLv * 0.06) * (1 + trainSpeedBonus));
+}
 // index.html:2154-2158 tierUnlockedFor — какой максимальный тир открыт
-// исследованием mil_tier_<type><N>. Честная добавка к источнику: startTrain
-// сам по себе НЕ проверяет это (в SP только UI прячет тир-выбор выше
-// открытого) — найдено при переносе mp-retrain (кусочек, добавляющий
-// собственно способ получить войска тира 2+), тем же коммитом закрыто и
-// здесь: без этой проверки прямой вызов mp-train с tier>1 обошёл бы
-// исследование полностью, тот же принцип "сервер не доверяет UI-гейтингу",
-// что и в mp-forge/mp-upgrade/mp-craft.
+// исследованием mil_tier_<type><N> (mil_tier_inf2/3/4/5 и т.д.).
 function tierUnlockedFor(tech, type) {
   let mx = 1;
   for (let t = 2; t <= 5; t++) { if ((tech["mil_tier_" + type + t] || 0) >= 1) mx = t; else break; }
@@ -464,10 +475,10 @@ Deno.serve(async (req) => {
     let body = {};
     try { body = await req.json(); } catch (_) { /* noop */ }
     const type = body.type;
-    const tier = Math.round(body.tier);
+    const fromTier = Math.round(body.fromTier);
     let n = Math.round(Number(body.n));
     if (!TRAIN_BLD[type]) return jsonResponse({ err: "Неизвестный тип войск" }, 400);
-    if (!(tier >= 1 && tier <= 5)) return jsonResponse({ err: "Неверный тир (1..5)" }, 400);
+    if (!(fromTier >= 1 && fromTier <= 4)) return jsonResponse({ err: "Неверный тир (1..4)" }, 400);
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
@@ -485,28 +496,32 @@ Deno.serve(async (req) => {
     // при mp-join (Фаза 6), но у записей до этой правки её там нет; bonuses()
     // ниже читает p.race как единый объект, а не state+row по отдельности.
     p.race = p.race || row.race;
+    if (!p.tech) p.tech = {};
+    if (!p.troops[type]) p.troops[type] = {};
     const bld = TRAIN_BLD[type];
     const now = Date.now() / 1000;
     syncRes(p, now);
 
-    // Дословно startTrain(p,type,tier,n) из index.html:5735-5751.
+    // Дословно startRetrain(p,type,fromTier,n) из index.html:5828-5847.
     if (p.train[type]) return jsonResponse({ err: "Здание уже занято набором" }, 400);
     if (p.queues.some((q) => q && q.b === bld))
       return jsonResponse({ err: "Здание сейчас улучшается — дождитесь окончания" }, 400);
-    if (tier > tierUnlockedFor(p.tech || {}, type))
-      return jsonResponse({ err: "Этот тир ещё не открыт исследованием" }, 400);
+    const maxT = tierUnlockedFor(p.tech, type);
+    if (fromTier < 1 || fromTier + 1 > maxT) return jsonResponse({ err: "Следующий тир ещё не открыт" }, 400);
+    if (n < 1) return jsonResponse({ err: "Выберите хотя бы одного воина" }, 400);
+    const have = p.troops[type][fromTier] || 0;
+    if (n > have) return jsonResponse({ err: "Недостаточно воинов этого тира" }, 400);
     const cap = trainCap(Array.isArray(p.b[bld]) ? Math.max(0, ...p.b[bld]) : p.b[bld]);
-    if (n < 1) return jsonResponse({ err: "Наберите хотя бы одного воина" }, 400);
-    if (n > cap) return jsonResponse({ err: "За раз можно набрать не больше " + cap }, 400);
-    const c = troopCost(type, tier), tot = {};
-    RES.forEach((r) => { tot[r] = Math.round((c[r] || 0) * n); });
+    if (n > cap) return jsonResponse({ err: "За раз можно переобучить не больше " + cap }, 400);
+    const tot = retrainCost(type, fromTier, n);
     if (!canPay(p.res, tot)) return jsonResponse({ err: "Не хватает ресурсов" }, 400);
     pay(p.res, tot);
+    p.troops[type][fromTier] -= n;
 
     const B = bonuses(p);
     const hallLv = Array.isArray(p.b.hall) ? Math.max(0, ...p.b.hall) : p.b.hall;
-    const t = trainDuration(hallLv, type, tier, n, B.trainSpeed);
-    p.train[type] = { type, tier, n, t0: now, t1: now + t };
+    const t = retrainDuration(hallLv, type, fromTier, n, B.trainSpeed);
+    p.train[type] = { type, tier: fromTier + 1, n, t0: now, t1: now + t, retrain: true };
 
     const { error: updErr } = await admin
       .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);

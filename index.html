@@ -8470,6 +8470,8 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(joinBtn){ const nickInp=$("#mp-nick"); mpState.nick=nickInp?nickInp.value:""; mpDoJoin(); return; }
   const trainBtn=e.target.closest("[data-mp='train']");
   if(trainBtn){ mpDoTrain(trainBtn.dataset.t); return; }
+  const retrainBtn=e.target.closest("[data-mp='retrain']");
+  if(retrainBtn){ mpDoRetrain(retrainBtn.dataset.t,+retrainBtn.dataset.from); return; }
   const healBtn=e.target.closest("[data-mp='heal']");
   if(healBtn){ mpDoHeal(healBtn.dataset.t); return; }
   const buildBtn=e.target.closest("[data-mp='build']");
@@ -8850,6 +8852,18 @@ async function mpDoTrain(type){
   const n=Math.max(1,Math.min(cap,+((inp&&inp.value)||1)));
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-train",{type,tier:1,n}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+// Новый кусочек (после Фазы 11) — переобучение войск в следующий тир
+// (mp-retrain), см. рубрику «Переобучение» в foMultiplayer. Читает
+// количество из <input id='mp-rt-n-<type>-<fromTier>'>, тот же приём, что
+// у mp-n-<t> в наборе войск.
+async function mpDoRetrain(type,fromTier){
+  const inp=document.getElementById("mp-rt-n-"+type+"-"+fromTier);
+  const n=Math.max(1,+((inp&&inp.value)||1));
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-retrain",{type,fromTier,n}); await mpRefreshPlayer(); }
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -9510,6 +9524,41 @@ function foMultiplayer(){
     }
     h+="</div></div></div>";
   });
+
+  // Новый кусочек (после Фазы 11) — переобучение в следующий тир (mp-retrain),
+  // зеркало startRetrain(p,type,fromTier,n) (index.html:5828-5847). Строка
+  // появляется на каждый тип войск, у которого есть хоть один воин тира
+  // fromTier И следующий тир уже открыт исследованием (tierUnlockedFor,
+  // используем ту же функцию, что и в академии выше — pShim2 там строится
+  // позже по тексту, поэтому здесь свой минимальный {tech:st.tech||{}}).
+  h+=rubric("Переобучение","в следующий тир");
+  { const techShim={tech:st.tech||{}};
+    let any=false;
+    TKEYS.forEach(t=>{
+      const maxT=tierUnlockedFor(techShim,t);
+      for(let fromTier=1; fromTier<maxT; fromTier++){
+        const have=(st.troops[t]&&st.troops[t][fromTier])||0;
+        if(!have) continue;
+        any=true;
+        const bld=TRAIN_BLD[t], cap=trainCap(Array.isArray(st.b[bld])?Math.max(0,...st.b[bld]):(st.b[bld]||0));
+        const training=st.train&&st.train[t];
+        h+="<div class='entry'><div class='line'><div class='fill'>"+
+           "<div class='title'>"+unitName(t,fromTier,p.race)+" → "+unitName(t,fromTier+1,p.race)+" — есть "+RU(have)+"</div>";
+        if(training){
+          h+="<div class='note'>Здание занято набором/переобучением.</div>";
+        } else {
+          const c=retrainCost(t,fromTier,1), n=Math.min(have,cap);
+          h+="<div class='note'>Цена за штуку (сверх уже вложенного): "+RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", ")+
+             " · максимум за раз: "+cap+"</div>"+
+             "<input id='mp-rt-n-"+t+"-"+fromTier+"' type='number' min='1' max='"+n+"' value='"+n+"'> "+
+             "<button class='seal' data-mp='retrain' data-t='"+t+"' data-from='"+fromTier+"'"+(mpState.loading?" disabled":"")+">Переобучить</button>";
+        }
+        h+="</div></div></div>";
+      }
+    });
+    if(!any) h+="<div class='entry'><div class='line'><div class='fill'>"+
+       "<div class='note'>Нет войск, готовых к переобучению — либо всё уже в высшем открытом тире, либо следующий тир ещё не изучен в Академии.</div></div></div></div>";
+  }
 
   // Фаза 4, седьмой кусочек — лазарет: тяжелораненые (Фаза 4, шестой
   // кусочек) больше не застревают в p.wounded навсегда, их можно вылечить
