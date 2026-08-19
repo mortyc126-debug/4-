@@ -438,18 +438,33 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   border-radius:50%;background:rgba(22,17,11,.9);border:1px solid var(--gilt-dim);
   color:var(--gilt-hi);font-size:22px;line-height:1}
 /* Фаза 13 — .mp-gated (см. SP_UNLOCKED в самом начале скрипта): прячет
-   ВСЮ одиночную обвязку (сама партия по-прежнему грузится и существует в
-   памяти, см. комментарий у SP_UNLOCKED — просто невидима и не запускает
-   рендер-цикл), оставляя видимым #menu-modal (панель общего мира) и
-   #onboard (Фаза 13, продолжение — переиспользован под регистрацию в
-   общем мире, runMpOnboarding(), тот же экран летописи, что и у
-   одиночки, см. её же CSS ниже по файлу). Одиночный claimChronicle() в
-   этом режиме НЕ зовётся вовсе (см. start()) — тот же #onboard/#ob-body
-   не должен достаться двум разным сценариям одновременно. Крестик
-   закрытия модалки скрыт — закрывать её в этом режиме некуда, под ней
-   ничего нет. */
-.mp-gated #app,.mp-gated #view-toggle,.mp-gated #menu-btn,.mp-gated #side-menu{display:none}
-.mp-gated #menu-modal-close{display:none}
+   ОДИНОЧНЫЙ РЕНДЕР (сама партия по-прежнему грузится и существует в
+   памяти, см. комментарий у SP_UNLOCKED — просто невидима, не запускает
+   рендер-цикл), но #app теперь НЕ спрятан целиком (Фаза 14, кусочек 1) —
+   при .view-world (класс проставляется в start()) #app показывает ровно
+   #chart: объёмная карта (#world3d) + инструменты (#tools) + подпись
+   тапа (#cartouche) — та же самая связка, что уже была подключена к
+   общему миру в Фазе 12, просто до сих пор не видна была за #app{display:
+   none}. #ledger (одиночные вкладки Город/Войско/Генерал/Инвентарь) при
+   .view-world и так спрятан своим собственным правилом (#app.view-world
+   #ledger{display:none}), трогать его отдельно не пришлось. #view-toggle
+   по-прежнему спрятан — переключать пока не на что (2D-город для общего
+   мира — Фаза 14, следующие кусочки), у общего мира сейчас только один
+   "мир". #onboard — переиспользован под регистрацию (runMpOnboarding()).
+   Одиночный claimChronicle() в этом режиме НЕ зовётся вовсе (см.
+   start()) — тот же #onboard/#ob-body не должен достаться двум разным
+   сценариям одновременно. #menu-btn/#menu-modal-close снова видны —
+   модалку общего мира (foMultiplayer) теперь можно закрыть, под ней
+   видна объёмная карта, а не пустота, как было до этого кусочка. */
+.mp-gated #view-toggle,.mp-gated #side-menu{display:none}
+/* #top/#amber-badge — renderTop() (одиночный: ник/сила/золото/янтарь из
+   me()) никогда не зовётся при .mp-gated (см. start() — рендер-цикл не
+   запускается), значит без этого правила там навсегда висело бы
+   "Безымянный лорд"/0/0 — не пустой экран, а НЕВЕРНЫЙ. Честнее спрятать
+   вовсе, чем показывать чужие цифры поверх настоящей карты общего мира;
+   собственный заголовок общего мира (ник/раса/сила) — следующий кусочек
+   Фазы 14, не эта правка. */
+.mp-gated #top,.mp-gated #amber-badge{display:none}
 #menu-modal-close:hover{border-color:var(--gilt-hi)}
 
 /* ─────────────── Модалка здания (пергамент) ─────────────── */
@@ -8260,7 +8275,13 @@ function toggleView(){
     if(w3d && !w3d.src) w3d.src="engine/dist/index.html";
   }
 }
-function toggleMenu(){ $("#side-menu").classList.toggle("open"); }
+// Фаза 14, кусочек 1 — при .mp-gated единственный пункт меню и есть сама
+// панель общего мира: открываем её напрямую, минуя выбор вкладки
+// (#side-menu спрятан CSS-ом, переключать там нечего).
+function toggleMenu(){
+  if(!SP_UNLOCKED){ openMenuModal("mp"); return; }
+  $("#side-menu").classList.toggle("open");
+}
 let buildingModalSel=-1;
 function openBuildingModal(ci){
   trainCtx=null; carouselCtx=null; forgeTab=null; forgeRarity=null; researchCtx=null; healCarouselOpen=false; healCtx=null;
@@ -8555,7 +8576,16 @@ function renderBadges(){
 // не заведены в этом режиме, но это ЕДИНСТВЕННОЕ место, которое реально
 // снимает .open и глушит опрос — второй барьер на случай другого пути
 // вызова (например, будущей кнопки), а не просто украшение.
-function closeMenuModal(){ if(!SP_UNLOCKED) return; $("#menu-modal").classList.remove("open"); mpStopPolling(); }
+// Фаза 14, кусочек 1 — модалку теперь можно закрывать и при .mp-gated
+// (под ней с этого кусочка видна объёмная карта, а не пустота, как
+// было). Опрос (mpStopPolling) глушится ТОЛЬКО при SP_UNLOCKED — уходя
+// со вкладки "mp" рядом с одиночкой, дёргать Supabase незачем; при
+// .mp-gated карта позади модалки сама всё ещё живая и ей нужны свежие
+// mpState.* (соседи/точки/лагеря/походы), даже когда сама панель закрыта.
+function closeMenuModal(){
+  $("#menu-modal").classList.remove("open");
+  if(SP_UNLOCKED) mpStopPolling();
+}
 /* ---- Живое обновление открытых окошек раз в секунду, без переоткрытия ---- */
 function refreshOpenModal(){
   if($("#building-modal").classList.contains("open")){
@@ -8800,7 +8830,14 @@ function mpFocusWorld3D(){
 }
 $("#t-in").onclick=()=>zoomAt(1.35);
 $("#t-out").onclick=()=>zoomAt(1/1.35);
+// Фаза 14, кусочек 1 — при .mp-gated "к своему городу" должно вести на
+// столицу ОБЩЕГО мира (mpState.player), а не на me() (столицу одиночки,
+// невидимой партии) — та же путаница, которую уже решала mpFocusWorld3D()
+// для случая "открыл общий мир, пока 3D уже смотрел на одиночку"; здесь
+// тот же самый сценарий, просто по клику на саму кнопку, а не один раз
+// при входе.
 $("#t-home").onclick=()=>{
+  if(!SP_UNLOCKED){ mpFocusWorld3D(); return; }
   const p=me();
   centerOn(p.x,p.y);
   const w=world3dWin();
@@ -10196,7 +10233,20 @@ function foMultiplayer(embedded){
   // (см. ниже), а не просто спрятан, так что и прежней причины звать
   // openMenuModal("mp") ДО загрузки одиночки (чтобы не отстать от
   // зависшего await) тоже больше нет.
-  if(!SP_UNLOCKED){ await mpOpen(); openMenuModal("mp"); }
+  if(!SP_UNLOCKED){
+    // Фаза 14, кусочек 1 — объёмная карта общего мира видна и в
+    // gate-режиме, не только при ?sp=1. #app.view-world прячет #ledger
+    // (одиночные вкладки) и показывает #chart (#world3d/#tools/
+    // #cartouche) — тот же переключатель классов, что и toggleView(),
+    // просто выставлен сразу на "мир", без одиночного "город" рядом (тому
+    // пока не с чем сравнивать — 2D-город общего мира ещё не перенесён).
+    // src у #world3d — тот же ленивый приём, что и в toggleView() (не
+    // тянуть WebGPU/модели, пока не нужно), просто здесь "нужно" сразу.
+    $("#app").className="view-world";
+    const w3d=$("#world3d"); if(w3d && !w3d.src) w3d.src="engine/dist/index.html";
+    await mpOpen();
+    openMenuModal("mp");
+  }
   const ok=await load();
   if(!ok) genWorld(Date.now()&0xffffff);
   // Старые сохранения флага не несут вовсе, поэтому у них экран не появится —
