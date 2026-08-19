@@ -210,10 +210,43 @@ async function main() {
   // reason "destroyed" — само устройство намеренно уничтожили НАШИМ же
   // кодом (нигде не вызываем device.destroy(), так что этой ветки на
   // практике не бывает) — на неё перезагружаться не нужно.
+  // Фаза 16 — если device.lost повторяется СРАЗУ ЖЕ после предыдущей
+  // перезагрузки (не "устройство потерялось раз за час игры", а "снова
+  // потерялось меньше чем через минуту после того, как мы сами только что
+  // перезагрузили страницу ради него же") — сам адаптер на этом устройстве,
+  // судя по всему, нестабилен (старый драйвер/софтверный рендер/эмуляция),
+  // и бесконечный цикл "потеряли → reload → потеряли снова" для игрока
+  // выглядит как зависшая/пустая страница (пользователь сообщил именно это:
+  // "загрузка была, а замка и точек нет"). sessionStorage переживает
+  // location.reload() (это НЕ новая вкладка), но не переживает закрытие
+  // вкладки — значит, при следующем визите движок честно попробует WebGPU
+  // заново, а не запомнит поломку навсегда для устройства, которое могло
+  // уже починиться (обновился драйвер/браузер).
+  const RELOAD_KEY = "fb-gpu-reload-at";
+  const lastReloadAt = Number(sessionStorage.getItem(RELOAD_KEY) || 0);
+  const reloadedRecently = lastReloadAt && Date.now() - lastReloadAt < 60000;
   device.lost.then((info) => {
     console.error("WebGPU device lost:", info.reason, info.message);
     if (info.reason === "destroyed") return;
+    if (reloadedRecently) {
+      // Второй раз подряд — не долбим reload вхолостую. Показываем понятную
+      // причину и, если движок открыт внутри игры (iframe), откатываем
+      // пользователя на 2D-карту города — она без WebGPU и уже отрисована.
+      showGpuBanner(
+        `WebGPU-устройство теряется повторно (${info.reason}) — похоже, объёмная карта нестабильна ` +
+          `на этом устройстве/браузере. Карта города ниже работает независимо от WebGPU.`
+      );
+      try {
+        if (window.parent && window.parent !== window && typeof (window.parent as any).forceCityView === "function") {
+          (window.parent as any).forceCityView();
+        }
+      } catch (_) {
+        /* кросс-origin — молча оставляем баннер как единственную обратную связь */
+      }
+      return;
+    }
     showGpuBanner(`WebGPU-устройство потеряно (${info.reason}): ${info.message}\nПерезагрузка через 2с...`);
+    sessionStorage.setItem(RELOAD_KEY, String(Date.now()));
     setTimeout(() => location.reload(), 2000);
   });
   const canvas = document.getElementById("gpu") as HTMLCanvasElement;

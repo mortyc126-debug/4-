@@ -718,13 +718,23 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    никакой CSS-класс не открывает/не закрывает её саму. */
 #mp-loading{position:fixed;inset:0;z-index:90;display:none;
   flex-direction:column;align-items:center;justify-content:center;gap:18px;
-  background:radial-gradient(ellipse at center,rgba(28,21,13,.97),rgba(8,5,2,.99));}
-.mp-loading-ring{width:56px;height:56px;border-radius:50%;
+  overflow:hidden;background:#0c0803}
+/* Тёмная накидка радиального градиента раньше была самим фоном #mp-loading
+   — теперь это отдельный .mp-loading-scrim ПОВЕРХ видео, но ПОД спиннером/
+   текстом (три обычных DOM-слоя по порядку в разметке, не ::after — тот
+   красится последним и лёг бы поверх спиннера тоже, не только поверх
+   видео). Видео и накидка — оба absolute на всю #mp-loading, спиннер/
+   текст — обычный flex-поток поверх обоих. */
+.mp-loading-bg{position:absolute;inset:0;width:100%;height:100%;
+  object-fit:cover;pointer-events:none}
+.mp-loading-scrim{position:absolute;inset:0;
+  background:radial-gradient(ellipse at center,rgba(28,21,13,.72),rgba(8,5,2,.88))}
+.mp-loading-ring{position:relative;width:56px;height:56px;border-radius:50%;
   border:3px solid rgba(194,153,60,.22);border-top-color:var(--gilt-hi);
   animation:mp-loading-spin 1s linear infinite}
 @keyframes mp-loading-spin{to{transform:rotate(360deg)}}
-.mp-loading-txt{font-variant:small-caps;letter-spacing:.14em;font-size:14px;
-  color:var(--vellum-dim)}
+.mp-loading-txt{position:relative;font-variant:small-caps;letter-spacing:.14em;
+  font-size:14px;color:var(--vellum-dim);text-shadow:0 2px 6px rgba(0,0,0,.8)}
 #onboard .ob-card{position:relative;width:100%;max-width:720px;
   overflow-y:auto;-webkit-overflow-scrolling:touch;
   background-image:url(images/ui/mail-parchment.jpg);background-size:cover;background-position:center;
@@ -1284,8 +1294,17 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
      секунд видны В ПРОЦЕССЕ загрузки (WebGPU+.glb — секунды, не миллисекунды,
      см. баг-фикс камеры выше; mp-join — сетевой круг) — выглядит как
      зависание/баг, а не загрузка. Полноэкранная накидка поверх ВСЕГО (даже
-     поверх #onboard, z-index 70) — до явного mpHideLoading() снизу. -->
+     поверх #onboard, z-index 70) — до явного mpHideLoading() снизу.
+     Фон — присланный автором ролик (loading-bg.mp4), зациклен/автовоспроизведение/
+     без звука/без контролов — playsinline нужен на iOS Safari, иначе видео
+     норовит открыться на весь экран своим системным плеером вместо тихого
+     фона. muted обязателен — автовоспроизведение со звуком браузеры блокируют
+     поголовно, без него ролик просто не запустился бы сам. preload="auto" —
+     тот самый файл, что и должен маскировать загрузку, качать его лениво
+     смысла нет. -->
 <div id="mp-loading">
+  <video class="mp-loading-bg" src="images/ui/loading-bg.mp4" autoplay loop muted playsinline preload="auto"></video>
+  <div class="mp-loading-scrim"></div>
   <div class="mp-loading-ring"></div>
   <div class="mp-loading-txt">Загрузка мира…</div>
 </div>
@@ -8652,6 +8671,21 @@ function handleAct(e){
 $("#folio").addEventListener("click",handleAct);
 $("#fieldarmy-world").addEventListener("click",handleAct);
 $("#cartouche").addEventListener("click",handleAct);
+// Фаза 16 — аварийный откат в город. Зовётся из движка (engine/src/main.ts,
+// см. её же комментарий у device.lost) через window.parent.forceCityView(),
+// когда WebGPU-устройство теряется НЕСКОЛЬКО раз подряд (нестабильный
+// драйвер/старое железо/софтверный рендер — на part устройств WebGPU до сих
+// пор "экспериментальный", это честно написано движком же в консоли) —
+// вместо бесконечного цикла "потеряли устройство → перезагрузили страницу →
+// потеряли снова" пользователь стабильно попадает на 2D-карту города,
+// которая от WebGPU вообще не зависит. Идемпотентна и безопасна звать в
+// любой момент (даже если город и так уже открыт) — просто ставит те же
+// классы/иконку, что и клик по #view-toggle из city.
+function forceCityView(){
+  const app=$("#app"), img=$("#view-toggle img");
+  app.classList.remove("view-world"); app.classList.add("view-city");
+  if(img){ img.src="images/ui/icon-world.png"; img.alt="Мир"; }
+}
 function toggleView(){
   const app=$("#app"), img=$("#view-toggle img");
   const showingCity=app.classList.contains("view-city");
@@ -9255,7 +9289,20 @@ function mpWorldSnapshot(){
 // "можно двигать камеру". Поэтому готовность камеры — тот же самый момент,
 // когда стоит снять накидку, никакого отдельного сигнала от движка заводить
 // не пришлось.
-function mpShowLoading(){ const el=$("#mp-loading"); if(el) el.style.display="flex"; }
+function mpShowLoading(){
+  const el=$("#mp-loading"); if(!el) return;
+  el.style.display="flex";
+  // .play() руками, а не только атрибут autoplay — display:none обычно не
+  // мешает автовоспроизведению, но перестраховка дешева: если браузер по
+  // какой-то причине не запустил само (или прошлый показ поставил на паузу
+  // при скрытии — некоторые движки так делают), запускаем явно. catch(()=>{})
+  // — .play() у HTMLMediaElement возвращает Promise, который может
+  // отклониться (автовоспроизведение запрещено политикой браузера и т.п.);
+  // тогда просто останется первый кадр видео как статичная картинка — не
+  // критично, накидка всё равно продолжает выполнять свою роль.
+  const v=el.querySelector(".mp-loading-bg");
+  if(v){ try{ v.currentTime=0; }catch(_){} const p=v.play(); if(p&&p.catch) p.catch(()=>{}); }
+}
 function mpHideLoading(){ const el=$("#mp-loading"); if(el) el.style.display="none"; }
 function mpFocusWorld3D(){
   const apply=(w)=>{
