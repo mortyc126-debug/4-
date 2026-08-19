@@ -733,6 +733,33 @@ function counterMult(from, to) {
   if (T.losesTo === to) return COUNTER_DOWN;
   return 1;
 }
+// index.html:4041 volleyDamage — венец эльфов (firstStrike, epoch 5):
+// досрочный залп ВСЕХ лучников до начала общей схватки, без ответа со
+// стороны обычного боя (защитник получает удар раньше, чем успевает
+// ударить сам). attUnits/attRace/attB — стреляющая сторона (используются
+// её живые лучники и её собственные atk/archer-бонусы), defS — снимок
+// цели (её HP-доли решают, кому именно из родов войск достанется залп),
+// defWallLv/wallBonus — стена цели (0/0, если целится по чистому полю).
+function volleyDamage(attUnits, attRace, attB, defS, defWallLv = 0, wallBonus = 0) {
+  if (!attB.firstStrike) return null;
+  const c = attUnits.arc || {};
+  let atk = 0, n = 0;
+  for (let i = 1; i <= 5; i++) {
+    const cnt = c[i] || 0; if (!cnt) continue;
+    atk += cnt * TROOP_TYPES.arc.atk * TIER_MULT[i - 1] * troopMod(attRace, "arc", "atk") * (1 + (attB.archer || 0)) * (1 + attB.atk);
+    n += cnt;
+  }
+  if (n <= 0) return null;
+  const defWall = 1 + wallDefBonus(defWallLv) * (1 + wallBonus);
+  const out = {};
+  TKEYS.forEach((dt) => {
+    if (defS[dt].n <= 0) { out[dt] = 0; return; }
+    const d = atk * counterMult("arc", dt) * (defS[dt].hp / Math.max(1, defS.totalHp));
+    const mitig = 1 + (defS[dt].def / Math.max(1, defS[dt].n)) / 70 * defWall;
+    out[dt] = d * BATTLE_PACE / mitig;
+  });
+  return out;
+}
 const SIDE_TYPE_ATK = { inf: "atkInf", arc: "atkArc", cav: "atkCav", sie: "atkSie" };
 const SIDE_TYPE_DEF = { inf: "defInf", arc: "defArc", cav: "defCav", sie: "defSie" };
 const SIDE_TYPE_MATK = { inf: "matkInf", arc: "matkArc", cav: "matkCav", sie: "matkSie" };
@@ -954,14 +981,20 @@ function damageToGeneral(gen, enemyS) {
 // Кусочек 4: урон по/от полководцам в бою (generalDamage/damageToGeneral/
 // genStats выше) — только если игрок вообще выбрал полководца (mp-pickgen,
 // Фаза 7); без него f.gen===null и оба урона тихо гасятся, как и в SP.
+// Кусочек 5: первый залп лучников без ответа (elf firstStrike, эпоха 5,
+// volleyDamage выше) — до общей схватки, наравне с уже существовавшим
+// залпом Сторожевой башни; и контрудар гарнизона (dwarf, эпоха 5, ТОЛЬКО
+// при обороне) — доля урона, нанесённого атакующим в этом раунде, летит
+// обратно в него же по HP-долям его войск (см. комментарий у if(defB.counter)
+// внутри цикла).
 // Честно ЕЩЁ НЕ входит (см. supabase/README.md, каждое — отдельный
 // следующий кусочек): поднятие нежити прямо в бою (raiseSkeletons — раз в
 // момент прибытия оно уже применяется отдельно, здесь речь о ПОРАУНДОВОМ
-// подъёме), контрудар гарнизона (dwarf B.counter), первый залп лучников
-// без ответа (elf firstStrike, index.html:4176-4181 — сейчас есть только
-// залп СТОРОЖЕВОЙ БАШНИ защитника, он был и раньше), досрочное отступление
-// атакующего при 72% потерь (rout), ничья по armyPower при исчерпании
-// ROUND_CAP раундов (сейчас ничья — по остатку totalHp, как и раньше).
+// подъёме — своя отдельная механика с половинным-статным вторым войском,
+// требует более крупной переделки sideStats/applyLosses, отложена
+// намеренно, не забывчивость), досрочное отступление атакующего при 72%
+// потерь (rout), ничья по armyPower при исчерпании ROUND_CAP раундов
+// (сейчас ничья — по остатку totalHp, как и раньше).
 // Фаза 6: attP/defP теперь полные объекты игрока (race+b+gen+tech), не
 // голые строки расы — нужны для bonuses(attP)/bonuses(defP,true) (defP
 // считается С defending=true — 5-я эпоха, defMods). См. подробный
@@ -979,6 +1012,24 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
   const wMod = (t) => (weather.mod && weather.mod[t]) || 1;
   const jit = weather.jitter || 0.05;
   const roll = () => 1 + (rnd() * 2 - 1) * jit;
+  // index.html:4169-4188 первый залп лучников без ответа (elf firstStrike,
+  // эпоха 5) — оба, если у обеих сторон подходящая раса/эпоха: атакующий
+  // бьёт первым по защитнику (через его стену), затем защитник отвечает
+  // своим залпом (без стены — по чистому полю). Погоду ловит через
+  // wMod("arc") (залп — чисто лучный урон) и свой roll(), как в источнике
+  // (index.html:4176/4179 — scale(volleyDamage(...), wMod("arc")*roll())).
+  const openA = volleyDamage(attU, attP.race, attB, sideStats(defU, defP.race, defB), defWallLv, defB.wallBonus);
+  if (openA) {
+    const scaled = {}; TKEYS.forEach((t) => { scaled[t] = (openA[t] || 0) * wMod("arc") * roll(); });
+    const l = applyLosses(defU, scaled, defP.race, defB.hp);
+    defU = unitsSub(defU, l.units); defLossTotal = unitsAdd(defLossTotal, l.units);
+  }
+  const openD = volleyDamage(defU, defP.race, defB, sideStats(attU, attP.race, attB));
+  if (openD) {
+    const scaled = {}; TKEYS.forEach((t) => { scaled[t] = (openD[t] || 0) * wMod("arc") * roll(); });
+    const l = applyLosses(attU, scaled, attP.race, attB.hp);
+    attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
+  }
   // Залп Сторожевой башни защитника — до общей схватки (Фаза 4, шестой
   // кусочек), теперь перед раундовым циклом, а не влит в единственный
   // обмен. Погоду НЕ ловит (index.html:4183 тоже вызывает его без wMod) —
@@ -987,11 +1038,11 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
   if (openG) {
     const l = applyLosses(attU, openG, attP.race, attB.hp);
     attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
-    // index.html:4186-4188 brk0A/brk0D — дисциплина проверяется и до общей
-    // схватки, по потерям от одних лишь стартовых залпов (тут — только
-    // залп башни защитника, у нас нет ни firstStrike, ни залпа A по D).
-    checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
   }
+  // index.html:4186-4188 brk0A/brk0D — дисциплина проверяется и один раз
+  // после ВСЕХ стартовых залпов разом (не после каждого по отдельности).
+  checkDiscipline(defUnits, defLossTotal, defP.race, defBroken);
+  checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
   let round = 0;
   // index.html:3958-3964 f.gen — эфемерный, строится один раз на бой (не
   // за раунд), полководец без выбора (p.gen.id==null) даёт null и просто
@@ -1007,6 +1058,21 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
     const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp);
     defU = unitsSub(defU, defLoss.units); defLossTotal = unitsAdd(defLossTotal, defLoss.units);
     attU = unitsSub(attU, attLoss.units); attLossTotal = unitsAdd(attLossTotal, attLoss.units);
+    // index.html:4229-4238 контрудар гарнизона (dwarf, эпоха 5, ТОЛЬКО при
+    // обороне — defB.counter приходит из bonuses(defP, true), которая уже
+    // применяет defMods лишь defending-стороне). Доля от урона, который
+    // атакующий только что нанёс защитнику (dmgToDef ЭТОГО раунда, не
+    // накопленного), возвращается атакующему по HP-долям его родов войск.
+    if (defB.counter) {
+      const totalDmgToDef = TKEYS.reduce((s, t) => s + (dmgToDef[t] || 0), 0);
+      const extra = totalDmgToDef * defB.counter;
+      if (extra > 0) {
+        const reflect = {};
+        TKEYS.forEach((t) => { if (attS[t].n > 0) reflect[t] = extra * (attS[t].hp / Math.max(1, attS.totalHp)); });
+        const l = applyLosses(attU, reflect, attP.race, attB.hp);
+        attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
+      }
+    }
     // index.html:4222-4228 — полководцы бьют/получают на тех же attS/defS,
     // что и основной обмен этого раунда (снятые ДО применения урона выше —
     // тот же порядок, что и в источнике).
@@ -1149,14 +1215,18 @@ const BANDIT_B = { atk: 0, def: 0, hp: 0, matk: 0, mdef: 0, archer: 0 };
 // боя под одной крышей.
 // Фаза 9, кусочки 1-4 — тот же переход на раундовый цикл + погоду +
 // дисциплину + урон полководца, что и у resolvePvp выше (см. её заголовок
-// насчёт честных пробелов, здесь те же самые: без контрудара/первого
-// залпа — у разбойников и так нет ни стены, ни башни, ни первого залпа
-// лучников). attP.race=null для лагеря (banditArmy) — disciplineThreshold
-// (t,i,null) просто не находит расового бонуса
-// (RACE_DISCIPLINE_BONUS[null]===undefined), даёт голый порог без надбавки,
-// ровно как и было задумано для "разбойников и т.п." в источнике. У самого
-// лагеря НЕТ полководца (banditArmy — просто гарнизон, не игрок) — бьёт и
-// получает удары только полководец АТАКУЮЩЕГО, если тот его выбрал.
+// насчёт честных пробелов). Контрудара гарнизона нет — BANDIT_B не считает
+// bonuses(...,true), у лагеря попросту не может взяться B.counter. Но
+// собственный первый залп АТАКУЮЩЕГО (elf firstStrike) — не завязан на
+// защитника: эльф стреляет первым по любой цели, лагерь варваров не
+// исключение (сам лагерь ответным первым залпом не бьёт — у BANDIT_B нет
+// поля firstStrike, volleyDamage тихо вернёт null). attP.race=null для
+// лагеря (banditArmy) — disciplineThreshold(t,i,null) просто не находит
+// расового бонуса (RACE_DISCIPLINE_BONUS[null]===undefined), даёт голый
+// порог без надбавки, ровно как и было задумано для "разбойников и т.п."
+// в источнике. У самого лагеря НЕТ полководца (banditArmy — просто
+// гарнизон, не игрок) — бьёт и получает удары только полководец
+// АТАКУЮЩЕГО, если тот его выбрал.
 function resolveBanditRaid(attUnits, attP, campLv, marchId = 0) {
   const attB = bonuses(attP);
   const bandStart = banditArmy(campLv);
@@ -1168,6 +1238,13 @@ function resolveBanditRaid(attUnits, attP, campLv, marchId = 0) {
   const wMod = (t) => (weather.mod && weather.mod[t]) || 1;
   const jit = weather.jitter || 0.05;
   const roll = () => 1 + (rnd() * 2 - 1) * jit;
+  const openA = volleyDamage(attU, attP.race, attB, sideStats(bandU, null, BANDIT_B));
+  if (openA) {
+    const scaled = {}; TKEYS.forEach((t) => { scaled[t] = (openA[t] || 0) * wMod("arc") * roll(); });
+    const l = applyLosses(bandU, scaled, null, 0);
+    bandU = unitsSub(bandU, l.units); bandLossTotal = unitsAdd(bandLossTotal, l.units);
+    checkDiscipline(bandStart, bandLossTotal, null, bandBroken);
+  }
   let round = 0;
   let attGen = genStats(attP);
   while (round < ROUND_CAP) {
