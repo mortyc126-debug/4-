@@ -8478,6 +8478,8 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(forgeBtn){ mpDoForge(forgeBtn.dataset.mat); return; }
   const matupBtn=e.target.closest("[data-mp='matup']");
   if(matupBtn){ mpDoUpgrade(matupBtn.dataset.mat,+matupBtn.dataset.tier); return; }
+  const craftBtn=e.target.closest("[data-mp='craft']");
+  if(craftBtn){ mpDoCraft(craftBtn.dataset.slot); return; }
   const attackPickBtn=e.target.closest("[data-mp='attackpick']");
   if(attackPickBtn){ mpState.attackTarget=+attackPickBtn.dataset.id; mpRerender(); return; }
   const attackCancelBtn=e.target.closest("[data-mp='attackcancel']");
@@ -8864,6 +8866,19 @@ async function mpDoForge(mat){
 async function mpDoUpgrade(mat,tier){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-upgrade",{mat,tier}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+// Фаза 11, кусочек 3 — ковка снаряжения (mp-craft), см. рубрику «Ковка
+// снаряжения» в foMultiplayer. Читает выбор школы/редкости из <select>
+// (id='mp-craft-order-<slot>'/'mp-craft-rarity-<slot>'), тот же приём, что
+// и у полей набора войск (mp-n-<t>).
+async function mpDoCraft(slot){
+  const orderEl=document.getElementById("mp-craft-order-"+slot);
+  const rarityEl=document.getElementById("mp-craft-rarity-"+slot);
+  const order=orderEl?orderEl.value:"bastion", rarity=rarityEl?+rarityEl.value:1;
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-craft",{slot,order,rarity}); await mpRefreshPlayer(); }
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -9356,8 +9371,9 @@ function foMultiplayer(){
 
   // Фаза 11: кусочек 1 — Горн, добыча сырых материалов (mp-forge, только
   // kind:"material"); кусочек 2 — слияние 4-в-1 на более редкое качество
-  // (mp-upgrade). Сама ковка снаряжения (kind:"item") сюда не входит,
-  // отдельный следующий кусочек — до неё материалы копятся без применения.
+  // (mp-upgrade); кусочек 3 — ковка снаряжения (mp-craft, kind:"item"),
+  // предмет при удаче доезжает до склада (p.inventory) — надеть его
+  // (equipItem) пока нельзя, отдельный следующий кусочек.
   h+=rubric("Горн","добыча и слияние материалов");
   if(!(mpBuildLv("forge")>0)){
     h+="<div class='entry'><div class='line'><div class='fill'>"+
@@ -9369,6 +9385,12 @@ function foMultiplayer(){
       h+="<div class='entry'><div class='line'><div class='fill'>"+
          "<div class='title'>Добывается: "+MATERIALS[craft.mat].name+" ×"+craft.n+"</div>"+
          "<div class='note'>Осталось: "+fmtDur(left)+"</div></div></div></div>";
+    } else if(craft && craft.kind==="item"){
+      const left=Math.max(0,craft.t1-Date.now()/1000);
+      const orderName=craft.order==="storm"?"Буря":"Бастион";
+      h+="<div class='entry'><div class='line'><div class='fill'>"+
+         "<div class='title'>Куётся: "+GEAR_NAMES[craft.slot][craft.order][craft.rarity-1]+"</div>"+
+         "<div class='note'>"+orderName+", "+RARITY_NAMES[craft.rarity-1]+" · осталось "+fmtDur(left)+"</div></div></div></div>";
     } else {
       Object.keys(MATERIALS).forEach(mat=>{
         const stock=(st.materials&&st.materials[mat])||[0,0,0,0,0];
@@ -9380,6 +9402,31 @@ function foMultiplayer(){
              "<button class='seal' data-mp='matup' data-mat='"+mat+"' data-tier='"+t+"'"+
              (mpState.loading||(stock[t]||0)<4?" disabled":"")+">4×"+RARITY_NAMES[t]+" → "+RARITY_NAMES[t+1]+"</button>"
            ).join(" ")+
+           "</div></div></div>";
+      });
+    }
+  }
+
+  if(mpBuildLv("forge")>0){
+    h+=rubric("Ковка снаряжения","Горн");
+    if(st.craft){
+      h+="<div class='entry'><div class='line'><div class='fill'>"+
+         "<div class='note'>Горн занят — дождитесь окончания текущей работы выше.</div></div></div></div>";
+    } else {
+      const hallLvFull=Array.isArray(st.b.hall)?Math.max(0,...st.b.hall):(st.b.hall||0);
+      const maxRarity=Math.min(5,epochOf(hallLvFull));
+      GEAR_SLOTS.forEach(s=>{
+        const matStock=(st.materials&&st.materials[s.mat])||[0,0,0,0,0];
+        h+="<div class='entry'><div class='line'><div class='fill'>"+
+           "<div class='title'>"+s.name+" ("+MATERIALS[s.mat].name+")</div>"+
+           "<select id='mp-craft-order-"+s.id+"'><option value='bastion'>Бастион</option><option value='storm'>Буря</option></select> "+
+           "<select id='mp-craft-rarity-"+s.id+"'>"+
+             Array.from({length:maxRarity},(_,i)=>i+1).map(r=>{
+               const need=CRAFT_MAT_NEED[r-1], have=matStock[r-1]||0, c=craftCost(s.mat,r-1,r);
+               return "<option value='"+r+"'"+(have<need?" disabled":"")+">"+RARITY_NAMES[r-1]+" — нужно "+need+"× ("+have+" есть) · "+RU(c.gold)+" золота · "+fmtDur(1800*r*r)+"</option>";
+             }).join("")+
+           "</select> "+
+           "<button class='seal' data-mp='craft' data-slot='"+s.id+"'"+(mpState.loading?" disabled":"")+">Ковать</button>"+
            "</div></div></div>";
       });
     }

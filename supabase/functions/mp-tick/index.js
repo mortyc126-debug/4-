@@ -166,10 +166,16 @@ async function applyResearch(admin, ev) {
   if (updErr) throw updErr;
 }
 
-// Фаза 11, кусочек 1 — Горн: добыча материалов. Зеркало EV.craft(d)
-// (index.html:4845-4861), только ветка kind==="material" — kind==="item"
-// (ковка снаряжения, шанс успеха/порча материала) сюда не входит, отдельный
-// следующий кусочек, см. mp-forge/index.js.
+// index.html:2246 CRAFT_CHANCE — шанс успеха ковки по редкости 1..5, тот
+// же порядок величин, что и CRAFT_MAT_NEED в mp-craft (дословная копия,
+// эти два файла не импортируют друг друга — тот же принцип self-contained
+// копий, что и везде в этом наборе функций).
+const CRAFT_CHANCE = [1.0, 0.9, 0.75, 0.55, 0.35];
+// Фаза 11: кусочек 1 — Горн, добыча материалов (kind:"material"); кусочек
+// 3 — ковка снаряжения (kind:"item"). Зеркало EV.craft(d) (index.html:
+// 4845-4861) целиком теперь здесь. Экипировка/снятие/разбор скованного —
+// отдельные следующие кусочки, эта функция только доводит предмет до
+// склада (p.inventory) при удаче.
 async function applyCraft(admin, ev) {
   const playerId = ev.data && ev.data.player_id;
   if (playerId == null) return;
@@ -183,6 +189,18 @@ async function applyCraft(admin, ev) {
     if (!p.materials) p.materials = { ore: [0, 0, 0, 0, 0], leather: [0, 0, 0, 0, 0], bone: [0, 0, 0, 0, 0], ebony: [0, 0, 0, 0, 0] };
     if (!p.materials[c.mat]) p.materials[c.mat] = [0, 0, 0, 0, 0];
     p.materials[c.mat][0] = (p.materials[c.mat][0] || 0) + c.n;
+  } else if (c.kind === "item") {
+    // index.html:4852-4858 — удача решает Math.random() (см. заголовок
+    // mp-craft/index.js насчёт выбора не-seeded PRNG для разовой ковки).
+    // Неудача — материал и золото уже списаны на отправке (mp-craft),
+    // здесь просто ничего не прибавляется, как и в источнике ("материал и
+    // время утрачены").
+    if (Math.random() < CRAFT_CHANCE[c.rarity - 1]) {
+      if (!p.inventory) p.inventory = {};
+      if (!p.inventory[c.slot]) p.inventory[c.slot] = {};
+      if (!p.inventory[c.slot][c.order]) p.inventory[c.slot][c.order] = [0, 0, 0, 0, 0];
+      p.inventory[c.slot][c.order][c.rarity - 1] = (p.inventory[c.slot][c.order][c.rarity - 1] || 0) + 1;
+    }
   }
   p.craft = null;
   const { error: updErr } = await admin
