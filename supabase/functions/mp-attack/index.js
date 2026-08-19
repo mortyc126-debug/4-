@@ -14,7 +14,7 @@
 // пока нечего.
 //
 // Тело запроса: { defender_id: number, units: {inf:{1:n,...},arc:{...},
-//                  cav:{...},sie:{...}} }
+//                  cav:{...},sie:{...}}, with_gen?: boolean }
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // Вставлено буквально из ../_shared/cors.js и ../_shared/rules.js —
@@ -412,6 +412,7 @@ Deno.serve(async (req) => {
     try { body = await req.json(); } catch (_) { /* noop */ }
     const defenderId = Number(body.defender_id);
     const reqUnits = body.units && typeof body.units === "object" ? body.units : {};
+    const withGen = !!body.with_gen;
     if (!Number.isFinite(defenderId)) return jsonResponse({ err: "Не указан защитник" }, 400);
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
@@ -463,8 +464,9 @@ Deno.serve(async (req) => {
     });
     if (totalSend <= 0) return jsonResponse({ err: "Отправьте хотя бы одного воина" }, 400);
 
-    // Дословно sendMarch из index.html:4646-4681 (без waterPath/portalShortcut
-    // /generала/предупреждения защитника — см. заголовок файла и README).
+    // Дословно sendMarch из index.html:4646-4681 (без waterPath/
+    // portalShortcut/предупреждения защитника — см. заголовок файла и
+    // README; генерал — withGen/takeGen ниже — теперь переносится).
     const dist = Math.hypot(defRow.x - attRow.x, defRow.y - attRow.y);
     const B = bonuses(attP);
     const spd = marchSpeed(sendUnits, attP.race, B.march);
@@ -473,15 +475,24 @@ Deno.serve(async (req) => {
     TKEYS.forEach((t) => {
       for (let i = 1; i <= 5; i++) attP.troops[t][i] = Math.max(0, (attP.troops[t][i] || 0) - sendUnits[t][i]);
     });
-    const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
-    if (updA) return jsonResponse({ err: updA.message }, 500);
+
+    // index.html:4655 takeGen — полководец физически один: берём его в
+    // поход, только если он вообще выбран (mp-pickgen) и сейчас не в пути
+    // с другим маршем (p.gen.away==null). Марш создаём ПЕРЕД записью attP
+    // (не как раньше) — away нужно проставить настоящим id марша, который
+    // появляется только после insert.
+    const takeGen = withGen && attP.gen && attP.gen.id != null && attP.gen.away == null;
 
     const { data: march, error: mErr } = await admin.from("marches").insert({
       world_id: world.id, player_id: attRow.id, mode: "attack", state: "go",
       tx: defRow.x, ty: defRow.y, t0: nowSec, t1: nowSec + travel,
-      units: sendUnits, data: { defender_id: defRow.id, dist, spd },
+      units: sendUnits, data: { defender_id: defRow.id, dist, spd, has_gen: takeGen },
     }).select().single();
     if (mErr) return jsonResponse({ err: mErr.message }, 500);
+
+    if (takeGen) attP.gen.away = march.id; // index.html:4666
+    const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
+    if (updA) return jsonResponse({ err: updA.message }, 500);
 
     const { error: evErr } = await admin.from("events").insert({
       world_id: world.id, fire_at: new Date((nowSec + travel) * 1000).toISOString(),
@@ -489,7 +500,7 @@ Deno.serve(async (req) => {
     });
     if (evErr) return jsonResponse({ err: evErr.message }, 500);
 
-    return jsonResponse({ ok: true, march_id: march.id, eta: travel });
+    return jsonResponse({ ok: true, march_id: march.id, eta: travel, has_gen: takeGen });
   } catch (e) {
     return jsonResponse({ err: String(e && e.message || e) }, 500);
   }

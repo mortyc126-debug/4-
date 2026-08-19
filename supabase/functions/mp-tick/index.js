@@ -1167,8 +1167,11 @@ function damageToGeneral(gen, enemyS) {
 // потерям (attLossTotal/defLossTotal, которые уже считались и раньше —
 // просто раньше никто их не читал для этого), как и в источнике.
 // Кусочек 4: урон по/от полководцам в бою (generalDamage/damageToGeneral/
-// genStats выше) — только если игрок вообще выбрал полководца (mp-pickgen,
-// Фаза 7); без него f.gen===null и оба урона тихо гасятся, как и в SP.
+// genStats выше) — изначально работало на условии "игрок вообще выбрал
+// полководца" (mp-pickgen, Фаза 7); отдельным более поздним кусочком
+// исправлено на честное "выбрал И привёз именно в ЭТОТ бой" (attHasGen/
+// defP.gen.away — см. заголовок resolvePvp ниже) — раньше полководец
+// участвовал одновременно везде, где угодно, без реального перемещения.
 // Кусочек 5: первый залп лучников без ответа (elf firstStrike, эпоха 5,
 // volleyDamage выше) — до общей схватки, наравне с уже существовавшим
 // залпом Сторожевой башни; и контрудар гарнизона (dwarf, эпоха 5, ТОЛЬКО
@@ -1198,7 +1201,7 @@ function damageToGeneral(gen, enemyS) {
 // marchId — Фаза 9, кусочек 2: сеет battleRngMp (см. её заголовок), без
 // него дефолт 0 — детерминированная (но не менее честная) погода на бой.
 const ROUND_CAP = 60; // index.html:4190 while(round<60) — то же число
-function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv = 0, marchId = 0) {
+function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv = 0, marchId = 0, attHasGen = false) {
   const attB = bonuses(attP), defB = bonuses(defP, true);
   let attU = attUnits, defU = defUnits;
   let attLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} }, defLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} };
@@ -1248,8 +1251,18 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
   let round = 0;
   // index.html:3958-3964 f.gen — эфемерный, строится один раз на бой (не
   // за раунд), полководец без выбора (p.gen.id==null) даёт null и просто
-  // не участвует, как и в источнике.
-  let attGen = genStats(attP), defGen = genStats(defP);
+  // не участвует, как и в источнике. Раньше genStats(attP)/genStats(defP)
+  // вызывались БЕЗУСЛОВНО (единственная проверка внутри genStats — выбран
+  // ли генерал вообще), из-за чего полководец фактически участвовал
+  // ОДНОВРЕМЕННО в любом числе боёв сразу — и в каждом марше атакующего, и
+  // в обороне города, всегда, если был хоть раз выбран. Полководец в
+  // источнике физически один: attHasGen — привезён ли он именно ЭТИМ
+  // маршем (m.data.has_gen, index.html:4655/4666 takeGen); у защитника
+  // отдельного флага не нужно — он либо дома (p.gen.away==null), либо в
+  // пути с каким-то СВОИМ маршем, и тогда defP уже целиком читается как
+  // "дома нет" (index.html:5373 withGen:!!(def.gen&&def.gen.away==null)).
+  let attGen = attHasGen ? genStats(attP) : null;
+  let defGen = (defP.gen && defP.gen.away == null) ? genStats(defP) : null;
   // index.html:5066/5374 ctx.startA — состав похода на момент ВХОДА в этот
   // бой (не изначальный набор при отправке — если что-то уже отбилось
   // раньше по дороге, отступать он будет от уже уменьшенного числа, как и
@@ -1492,7 +1505,7 @@ const BANDIT_B = { atk: 0, def: 0, hp: 0, matk: 0, mdef: 0, archer: 0 };
 // rout и честная ничья по armyPower — распространены и на лагеря
 // (index.html:5066 тоже отправляет resolveBattle без toDeath, то есть с
 // тем же rout, что и обычный поход на игрока).
-function resolveBanditRaid(attUnits, attP, campLv, marchId = 0) {
+function resolveBanditRaid(attUnits, attP, campLv, marchId = 0, attHasGen = false) {
   const attB = bonuses(attP);
   const bandStart = banditArmy(campLv);
   let attU = attUnits, bandU = bandStart;
@@ -1515,7 +1528,10 @@ function resolveBanditRaid(attUnits, attP, campLv, marchId = 0) {
     checkDiscipline(bandStart, bandLossTotal, null, bandBroken);
   }
   let round = 0;
-  let attGen = genStats(attP);
+  // attHasGen — тот же смысл, что и в resolvePvp выше (m.data.has_gen):
+  // генерал физически один, участвует только там, куда его реально
+  // отправили этим маршем, а не в каждом бою автоматически.
+  let attGen = attHasGen ? genStats(attP) : null;
   const attStartN = unitsTotal(attUnits); // Фаза 9, кусочек 6 — см. заголовок resolvePvp
   while (round < ROUND_CAP) {
     const attS = sideStats(attU, attP.race, attB, attBroken, attRisen), bandS = sideStats(bandU, null, BANDIT_B, bandBroken);
@@ -1615,7 +1631,8 @@ async function applyMarchArrive(admin, ev) {
     defP.race = defP.race || defRow.race;
     const defWallLv = (defP.b && typeof defP.b.wall === "number") ? defP.b.wall : 0;
     const defGarrisonLv = (defP.b && typeof defP.b.garrison === "number") ? defP.b.garrison : 0;
-    const result = resolvePvp(m.units, attP, defP.troops, defP, defWallLv, defGarrisonLv, m.id);
+    const attHasGen = !!(m.data && m.data.has_gen);
+    const result = resolvePvp(m.units, attP, defP.troops, defP, defWallLv, defGarrisonLv, m.id, attHasGen);
     defP.troops = unitsSub(defP.troops, result.defLoss);
     // Фаза 4, шестой кусочек: лазарет защитника (index.html:4351/4411-4423)
     // — часть потерь не гибнет насмерть. Слегка раненые (12%) немедленно
@@ -1658,6 +1675,16 @@ async function applyMarchArrive(admin, ev) {
       // мира ещё раньше в этой миграции (не были закончены даже в
       // одиночной игре), тот же принцип, что и у wallHp вообще.
     }
+    // index.html:4950-4957 EV.home — генерал возвращается домой вместе с
+    // отрядом НЕЗАВИСИМО от исхода похода; там это происходит при обычном
+    // возвращении. Если же весь посланный отряд полёг (survivors пуст),
+    // applyMarchArrive удаляет марш немедленно, минуя домашний путь и
+    // applyMarchHome (см. ниже) — той развязки, что освобождает away,
+    // тогда не будет вовсе, поэтому освобождаем прямо здесь, пока ещё
+    // знаем survivors. Проверка на attP.gen.away===m.id — та же
+    // защитная, что и в источнике (не отобрать генерала у НОВОГО похода
+    // из-за завершения старого).
+    if (attHasGen && unitsTotal(survivors) <= 0 && attP.gen && attP.gen.away === m.id) attP.gen.away = null;
     const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
     if (updA) throw updA;
     const { error: updD } = await admin.from("players").update({ state: defP, updated_at: new Date().toISOString() }).eq("id", defRow.id);
@@ -1718,6 +1745,14 @@ async function applyMarchHome(admin, ev) {
     if (m.data && m.data.carry) {
       RES.forEach((r) => { if (m.data.carry[r]) p.res[r] = (p.res[r] || 0) + m.data.carry[r]; });
     }
+    // index.html:4950-4957 EV.home — генерал возвращается вместе с
+    // отрядом независимо от того, как поход закончился (дошёл сам, был
+    // отозван, или это выжившие после боя — applyMarchArrive/
+    // applyRaidArrive добираются сюда обычным путём марша "back", только
+    // полный ноль выживших освобождает away раньше, см. их заголовки).
+    // Проверка на p.gen.away===m.id, а не просто m.data.has_gen — не
+    // отобрать генерала у НОВОГО похода из-за возврата старого.
+    if (m.data && m.data.has_gen && p.gen && p.gen.away === m.id) p.gen.away = null;
     const { error: updErr } = await admin.from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
     if (updErr) throw updErr;
   }
@@ -1816,12 +1851,13 @@ async function applyRaidArrive(admin, m) {
 
   const nowSec = Date.now() / 1000;
   let survivors = m.units, carry = {};
+  const attHasGen = !!(m.data && m.data.has_gen);
   // Лагерь уже разгромлен кем-то другим, пока отряд шёл — бой не
   // случается, отряд просто разворачивается пустым (как gather на
   // истощённую точку, как attack на пропавшего защитника).
   if (cell && (cell.t === "camp" || cell.t === "fort")) {
     const campLv = (m.data && m.data.camp_lv) || 1;
-    const result = resolveBanditRaid(m.units, attP, campLv, m.id);
+    const result = resolveBanditRaid(m.units, attP, campLv, m.id, attHasGen);
     const hs = hospitalSplit(attP, result.attLoss, "hospital");
     attP.troops = unitsAdd(attP.troops, hs.slightUnits);
     attP.wounded = unitsAdd(attP.wounded, hs.hurtUnits);
@@ -1853,6 +1889,10 @@ async function applyRaidArrive(admin, m) {
     if (mailErr) throw mailErr;
   }
 
+  // index.html:4950-4957 — та же логика, что и в applyMarchArrive выше
+  // (см. её заголовок): если весь отряд полёг, домашнего пути и
+  // applyMarchHome не будет, освобождаем away прямо здесь.
+  if (attHasGen && unitsTotal(survivors) <= 0 && attP.gen && attP.gen.away === m.id) attP.gen.away = null;
   const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
   if (updA) throw updA;
 

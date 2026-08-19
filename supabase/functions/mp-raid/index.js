@@ -12,12 +12,13 @@
 //    самих клеток не генерируется.
 // 2. ~~Респаун разгромленного лагеря — НЕ перенесён~~ — закрыто в Фазе 8,
 //    кусочек 3 (см. applyCampRespawn в mp-tick).
-// 3. Книги опыта генерала (bookDrop) — не перенесены (в общем мире нет
-//    предметов/инвентаря вообще, Фаза 11). ~~Опыт генерала (BANDIT_XP) —
-//    не перенесён~~ — закрыто в Фазе 10, кусочек 1 (applyRaidArrive
-//    начисляет addXp победителю).
+// 3. ~~Книги опыта генерала (bookDrop) — не перенесены~~ / ~~Опыт
+//    генерала (BANDIT_XP) — не перенесён~~ — оба закрыты (BANDIT_XP в
+//    Фазе 10 кусочек 1, bookDrop отдельным кусочком позже — applyRaidArrive
+//    начисляет и то, и другое победителю).
 //
-// Тело запроса: { x: number, y: number, units:{inf:{1:n,...},...} }
+// Тело запроса: { x: number, y: number, units:{inf:{1:n,...},...},
+//                  with_gen?: boolean }
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const CORS_HEADERS = {
@@ -108,6 +109,7 @@ Deno.serve(async (req) => {
     try { body = await req.json(); } catch (_) { /* noop */ }
     const tx = Math.round(Number(body.x)), ty = Math.round(Number(body.y));
     const reqUnits = body.units && typeof body.units === "object" ? body.units : {};
+    const withGen = !!body.with_gen;
     if (!Number.isFinite(tx) || !Number.isFinite(ty)) return jsonResponse({ err: "Не указан лагерь" }, 400);
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
@@ -160,16 +162,24 @@ Deno.serve(async (req) => {
     TKEYS.forEach((t) => {
       for (let i = 1; i <= 5; i++) attP.troops[t][i] = Math.max(0, (attP.troops[t][i] || 0) - sendUnits[t][i]);
     });
-    const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
-    if (updA) return jsonResponse({ err: updA.message }, 500);
+
+    // index.html:4655/5061 takeGen/withGen — рейд на лагерь тоже берёт
+    // полководца с собой (bandUnits вообще без своего генерала, но
+    // атакующий свой применяет), тот же принцип "один физически", что и в
+    // mp-attack (см. заголовок там). march.id нужен раньше записи attP.
+    const takeGen = withGen && attP.gen && attP.gen.id != null && attP.gen.away == null;
 
     const nowSec = Date.now() / 1000;
     const { data: marchRow, error: mErr } = await admin.from("marches").insert({
       world_id: world.id, player_id: attRow.id, mode: "raid", state: "go",
       tx, ty, t0: nowSec, t1: nowSec + travel,
-      units: sendUnits, data: { dist, spd, camp_lv: campLv, cell_x: tx, cell_y: ty },
+      units: sendUnits, data: { dist, spd, camp_lv: campLv, cell_x: tx, cell_y: ty, has_gen: takeGen },
     }).select().single();
     if (mErr) return jsonResponse({ err: mErr.message }, 500);
+
+    if (takeGen) attP.gen.away = marchRow.id;
+    const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
+    if (updA) return jsonResponse({ err: updA.message }, 500);
 
     const { error: evErr } = await admin.from("events").insert({
       world_id: world.id, fire_at: new Date((nowSec + travel) * 1000).toISOString(),
@@ -177,7 +187,7 @@ Deno.serve(async (req) => {
     });
     if (evErr) return jsonResponse({ err: evErr.message }, 500);
 
-    return jsonResponse({ ok: true, march_id: marchRow.id, eta: travel });
+    return jsonResponse({ ok: true, march_id: marchRow.id, eta: travel, has_gen: takeGen });
   } catch (e) {
     return jsonResponse({ err: String(e && e.message || e) }, 500);
   }
