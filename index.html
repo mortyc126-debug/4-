@@ -461,14 +461,15 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    общего мира больше не "нечего показать". #side-menu по-прежнему спрятан —
    единственный вход в меню общего мира — прямой #menu-btn (toggleMenu()). */
 .mp-gated #side-menu{display:none}
-/* #top/#amber-badge — renderTop() (одиночный: ник/сила/золото/янтарь из
-   me()) никогда не зовётся при .mp-gated (см. start() — рендер-цикл не
-   запускается), значит без этого правила там навсегда висело бы
-   "Безымянный лорд"/0/0 — не пустой экран, а НЕВЕРНЫЙ. Честнее спрятать
-   вовсе, чем показывать чужие цифры поверх настоящей карты общего мира;
-   собственный заголовок общего мира (ник/раса/сила) — следующий кусочек
-   Фазы 14, не эта правка. */
-.mp-gated #top,.mp-gated #amber-badge{display:none}
+/* #amber-badge — янтарь как ресурс у общего мира ещё не заведён (см.
+   комментарий у mpRenderTop()), показывать там нечего — остаётся спрятан.
+   #top — Фаза 14, кусочек 1 прятала его тем же общим правилом, что и
+   #amber-badge (renderTop() одиночки никогда не зовётся при .mp-gated,
+   без этого правила там навсегда висело бы "Безымянный лорд"/0/0 — не
+   пустой экран, а НЕВЕРНЫЙ). Кусочек 3 завёл mpRenderTop() — те же самые
+   DOM-узлы (#purse/#crest-*), просто из mpState.player, — так что #top
+   снова можно показывать. */
+.mp-gated #amber-badge{display:none}
 #menu-modal-close:hover{border-color:var(--gilt-hi)}
 
 /* ─────────────── Модалка здания (пергамент) ─────────────── */
@@ -6729,6 +6730,61 @@ function mpRenderFolio(){
   const st=el.scrollTop;
   el.innerHTML=h; el.scrollTop=st;
 }
+// Фаза 14, кусочек 3 — своя мощь для шапки общего мира: дословно та же
+// сумма, что и у одиночного power() (buildingPower по всем BKEYS + войска
+// дома по unitPower + войска в походах + исследования (researchPower) +
+// генерал (genPowerOf) + снаряжение (gearPowerOf)) — отличие ровно одно:
+// войска "в походах" берутся из mpState.marches (свои реальные марши с
+// сервера), а не из глобального W.marches (столицы НЕВИДИМОЙ одиночки).
+function mpPower(p){
+  let v=0; BKEYS.forEach(k=>{
+    const lv=p.b[k];
+    if(Array.isArray(lv)) lv.forEach(l=>v+=buildingPower(k,l)); else v+=buildingPower(k,lv);
+  });
+  TKEYS.forEach(t=>{for(let i=1;i<=5;i++) v+=((p.troops[t]&&p.troops[t][i])||0)*unitPower(i)});
+  mpState.marches.forEach(m=>TKEYS.forEach(t=>{for(let i=1;i<=5;i++)v+=((m.units&&m.units[t]&&m.units[t][i])||0)*unitPower(i)}));
+  [...ACADEMY_TREE.eco,...ACADEMY_TREE.mil].forEach(n=>{
+    const lv=(p.tech&&p.tech[n.id])||0; if(lv) v+=researchPower(n,lv);
+  });
+  v+=genPowerOf(p);
+  v+=gearPowerOf(p);
+  return Math.round(v);
+}
+// Пишет в ТЕ ЖЕ DOM-узлы, что и одиночный renderTop() (#purse/#crest-name/
+// #crest-power/#crest-avatar) — тот же CSS, никаких новых правил. #amber-
+// badge и #chron (день/темп ускорения) намеренно НЕ трогаются: янтарь как
+// ресурс у общего мира ещё не заведён (см. p.amber в одиночке против
+// newPlayerState в mp-join — там такого поля просто нет), а собственных
+// суток/ускорения у общего мира не бывает — оба остаются спрятаны/скрыты,
+// как и раньше.
+let lastMpCrestAvatar=null;
+function mpRenderTop(){
+  if(!mpState.player) return;
+  const mp=mpState.player, st=mp.state;
+  const pShim={race:mp.race, b:st.b, troops:st.troops, tech:st.tech, gen:st.gen, gear:st.gear};
+  const pr=mpProdPerHour(mp);
+  $("#purse").innerHTML = ["food","stone","wood","gold"].map(r=>{
+    const v=pr[r];
+    return "<div class='coin' title='"+RES_NAME[r]+"'>"+
+      "<img class='disc' src='images/ui/res-"+r+".png' alt=''>"+
+      "<span><b class='amt'>"+fmt(st.res[r])+"</b>"+
+      "<s class='rate"+(v<0?" neg":"")+"'>"+(v<0?"−":"+")+fmt(Math.abs(v))+"/ч</s></span></div>";
+  }).join("");
+  $("#crest-name").textContent=mp.nick||"Безымянный лорд";
+  $("#crest-power").innerHTML="<img class='ico' src='images/ui/icon-power.png' alt=''>"+fmt(mpPower(pShim));
+  const avSrc=playerAvatarSrc(pShim);
+  if(avSrc!==lastMpCrestAvatar){
+    lastMpCrestAvatar=avSrc;
+    const av=$("#crest-avatar"), mark=$("#crest .mark");
+    if(avSrc){
+      av.onload=()=>{ av.style.display="block"; if(mark) mark.style.display="none" };
+      av.onerror=()=>{ av.style.display="none"; if(mark) mark.style.display="" };
+      av.src=avSrc;
+    } else if(av){
+      av.style.display="none"; if(mark) mark.style.display="";
+    }
+  }
+}
 function cityCellIndexFor(bk,plot){
   const key = plot==null ? null : plot;
   return CITY_CELLS.findIndex(c=>c.bk===bk && (c.pl==null?null:c.pl)===key);
@@ -9237,6 +9293,10 @@ function mpRerender(){
   // может стоять на вкладке "Город" (#view-toggle) с закрытым меню и должен
   // видеть новые уровни/постройки без лишнего клика.
   if(!SP_UNLOCKED) mpRenderFolio();
+  // Фаза 14, кусочек 3 — тот же довод для шапки (#top): ник/раса/мощь и
+  // запасы с добычей/час должны обновляться сами, а не только пока открыта
+  // модалка меню — шапка видна поверх и карты, и города одновременно.
+  if(!SP_UNLOCKED) mpRenderTop();
 }
 function mpStartPolling(){ mpStopPolling(); mpPollTimer=setInterval(mpPollTick,5000); }
 function mpStopPolling(){ if(mpPollTimer){ clearInterval(mpPollTimer); mpPollTimer=null; } }
@@ -10321,6 +10381,7 @@ function foMultiplayer(embedded){
     if(vtImg){ vtImg.src="images/ui/icon-city.png"; vtImg.alt="Город"; }
     await mpOpen();
     mpRenderFolio();
+    mpRenderTop();
     openMenuModal("mp");
   }
   const ok=await load();
