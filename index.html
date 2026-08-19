@@ -9181,13 +9181,12 @@ function foMultiplayer(){
          "<div class='note'>Осталось: "+fmtDur(left)+"</div>";
       // Фаза 4, девятый кусочек — отзыв похода на полпути (mp-recall):
       // разворачивает отряд ОТ ТЕКУЩЕЙ ТОЧКИ, а не мгновенно из дома — чем
-      // дальше он уже прошёл, тем дольше идти назад. Только для ещё идущих
-      // (state:"go") — уже возвращающихся отзывать нечего. Пока действует
-      // только на боевые марши на игрока (mp-recall сам проверяет
-      // mode==="attack") — для gather/raid нужен отдельный разбор "что
-      // делать с уже забронированной добычей"/"с уже начавшимся боем" — не
-      // в этом кусочке, см. supabase/README.md.
-      if(going && !isGather && !isRaid) h+="<button class='seal' data-mp='recall' data-id='"+m.id+"'"+(mpState.loading?" disabled":"")+">Отозвать</button>";
+      // дальше он уже прошёл, тем дольше идти назад. Фаза 9 (мелкий
+      // пробел): mp-recall теперь понимает и gather/raid, не только
+      // attack — кнопка доступна, пока отряд ещё идёт (state:"go", любой
+      // режим) ИЛИ уже стоит на точке сбора (state:"gather" — тогда сбор
+      // засчитывается целиком, см. заголовок mp-recall/index.js).
+      if(going || (gathering && isGather)) h+="<button class='seal' data-mp='recall' data-id='"+m.id+"'"+(mpState.loading?" disabled":"")+">Отозвать</button>";
       h+="</div></div></div>";
     });
   }
