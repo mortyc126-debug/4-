@@ -8613,6 +8613,29 @@ function mpWorldSnapshot(){
   });
   return { t: Date.now()/1000, map, players, marches };
 }
+// Фаза 12, кусочек 3 — переключатель показа. mpWorldSnapshot() выше уже
+// подключён в движке (readLiveWorld/readLiveWorldMarches предпочитают его
+// обычному W) — движок САМ подхватит общий мир на ближайшем 3-секундном
+// опросе (syncLiveEntities в engine/src/main.ts), без единой правки здесь.
+// Но радиус выборки сущностей центрирован на cam.target, а если "Мир" был
+// открыт ДО входа в общий мир, cam.target всё ещё смотрит на столицу
+// ОДИНОЧНОЙ партии — от столицы общего мира она может быть сколь угодно
+// далеко. Без явного перевода камеры игрок увидел бы пустую карту: все
+// сущности общего мира просто не попали бы в радиус выборки вокруг
+// устаревшего центра. window.cam.tx/tz — тот же готовый мост "к своему
+// городу", что уже использует кнопка "Домой" ($("#t-home") ниже), просто
+// нацеленный на настоящую столицу общего мира, а не на me() из одиночки.
+// Если "Мир" ещё не открывали вовсе (iframe без src, world3dWin()===null)
+// — трогать нечего, самый первый рендер и так возьмёт верную точку через
+// getOwnCityPos()→mpWorldSnapshot() (см. её же комментарий).
+function mpFocusWorld3D(){
+  const w=world3dWin();
+  if(!w || !mpState.player) return;
+  const p=mpState.player;
+  w.cam.tx=p.x; w.cam.tz=p.y;
+  if(typeof w.H==="function") w.cam.ty=w.H(p.x,p.y)+2;
+  w.cam.dist=40; w.cam.pitch=0.5;
+}
 $("#t-in").onclick=()=>zoomAt(1.35);
 $("#t-out").onclick=()=>zoomAt(1/1.35);
 $("#t-home").onclick=()=>{
@@ -8906,10 +8929,19 @@ async function mpRefreshScoutMail(){
 // существующего игрока — сразу дашборд, без анкеты. Если нет — тихо ловим
 // ожидаемую ошибку "Нужна раса" и показываем анкету, это не сбой.
 async function mpOpen(){
+  // wasJoined — mpOpen() зовётся КАЖДЫЙ раз при открытии вкладки «Общий
+  // мир», не только при первом входе (это же и есть авто-резюме уже
+  // существующего игрока, см. комментарий выше). mpFocusWorld3D() ниже не
+  // должен дёргаться на каждое такое открытие — иначе игрока, который сам
+  // отъехал по 3D-карте куда-то ещё, молча одёргивало бы обратно к столице
+  // при каждом заходе в этот же folio-таб. Фокусируем только на переходе
+  // false→true — тот самый момент, когда камера впервые может смотреть в
+  // устаревшую точку (см. mpFocusWorld3D()).
+  const wasJoined=mpState.joined;
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{});
-    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail();
+    mpState.joined=true; mpState.player=j.player; if(!wasJoined) mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail();
   }catch(e){ mpState.joined=false; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -8918,7 +8950,7 @@ async function mpDoJoin(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{race:mpState.race,nick:mpState.nick||""});
-    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail();
+    mpState.joined=true; mpState.player=j.player; mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail();
   }catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
