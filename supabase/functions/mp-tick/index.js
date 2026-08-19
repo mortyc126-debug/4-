@@ -80,6 +80,7 @@ Deno.serve(async (req) => {
         else if (ev.type === "heal") await applyHeal(admin, ev);
         else if (ev.type === "scout_arrive") await applyScoutArrive(admin, ev);
         else if (ev.type === "research") await applyResearch(admin, ev);
+        else if (ev.type === "craft") await applyCraft(admin, ev);
         else if (ev.type === "gathered") await applyGathered(admin, ev);
         else if (ev.type === "node_respawn") await applyNodeRespawn(admin, ev);
         else if (ev.type === "camp_respawn") await applyCampRespawn(admin, ev);
@@ -160,6 +161,30 @@ async function applyResearch(admin, ev) {
   if (!p.tech) p.tech = {};
   p.tech[R.id] = R.lv;
   p.rsch = null;
+  const { error: updErr } = await admin
+    .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
+  if (updErr) throw updErr;
+}
+
+// Фаза 11, кусочек 1 — Горн: добыча материалов. Зеркало EV.craft(d)
+// (index.html:4845-4861), только ветка kind==="material" — kind==="item"
+// (ковка снаряжения, шанс успеха/порча материала) сюда не входит, отдельный
+// следующий кусочек, см. mp-forge/index.js.
+async function applyCraft(admin, ev) {
+  const playerId = ev.data && ev.data.player_id;
+  if (playerId == null) return;
+  const { data: row, error } = await admin.from("players").select("*").eq("id", playerId).maybeSingle();
+  if (error) throw error;
+  if (!row) return;
+  const p = row.state;
+  const c = p.craft;
+  if (!c) return; // уже разобрано/отменено
+  if (c.kind === "material") {
+    if (!p.materials) p.materials = { ore: [0, 0, 0, 0, 0], leather: [0, 0, 0, 0, 0], bone: [0, 0, 0, 0, 0], ebony: [0, 0, 0, 0, 0] };
+    if (!p.materials[c.mat]) p.materials[c.mat] = [0, 0, 0, 0, 0];
+    p.materials[c.mat][0] = (p.materials[c.mat][0] || 0) + c.n;
+  }
+  p.craft = null;
   const { error: updErr } = await admin
     .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
   if (updErr) throw updErr;

@@ -8474,6 +8474,8 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(healBtn){ mpDoHeal(healBtn.dataset.t); return; }
   const buildBtn=e.target.closest("[data-mp='build']");
   if(buildBtn){ mpDoBuild(buildBtn.dataset.bk, buildBtn.dataset.plot==null?null:+buildBtn.dataset.plot); return; }
+  const forgeBtn=e.target.closest("[data-mp='forge']");
+  if(forgeBtn){ mpDoForge(forgeBtn.dataset.mat); return; }
   const attackPickBtn=e.target.closest("[data-mp='attackpick']");
   if(attackPickBtn){ mpState.attackTarget=+attackPickBtn.dataset.id; mpRerender(); return; }
   const attackCancelBtn=e.target.closest("[data-mp='attackcancel']");
@@ -8741,7 +8743,7 @@ let mpPollTimer = null;
 // mp-scout). Порядок в списке — тот, в котором здания реально нужны
 // игроку (сначала HALL_REQ, потом ратуша, потом казармы/мастерские/
 // хозяйство).
-const BUILD_MP_BLDS = ["wall","store","academy","hospital","hall","barracks","range","stable","siege","farm","lumber","quarry","mine","garrison","scout"];
+const BUILD_MP_BLDS = ["wall","store","academy","hospital","hall","barracks","range","stable","siege","farm","lumber","quarry","mine","garrison","scout","forge"];
 // hospital/farm/lumber/quarry/mine — multi-здания (plots:4 у каждого), все
 // 4 участка (0-3) строятся отдельно — см. renderPlotRow/mpBuildLvAt в
 // foMultiplayer, зеркало plotUnlocked/epochOf.
@@ -8844,6 +8846,14 @@ async function mpDoTrain(type){
 async function mpDoBuild(bk,plot){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-build",plot==null?{bk}:{bk,plot}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+// Фаза 11, кусочек 1 — добыча материалов в Горне (mp-forge), см. рубрику
+// «Горн» в foMultiplayer.
+async function mpDoForge(mat){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-forge",{mat}); await mpRefreshPlayer(); }
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -9018,13 +9028,13 @@ function foMultiplayer(){
   let h=rubric("Общий мир","бета");
   h+="<div class='entry'><div class='line'><div class='fill'>"+
      "<div class='note'>Один настоящий мир на всех, кто сюда заходит — не отдельная копия для "+
-     "каждого браузера. Все постройки (кроме Горна), набор войск (тир 1), добыча ресурсов по "+
-     "времени, атака с настоящим маршем и боем (стена/башня/лазарет уже настоящие), лечение "+
-     "раненых, разведка и дерево исследований Академии — всё уже здесь, честно упрощённое (см. "+
-     "подсказки на месте и supabase/README.md); раса/эпоха расы/дефолтный генерал/дерево "+
-     "исследований теперь реально влияют на добычу, набор, стройку и лазарет — но полный "+
-     "многораундовый бой (полководцы, погода) и вложение очков таланта генерала из одиночной "+
-     "игры — следующие шаги.</div></div></div></div>";
+     "каждого браузера. Все постройки (включая Горн), набор войск (тир 1), добыча ресурсов и "+
+     "материалов по времени, полноценный раундовый бой (погода, дисциплина, полководцы, венцы "+
+     "рас), лечение раненых, разведка, дерево исследований Академии, опыт/уровень/таланты "+
+     "генерала, точки сбора и лагеря варваров на карте — всё уже здесь, честно упрощённое (см. "+
+     "подсказки на месте и supabase/README.md). Кузница пока умеет только добывать сырые "+
+     "материалы (не ковать снаряжение), а щит мира и перенос столицы намеренно не переносятся "+
+     "вовсе — следующие шаги.</div></div></div></div>";
 
   if(!mpState.joined){
     h+="<div class='entry'><div class='line'><div class='fill'>"+
@@ -9302,7 +9312,7 @@ function foMultiplayer(){
     } else if(queued){
       const left=Math.max(0,queued.t1-Date.now()/1000);
       h+="<div class='note'>Строится до "+nextLv+" ур., осталось "+fmtDur(left)+"</div>";
-    } else if(nextLv>25){
+    } else if(nextLv>buildingMax(bld)){
       h+="<div class='note'>Максимальный уровень.</div>";
     } else if(bld==="hall"){
       const need=HALL_REQ.filter(k=>mpBuildLv(k)<hallLv);
@@ -9333,6 +9343,33 @@ function foMultiplayer(){
       renderPlotRow(bld,null,mpBuildLv(bld),"");
     }
   });
+
+  // Фаза 11, кусочек 1 — Горн: добыча сырых материалов (mp-forge). Только
+  // gathering (kind:"material") — ковка снаряжения (kind:"item") сюда не
+  // входит, отдельный следующий кусочек, поэтому у материалов пока нет
+  // применения кроме как копиться на складе.
+  h+=rubric("Горн","добыча материалов");
+  if(!(mpBuildLv("forge")>0)){
+    h+="<div class='entry'><div class='line'><div class='fill'>"+
+       "<div class='note'>Нужно построить Горн (см. «Постройки» выше).</div></div></div></div>";
+  } else {
+    const craft=st.craft;
+    if(craft && craft.kind==="material"){
+      const left=Math.max(0,craft.t1-Date.now()/1000);
+      h+="<div class='entry'><div class='line'><div class='fill'>"+
+         "<div class='title'>Добывается: "+MATERIALS[craft.mat].name+" ×"+craft.n+"</div>"+
+         "<div class='note'>Осталось: "+fmtDur(left)+"</div></div></div></div>";
+    } else {
+      Object.keys(MATERIALS).forEach(mat=>{
+        const have=(st.materials&&st.materials[mat]&&st.materials[mat][0])||0;
+        h+="<div class='entry'><div class='line'><div class='fill'>"+
+           "<div class='title'>"+MATERIALS[mat].name+" — есть "+RU(have)+" (обычного качества)</div>"+
+           "<div class='note'>Партия ×3 · 100 золота · "+fmtDur(2400)+"</div>"+
+           "<button class='seal' data-mp='forge' data-mat='"+mat+"'"+(mpState.loading?" disabled":"")+">Добыть</button>"+
+           "</div></div></div>";
+      });
+    }
+  }
 
   h+=rubric("Набор войск","тир 1");
   TKEYS.forEach(t=>{

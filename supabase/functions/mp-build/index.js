@@ -232,13 +232,25 @@ const SCOUT_TABLE = [
   { food: 157500, wood: 157500, t: 288000, power: 58118 }, { food: 250000, wood: 250000, t: 378000, power: 74187 },
   { food: 500000, wood: 500000, t: 504000, power: 96279 }, { food: 650000, wood: 650000, t: 669600, power: 139023 },
 ];
+// index.html:1695 FORGE_TABLE — Горн, единственная строка данных (RoK-
+// кузница без уровней вообще, апгрейдов не бывает — см. BUILD_MAX_LV_OVERRIDE
+// ниже). Фаза 11, кусочек 1 — до сих пор нигде не деплоилось (mp-build
+// сам об этом честно предупреждал: "кузница пока не переносилась").
+const FORGE_TABLE = [{ food: 1000, wood: 1000, stone: 1000, t: 11, power: 5 }];
 const BUILD_BLD_TABLE = {
   barracks: BARRACKS_TABLE, range: BARRACKS_TABLE, stable: BARRACKS_TABLE, siege: SIEGE_TABLE,
   hall: HALL_TABLE, wall: WALL_TABLE, store: STORE_BUILD_TABLE, academy: ACADEMY_BUILD_TABLE, hospital: HOSPITAL_BUILD_TABLE,
   farm: FARM_TABLE, lumber: LUMBER_TABLE, quarry: QUARRY_TABLE, mine: MINE_TABLE,
-  garrison: WATCH_TABLE, scout: SCOUT_TABLE,
+  garrison: WATCH_TABLE, scout: SCOUT_TABLE, forge: FORGE_TABLE,
 };
 const BUILD_MAX_LV = 25;
+// index.html:2777 buildingMax — потолок здания — .max конкретного здания
+// (BUILDINGS[bk].max), не выше общего CFG.MAX_LEVEL. У всех зданий этого
+// модуля .max===25 (общий потолок), кроме Горна — max:1 (разовая
+// постройка). Единственное здание с явным override, поэтому отдельная
+// табличка, а не полный перенос BUILDINGS.*.max.
+const BUILD_MAX_LV_OVERRIDE = { forge: 1 };
+const buildingMax = (bk) => BUILD_MAX_LV_OVERRIDE[bk] || BUILD_MAX_LV;
 // hospital/farm/lumber/quarry/mine — multi-здания (BUILDINGS.*.plots в
 // index.html), у каждого 4 участка (индексы 0-3). Участок 0 разблокирован
 // всегда, участки 1-3 — по эпохе ратуши (epochOf/plotUnlocked ниже,
@@ -655,7 +667,7 @@ Deno.serve(async (req) => {
     try { body = await req.json(); } catch (_) { /* noop */ }
     const bk = body.bk;
     if (!BUILD_BLD_TABLE[bk])
-      return jsonResponse({ err: "Неизвестное здание (кузница пока не переносилась)" }, 400);
+      return jsonResponse({ err: "Неизвестное здание" }, 400);
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
@@ -698,7 +710,7 @@ Deno.serve(async (req) => {
       return jsonResponse({ err: "Здание занято набором войск — дождитесь окончания" }, 400);
     const cur = isMulti ? buildLvAt(p, bk, plotReq) : buildLv(p, bk);
     const lv = cur + 1;
-    if (lv > BUILD_MAX_LV) return jsonResponse({ err: "Максимальный уровень" }, 400);
+    if (lv > buildingMax(bk)) return jsonResponse({ err: "Максимальный уровень" }, 400);
     const hallLv = buildLv(p, "hall");
     if (bk === "hall") {
       const need = HALL_REQ.filter((k) => buildLv(p, k) < hallLv);
