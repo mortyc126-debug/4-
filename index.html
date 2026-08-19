@@ -7367,6 +7367,126 @@ async function mpDoTrainGo(){
   }catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
+// ===== Фаза 19, кусочек 2 — карусель лазарета: абсолютная копия одиночной
+// healCarouselHtml()/openHealCarousel()/healInlineHtml()/updateHealSheet()
+// (см. их исходники ниже по файлу), тем же приёмом, что и карусель обучения
+// выше (mpFullShim/mpTrainCtx/mpCarouselCtx). Заменяет mpHospitalHtml()
+// (Фаза 18) внутри mpBuildingModalHtml() — та функция НЕ тронута, читает
+// mpCellHealHtml (Фаза 14), тоже больше не вызываемая, но по-прежнему
+// тестируемая (тот же приём, что и с mpCellTrainHtml в кусочке 1).
+// Честный, не выдуманный бонус: mpDoHeal() (плоский список "Лазарет" в
+// foMultiplayer()) всегда шлёт tier:1 — сервер (mp-heal) давно принимает
+// произвольный тир, просто клиент раньше не давал его выбрать. Карусель
+// показывает ВСЕ раненые тиры (woundedList), поэтому mpDoHealGo() ниже
+// шлёт настоящий mpHealCtx.tier — честная починка, не новый функционал. =====
+let mpHealCtx=null, mpHealCarouselOpen=false;
+function mpOpenHealCarousel(){
+  mpCarouselCtx=null; mpTrainCtx=null; // та же чистка контекста, что и у одиночного openHealCarousel()
+  mpHealCarouselOpen=true; mpHealCtx=null;
+  $("#bm-body").innerHTML = mpHealCarouselHtml();
+  $("#building-modal").classList.add("open");
+  mpUpdateHealSheet();
+}
+function mpHealInlineHtml(){
+  const st=mpState.player.state, pShim=mpFullShim(mpState.player,st), {type,tier,max,n}=mpHealCtx;
+  const busy=!!st.heal, locked=busy||max<1;
+  let h="<div id='bm-qty'><div class='cap'><span>Доступно максимум</span><b>"+RU(max)+"</b></div>"+
+     "<div class='row'><input type='range' id='mp-hqty-range' min='0' max='"+max+"' value='"+n+"' "+(locked?"disabled":"")+">"+
+     "<input type='number' id='mp-hqty-num' min='0' max='"+max+"' value='"+n+"' "+(locked?"disabled":"")+"></div></div>";
+  if(busy){
+    h+="<div id='bm-time'>Лазарет занят лечением.</div>";
+  } else if(max<1){
+    h+="<div id='bm-time'>Не хватает ресурсов ни на одного раненого.</div>";
+  } else {
+    const c=healUnitCost(pShim,type,tier);
+    h+="<div id='bm-reqs'>"+RES.map(r=>{
+      if(!c[r]) return "";
+      return "<div class='req-row' data-r='"+r+"'><img src='images/ui/res-"+r+".png'>"+
+        "<span class='req-name'>"+RES_NAME[r]+"</span><span class='req-amt'></span></div>";
+    }).join("")+"</div>";
+    h+="<div id='bm-time'></div>";
+  }
+  h+="<button id='bm-btn' class='uc-go' data-mp='healgo' "+((busy||max<1||n<=0||mpState.loading)?"disabled":"")+">Лечить</button>";
+  return h;
+}
+function mpHealCarouselHtml(){
+  const st=mpState.player.state, pShim=mpFullShim(mpState.player,st), list=woundedList(pShim);
+  let h="<div id='bm-title'>Лазарет</div>";
+  if(!list.length){
+    mpHealCtx=null;
+    h+="<div id='bm-tree'><div class='rgroup'>Раненых нет</div></div>";
+    return h;
+  }
+  if(!mpHealCtx || !list.some(x=>x.type===mpHealCtx.type&&x.tier===mpHealCtx.tier)){
+    const f=list[0], max=healMaxN(pShim,f.type,f.tier);
+    mpHealCtx={type:f.type,tier:f.tier,max,n:max,lastLocked:!!st.heal||max<1};
+  }
+  h+="<div id='uc-track'>";
+  list.forEach(({type,tier})=>{
+    const active = mpHealCtx.type===type && mpHealCtx.tier===tier;
+    h+="<div class='uc-card'>"+
+      "<img class='uc-img' src='images/units/"+pShim.race+"-"+type+tier+".png' alt=''>"+
+      "<div class='uc-name'>"+unitName(type,tier,pShim.race)+"</div>"+
+      healCardStatsHtml(pShim,type,tier);
+    if(active) h+=mpHealInlineHtml();
+    else h+="<button class='rnode-go uc-go' data-mp='hcfocus' data-type='"+type+"' data-tier='"+tier+"'>Лечить</button>";
+    h+="</div>";
+  });
+  h+="</div>";
+  h+="<div id='uc-nav'><button data-act='ucnav' data-dir='-1'>&lsaquo; Назад</button>"+
+    "<button data-act='ucnav' data-dir='1'>Вперёд &rsaquo;</button></div>";
+  return h;
+}
+function mpUpdateHealSheet(){
+  const st=mpState.player.state, pShim=mpFullShim(mpState.player,st);
+  if(!mpHealCtx || !$("#mp-hqty-range")) return;
+  const {type,tier,max,n}=mpHealCtx;
+  $("#mp-hqty-range").value=n; $("#mp-hqty-num").value=n;
+  const unitC=healUnitCost(pShim,type,tier);
+  RES.forEach(r=>{
+    if(!unitC[r]) return;
+    const need=Math.round(unitC[r]*n), short=st.res[r]<need;
+    const el=document.querySelector("#bm-reqs [data-r='"+r+"'] .req-amt");
+    if(el){ el.textContent=fmt(need)+" / "+fmt(st.res[r]); el.classList.toggle("short",short) }
+  });
+  if($("#bm-reqs")){
+    const dur=healDuration(pShim,type,tier,n);
+    $("#bm-time").textContent = n>0 ? "Время лечения: "+fmtDur(dur) : "Выберите хотя бы одного раненого.";
+  }
+  $("#bm-btn").disabled = !!st.heal || max<1 || n<=0 || mpState.loading;
+}
+async function mpDoHealGo(){
+  if(!mpHealCtx) return;
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{
+    await mpCall("mp-heal",{type:mpHealCtx.type,tier:mpHealCtx.tier,n:mpHealCtx.n});
+    await mpRefreshPlayer();
+    mpHealCtx=null; mpHealCarouselOpen=false;
+    mpCloseBuildingModal();
+  }catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+// Дословная копия hospitalInfoHtml(p) (см. её исходник ниже по файлу) —
+// статус-карточка, пока идёт лечение, иначе одна кнопка "Раненые (N)",
+// открывающая карусель. Меняет mpHospitalHtml() внутри mpBuildingModalHtml
+// (та функция НЕ тронута — используется старой mpCellPanelHtml(), нигде не
+// вызываемой сейчас, но по-прежнему тестируемой, тот же приём, что и с
+// mpCellTrainHtml/mpTrainInfoHtml в кусочке 1).
+function mpHospitalInfoHtml(pShim,st){
+  const hurt=woundedList(st).reduce((s,x)=>s+(st.wounded[x.type][x.tier]||0),0);
+  let h="<div id='bm-tree'>";
+  if(st.heal){
+    const H=st.heal;
+    h+="<div class='rgroup'>Идёт лечение</div>"+
+      "<div class='rnode'><div class='rnode-hd'>"+unitThumb(pShim,H.type,H.tier)+"<b>"+unitName(H.type,H.tier,pShim.race)+"</b>"+
+      "<span class='rnode-lv'>&times;"+RU(H.n)+"</span></div>"+
+      "<div class='rnode-eff'>Готовы через <em>"+fmtDur(Math.max(0,H.t1-Date.now()/1000))+"</em></div></div>";
+  }
+  h+= hurt>0 ? "<button class='rnode-go' data-mp='browseheal'>Раненые ("+RU(hurt)+")</button>"
+             : "<div class='rgroup'>Раненых нет</div>";
+  h+="</div>";
+  return h;
+}
 // Фаза 17, кусочек 1 — иллюстрированное меню здания в общем мире: та же
 // разметка/CSS-классы, что и у одиночного #building-modal/buildingModalHtml()
 // чуть ниже по файлу (#bm-art/#bm-title/#bm-sub/#bm-desc/#bm-stats/#bm-reqs/
@@ -7381,10 +7501,11 @@ async function mpDoTrainGo(){
 // плоский <div class='mp-cell-panel'>, тут нужен текст веток БЕЗ обёртки,
 // встроенный в другую разметку (тот же приём и тот же довод, что и у
 // mpCellPanelHtml про renderPlotRow() в её собственном комментарии).
-// Специализированные блоки (лечение/ковка) — БУКВАЛЬНО те же
-// mpCellHealHtml/mpCellForgeHtml, что уже жили в .mp-cell-panel; набор войск
-// с Фазы 19 идёт через mpTrainInfoHtml() (карусель) вместо инлайн-формы
-// mpCellTrainHtml (та НЕ тронута — используется старой mpCellPanelHtml).
+// Специализированный блок (ковка) — БУКВАЛЬНО тот же mpCellForgeHtml, что
+// уже жил в .mp-cell-panel; набор войск (Фаза 19, кусочек 1) и лечение
+// (Фаза 19, кусочек 2) идут через карусели (mpTrainInfoHtml/
+// mpHospitalInfoHtml) вместо инлайн-форм mpCellTrainHtml/mpCellHealHtml/
+// mpHospitalHtml (те НЕ тронуты — используются старой mpCellPanelHtml).
 // Все data-mp-кнопки внутри слушает handleMpAct(), навешанная и на
 // #building-modal (см. Фазу 19 у её объявления — раньше висел только
 // handleAct(), про data-mp не знавший, кнопки были мёртвыми).
@@ -7437,7 +7558,7 @@ function mpBuildingModalHtml(idx){
   h+="<button id='bm-btn' data-mp='build' data-bk='"+bld+"' "+(plot!=null?"data-plot='"+plot+"' ":"")+
      (canGo&&!mpState.loading?"":"disabled")+">"+(maxed?"Предел уровня":queued?"Уже строится":canGo?actionLabel:"Недоступно")+"</button>";
   h+=mpTrainInfoHtml(bld,pShim,st);
-  if(bld==="hospital") h+=mpHospitalHtml(pShim,st);
+  if(bld==="hospital") h+=mpHospitalInfoHtml(pShim,st);
   if(bld==="forge" && lv>0) h+=mpCellForgeHtml(st);
   // Фаза 18, кусочек 1 — Академия на карте города: та же mpAcademyHtml(),
   // что и в полной странице "Общий мир" (см. её комментарий) — раньше клик
@@ -7465,7 +7586,8 @@ function mpOpenBuildingModal(idx){
   // переключение на другую ячейку с ещё открытой каруселью оставило бы
   // mpCarouselCtx/mpTrainCtx старыми, и mpRerender() ошибочно продолжил бы
   // считать, что карусель всё ещё активна.
-  mpCarouselCtx=null; mpTrainCtx=null;
+  // Фаза 19, кусочек 2 — та же чистка и для карусели лазарета.
+  mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false;
   mpCitySel=idx;
   $("#bm-body").innerHTML = mpBuildingModalHtml(idx);
   $("#building-modal").classList.add("open");
@@ -7474,11 +7596,12 @@ function mpOpenBuildingModal(idx){
 function mpCloseBuildingModal(){
   $("#building-modal").classList.remove("open");
   mpCitySel=-1;
-  // Фаза 19, кусочек 1 — сбрасывает и карусель обучения, если она была
-  // открыта (крестик/подложка закрывают модалку МИНУЯ mpDoTrainGo) — иначе
-  // mpRerender() при следующем открытии ДРУГОЙ ячейки ошибочно решил бы,
-  // что карусель всё ещё активна (см. её же проверку mpCarouselCtx&&mpTrainCtx).
-  mpCarouselCtx=null; mpTrainCtx=null;
+  // Фаза 19, кусочки 1-2 — сбрасывает и карусели обучения/лазарета, если
+  // они были открыты (крестик/подложка закрывают модалку МИНУЯ
+  // mpDoTrainGo()/mpDoHealGo()) — иначе mpRerender() при следующем открытии
+  // ДРУГОЙ ячейки ошибочно решил бы, что карусель всё ещё активна (см. её
+  // же проверки mpCarouselCtx&&mpTrainCtx / mpHealCarouselOpen).
+  mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false;
   mpRenderFolio();
 }
 // Тот же приём диффа/сохранения scrollTop, что и у renderFolio() —
@@ -9223,8 +9346,8 @@ function closeBuildingModal(){
   // Фаза 19, кусочек 1 — mpCarouselCtx/mpTrainCtx тоже сбрасываются здесь
   // (см. тот же довод в mpCloseBuildingModal() выше) — крестик/подложка
   // могут закрыть модалку, пока открыта карусель обучения, минуя
-  // mpDoTrainGo().
-  if(!SP_UNLOCKED && mpCitySel>=0){ mpCarouselCtx=null; mpTrainCtx=null; mpCitySel=-1; mpRenderFolio(); }
+  // mpDoTrainGo()/mpDoHealGo() (Фаза 19, кусочки 1-2).
+  if(!SP_UNLOCKED && mpCitySel>=0){ mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpCitySel=-1; mpRenderFolio(); }
 }
 $("#building-modal").addEventListener("click",e=>{ if(e.target.id==="building-modal") closeBuildingModal(); });
 $("#building-modal").addEventListener("click",handleAct);
@@ -9243,6 +9366,11 @@ $("#building-modal").addEventListener("input",e=>{
   } else if((s==="mp-qty-range"||s==="mp-qty-num")&&mpTrainCtx){
     mpTrainCtx.n=clamp(Math.round(+e.target.value||0),0,mpTrainCtx.max);
     mpUpdateTrainSheet();
+  // Фаза 19, кусочек 2 — тот же приём для ползунка карусели лазарета
+  // (mp-hqty-*, отдельный id от одиночного hqty-* по той же причине).
+  } else if((s==="mp-hqty-range"||s==="mp-hqty-num")&&mpHealCtx){
+    mpHealCtx.n=clamp(Math.round(+e.target.value||0),0,mpHealCtx.max);
+    mpUpdateHealSheet();
   }
 });
 
@@ -9666,6 +9794,24 @@ function handleMpAct(e){
   }
   const trainGoBtn=e.target.closest("[data-mp='traingo']");
   if(trainGoBtn){ mpDoTrainGo(); return; }
+  // Фаза 19, кусочек 2 — карусель лазарета (абсолютная копия одиночных
+  // browseheal/hcfocus/healgo, см. их же ветки в handleAct()).
+  const browseHealBtn=e.target.closest("[data-mp='browseheal']");
+  if(browseHealBtn){ mpOpenHealCarousel(); return; }
+  const hcFocusBtn=e.target.closest("[data-mp='hcfocus']");
+  if(hcFocusBtn){
+    const st=mpState.player.state, pShim=mpFullShim(mpState.player,st);
+    const type=hcFocusBtn.dataset.type, tier=+hcFocusBtn.dataset.tier;
+    const max=healMaxN(pShim,type,tier);
+    mpHealCtx={type,tier,max,n:max,lastLocked:!!st.heal||max<1};
+    const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
+    $("#bm-body").innerHTML=mpHealCarouselHtml();
+    mpUpdateHealSheet();
+    const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
+    return;
+  }
+  const healGoBtn=e.target.closest("[data-mp='healgo']");
+  if(healGoBtn){ mpDoHealGo(); return; }
   const trainBtn=e.target.closest("[data-mp='train']");
   if(trainBtn){ mpDoTrain(trainBtn.dataset.t); return; }
   const retrainBtn=e.target.closest("[data-mp='retrain']");
@@ -10281,6 +10427,10 @@ function mpRerender(){
   if(!SP_UNLOCKED && $("#building-modal").classList.contains("open")){
     if(mpCarouselCtx && mpTrainCtx){
       mpUpdateTrainSheet();
+    // Фаза 19, кусочек 2 — тот же приём для карусели лазарета: живой
+    // пересчёт цифр (mpUpdateHealSheet), не перестройка #bm-body целиком.
+    } else if(mpHealCarouselOpen){
+      mpUpdateHealSheet();
     } else if(mpCitySel>=0){
       $("#bm-body").innerHTML = mpBuildingModalHtml(mpCitySel);
     }
