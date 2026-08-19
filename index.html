@@ -7095,18 +7095,18 @@ function mpBuildingStatDeltaHtml(bk,lv,nx,hallLv){
   }
   return "";
 }
-// Фаза 18, кусочек 1 — дословная копия renderTreeMap() (index.html, чуть
-// ниже по файлу) БЕЗ одной детали: узлы сетки там несут data-act='rtreejump'
-// (клик открывает openResearchCarousel() — читает me()/W, полноценная
-// одиночная карусель выбора уровня исследования). В общем мире это чужая,
-// невидимая партия, а самой карусели для общего мира не заведено (см.
-// mpAcademyHtml() ниже — настоящее действие там уже есть, в карточках
-// .rnode под сеткой, той же data-mp='research', что была и в плоском
-// списке раньше). Сетка тут ПОЛНОСТЬЮ визуальная (ориентир "что где", какие
-// узлы открыты/заперты/докачаны) — без клика, чтобы случайно не задеть
-// одиночный rtreejump. computeRows/researchLocked/nodeImgSrc/nodeTitle —
-// те же чистые функции, что уже вызывает существующий плоский список ниже
-// (bonuses(pShim2) и т.п.) — ничего не дублирует, кроме самой этой разметки.
+// Фаза 19, кусочек 3 — теперь дословная копия одиночной renderTreeMap()
+// (index.html, чуть ниже по файлу) ВКЛЮЧАЯ клик по узлу: раньше (Фаза 18)
+// сетка была ПОЛНОСТЬЮ визуальной, без rtreejump — честный компромисс на
+// то время (карусели для общего мира ещё не было, действие жило в плоском
+// списке под сеткой, см. старую версию mpAcademyHtml() в истории коммитов).
+// Автор явно попросил абсолютную копию — компромисс снят: узлы несут
+// data-mp='rtreejump' (не data-act — общий #building-modal слушает свой
+// отдельный обработчик, см. handleMpAct()) и открывают ту же карусель, что
+// и одиночный rtreejump (mpOpenResearchCarousel(), см. её исходник в Фазе
+// 19, кусочек 3, вместе с mpResearchCarouselHtml()). computeRows/
+// researchLocked/nodeImgSrc/nodeTitle — те же чистые функции одиночки,
+// переиспользуются напрямую, ничего не дублируют.
 function mpRenderTreeMap(arr,p){
   const rows=computeRows(arr,p);
   let h="<div class='rtree'>";
@@ -7116,7 +7116,7 @@ function mpRenderTreeMap(arr,p){
       row.map(n=>{
         const lv=p.tech[n.id]||0, maxed=lv>=n.max, locked=researchLocked(n,p);
         const state=maxed?"maxed":locked?"locked":lv>0?"started":"open";
-        return "<div class='rtree-node "+state+"' title='"+nodeTitle(n)+"'>"+
+        return "<div class='rtree-node "+state+"' data-mp='rtreejump' data-id='"+n.id+"' title='"+nodeTitle(n)+"'>"+
           "<img src='"+nodeImgSrc(n,p)+"'"+(n.unlock?" style='object-position:"+unitHeadPos(p.race,n.unlock.type,n.unlock.tier)+"'":"")+" alt='' onerror=\"this.style.display='none'\">"+
           "<span class='rtree-node-lv'>"+lv+"/"+n.max+"</span></div>";
       }).join("")+
@@ -7132,13 +7132,17 @@ function mpRenderTreeMap(arr,p){
 // местах — там же (foMultiplayer(), полная страница) И внутри
 // иллюстрированного меню здания (mpBuildingModalHtml(), клик по ячейке
 // Академии на карте) — автор попросил дерево исследований именно там же,
-// где и остальные постройки. Визуальная сетка (mpRenderTreeMap) сверху —
-// сразу узнаваемо "это дерево", как в одиночке; сами действия — карточки
-// .rnode ниже (та же цена/время/кнопка "Исследовать", что была и в плоском
-// списке, только оформление под стиль остальных #bm-tree разделов —
-// hallInfoHtml/forgeInfoHtml и т.п. в одиночке используют те же классы).
+// где и остальные постройки.
+// Фаза 19, кусочек 3 — плоский список карточек .rnode под сеткой (был
+// здесь с Фазы 18) убран: в одиночке academyTreeHtml() — это статус-
+// карточка "Исследуется" + вкладки + СЕТКА, и всё, никакого списка под ней
+// нет вовсе — действие идёт исключительно через тап по узлу сетки
+// (rtreejump), открывающий карусель. Список был честным функционально
+// полным компромиссом Фазы 18 (карусели для общего мира ещё не было),
+// теперь, когда mpRenderTreeMap() несёт настоящий data-mp='rtreejump' и
+// mpOpenResearchCarousel()/mpResearchCarouselHtml() перенесены дословно,
+// список стал лишним отступлением от структуры одиночки — снят.
 function mpAcademyHtml(pShim2,st){
-  const rschB=bonuses(pShim2);
   const rsch=st.rsch;
   let h="<div id='bm-tree'>";
   if(rsch){
@@ -7156,24 +7160,6 @@ function mpAcademyHtml(pShim2,st){
      "</div>";
   const branch=mpState.rschTab==="mil"?"mil":"eco";
   h+=mpRenderTreeMap(ACADEMY_TREE[branch],pShim2);
-  ACADEMY_TREE[branch].filter(n=>nodeVisibleFor(n,pShim2)).forEach(n=>{
-    const lv=(st.tech&&st.tech[n.id])||0, maxed=lv>=n.max;
-    h+="<div class='rnode'><div class='rnode-hd'><b>"+nodeTitle(n)+"</b><span class='rnode-lv"+(maxed?" maxed":"")+"'>"+lv+"/"+n.max+"</span></div>";
-    if(maxed){
-      h+="<div class='rnode-eff'>Максимальный уровень.</div>";
-    } else if(researchLocked(n,pShim2)){
-      h+="<div class='rnode-eff'>"+lockReason(n,pShim2)+"</div>";
-    } else if(rsch){
-      h+="<div class='rnode-eff'>Академия уже занята другим исследованием.</div>";
-    } else {
-      const nlv=lv+1, c=researchCost(n,nlv), t=researchTime(n,nlv)/(1+rschB.researchSpeed);
-      h+="<div class='rnode-eff'>До "+nlv+" ур.: "+
-         (RES.some(r=>c[r])?RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", "):"бесплатно")+
-         " · "+fmtDur(t)+"</div>"+
-         "<button class='rnode-go' data-mp='research' data-id='"+n.id+"'"+(mpState.loading?" disabled":"")+">Исследовать</button>";
-    }
-    h+="</div>";
-  });
   h+="</div>";
   return h;
 }
@@ -7268,6 +7254,11 @@ function mpTrainInfoHtml(bld,pShim,st){
 function mpOpenUnitCarousel(type){
   const st=mpState.player.state, pShim=mpFullShim(mpState.player,st);
   const maxT=tierUnlockedFor(pShim,type);
+  // Та же чистка чужих контекстов карусели, что и у одиночного
+  // openUnitCarousel() — иначе прыжок из одной карусели сразу в другую
+  // (минуя закрытие модалки) оставил бы позади мёртвый mpHealCtx/
+  // mpResearchCtx, который потом ловил бы mpRerender().
+  mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpCarouselCtx={type};
   const max=trainMax(pShim,type,maxT);
   mpTrainCtx={type,tier:maxT,mode:"train",max,n:max,lastLocked:!!(st.train&&st.train[type])||max<1};
@@ -7381,7 +7372,7 @@ async function mpDoTrainGo(){
 // шлёт настоящий mpHealCtx.tier — честная починка, не новый функционал. =====
 let mpHealCtx=null, mpHealCarouselOpen=false;
 function mpOpenHealCarousel(){
-  mpCarouselCtx=null; mpTrainCtx=null; // та же чистка контекста, что и у одиночного openHealCarousel()
+  mpCarouselCtx=null; mpTrainCtx=null; mpResearchCtx=null; // та же чистка контекста, что и у одиночного openHealCarousel()
   mpHealCarouselOpen=true; mpHealCtx=null;
   $("#bm-body").innerHTML = mpHealCarouselHtml();
   $("#building-modal").classList.add("open");
@@ -7487,6 +7478,87 @@ function mpHospitalInfoHtml(pShim,st){
   h+="</div>";
   return h;
 }
+// ===== Фаза 19, кусочек 3 — карусель исследований Академии: абсолютная
+// копия одиночной academyTreeHtml()/renderTreeMap()/researchCarouselHtml()/
+// openResearchCarousel() (см. их же исходники ниже по файлу). Раньше
+// (Фаза 18) mpAcademyHtml() рисовала сетку И плоский список карточек с
+// ценой/кнопкой "Исследовать" ПРЯМО под ней — функционально полный, но не
+// структурно идентичный интерфейс: в одиночке модалка здания при клике на
+// Академию показывает ТОЛЬКО сетку (academyTreeHtml), никакого списка под
+// ней нет вовсе, а само действие открывается тапом по узлу сетки
+// (data-act='rtreejump'), ведущим в отдельную карусель — свайп по узлам
+// одной ветки с раскрытой карточкой (портрет/эффекты/мощь/цена/кнопка).
+// Список в mpAcademyHtml() убран (см. её же комментарий), узлы сетки
+// (mpRenderTreeMap) теперь несут data-mp='rtreejump' и ведут сюда.
+// mpAcademyHtml() по-прежнему используется в двух местах (foMultiplayer(),
+// полная страница, И mpBuildingModalHtml(), клик по ячейке Академии) — тап
+// по узлу из ЛЮБОГО места одинаково открывает #building-modal
+// (z-index:27 выше z-index:25 у #menu-modal — открытие поверх уже открытой
+// страницы "Общий мир" работает корректно, тот же приём, что уже
+// используют карусели обучения/лазарета выше). Разница с одиночной
+// версией — та же самая, что и у них: читает mpState.player/mpResearchCtx
+// вместо me()/researchCtx, действие идёт через настоящий сетевой
+// mpDoResearch() (data-mp='research', уже был заведён и работал —
+// исследование само по себе никогда не было сломано, менялось только
+// оформление карточки вокруг него).
+let mpResearchCtx=null;
+function mpOpenResearchCarousel(branch,startId){
+  const st=mpState.player.state, pShim=mpFullShim(mpState.player,st);
+  // Та же чистка чужих контекстов карусели, что и у остальных mpOpen*Carousel().
+  mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false;
+  const list=researchNodeList(branch,pShim);
+  const idx=Math.max(0,list.findIndex(n=>n.id===startId));
+  mpResearchCtx={branch,idx};
+  $("#bm-body").innerHTML = mpResearchCarouselHtml();
+  $("#building-modal").classList.add("open");
+  requestAnimationFrame(()=>{
+    const track=$("#uc-track"), card=track&&track.querySelectorAll(".uc-card")[idx];
+    if(track&&card) track.scrollLeft = card.offsetLeft;
+  });
+}
+// Дословная копия researchCarouselHtml() (см. её исходник ниже по файлу):
+// W.t (игровые часы одиночки) заменён на Date.now()/1000 — тот же приём,
+// что и во всех остальных mpX-функциях этого файла (mpTrainInfoHtml и
+// т.п.), общий мир не ведёт свой W.
+function mpResearchCarouselHtml(){
+  const st=mpState.player.state, pShim=mpFullShim(mpState.player,st), B=bonuses(pShim);
+  const list=researchNodeList(mpResearchCtx.branch,pShim);
+  let h="<div id='bm-title'>"+(mpResearchCtx.branch==="mil"?"Военные исследования":"Экономические исследования")+"</div>";
+  h+="<div id='uc-track'>";
+  list.forEach(n=>{
+    const lv=pShim.tech[n.id]||0, maxed=lv>=n.max, nx=lv+1, gated=pShim.b.academy<=0;
+    const locked=researchLocked(n,pShim);
+    const c = maxed||locked||gated?null:researchCost(n,nx);
+    const powNow=researchPower(n,lv), powNext=researchPower(n,nx);
+    const rows=nodeEffectRows(n,lv,nx);
+    h+="<div class='uc-card"+(locked?" locked":"")+"'>"+
+      "<img class='uc-img' style='max-height:170px;border-radius:50%' src='"+nodeImgSrc(n,pShim)+"' alt='' onerror=\"this.style.display='none'\">"+
+      "<div class='uc-name'>"+nodeTitle(n)+(n.race?" · венец":"")+"</div>"+
+      "<div class='uc-have'>"+waveLabel(n.wave)+" · уровень "+lv+"/"+n.max+"</div>"+
+      (locked?"<div class='uc-lock'>&#128274; "+lockReason(n,pShim)+"</div>":"")+
+      "<table id='bm-stats'>"+
+        rows.map(r=>"<tr><td>"+(r.icon?"<img class='stat-ico' src='images/ui/"+r.icon+".png' alt='' onerror=\"this.remove()\">":"")+
+          r.label+"</td><td>"+r.now+(r.next?" &rarr; "+r.next:"")+"</td></tr>").join("")+
+        "<tr><td><img class='stat-ico' src='images/ui/icon-power.png' alt=''>Мощь</td><td>"+fmt(powNow)+(maxed?"":" &rarr; "+fmt(powNext))+"</td></tr>"+
+      "</table>"+
+      (c?"<div id='bm-reqs'>"+RES.filter(r=>c[r]).map(r=>
+        "<div class='req-row'><img src='images/ui/res-"+r+".png' alt=''>"+
+        "<span class='req-name'>"+RES_NAME[r]+"</span>"+
+        "<span class='req-amt"+(pShim.res[r]<c[r]?" short":"")+"'>"+fmt(c[r])+"</span></div>").join("")+"</div>":"")+
+      (st.rsch&&st.rsch.id===n.id ?
+        "<div class='progress'><i style='width:"+(Math.min(1,(Date.now()/1000-st.rsch.t0)/Math.max(1,st.rsch.t1-st.rsch.t0))*100).toFixed(1)+"%'></i></div>"+
+        "<div class='rnode-eff'>Готово через <em>"+fmtDur(st.rsch.t1-Date.now()/1000)+"</em></div>"
+      : "<button class='rnode-go uc-go' data-mp='research' data-id='"+n.id+"' "+(maxed||gated||locked||st.rsch||mpState.loading?"disabled":"")+">"+
+        (maxed?"Предел":gated?"Нужна академия":locked?lockReason(n,pShim):st.rsch?"Академия занята":
+          "Исследовать · "+fmtDur(researchTime(n,nx)/(1+B.researchSpeed)))+
+        "</button>")+
+      "</div>";
+  });
+  h+="</div>";
+  h+="<div id='uc-nav'><button data-act='ucnav' data-dir='-1'>&lsaquo; Назад</button>"+
+    "<button data-act='ucnav' data-dir='1'>Вперёд &rsaquo;</button></div>";
+  return h;
+}
 // Фаза 17, кусочек 1 — иллюстрированное меню здания в общем мире: та же
 // разметка/CSS-классы, что и у одиночного #building-modal/buildingModalHtml()
 // чуть ниже по файлу (#bm-art/#bm-title/#bm-sub/#bm-desc/#bm-stats/#bm-reqs/
@@ -7587,7 +7659,8 @@ function mpOpenBuildingModal(idx){
   // mpCarouselCtx/mpTrainCtx старыми, и mpRerender() ошибочно продолжил бы
   // считать, что карусель всё ещё активна.
   // Фаза 19, кусочек 2 — та же чистка и для карусели лазарета.
-  mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false;
+  // Фаза 19, кусочек 3 — и для карусели исследований Академии.
+  mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpCitySel=idx;
   $("#bm-body").innerHTML = mpBuildingModalHtml(idx);
   $("#building-modal").classList.add("open");
@@ -7601,7 +7674,9 @@ function mpCloseBuildingModal(){
   // mpDoTrainGo()/mpDoHealGo()) — иначе mpRerender() при следующем открытии
   // ДРУГОЙ ячейки ошибочно решил бы, что карусель всё ещё активна (см. её
   // же проверки mpCarouselCtx&&mpTrainCtx / mpHealCarouselOpen).
-  mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false;
+  // Фаза 19, кусочек 3 — и mpResearchCtx (карусель исследований) той же
+  // причине.
+  mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpRenderFolio();
 }
 // Тот же приём диффа/сохранения scrollTop, что и у renderFolio() —
@@ -9347,7 +9422,7 @@ function closeBuildingModal(){
   // (см. тот же довод в mpCloseBuildingModal() выше) — крестик/подложка
   // могут закрыть модалку, пока открыта карусель обучения, минуя
   // mpDoTrainGo()/mpDoHealGo() (Фаза 19, кусочки 1-2).
-  if(!SP_UNLOCKED && mpCitySel>=0){ mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpCitySel=-1; mpRenderFolio(); }
+  if(!SP_UNLOCKED && mpCitySel>=0){ mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null; mpCitySel=-1; mpRenderFolio(); }
 }
 $("#building-modal").addEventListener("click",e=>{ if(e.target.id==="building-modal") closeBuildingModal(); });
 $("#building-modal").addEventListener("click",handleAct);
@@ -9858,6 +9933,10 @@ function handleMpAct(e){
   if(recallBtn){ mpDoRecall(+recallBtn.dataset.id); return; }
   const rschTabBtn=e.target.closest("[data-mp='rschtab']");
   if(rschTabBtn){ mpState.rschTab=rschTabBtn.dataset.t; mpRerender(); return; }
+  // Фаза 19, кусочек 3 — карусель исследований Академии (абсолютная копия
+  // одиночного rtreejump, см. её же ветку в handleAct()).
+  const rtreejumpBtn=e.target.closest("[data-mp='rtreejump']");
+  if(rtreejumpBtn){ const n=findNode(rtreejumpBtn.dataset.id); if(n) mpOpenResearchCarousel(n.branch,n.id); return; }
   const researchBtn=e.target.closest("[data-mp='research']");
   if(researchBtn){ mpDoResearch(researchBtn.dataset.id); return; }
   const pickgenBtn=e.target.closest("[data-mp='pickgen']");
@@ -10431,6 +10510,15 @@ function mpRerender(){
     // пересчёт цифр (mpUpdateHealSheet), не перестройка #bm-body целиком.
     } else if(mpHealCarouselOpen){
       mpUpdateHealSheet();
+    // Фаза 19, кусочек 3 — карусель исследований: одиночный refreshOpenModal()
+    // для researchCtx НЕ делает диф-проверку в отличие от train/heal выше —
+    // просто перестраивает всю карусель заново на каждый тик, сохраняя
+    // прокрутку вручную (keepScroll). Тот же приём здесь — честная копия,
+    // а не изобретение нового поведения.
+    } else if(mpResearchCtx){
+      const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
+      $("#bm-body").innerHTML=mpResearchCarouselHtml();
+      const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
     } else if(mpCitySel>=0){
       $("#bm-body").innerHTML = mpBuildingModalHtml(mpCitySel);
     }
