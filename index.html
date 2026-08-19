@@ -7134,6 +7134,167 @@ function mpForgeInfoHtml(st){
   h+="</div>";
   return h;
 }
+// ===== Фаза 19, кусочек 6 — экран Генерала: абсолютная копия одиночной
+// foGen() (index.html, чуть ниже по файлу) — портрет+фигура персонажа,
+// кольцо опыта (ring()), звёзды ранга, вкладки Обзор/Таланты/Экипировка,
+// сетка .gear-slot для экипировки. Раньше (Фаза 7/10/11) это были ЧЕТЫРЕ
+// независимых плоских рубричных блока прямо внутри foMultiplayer()
+// ("Полководец"/"Книги опыта"/"Снаряжение"/"Таланты") — функционально
+// полные (выбор генерала, XP, оба дерева талантов через TALENT_BRANCHES,
+// все бонусы честно считаются через bonuses()), но визуально это был голый
+// список вместо портрета/колец/вкладок одиночного экрана. Единая
+// mpGenHtml() сменяет все четыре разом — вызывается ОДИН раз внутри
+// foMultiplayer(), оборачивается тем же rubric("Полководец",...,
+// "mp-anchor-gen"), что и раньше (см. её вызов там же).
+// pShim нужен полный (mpFullShim) — genStats/bonuses/genOf/genPowerOf/
+// genSkillBadges читают p.gen.tal/p.tech/p.gear/p.race целиком, бару
+// {race,b} тут не хватит (то же обоснование, что и у Ратуши/Склада в
+// прошлом кусочке).
+let mpGenTab="overview", mpGenTomesOpen=false;
+function mpGenHtml(pShim,st){
+  if(!st.gen||st.gen.id==null){
+    let h="";
+    GENERALS[pShim.race].forEach((g,i)=>{
+      h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
+        genPortraitHtml(pShim.race,i)+shieldSvg(pShim.race,26)+"</div><div class='fill'>"+
+        "<div class='title'>"+g.name+"<span class='tag gilt'>"+g.role+"</span></div>"+
+        "<div class='note'>"+g.flavor+"<span class='gen-stat'>"+g.stat+"</span></div></div></div>"+
+        "<button class='seal' data-mp='pickgen' data-id='"+i+"'"+(mpState.loading?" disabled":"")+">Выбрать</button></div>";
+    });
+    return h;
+  }
+  const G=genOf(pShim), B=bonuses(pShim), S=genStats(pShim);
+  const lv=st.gen.lv||1, xp=st.gen.xp||0, pts=st.gen.pts||0;
+  const need=genXpNeed(lv), f=xp/need, lvCap=Math.min(60,epochOf(st.b.hall||0)*12);
+  const stars=Math.min(6,1+Math.floor(lv/10));
+  const genPower=genPowerOf(pShim);
+  let h="<div class='gen-figure-wrap'>"+genFigureHtml(pShim.race,st.gen.id||0)+"</div>";
+  h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
+    genPortraitHtml(pShim.race,st.gen.id||0)+"</div>"+ring(lv,60)+"<div class='fill'>"+
+    "<div class='title'>"+G.name+"<span class='tag gilt'>"+G.role+"</span></div>"+
+    "<div class='stars'>"+"&#9733;".repeat(stars)+"&#9734;".repeat(6-stars)+"</div>"+
+    "<div class='note'>"+G.flavor+"<span class='gen-stat'>"+G.stat+
+    (pts>0?" · очков к раздаче: "+pts:"")+
+    (lv>=lvCap&&lvCap<60?" · потолок эпохи: "+lvCap:"")+"</span></div>"+
+    // Честный MP-довесок без одиночного аналога: генерал делится с
+    // походами/обороной (см. takeGen), достаточно важно, чтобы показать
+    // сразу на карточке, а не только косвенно через занятость казарм.
+    "<div class='note'>"+(st.gen.away!=null?"В походе — недоступен для другого марша и обороны города.":"Дома — доступен для похода и обороны города.")+"</div>"+
+    "</div></div>"+
+    "<div class='line' style='margin-top:7px;gap:8px'><div class='progress' style='flex:1;margin-top:0'>"+
+    "<i style='width:"+(f*100).toFixed(1)+"%'></i></div>"+
+    "<button class='seal' data-mp='togglegentomes' title='Использовать книгу опыта' "+
+    "style='flex:0 0 auto;padding:0;width:30px;height:30px;font-size:17px;line-height:28px;text-align:center'"+
+    (mpState.loading?" disabled":"")+">"+
+    (mpGenTomesOpen?"&#8722;":"+")+"</button></div>"+
+    (mpGenTomesOpen?mpTomesPanelHtml(st,lvCap):"")+
+    "<table class='roll' style='margin-top:9px'><tr><td>Сила полководца</td><td>"+RU(genPower)+"</td></tr></table>"+
+    genSkillBadges(pShim)+
+    "</div>";
+
+  h+="<div id='inv-tabs'>"+
+    "<button class='"+(mpGenTab==="overview"?"on":"")+"' data-mp='gentab' data-t='overview'>Обзор</button>"+
+    "<button class='"+(mpGenTab==="talents"?"on":"")+"' data-mp='gentab' data-t='talents'>Таланты</button>"+
+    "<button class='"+(mpGenTab==="gear"?"on":"")+"' data-mp='gentab' data-t='gear'>Экипировка</button>"+
+    "</div>";
+
+  if(mpGenTab==="gear") return h+mpGenGearHtml(pShim,st);
+
+  if(mpGenTab==="talents"){
+    TALENT_BRANCHES.forEach(([key,br])=>{
+      let spent=0; br.nodes.forEach(n=>spent+=((st.gen.tal&&st.gen.tal[n.id])||0));
+      const totalMax=br.nodes.reduce((a,n)=>a+(n.max||5),0);
+      h+=rubric(br.name, spent+" из "+totalMax);
+      br.nodes.forEach(n=>{
+        const max=n.max||5, lv2=(st.gen.tal&&st.gen.tal[n.id])||0, full=lv2>=max;
+        h+="<div class='entry"+(lv2>0?" hot":"")+"'><div class='line'><div class='fill'>"+
+          "<div class='title'>"+n.name+"<span class='tag"+(full?" gilt":"")+"'>"+lv2+"/"+max+"</span></div>"+
+          "<div class='note'>"+n.txt+" · сейчас <em>+"+(lv2*n.per*100).toFixed(0)+"%</em></div></div>"+
+          "<button class='seal' data-mp='talent' data-id='"+n.id+"' "+
+          (pts<=0||full||mpState.loading?"disabled":"")+">Вложить</button></div></div>";
+      });
+    });
+    return h;
+  }
+
+  h+=rubric("Характеристики");
+  h+="<div class='entry'><table class='roll'>"+
+    "<tr><td>"+statIcon("hp")+"Здоровье</td><td>"+RU(S.hp)+"</td></tr>"+
+    "<tr><td>"+statIcon("atk")+"Атака</td><td>"+RU(S.atk)+"</td></tr>"+
+    "<tr><td>"+statIcon("def")+"Защита</td><td>"+RU(S.def)+"</td></tr></table></div>";
+
+  h+=rubric("Итог бонусов");
+  h+="<div class='entry'><table class='roll'>"+
+    "<tr><td>"+statIcon("atk")+"Атака войск</td><td class='"+(B.atk>0?"good":"")+"'>"+(B.atk>=0?"+":"")+(B.atk*100).toFixed(0)+"%</td></tr>"+
+    "<tr><td>"+statIcon("def")+"Защита войск</td><td class='"+(B.def<0?"bad":B.def>0?"good":"")+"'>"+(B.def>=0?"+":"")+(B.def*100).toFixed(0)+"%</td></tr>"+
+    "<tr><td>"+statIcon("hp")+"Здоровье войск</td><td class='"+(B.hp>0?"good":"")+"'>+"+(B.hp*100).toFixed(0)+"%</td></tr>"+
+    "<tr><td>"+statIcon("speed")+"Скорость марша</td><td>×"+B.march.toFixed(2)+"</td></tr>"+
+    "<tr><td>Скорость стройки</td><td>×"+B.build.toFixed(2)+"</td></tr>"+
+    "<tr><td>Скорость сбора</td><td>+"+(B.gather*100).toFixed(0)+"%</td></tr>"+
+    "<tr><td>Поднятие павших</td><td class='"+(B.raise>0?"good":"")+"'>"+(B.raise*100).toFixed(0)+"%</td></tr>"+
+    "</table></div>";
+  return h;
+}
+// Дословная копия genGearHtml(p) (см. её исходник ниже по файлу) — сетка
+// .gear-slot (9 слотов GEAR_LAYOUT: что надето сейчас, кнопка "Снять") +
+// склад (что лежит, кнопки "Надеть"/"Разобрать"). Меняет data-act на
+// data-mp, читает st.gear/st.inventory вместо p.gear/p.inventory — то же
+// самое, что и раньше делали отдельная плоская рубрика "Снаряжение" внутри
+// foMultiplayer(), просто оформлено сеткой, как в одиночке.
+function mpGenGearHtml(pShim,st){
+  let h=rubric("Экипировка");
+  h+="<div class='gear-slots'>";
+  GEAR_LAYOUT.forEach(id=>{
+    const s=findGearSlot(id), it=st.gear&&st.gear[id];
+    h+="<div class='gear-slot"+(it?" filled":"")+(id==="helmet"?" crown":"")+"' "+(it?"style='--pc:"+RARITY_COLOR[it.rarity-1]+"'":"")+">"+
+      "<div class='gear-slot-icon'>"+(it?"<img src='"+gearIconSrc(s.id,it.order)+"' alt=''>":"")+"</div>"+
+      "<div class='gear-slot-name'>"+s.name+"</div>"+
+      "<div class='gear-slot-item'>"+(it?GEAR_NAMES[s.id][it.order][it.rarity-1]+"<span class='tag gilt'>"+RARITY_NAMES[it.rarity-1]+"</span>"
+        +"<div class='note'>"+statTxt(gearItemStats(s.cat,it.order,it.rarity))+" · мощь "+RU(GEAR_POWER[it.rarity-1])+"</div>":"пусто")+"</div>"+
+      (it?"<button class='seal' data-mp='unequip' data-slot='"+s.id+"'"+(mpState.loading?" disabled":"")+">Снять</button>":"")+
+      "</div>";
+  });
+  h+="</div>";
+
+  let any=false, stored="";
+  GEAR_SLOTS.forEach(s=>{
+    ["bastion","storm"].forEach(order=>{
+      for(let r=1;r<=5;r++){
+        const cnt=(st.inventory&&st.inventory[s.id]&&st.inventory[s.id][order]&&st.inventory[s.id][order][r-1])||0; if(!cnt) continue;
+        any=true;
+        stored+="<div class='entry'><div class='line'>"+
+          "<div class='mat-icon-wrap' style='--pc:"+RARITY_COLOR[r-1]+";box-shadow:inset 0 0 8px var(--pc)'>"+
+          "<img class='mat-icon' src='"+gearIconSrc(s.id,order)+"' alt=''></div>"+
+          "<div class='fill'>"+
+          "<div class='title'>"+GEAR_NAMES[s.id][order][r-1]+"<span class='tag'>×"+cnt+"</span></div>"+
+          "<div class='note'>"+s.name+" · "+statTxt(gearItemStats(s.cat,order,r))+" · мощь "+RU(GEAR_POWER[r-1])+"</div></div>"+
+          "<button class='seal' data-mp='equip' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'"+(mpState.loading?" disabled":"")+">Надеть</button>"+
+          "<button class='seal' data-mp='dismantle' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'"+(mpState.loading?" disabled":"")+">Разобрать</button></div>";
+      }
+    });
+  });
+  h+=rubric("На складе","можно надеть или разобрать");
+  h+= any ? stored : hollow("&#9884;","Склад снаряжения пуст — куйте в горне.");
+  return h;
+}
+// Дословная копия tomesPanelHtml(p,lvCap) (см. её исходник ниже по файлу) —
+// раскрывающаяся панель книг опыта под полоской XP, вместо отдельной
+// рубрики "Книги опыта" где-то ниже страницы (Фаза "после Портала"). Та
+// рубрика была честной, но структурно отдельной от статус-карточки — в
+// одиночке книги открываются кнопкой "+" ПРЯМО на полоске опыта генерала.
+function mpTomesPanelHtml(st,lvCap){
+  const owned=TOME_VALUES.filter(v=>(st.tomes&&st.tomes[v])||0);
+  if(!owned.length) return "<div class='hint' style='margin-top:7px'>Книг опыта нет на складе — они выпадают за победу над лагерями разбойников в мире.</div>";
+  return "<div style='margin-top:7px'>"+owned.map(v=>{
+    const cnt=st.tomes[v];
+    return "<div class='entry'><div class='line'>"+
+      "<img src='images/ui/"+TOME_ICON[v]+".png' alt='' style='width:26px;height:26px;object-fit:contain;flex:0 0 auto'>"+
+      "<div class='fill'><div class='title'>"+TOME_NAME[v]+"<span class='tag'>×"+cnt+"</span></div>"+
+      "<div class='note'>восполняет "+RU(v)+" опыта</div></div>"+
+      "<button class='seal' data-mp='usetome' data-v='"+v+"' "+((st.gen.lv||1)>=lvCap||mpState.loading?"disabled":"")+">Использовать</button>"+
+      "</div></div>";
+  }).join("")+"</div>";
+}
 // Фаза 17, кусочек 1 — дословная копия buildingStatDeltaHtml() (index.html,
 // см. её же комментарий чуть ниже по файлу), но БЕЗ обращения к me(): та
 // функция почти целиком чистая (bk/lv/nx + глобальные таблицы), кроме ОДНОЙ
@@ -9802,6 +9963,12 @@ function openMenuModal(t){
   // открытии. У почты и генерала гасить нечего: метка сама пропадёт, когда
   // письма прочитаны, а очки таланта вложены.
   if(t==="inv") me().invNew=false;
+  // Фаза 19, кусочек 6 — при .mp-gated экипировка теперь живёт вкладкой
+  // "Экипировка" внутри объединённой карточки генерала (mpGenHtml), а не
+  // отдельным разделом страницы — открывая "Инвентарь" со стороны, сразу
+  // переключаем эту вкладку, чтобы после прокрутки к mp-anchor-inv (см.
+  // ниже) была видна нужная сетка снаряжения, а не "Обзор" по умолчанию.
+  if(!SP_UNLOCKED && t==="inv") mpGenTab="gear";
   // Общий мир — отдельная вкладка со своим опросом сервера (см. mpStartPolling
   // ниже): уходя с неё, глушим таймер, чтобы не дёргать Supabase впустую,
   // пока игрок смотрит другую вкладку. Только в одиночке (SP_UNLOCKED) —
@@ -10070,6 +10237,12 @@ function handleMpAct(e){
   if(pickgenBtn){ mpDoPickGen(+pickgenBtn.dataset.id); return; }
   const talentBtn=e.target.closest("[data-mp='talent']");
   if(talentBtn){ mpDoTalent(talentBtn.dataset.id); return; }
+  // Фаза 19, кусочек 6 — экран Генерала (абсолютная копия одиночных
+  // gentab/toggletomes, см. их же ветки в handleAct()).
+  const genTabBtn=e.target.closest("[data-mp='gentab']");
+  if(genTabBtn){ mpGenTab=genTabBtn.dataset.t; mpRerender(); return; }
+  const toggleGenTomesBtn=e.target.closest("[data-mp='togglegentomes']");
+  if(toggleGenTomesBtn){ mpGenTomesOpen=!mpGenTomesOpen; mpRerender(); return; }
 }
 $("#menu-modal-body").addEventListener("click",e=>{
   if($("#menu-modal").dataset.tab!=="mp") return;
@@ -11411,59 +11584,6 @@ function foMultiplayer(embedded){
     h+=mpForgeInfoHtml(st);
   }
 
-  // Новый кусочек (после Портала) — книги опыта генерала (mp-usetome),
-  // зеркало клиентского "usetome" (index.html:7943-7950). Появляются с
-  // разгрома лагерей разбойников (mp-tick, applyRaidArrive — bookDrop
-  // тем же коммитом наконец подключён, раньше честно не переносился).
-  {
-    const owned=TOME_VALUES.filter(v=>(st.tomes&&st.tomes[v])||0);
-    const hallLvT=Array.isArray(st.b.hall)?Math.max(0,...st.b.hall):(st.b.hall||0);
-    const lvCap=Math.min(60,epochOf(hallLvT)*12);
-    const genLv=(st.gen&&st.gen.lv)||1;
-    if(owned.length){
-      h+=rubric("Книги опыта","+"+RU(genLv)+" ур. генерала из "+lvCap);
-      owned.forEach(v=>{
-        const cnt=st.tomes[v];
-        h+="<div class='entry'><div class='line'><div class='fill'>"+
-           "<div class='title'>"+TOME_NAME[v]+" ×"+RU(cnt)+"</div>"+
-           "<div class='note'>+"+RU(v)+" опыта генералу"+(genLv>=lvCap?" (генерал уже на максимуме эпохи)":"")+"</div>"+
-           "<button class='seal' data-mp='usetome' data-v='"+v+"'"+(mpState.loading||genLv>=lvCap?" disabled":"")+">Использовать</button>"+
-           "</div></div></div>";
-      });
-    }
-  }
-
-  // Фаза 11, кусочек 4 — надеть/снять/разобрать. Зеркало equipItem/
-  // unequipItem/dismantleItem (index.html:5895-5917). Показываем 9 слотов
-  // GEAR_SLOTS: что надето сейчас (с бонусом через statTxt+gearItemStats,
-  // как в SP genGearHtml) и что лежит на складе (st.inventory[slot][order][r-1]).
-  h+=rubric("Снаряжение","надето и склад","mp-anchor-inv");
-  GEAR_SLOTS.forEach(s=>{
-    const cur=st.gear&&st.gear[s.id];
-    h+="<div class='entry'><div class='line'><div class='fill'>"+
-       "<div class='title'>"+s.name+"</div>";
-    if(cur){
-      const stat=gearItemStats(s.cat,cur.order,cur.rarity);
-      h+="<div class='note'>"+GEAR_NAMES[s.id][cur.order][cur.rarity-1]+" · "+RARITY_NAMES[cur.rarity-1]+" · "+statTxt(stat)+"</div>"+
-         "<button class='seal' data-mp='unequip' data-slot='"+s.id+"'"+(mpState.loading?" disabled":"")+">Снять</button>";
-    } else {
-      h+="<div class='note'>Пусто</div>";
-    }
-    const inv=(st.inventory&&st.inventory[s.id])||{};
-    ["bastion","storm"].forEach(order=>{
-      const stock=inv[order]||[0,0,0,0,0];
-      stock.forEach((n,i)=>{
-        if(!n) return;
-        const rarity=i+1, orderName=order==="storm"?"Буря":"Бастион";
-        h+="<div class='note'>"+GEAR_NAMES[s.id][order][i]+" ("+orderName+", "+RARITY_NAMES[i]+") ×"+RU(n)+" — "+
-           "<button class='seal' data-mp='equip' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+rarity+"'"+(mpState.loading?" disabled":"")+">Надеть</button> "+
-           "<button class='seal' data-mp='dismantle' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+rarity+"'"+(mpState.loading?" disabled":"")+">Разобрать ("+RU(Math.round(200*rarity*rarity*0.5))+" золота)</button>"+
-           "</div>";
-      });
-    });
-    h+="</div></div></div>";
-  });
-
   h+=rubric("Набор войск","тир 1");
   TKEYS.forEach(t=>{
     const bld=TRAIN_BLD[t], lv=st.b[bld]||0, cap=trainCap(lv);
@@ -11562,64 +11682,22 @@ function foMultiplayer(embedded){
     });
   }
 
-  // Фаза 7 — выбор полководца (mp-pickgen), зеркало foGen()'s "Выбор
-  // полководца" (index.html:7414-7426) и клика (index.html:7951-7953).
-  // Честно переиспользует ту же самую глобальную таблицу GENERALS, что и
-  // одиночная игра — один файл, отдельной копии не заводим. Одноразово,
-  // бесплатно, необратимо: как только st.gen.id не null, кнопка выбора
-  // больше не показывается вообще (переиграть нельзя, ровно как в клиенте).
-  // Фаза 10, кусочек 1 — уровень/опыт генерала наконец начисляются
-  // (addXp в mp-tick, на победу над лагерем/игроком) — переиспользует те
-  // же самые genXpNeed/epochOf, что и одиночная игра (тот же файл, приём
-  // как у mpProdPerHour ниже). Очки таланта (p.gen.pts) уже копятся
-  // по-настоящему, но тратить их пока негде — mp-talent и подключение
-  // самих бонусов в bonuses() отдельными следующими кусочками, см.
-  // supabase/README.md.
+  // Фаза 19, кусочек 6 — экран Генерала: раньше это были ЧЕТЫРЕ независимых
+  // плоских блока (Полководец/Книги опыта/Снаряжение/Таланты — см. их
+  // историю в git) — mpGenHtml() сменяет их все разом абсолютной копией
+  // одиночного foGen() (портрет/фигура/кольцо опыта/звёзды/вкладки
+  // Обзор-Таланты-Экипировка), см. её собственный комментарий у объявления
+  // чуть выше по файлу.
+  // <span id='mp-anchor-inv'> — отдельный, почти нулевой якорь для иконки
+  // "Инвентарь" бокового меню (Фаза 17, кусочек 2): экипировка теперь живёт
+  // ВНУТРИ карточки генерала (вкладка "Экипировка"), а не отдельной
+  // рубрикой со своим собственным id — но openMenuModal() всё ещё должен
+  // куда-то прокрутить страницу по клику на "инвентарь" (см. её же правку,
+  // переключающую заодно mpGenTab="gear", чтобы после прокрутки сразу была
+  // видна нужная вкладка, а не "Обзор").
+  h+="<span id='mp-anchor-inv'></span>";
   h+=rubric("Полководец","решение окончательное","mp-anchor-gen");
-  if(!st.gen||st.gen.id==null){
-    GENERALS[p.race].forEach((g,i)=>{
-      h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
-        genPortraitHtml(p.race,i)+shieldSvg(p.race,26)+"</div><div class='fill'>"+
-        "<div class='title'>"+g.name+"<span class='tag gilt'>"+g.role+"</span></div>"+
-        "<div class='note'>"+g.flavor+"<span class='gen-stat'>"+g.stat+"</span></div></div></div>"+
-        "<button class='seal' data-mp='pickgen' data-id='"+i+"'"+(mpState.loading?" disabled":"")+">Выбрать</button></div>";
-    });
-  } else {
-    const g=GENERALS[p.race][st.gen.id];
-    const lv=st.gen.lv||1, xp=st.gen.xp||0, pts=st.gen.pts||0;
-    const lvCap=Math.min(60,epochOf(st.b.hall||0)*12), need=genXpNeed(lv);
-    h+="<div class='entry'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
-      genPortraitHtml(p.race,st.gen.id)+shieldSvg(p.race,26)+"</div><div class='fill'>"+
-      "<div class='title'>"+g.name+"<span class='tag gilt'>"+g.role+"</span> · "+lv+" ур."+"</div>"+
-      "<div class='note'>"+g.flavor+"<span class='gen-stat'>"+g.stat+"</span></div>"+
-      "<div class='note'>Опыт: "+RU(xp)+" / "+RU(need)+(lv>=lvCap?" · потолок эпохи":"")+
-      (pts>0?" · очков таланта: "+pts:"")+"</div>"+
-      "<div class='note'>"+(st.gen.away!=null?"В походе — недоступен для другого марша и обороны города.":"Дома — доступен для похода и обороны города.")+"</div>"+
-      "</div></div></div>";
-  }
-
-  // Фаза 10, кусочек 2 — трата очков таланта (mp-talent). Честно
-  // переиспользует TALENT_BRANCHES/TALENTS/GENERAL_TREE одиночной игры
-  // (тот же файл, как и GENERALS выше) — пять веток (Город/Армия/Война/
-  // Развитие/Сбор), максимум узла — n.max у GENERAL_TREE, ||5 у голых
-  // TALENTS (там своего max нет, тот же приём, что findTalentNode в
-  // index.html:7935). Сам эффект вложенных очков в bonuses() подключён
-  // кусочком 3 той же Фазы 10 (см. supabase/README.md).
-  if(st.gen && st.gen.id!=null){
-    h+=rubric("Таланты",(st.gen.pts||0)+" очков свободно");
-    TALENT_BRANCHES.forEach(([key,br])=>{
-      let spent=0; br.nodes.forEach(n=>spent+=((st.gen.tal&&st.gen.tal[n.id])||0));
-      h+="<div class='entry'><div class='line'><div class='fill'><div class='title'>"+br.name+"</div></div></div>";
-      br.nodes.forEach(n=>{
-        const max=n.max||5, lv2=(st.gen.tal&&st.gen.tal[n.id])||0, full=lv2>=max;
-        h+="<div class='line' style='margin-top:4px'><div class='fill'>"+
-           "<div class='note'>"+n.name+" — "+n.txt+" <span class='tag"+(full?" gilt":"")+"'>"+lv2+"/"+max+"</span></div></div>"+
-           "<button class='seal' data-mp='talent' data-id='"+n.id+"'"+
-           ((st.gen.pts||0)<=0||full||mpState.loading?" disabled":"")+">Вложить</button></div>";
-      });
-      h+="</div>";
-    });
-  }
+  h+=mpGenHtml(mpFullShim(p,st),st);
 
   // Фаза 5, Академия — дерево исследований (ACADEMY_TREE, зеркало
   // startResearch(p,id) из index.html:5848-5863, см. mp-research). Честно
