@@ -454,20 +454,81 @@ function newPlayerState(race, nowSec) {
   };
 }
 
+// index.html:2706-2763 — дословная копия рельефа объёмной карты (Фаза 12).
+// RW_SEED — ФИКСИРОВАННАЯ константа, одна и та же у любого клиента (не
+// worlds.seed), рельеф не зависит от того, чья это партия — поэтому эта
+// копия детерминированно совпадает с тем, что показывает 3D-вкладка «Мир»
+// у каждого игрока, без какой-либо синхронизации сида между сервером и
+// клиентами. До Фазы 12 mp-join сажал город/точку/лагерь вслепую (только
+// от игроков/друг друга) — 3D-карты тогда не существовало, поэтому "город
+// в море" был просто невозможен УВИДЕТЬ. Теперь, когда объёмная карта
+// реально показывает соседей (кусочки 1-4), это стало видимым багом:
+// первый же игрок мог случайно осесть на воде.
+function hash2(x, y, s) { let h = x * 374761393 + y * 668265263 + s * 1274126177;
+  h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; }
+function noise(x, y, s) {
+  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  const a = hash2(xi, yi, s), b = hash2(xi + 1, yi, s), c = hash2(xi, yi + 1, s), d = hash2(xi + 1, yi + 1, s);
+  return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
+}
+function ridge(x, y, s) { return 1 - Math.abs(2 * noise(x, y, s) - 1); }
+const RW_SEED = 12345, RW_SEA = 0.235;
+function rwSstep(a, b, x) { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); }
+function rwRegionKind(x, y) {
+  return { mount: rwSstep(0.40, 0.72, noise(x / 40, y / 40, RW_SEED + 55)),
+           plat: rwSstep(0.62, 0.84, noise(x / 34, y / 34, RW_SEED + 88)),
+           rough: noise(x / 26, y / 26, RW_SEED + 123) };
+}
+function rwHeightRaw(x, y) {
+  const wx = (noise(x / 34, y / 34, RW_SEED + 101) * 2 - 1) * 13;
+  const wy = (noise(x / 34, y / 34, RW_SEED + 102) * 2 - 1) * 13;
+  const X = x + wx, Y = y + wy;
+  const R = rwRegionKind(x, y);
+  const cont = noise(X / 62, Y / 62, RW_SEED + 201);
+  let e = 0.16 + cont * 0.50;
+  const amp = 0.16 + 0.84 * R.mount + 0.35 * R.rough;
+  e += (noise(X / 27, Y / 27, RW_SEED) * 0.20 + noise(X / 13, Y / 13, RW_SEED + 9) * 0.10
+    + noise(X / 6, Y / 6, RW_SEED + 21) * 0.045) * amp;
+  e += ridge(X / 17, Y / 17, RW_SEED + 37) * 0.33 * R.mount;
+  e += R.mount * 0.10 - (1 - R.mount) * 0.05;
+  if (R.plat > 0.02) {
+    const terr = Math.round(e * 6.0) / 6.0;
+    e = e * (1 - R.plat * 0.80) + terr * (R.plat * 0.80);
+  }
+  if (e >= 0.42) {
+    const k = rwSstep(0.42, 0.68, e);
+    e += (noise(x / 2.4, y / 2.4, RW_SEED + 180) - 0.5) * 0.075 * k
+      + (noise(x / 5.5, y / 5.5, RW_SEED + 181) - 0.5) * 0.055 * k;
+  }
+  return Math.max(0.02, Math.min(1, e));
+}
+function rwHeightAt(x, y) {
+  const c = rwHeightRaw(x, y);
+  const s = (rwHeightRaw(x + 0.7, y) + rwHeightRaw(x - 0.7, y) + rwHeightRaw(x, y + 0.7) + rwHeightRaw(x, y - 0.7)) * 0.25;
+  return c * 0.55 + s * 0.45;
+}
+function isRealWater(x, y) { return rwHeightAt(x + 0.5, y + 0.5) < RW_SEA; }
+
 // Простой поиск свободного места на условной решётке мира — не копия
 // findFreeCellInChunk/MIN_STRUCT_GAP из index.html (та логика заточена под
 // плотную карту узлов/лагерей одного браузера), здесь городов в общем мире
 // будет заведомо меньше и достаточно грубой проверки минимального
 // расстояния между СТОЛИЦАМИ, чтобы новый игрок не встал вплотную к чужой.
+// isRealWater добавлена Фазой 12 — раньше проверялось только расстояние.
 const MIN_CITY_GAP = 40;
 function pickSpawn(existing) {
   for (let attempt = 0; attempt < 200; attempt++) {
     const ring = 50 + Math.floor(attempt / 10) * 30;
     const x = Math.round((Math.random() * 2 - 1) * ring);
     const y = Math.round((Math.random() * 2 - 1) * ring);
+    if (isRealWater(x, y)) continue;
     const ok = existing.every((p) => Math.hypot(p.x - x, p.y - y) >= MIN_CITY_GAP);
     if (ok) return { x, y };
   }
+  // 200 попыток по воде и соседям не нашли места — тот же честный отказ от
+  // проверки водой, что и раньше был у самой функции целиком: лучше
+  // редчайший город в море, чем игрок, которому вообще не дали войти.
   return { x: Math.round(Math.random() * 400 - 200), y: Math.round(Math.random() * 400 - 200) };
 }
 
@@ -483,12 +544,25 @@ function pickSpawn(existing) {
 // (или повторный вызов из-за retry), лишняя запись просто не создаётся,
 // без падения на конфликте первичного ключа.
 const NODE_SEED_COUNT = 5, NODE_SEED_MIN_R = 8, NODE_SEED_MAX_R = 25;
+// SEED_WATER_TRIES — Фаза 12: точка/лагерь пересеивается в воду до 8 раз
+// (тот же приём, что и у pickSpawn выше), последняя попытка кладётся как
+// есть без проверки — честный редкий отказ вместо риска зациклиться в
+// сильно "морском" кольце.
+const SEED_WATER_TRIES = 8;
+function seedPointAvoidingWater(cx, cy, minR, maxR) {
+  let x, y;
+  for (let t = 0; t < SEED_WATER_TRIES; t++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = minR + Math.random() * (maxR - minR);
+    x = Math.round(cx + Math.cos(ang) * r); y = Math.round(cy + Math.sin(ang) * r);
+    if (!isRealWater(x, y)) return { x, y };
+  }
+  return { x, y };
+}
 async function seedNodesAround(admin, worldId, cx, cy) {
   const rows = [];
   for (let i = 0; i < NODE_SEED_COUNT; i++) {
-    const ang = Math.random() * Math.PI * 2;
-    const r = NODE_SEED_MIN_R + Math.random() * (NODE_SEED_MAX_R - NODE_SEED_MIN_R);
-    const x = Math.round(cx + Math.cos(ang) * r), y = Math.round(cy + Math.sin(ang) * r);
+    const { x, y } = seedPointAvoidingWater(cx, cy, NODE_SEED_MIN_R, NODE_SEED_MAX_R);
     const lv = 1 + Math.floor(Math.random() * 3); // 1..3 — новичкам не нужны жилы 5 уровня под боком
     const amount = Math.round(6000 * Math.pow(2.6, lv - 1)); // index.html:3111 (EV.nodeback) — та же формула
     const res = RES[Math.floor(Math.random() * RES.length)];
@@ -512,9 +586,7 @@ const CAMP_SEED_COUNT = 3, CAMP_SEED_MIN_R = 8, CAMP_SEED_MAX_R = 25;
 async function seedCampsAround(admin, worldId, cx, cy) {
   const rows = [];
   for (let i = 0; i < CAMP_SEED_COUNT; i++) {
-    const ang = Math.random() * Math.PI * 2;
-    const r = CAMP_SEED_MIN_R + Math.random() * (CAMP_SEED_MAX_R - CAMP_SEED_MIN_R);
-    const x = Math.round(cx + Math.cos(ang) * r), y = Math.round(cy + Math.sin(ang) * r);
+    const { x, y } = seedPointAvoidingWater(cx, cy, CAMP_SEED_MIN_R, CAMP_SEED_MAX_R);
     const lv = 1 + Math.floor(Math.random() * 5); // 1..5 — уровни 15+ (форт) новичку рядом не нужны
     rows.push({ world_id: worldId, x, y, t: "camp", data: { lv } });
   }

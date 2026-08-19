@@ -6353,6 +6353,15 @@ let selMarch=null;
 function renderMarchCartoucheFor(marchId){ selMarch=marchId; sel=null; renderCartouche(); }
 const MARCH_STATE_RU={go:"в пути",gather:"собирает",back:"возвращается",siege:"осаждает"};
 function renderCartouche(){
+  // Фаза 12, кусочек 4 — тап по объёмной карте общего мира. Once
+  // mpState.joined, 3D показывает mpWorldSnapshot() (кусочки 1-3), а не
+  // W с ботами одиночки — тап по любой клетке/маршу теперь тоже должен
+  // читать mpState, а не W, иначе панель либо ничего не найдёт, либо (реже)
+  // случайно совпадёт с чужой клеткой одиночной партии на тех же
+  // координатах. Отдельная функция, не веточка внутри этой же — слишком
+  // разные источники данных и набор кнопок (mpDoAttack/mpDoScout/
+  // mpDoGather/mpDoRaid/mpDoRecall вместо startBuild/sendScout/recall).
+  if(mpState.joined){ renderCartoucheMp(); return; }
   const el=$("#cartouche");
   // Крестик добавляется тут ОДИН раз, а не в каждой из веток ниже
   // (node/camp-fort/city/march) — put() оборачивает готовое тело панели,
@@ -6491,6 +6500,107 @@ function renderCartouche(){
 // вот эта клетка", а рисует и обрабатывает клики по кнопкам уже здесь, как и
 // для 2D-карты.
 function renderCartoucheFor(x,y){ sel={x,y}; renderCartouche(); }
+
+// Фаза 12, кусочек 4 — та же панель cartouche, но по данным общего мира
+// (mpWorldSnapshot(), кусочек 2) вместо W. Переиспользует те же глобальные
+// хелперы, что и одиночная ветка выше (shieldSvg/countUnits/fmt/RU/fmtDur/
+// key/MARCH_STATE_RU/RES_SITE_NAME) — тот же файл, дублировать нечего.
+// Кнопки атаки/сбора/рейда НЕ шлют поход прямо отсюда (нужен выбор состава
+// войск, форма для этого уже есть в панели «Общий мир» — city/node/camp
+// список там же, свои же mpDoAttack/mpDoGather/mpDoRaid) — вместо
+// дублирования формы кнопка выставляет тот же mpState.xTarget, что и
+// "...pick" в folio, и открывает folio на вкладке "mp": тот же экран,
+// который игрок уже умеет читать, просто с курсором сразу на нужной
+// строке. Разведка/отзыв похода — уже однокнопочные действия (без формы),
+// оборачиваются в mpCartScout/mpCartRecall ниже, чтобы ошибка сервера не
+// потерялась молча (у cartouche нет своего mpState.err-вывода — при сбое
+// открываем ту же folio, там он уже показывается).
+function renderCartoucheMp(){
+  const el=$("#cartouche");
+  const put=h=>{
+    const full=h?"<button class='cart-close' data-act='closecartouche' title='Закрыть' aria-label='Закрыть'>&times;</button>"+h:h;
+    if(full!==lastCart){ lastCart=full; el.innerHTML=full } el.style.display=full?"":"none";
+  };
+  const snap=mpWorldSnapshot();
+  if(!snap){ put(""); return; } // гонка: joined уже true, но mpState.player ещё не подгружен
+  const me=snap.players[0], st=(mpState.player&&mpState.player.state)||{};
+  if(selMarch!=null){
+    const m=snap.marches.find(x=>x.id===selMarch);
+    if(!m){ selMarch=null; } // отряд уже прибыл/пропал из mpState, пока панель была открыта
+    else {
+      const owner=snap.players.find(q=>q.id===m.pid);
+      const mine=m.pid===me.id;
+      const mcoord="<span class='n' style='font-family:var(--data);font-size:10px;color:var(--vellum-faint)'>"+
+        m.tx+" · "+m.ty+"</span>";
+      let body="<div class='hd'>"+(owner?shieldSvg(owner.race,14):"")+(owner?owner.nick:"?")+" — отряд "+mcoord+"</div>"+
+        "<div class='co'><span>Состояние</span><b>"+(MARCH_STATE_RU[m.state]||m.state)+"</b></div>"+
+        "<div class='co'><span>Воинов</span><b>"+RU(countUnits(m.units))+"</b></div>"+
+        "<div class='co'><span>Цель</span><b>"+m.tx+" · "+m.ty+"</b></div>"+
+        // t0/t1 общего мира — реальное unix-время (Date.now()/1000), НЕ W.t
+        // одиночки (см. mpWorldSnapshot()) — иначе "прибытие через" считало
+        // бы от чужих часов и показывало бы бессмыслицу.
+        (m.state!=="gather"?"<div class='co'><span>Прибытие через</span><b>"+fmtDur(Math.max(0,m.t1-Date.now()/1000))+"</b></div>":"");
+      if(mine){
+        body+="<button class='seal wide' style='margin-top:9px' data-mp='cartrecall' data-id='"+m.id+"'>Отозвать</button>";
+      } else {
+        body+="<div class='hint'>Разведка чужих отрядов в пути в общем мире пока не поддержана.</div>";
+      }
+      put(body);
+      return;
+    }
+  }
+  if(!sel){ put(""); return; }
+  const o=snap.map[key(sel.x,sel.y)];
+  const coord="<span class='n' style='font-family:var(--data);font-size:10px;color:var(--vellum-faint)'>"+
+    sel.x+" · "+sel.y+"</span>";
+  // Пустошь в общем мире отрядом не засеять — march-по-клетке (в одиночке
+  // ведущий домой марш просто разворачивается сам, arriveMarch) для
+  // общего мира не перенесён: у mp-attack/mp-gather/mp-raid всегда есть
+  // конкретная цель (город/точка/лагерь), похода "в пустоту" тут нет.
+  if(!o){ put(""); return; }
+  if(o.t==="node"){
+    const amount=o.amount||0;
+    let body="<div class='hd'>"+(RES_SITE_NAME[o.res]||o.res)+" "+coord+"</div>"+
+      "<div class='co'><span>Уровень</span><b>"+(o.lv||1)+"</b></div>"+
+      "<div class='co'><span>Резервы</span><b>"+fmt(amount)+"</b></div>";
+    body += amount>0
+      ? "<button class='seal wide' style='margin-top:9px' data-mp='cartgatherpick' data-k='"+o.x+","+o.y+"'>Собрать</button>"
+      : "<div class='hint'>Точка истощена.</div>";
+    put(body);
+    return;
+  }
+  if(o.t==="camp"||o.t==="fort"){
+    put("<div class='hd'>"+(o.t==="fort"?"Форт":"Лагерь")+" варваров "+coord+"</div>"+
+      "<div class='co'><span>Уровень</span><b>"+(o.lv||1)+"</b></div>"+
+      "<button class='seal wide blood' style='margin-top:9px' data-mp='cartraidpick' data-k='"+o.x+","+o.y+"'>Атаковать</button>");
+    return;
+  }
+  if(o.t==="city"){
+    const q=snap.players.find(z=>z.id===o.pid);
+    if(!q || q.id===me.id){ put(""); return; } // своя столица — панель тут ни к чему, свободная клетка выше уже отсеяна
+    const hasScout=(st.b&&st.b.scout)>0;
+    put("<div class='hd'>"+shieldSvg(q.race,14)+q.nick+" "+coord+"</div>"+
+      "<div class='co'><span>Ратуша</span><b>"+q.b.hall+"</b></div>"+
+      "<div class='chips' style='margin-top:9px'>"+
+        (hasScout?"<button class='seal' data-mp='cartscout' data-id='"+q.id+"'>Разведать</button>":"")+
+        "<button class='seal blood' data-mp='cartattackpick' data-id='"+q.id+"'>Атака</button>"+
+      "</div>");
+    return;
+  }
+  put("");
+}
+// Разведка одним тапом (без формы) — оборачивает mpDoScout, чтобы ошибку
+// сервера (нет здания/лазутчики заняты) не потерять молча: у cartouche
+// своего вывода mpState.err нет, при сбое открываем folio, где он уже
+// показывается; при успехе — просто herald прямо на карте, без смены экрана.
+async function mpCartScout(id){
+  await mpDoScout(id);
+  if(mpState.err) openMenuModal("mp"); else herald("Лазутчик отправлен.");
+}
+async function mpCartRecall(id){
+  await mpDoRecall(id);
+  if(mpState.err) openMenuModal("mp"); else herald("Отряд отозван.");
+}
 
 /* ---- Город ---- */
 function cityCellLevel(p,c){
@@ -7812,6 +7922,21 @@ function handleAct(e){
   if(closeBm){ closeBuildingModal(); return; }
   const closeCart=e.target.closest("[data-act='closecartouche']");
   if(closeCart){ sel=null; selMarch=null; renderCartouche(); return; }
+  // Фаза 12, кусочек 4 — кнопки cartouche общего мира (renderCartoucheMp).
+  // #cartouche уже слушает только handleAct (см. addEventListener ниже) —
+  // заводить отдельный "data-mp"-слушатель ради пяти кнопок незачем, тот же
+  // атрибут data-mp просто читается прямо здесь, отдельными case'ами, не
+  // пересекающимися с data-act одиночки.
+  const cartScout=e.target.closest("[data-mp='cartscout']");
+  if(cartScout){ mpCartScout(+cartScout.dataset.id); return; }
+  const cartRecall=e.target.closest("[data-mp='cartrecall']");
+  if(cartRecall){ mpCartRecall(+cartRecall.dataset.id); return; }
+  const cartAttackPick=e.target.closest("[data-mp='cartattackpick']");
+  if(cartAttackPick){ mpState.attackTarget=+cartAttackPick.dataset.id; sel=null; selMarch=null; openMenuModal("mp"); return; }
+  const cartGatherPick=e.target.closest("[data-mp='cartgatherpick']");
+  if(cartGatherPick){ mpState.gatherTarget=cartGatherPick.dataset.k; sel=null; selMarch=null; openMenuModal("mp"); return; }
+  const cartRaidPick=e.target.closest("[data-mp='cartraidpick']");
+  if(cartRaidPick){ mpState.raidTarget=cartRaidPick.dataset.k; sel=null; selMarch=null; openMenuModal("mp"); return; }
   const cell=e.target.closest("[data-cell]");
   if(cell && !e.target.closest("[data-act]")){
     openBuildingModal(+cell.dataset.cell);
