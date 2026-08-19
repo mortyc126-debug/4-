@@ -514,17 +514,24 @@ export function syncRes(p, nowSec) {
 // trainSpeed/build/prod раньше, а сознательное упрощение всей МЕХАНИКИ боя;
 // сами бонусы внутри этого упрощения теперь настоящие, см. выше).
 export const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];
+// load — грузоподъёмность бойца (сбор с точек и вынос добычи из боя).
+// Раньше её тут не было вовсе, хотя index.html:2583-2587 её задаёт: справочник
+// расходился с игрой, и обе живые копии (mp-gather/mp-tick) дописывали её
+// каждая по-своему. Приведено к эталону.
 export const TROOP_TYPES = {
-  inf: { atk: 34, def: 46, hp: 44, speed: 1.00, magicAtk: 8, magicDef: 18, beats: "arc", losesTo: "cav" },
-  arc: { atk: 50, def: 30, hp: 36, speed: 1.10, magicAtk: 20, magicDef: 8, beats: "cav", losesTo: "inf" },
-  cav: { atk: 46, def: 34, hp: 40, speed: 1.70, magicAtk: 12, magicDef: 12, beats: "inf", losesTo: "arc" },
-  sie: { atk: 24, def: 20, hp: 60, speed: 0.60, magicAtk: 26, magicDef: 6, beats: null, losesTo: null },
+  inf: { atk: 34, def: 46, hp: 44, load: 6, speed: 1.00, magicAtk: 8, magicDef: 18, beats: "arc", losesTo: "cav" },
+  arc: { atk: 50, def: 30, hp: 36, load: 8, speed: 1.10, magicAtk: 20, magicDef: 8, beats: "cav", losesTo: "inf" },
+  cav: { atk: 46, def: 34, hp: 40, load: 5, speed: 1.70, magicAtk: 12, magicDef: 12, beats: "inf", losesTo: "arc" },
+  sie: { atk: 24, def: 20, hp: 60, load: 30, speed: 0.60, magicAtk: 26, magicDef: 6, beats: null, losesTo: null },
 };
 export const RACE_TROOP_MOD = {
   dwarf: { inf: { atk: 1.05, def: 1.05, hp: 1.05 } },
   human: { cav: { atk: 1.05, def: 1.05, hp: 1.05 } },
   elf: { arc: { atk: 1.05, def: 1.05, hp: 1.05 } },
-  undead: { sie: { atk: 2.20 * 1.05, def: 1.05, hp: 1.05, speed: 1.20 } },
+  // load:0.80 — обратная сторона вдвое более сильных осадных нежити
+  // (index.html:2725). Её отсутствие здесь и в живых копиях давало нежити
+  // в общем мире силу без размена: +25% к выносу добычи против одиночки.
+  undead: { sie: { atk: 2.20 * 1.05, def: 1.05, hp: 1.05, speed: 1.20, load: 0.80 } },
 };
 export const troopMod = (race, t, stat) => (RACE_TROOP_MOD[race] && RACE_TROOP_MOD[race][t] && RACE_TROOP_MOD[race][t][stat]) || 1;
 // index.html:2895 tableAt — дробный (интерполированный) поиск по уровню:

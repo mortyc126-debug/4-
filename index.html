@@ -7153,7 +7153,12 @@ function mpForgeInfoHtml(st){
 let mpGenTab="overview", mpGenTomesOpen=false;
 function mpGenHtml(pShim,st){
   if(!st.gen||st.gen.id==null){
-    let h="";
+    // Заголовок раздела рисует сама функция, как и одиночная foGen(): у
+    // неё их ДВА разных — "Выбор полководца · решение окончательное", пока
+    // выбора нет, и просто "Полководец" после. Раньше заголовок стоял
+    // снаружи, в foMultiplayer(), и всегда нёс "решение окончательное" —
+    // после выбора генерала это уже была неправда (выбирать нечего).
+    let h=rubric("Выбор полководца","решение окончательное");
     GENERALS[pShim.race].forEach((g,i)=>{
       h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
         genPortraitHtml(pShim.race,i)+shieldSvg(pShim.race,26)+"</div><div class='fill'>"+
@@ -7168,7 +7173,8 @@ function mpGenHtml(pShim,st){
   const need=genXpNeed(lv), f=xp/need, lvCap=Math.min(60,epochOf(st.b.hall||0)*12);
   const stars=Math.min(6,1+Math.floor(lv/10));
   const genPower=genPowerOf(pShim);
-  let h="<div class='gen-figure-wrap'>"+genFigureHtml(pShim.race,st.gen.id||0)+"</div>";
+  let h=rubric("Полководец");
+  h+="<div class='gen-figure-wrap'>"+genFigureHtml(pShim.race,st.gen.id||0)+"</div>";
   h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
     genPortraitHtml(pShim.race,st.gen.id||0)+"</div>"+ring(lv,60)+"<div class='fill'>"+
     "<div class='title'>"+G.name+"<span class='tag gilt'>"+G.role+"</span></div>"+
@@ -7201,19 +7207,34 @@ function mpGenHtml(pShim,st){
   if(mpGenTab==="gear") return h+mpGenGearHtml(pShim,st);
 
   if(mpGenTab==="talents"){
-    TALENT_BRANCHES.forEach(([key,br])=>{
+    // Два раздельных прохода, а не один по TALENT_BRANCHES — дословно как у
+    // одиночной foGen(). Сверка текста экранов показала, что объединённый
+    // проход терял подпись "Личное дерево: " у веток Город/Армия: у игрока
+    // пропадала разница между ЛИЧНЫМ деревом выбранного полководца
+    // (GENERAL_TREE) и общими ветками талантов (TALENTS), хотя очки у них
+    // общие и выбор между ними — как раз то решение, ради которого подпись
+    // и заведена.
+    const talNodeHtml=(n,max)=>{
+      const lv2=(st.gen.tal&&st.gen.tal[n.id])||0, full=lv2>=max;
+      return "<div class='entry"+(lv2>0?" hot":"")+"'><div class='line'><div class='fill'>"+
+        "<div class='title'>"+n.name+"<span class='tag"+(full?" gilt":"")+"'>"+lv2+"/"+max+"</span></div>"+
+        "<div class='note'>"+n.txt+" · сейчас <em>+"+(lv2*n.per*100).toFixed(0)+"%</em></div></div>"+
+        "<button class='seal' data-mp='talent' data-id='"+n.id+"' "+
+        (pts<=0||full||mpState.loading?"disabled":"")+">Вложить</button></div></div>";
+    };
+    for(const bk in GENERAL_TREE){
+      const br=GENERAL_TREE[bk];
       let spent=0; br.nodes.forEach(n=>spent+=((st.gen.tal&&st.gen.tal[n.id])||0));
-      const totalMax=br.nodes.reduce((a,n)=>a+(n.max||5),0);
-      h+=rubric(br.name, spent+" из "+totalMax);
-      br.nodes.forEach(n=>{
-        const max=n.max||5, lv2=(st.gen.tal&&st.gen.tal[n.id])||0, full=lv2>=max;
-        h+="<div class='entry"+(lv2>0?" hot":"")+"'><div class='line'><div class='fill'>"+
-          "<div class='title'>"+n.name+"<span class='tag"+(full?" gilt":"")+"'>"+lv2+"/"+max+"</span></div>"+
-          "<div class='note'>"+n.txt+" · сейчас <em>+"+(lv2*n.per*100).toFixed(0)+"%</em></div></div>"+
-          "<button class='seal' data-mp='talent' data-id='"+n.id+"' "+
-          (pts<=0||full||mpState.loading?"disabled":"")+">Вложить</button></div></div>";
-      });
-    });
+      const totalMax=br.nodes.reduce((a,n)=>a+n.max,0);
+      h+=rubric("Личное дерево: "+br.name, spent+" из "+totalMax);
+      br.nodes.forEach(n=>{ h+=talNodeHtml(n,n.max); });
+    }
+    for(const bk in TALENTS){
+      const br=TALENTS[bk];
+      let spent=0; br.nodes.forEach(n=>spent+=((st.gen.tal&&st.gen.tal[n.id])||0));
+      h+=rubric(br.name, spent+" из 25");
+      br.nodes.forEach(n=>{ h+=talNodeHtml(n,5); });
+    }
     return h;
   }
 
@@ -11752,7 +11773,10 @@ function foMultiplayer(embedded){
   h+="<div id='mp-anchor-inv'></div>";
   h+=mpInvHtml(mpFullShim(p,st),st);
 
-  h+=rubric("Полководец","решение окончательное","mp-anchor-gen");
+  // Заголовок раздела теперь внутри mpGenHtml() (их там два разных, как и у
+  // одиночной foGen() — см. её комментарий), снаружи остаётся только якорь
+  // для иконки "Генерал" бокового меню, как и у Инвентаря выше.
+  h+="<div id='mp-anchor-gen'></div>";
   h+=mpGenHtml(mpFullShim(p,st),st);
 
   // Фаза 5, Академия — дерево исследований (ACADEMY_TREE, зеркало
