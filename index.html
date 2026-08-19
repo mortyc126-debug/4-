@@ -944,6 +944,18 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .cbuild .lvl{position:absolute;bottom:2px;right:4px;font-family:var(--data);font-size:10px;
   color:var(--gilt-hi);background:rgba(0,0,0,.55);padding:0 3px;line-height:1.4;z-index:2}
 
+/* Фаза 14, кусочек 4 — выделенная ячейка города общего мира (mpCitySel) и
+   всплывающая снизу карты панель действия (mpCellPanelHtml). Тот же
+   .entry, что и в списках foMultiplayer/#folio (см. выше) — просто
+   поверх картинки карты нужен свой тёмный фон-подложка под текст
+   (у самой карты фона нет, снизу лежит просто фотография города). */
+.cbuild.sel .shape{border-color:var(--gilt-hi);background:rgba(194,153,60,.28)}
+.mp-cell-panel{position:absolute;left:0;right:0;bottom:0;z-index:3;
+  max-height:60%;overflow-y:auto;margin:0;border-left:none;border-right:none;border-bottom:none;
+  background:linear-gradient(180deg,rgba(15,11,7,0),rgba(15,11,7,.94) 30%,rgba(15,11,7,.96))}
+.mp-cell-panel .line{align-items:flex-start;flex-wrap:wrap}
+.mp-cell-panel .seal{margin-top:8px}
+
 /* Бригады (слева) и отряды в поле (справа) — плавающие столбцы поверх фона города */
 #brigades,#fieldarmy{position:absolute;top:108px;bottom:14px;display:flex;flex-direction:column;
   gap:8px;z-index:5;overflow-y:auto;scrollbar-width:none}
@@ -6688,13 +6700,13 @@ function renderCityMap(){
 // строится из mpState.player, а не me(). cityCellLevel/cityShapeCss/
 // cityCellImg/plotUnlocked — чистые функции от p.b/p.race, реальной разницы
 // для общего мира нет (тот же pShim-приём, что уже был в foMultiplayer).
-// Честно НЕ перенесено: клик по ячейке НЕ открывает карточку постройки
-// (openBuildingModal — синхронная мутация me(), см. заголовок Фазы 14 в
-// README) — данные ячейки только data-mpcell (не data-cell, чтобы не
-// столкнуться с одиночным обработчиком в handleAct), клик по ней в
-// handleAct просто показывает herald с именем/уровнем; собрать/строить
-// по-прежнему через список "Постройки" в панели общего мира (foMultiplayer).
+// Клик по ячейке (data-mpcell, не data-cell — не сталкивается с одиночным
+// openBuildingModal/handleAct) выделяет её (mpCitySel) и разворачивает
+// mpCellPanelHtml() ниже картой — уже настоящее действие "Улучшить"/
+// "Построить" (data-mp='build', та же кнопка, что и в списке "Постройки"
+// foMultiplayer), не просто herald с именем — см. Фазу 14, кусочек 4.
 function mpCityShim(){ return {race:mpState.player.race, b:mpState.player.state.b}; }
+let mpCitySel=-1;
 function mpRenderCityMap(){
   const p=mpCityShim();
   let h="<div id='citymap-wrap'><img class='base' src='map.jpg'>";
@@ -6705,15 +6717,63 @@ function mpRenderCityMap(){
          "<div class='shape' style='"+cityShapeCss(c)+"'></div></div>";
       return;
     }
+    const idx=CITY_CELLS.indexOf(c);
     const built=lv>0, locked=c.bk!=="hall" && !built && (c.pl!=null && !plotUnlocked(c.bk,c.pl,p.b.hall));
-    h+="<div class='cbuild"+(built?" built":"")+(locked?" locked":"")+"' data-mpcell='"+CITY_CELLS.indexOf(c)+"' "+
+    h+="<div class='cbuild"+(built?" built":"")+(locked?" locked":"")+(mpCitySel===idx?" sel":"")+"' data-mpcell='"+idx+"' "+
        "style='left:"+c.x+"%;top:"+c.y+"%;width:"+c.w+"%;height:"+c.h+"%'>"+
        "<div class='shape' style='"+cityShapeCss(c)+"'></div>"+
        (built?(c.bk!=="wall"?"<img class='bimg' src='"+cityCellImg(c)+"'>":"")+"<span class='lvl'>"+lv+"</span>":"")+
        "</div>";
   });
+  if(mpCitySel>=0) h+=mpCellPanelHtml(mpCitySel);
   h+="</div>";
   return h;
+}
+// Та же ветвящаяся логика (участок ещё не открыт / в очереди / макс.
+// уровень / нужна ратуша / ратуше не хватает построек-требований HALL_REQ /
+// обычная стоимость), что и у renderPlotRow() внутри foMultiplayer() —
+// намеренно НЕ рефакторено в общую функцию: тот список уже отгружен и
+// протестирован, трогать его ради этой панели — лишний риск регресса без
+// пользы. cost/time — та же формула (buildCost/buildTime, чистые функции),
+// просто для ОДНОЙ выбранной ячейки, а не всего списка построек разом.
+function mpCellPanelHtml(idx){
+  const c=CITY_CELLS[idx]; if(!c || !c.bk) return "";
+  const st=mpState.player.state, pShim=mpCityShim();
+  const bld=c.bk, isMultiBld=BUILD_MP_MULTI.has(bld), plot=isMultiBld?c.pl:null;
+  const lv=cityCellLevel(pShim,c), nextLv=lv+1, hallLv=st.b.hall||0;
+  const queued=st.queues.find(q=>q&&q.b===bld&&q.plot===plot);
+  let body="<div class='title'>"+buildingName(bld,pShim)+(isMultiBld?" — участок "+(plot+1):"")+" — уровень "+lv+"</div>";
+  if(isMultiBld && !plotUnlocked(bld,plot,hallLv)){
+    body+="<div class='note'>Участок откроется позже (нужна ратуша "+([0,7,13,19][plot])+" ур.).</div>";
+  } else if(queued){
+    const left=Math.max(0,queued.t1-Date.now()/1000);
+    body+="<div class='note'>Строится до "+nextLv+" ур., осталось "+fmtDur(left)+"</div>";
+  } else if(nextLv>buildingMax(bld)){
+    body+="<div class='note'>Максимальный уровень.</div>";
+  } else if(bld==="hall"){
+    const need=HALL_REQ.filter(k=>{
+      const raw=st.b[k]; return (BUILD_MP_MULTI.has(k)?((Array.isArray(raw)?raw[0]:raw)||0):(raw||0))<hallLv;
+    });
+    if(need.length){
+      body+="<div class='note'>Сначала до "+hallLv+" ур.: "+need.map(k=>buildingName(k,pShim)).join(", ")+"</div>";
+    } else {
+      const cst=buildCost(bld,nextLv), t=buildTime(bld,nextLv);
+      body+="<div class='note'>До "+nextLv+" ур.: "+
+        (RES.some(r=>cst[r])?RES.filter(r=>cst[r]).map(r=>RES_NAME[r]+" "+RU(cst[r])).join(", "):"бесплатно")+
+        " · "+fmtDur(t)+"</div>"+
+        "<button class='seal' data-mp='build' data-bk='"+bld+"'"+(mpState.loading?" disabled":"")+">Улучшить</button>";
+    }
+  } else if(nextLv>hallLv){
+    body+="<div class='note'>Требуется ратуша "+nextLv+" уровня (сейчас "+hallLv+").</div>";
+  } else {
+    const cst=buildCost(bld,nextLv), t=buildTime(bld,nextLv);
+    body+="<div class='note'>До "+nextLv+" ур.: "+
+      (RES.some(r=>cst[r])?RES.filter(r=>cst[r]).map(r=>RES_NAME[r]+" "+RU(cst[r])).join(", "):"бесплатно")+
+      " · "+fmtDur(t)+"</div>"+
+      "<button class='seal' data-mp='build' data-bk='"+bld+"'"+(plot!=null?" data-plot='"+plot+"'":"")+(mpState.loading?" disabled":"")+">"+(lv?"Улучшить":"Построить")+"</button>";
+  }
+  body+=" <button class='seal' data-mp='citycellclose'>Закрыть</button>";
+  return "<div class='mp-cell-panel entry'><div class='line'><div class='fill'>"+body+"</div></div></div>";
 }
 // Тот же приём диффа/сохранения scrollTop, что и у renderFolio() —
 // #folio делит DOM-узел с одиночкой (той же разметкой), но текст сюда
@@ -8092,16 +8152,21 @@ function handleAct(e){
   if(cartGatherPick){ mpState.gatherTarget=cartGatherPick.dataset.k; sel=null; selMarch=null; openMenuModal("mp"); return; }
   const cartRaidPick=e.target.closest("[data-mp='cartraidpick']");
   if(cartRaidPick){ mpState.raidTarget=cartRaidPick.dataset.k; sel=null; selMarch=null; openMenuModal("mp"); return; }
-  // Фаза 14, кусочек 2 — клик по ячейке mpRenderCityMap(): в отличие от
-  // одиночного data-cell (открывает карточку постройки с кнопками "строить"/
-  // "тренировать" — синхронная мутация me()), здесь только herald с именем и
-  // уровнем: строить по-прежнему через список в панели общего мира.
+  // Фаза 14, кусочек 4 — клик по ячейке mpRenderCityMap(): в отличие от
+  // одиночного data-cell (открывает openBuildingModal() — синхронная
+  // мутация me(), см. заголовок Фазы 14 в README), тут просто выделение
+  // (mpCitySel) — mpRenderCityMap() сама разворачивает mpCellPanelHtml()
+  // с настоящим действием (data-mp='build', уже обрабатывается ниже).
+  // Повторный клик по той же ячейке снимает выделение.
   const mpCell=e.target.closest("[data-mpcell]");
   if(mpCell){
-    const c=CITY_CELLS[+mpCell.dataset.mpcell], p=mpCityShim(), lv=cityCellLevel(p,c);
-    herald(lv>0 ? buildingName(c.bk,p)+" — "+lv+" ур." : "Ещё не построено — постройте в панели «Общий мир» (кнопка меню).");
+    const idx=+mpCell.dataset.mpcell;
+    mpCitySel = mpCitySel===idx ? -1 : idx;
+    mpRenderFolio();
     return;
   }
+  const mpCellClose=e.target.closest("[data-mp='citycellclose']");
+  if(mpCellClose){ mpCitySel=-1; mpRenderFolio(); return; }
   const cell=e.target.closest("[data-cell]");
   if(cell && !e.target.closest("[data-act]")){
     openBuildingModal(+cell.dataset.cell);
