@@ -447,16 +447,20 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    общему миру в Фазе 12, просто до сих пор не видна была за #app{display:
    none}. #ledger (одиночные вкладки Город/Войско/Генерал/Инвентарь) при
    .view-world и так спрятан своим собственным правилом (#app.view-world
-   #ledger{display:none}), трогать его отдельно не пришлось. #view-toggle
-   по-прежнему спрятан — переключать пока не на что (2D-город для общего
-   мира — Фаза 14, следующие кусочки), у общего мира сейчас только один
-   "мир". #onboard — переиспользован под регистрацию (runMpOnboarding()).
+   #ledger{display:none}), трогать его отдельно не пришлось. #view-toggle —
+   Фаза 14, кусочек 1 всё ещё прятала его (переключать было не на что);
+   кусочек 2 его открывает, см. правило ниже. #onboard — переиспользован
+   под регистрацию (runMpOnboarding()).
    Одиночный claimChronicle() в этом режиме НЕ зовётся вовсе (см.
    start()) — тот же #onboard/#ob-body не должен достаться двум разным
    сценариям одновременно. #menu-btn/#menu-modal-close снова видны —
    модалку общего мира (foMultiplayer) теперь можно закрыть, под ней
    видна объёмная карта, а не пустота, как было до этого кусочка. */
-.mp-gated #view-toggle,.mp-gated #side-menu{display:none}
+/* Фаза 14, кусочек 2 — #view-toggle больше не в списке: теперь есть на что
+   переключать (#folio показывает mpRenderCityMap(), см. ниже), 2D-город
+   общего мира больше не "нечего показать". #side-menu по-прежнему спрятан —
+   единственный вход в меню общего мира — прямой #menu-btn (toggleMenu()). */
+.mp-gated #side-menu{display:none}
 /* #top/#amber-badge — renderTop() (одиночный: ник/сила/золото/янтарь из
    me()) никогда не зовётся при .mp-gated (см. start() — рендер-цикл не
    запускается), значит без этого правила там навсегда висело бы
@@ -6677,6 +6681,54 @@ function renderCityMap(){
   h+="</div>";
   return h;
 }
+// Фаза 14, кусочек 2 — визуальная 2D-карта города для общего мира: дословно
+// та же разметка/CSS, что и у renderCityMap() выше (#citymap-wrap/.cbuild/
+// .shape/.bimg/.lvl — ни одного нового правила не понадобилось), просто p
+// строится из mpState.player, а не me(). cityCellLevel/cityShapeCss/
+// cityCellImg/plotUnlocked — чистые функции от p.b/p.race, реальной разницы
+// для общего мира нет (тот же pShim-приём, что уже был в foMultiplayer).
+// Честно НЕ перенесено: клик по ячейке НЕ открывает карточку постройки
+// (openBuildingModal — синхронная мутация me(), см. заголовок Фазы 14 в
+// README) — данные ячейки только data-mpcell (не data-cell, чтобы не
+// столкнуться с одиночным обработчиком в handleAct), клик по ней в
+// handleAct просто показывает herald с именем/уровнем; собрать/строить
+// по-прежнему через список "Постройки" в панели общего мира (foMultiplayer).
+function mpCityShim(){ return {race:mpState.player.race, b:mpState.player.state.b}; }
+function mpRenderCityMap(){
+  const p=mpCityShim();
+  let h="<div id='citymap-wrap'><img class='base' src='map.jpg'>";
+  CITY_CELLS.forEach(c=>{
+    const lv=cityCellLevel(p,c);
+    if(c.bk===null){
+      h+="<div class='cbuild locked' style='left:"+c.x+"%;top:"+c.y+"%;width:"+c.w+"%;height:"+c.h+"%'>"+
+         "<div class='shape' style='"+cityShapeCss(c)+"'></div></div>";
+      return;
+    }
+    const built=lv>0, locked=c.bk!=="hall" && !built && (c.pl!=null && !plotUnlocked(c.bk,c.pl,p.b.hall));
+    h+="<div class='cbuild"+(built?" built":"")+(locked?" locked":"")+"' data-mpcell='"+CITY_CELLS.indexOf(c)+"' "+
+       "style='left:"+c.x+"%;top:"+c.y+"%;width:"+c.w+"%;height:"+c.h+"%'>"+
+       "<div class='shape' style='"+cityShapeCss(c)+"'></div>"+
+       (built?(c.bk!=="wall"?"<img class='bimg' src='"+cityCellImg(c)+"'>":"")+"<span class='lvl'>"+lv+"</span>":"")+
+       "</div>";
+  });
+  h+="</div>";
+  return h;
+}
+// Тот же приём диффа/сохранения scrollTop, что и у renderFolio() —
+// #folio делит DOM-узел с одиночкой (той же разметкой), но текст сюда
+// пишет отдельная функция, потому что источник данных другой (mpState, не
+// W/me()) и рендер-цикл одиночки (frame()) при .mp-gated не запускается —
+// renderFolio() эту ветку никогда бы не вызвала сама.
+let lastMpFolio="";
+function mpRenderFolio(){
+  if(!mpState.player) return;
+  const h=mpRenderCityMap();
+  if(h===lastMpFolio) return;
+  lastMpFolio=h;
+  const el=$("#folio"); if(!el) return;
+  const st=el.scrollTop;
+  el.innerHTML=h; el.scrollTop=st;
+}
 function cityCellIndexFor(bk,plot){
   const key = plot==null ? null : plot;
   return CITY_CELLS.findIndex(c=>c.bk===bk && (c.pl==null?null:c.pl)===key);
@@ -7984,6 +8036,16 @@ function handleAct(e){
   if(cartGatherPick){ mpState.gatherTarget=cartGatherPick.dataset.k; sel=null; selMarch=null; openMenuModal("mp"); return; }
   const cartRaidPick=e.target.closest("[data-mp='cartraidpick']");
   if(cartRaidPick){ mpState.raidTarget=cartRaidPick.dataset.k; sel=null; selMarch=null; openMenuModal("mp"); return; }
+  // Фаза 14, кусочек 2 — клик по ячейке mpRenderCityMap(): в отличие от
+  // одиночного data-cell (открывает карточку постройки с кнопками "строить"/
+  // "тренировать" — синхронная мутация me()), здесь только herald с именем и
+  // уровнем: строить по-прежнему через список в панели общего мира.
+  const mpCell=e.target.closest("[data-mpcell]");
+  if(mpCell){
+    const c=CITY_CELLS[+mpCell.dataset.mpcell], p=mpCityShim(), lv=cityCellLevel(p,c);
+    herald(lv>0 ? buildingName(c.bk,p)+" — "+lv+" ур." : "Ещё не построено — постройте в панели «Общий мир» (кнопка меню).");
+    return;
+  }
   const cell=e.target.closest("[data-cell]");
   if(cell && !e.target.closest("[data-act]")){
     openBuildingModal(+cell.dataset.cell);
@@ -9170,6 +9232,11 @@ function mpRerender(){
     lastMenuBody = foMultiplayer(!SP_UNLOCKED);
     $("#menu-modal-body").innerHTML = lastMenuBody;
   }
+  // Фаза 14, кусочек 2 — держим 2D-карту города (#folio) свежей на каждый
+  // опрос/действие, не только пока открыта модалка "Общий мир": пользователь
+  // может стоять на вкладке "Город" (#view-toggle) с закрытым меню и должен
+  // видеть новые уровни/постройки без лишнего клика.
+  if(!SP_UNLOCKED) mpRenderFolio();
 }
 function mpStartPolling(){ mpStopPolling(); mpPollTimer=setInterval(mpPollTick,5000); }
 function mpStopPolling(){ if(mpPollTimer){ clearInterval(mpPollTimer); mpPollTimer=null; } }
@@ -10238,13 +10305,22 @@ function foMultiplayer(embedded){
     // gate-режиме, не только при ?sp=1. #app.view-world прячет #ledger
     // (одиночные вкладки) и показывает #chart (#world3d/#tools/
     // #cartouche) — тот же переключатель классов, что и toggleView(),
-    // просто выставлен сразу на "мир", без одиночного "город" рядом (тому
-    // пока не с чем сравнивать — 2D-город общего мира ещё не перенесён).
+    // просто выставлен сразу на "мир" по умолчанию. #view-toggle (кусочек 2)
+    // умеет переключить на .view-city — там теперь mpRenderCityMap() (см.
+    // mpRenderFolio() ниже), а не пустой #ledger, как было раньше.
     // src у #world3d — тот же ленивый приём, что и в toggleView() (не
     // тянуть WebGPU/модели, пока не нужно), просто здесь "нужно" сразу.
     $("#app").className="view-world";
     const w3d=$("#world3d"); if(w3d && !w3d.src) w3d.src="engine/dist/index.html";
+    // Иконка #view-toggle показывает пункт НАЗначения клика (см. toggleView()
+    // — тот же приём для одиночки: в .view-city лежит icon-world.png, "жми,
+    // чтобы попасть в мир"). Разметка по умолчанию несёт icon-world.png (под
+    // одиночный старт с .view-city) — при старте сразу в .view-world её надо
+    // довернуть на icon-city.png, иначе кнопка звала бы туда, где мы уже есть.
+    const vtImg=$("#view-toggle img");
+    if(vtImg){ vtImg.src="images/ui/icon-city.png"; vtImg.alt="Город"; }
     await mpOpen();
+    mpRenderFolio();
     openMenuModal("mp");
   }
   const ok=await load();
