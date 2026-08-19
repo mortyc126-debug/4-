@@ -318,6 +318,17 @@ function bonuses(p, defending = false) {
   }
   GENERALS[p.race][(p.gen && p.gen.id) || 0].apply(b);
   b.march *= 1 + portalMarchBonus((p.b && p.b.portal) || 0);
+  // index.html:3760-3767 TALENTS (war/dev/gath) — Фаза 10, кусочек 3: раньше
+  // p.gen.tal было гарантированно {} (очков взять было неоткуда), теперь
+  // mp-talent (кусочек 2) реально его заполняет — здесь наконец читаем эффект.
+  const T = (p.gen && p.gen.tal) || {};
+  const g = (id) => T[id] || 0;
+  b.atk += g("w1") * .02; b.def += g("w2") * .02; b.hp += g("w3") * .02;
+  b.bandit += g("w4") * .05; b.mercy += g("w5") * .03;
+  b.build *= 1 + g("d1") * .03; b.prodFW += g("d2") * .04; b.prodSG += g("d3") * .04;
+  b.hosp += g("d4") * .05; b.cap += g("d5") * .04;
+  b.load += g("g1") * .04; b.gather += g("g2") * .04; b.march *= 1 + g("g3") * .03;
+  b.gatherFW = g("g4") * .05; b.gatherSG = g("g5") * .05;
   const tech = p.tech || {};
   const multAcc = {};
   [ACADEMY_TREE.eco, ACADEMY_TREE.mil].forEach((arr) => arr.forEach((n) => {
@@ -330,6 +341,32 @@ function bonuses(p, defending = false) {
     });
   }));
   Object.keys(multAcc).forEach((f) => b[f] *= (1 + multAcc[f]));
+  // index.html:3780-3787 GENERAL_TREE (город/армия) — тот же T, что и выше.
+  const GENERAL_TREE_NODES = [
+    { id: "gt_c1", per: .03, kind: "mult", field: "build" },
+    { id: "gt_c2", per: .03, kind: "add", field: "buildCostCut" },
+    { id: "gt_c3", per: .04, kind: "add", field: "trainSpeed" },
+    { id: "gt_c4", per: .03, kind: "add", field: "prodAll" },
+    { id: "gt_c5", per: .03, kind: "add", field: "cap" },
+    { id: "gt_a1", per: .03, kind: "add", field: "genAtkMod" },
+    { id: "gt_a2", per: .03, kind: "add", field: "genDefMod" },
+    { id: "gt_a3", per: .03, kind: "add", field: "genHpMod" },
+    { id: "gt_a4", per: .02, kind: "add", field: "atk" },
+    { id: "gt_a5", per: .02, kind: "add", field: "def" },
+    { id: "gt_a6", per: .02, kind: "add", field: "hp" },
+    { id: "gt_a7", per: .03, kind: "mult", field: "march" },
+    { id: "gt_a8", per: .03, kind: "add", field: "load" },
+    { id: "gt_a9", per: .05, kind: "add", field: "bandit" },
+    { id: "gt_a10", per: .03, kind: "add", field: "mercy" },
+  ];
+  const multAcc2 = {};
+  GENERAL_TREE_NODES.forEach((n) => {
+    const lv = T[n.id] || 0; if (!lv) return;
+    const inc = n.per * lv;
+    if (n.kind === "mult") multAcc2[n.field] = (multAcc2[n.field] || 0) + inc;
+    else b[n.field] = (b[n.field] || 0) + inc;
+  });
+  Object.keys(multAcc2).forEach((f) => b[f] *= (1 + multAcc2[f]));
   return b;
 }
 
@@ -434,6 +471,57 @@ function pickSpawn(existing) {
   return { x: Math.round(Math.random() * 400 - 200), y: Math.round(Math.random() * 400 - 200) };
 }
 
+// Фаза 8, кусочек 1 — точки сбора ресурсов (map_cells, t:"node"). Таблица
+// map_cells существует с самой первой миграции (0001) — заведена "на
+// вырост", под именно узлы сбора и лагеря/форты разбойников (см. её
+// комментарий), просто до сих пор никто в неё не писал. Честное упрощение:
+// вместо hash-детерминированной плотности по всей бескрайней карте
+// (nodeLevelAt/findFreeCellInChunk, index.html:2968/3103 — заточены под
+// чанки одного браузера) — небольшое кольцо узлов вокруг КАЖДОГО нового
+// города, только при первом создании игрока (не на каждый join/опрос).
+// upsert с ignoreDuplicates — если чьё-то кольцо случайно перекроет чужое
+// (или повторный вызов из-за retry), лишняя запись просто не создаётся,
+// без падения на конфликте первичного ключа.
+const NODE_SEED_COUNT = 5, NODE_SEED_MIN_R = 8, NODE_SEED_MAX_R = 25;
+async function seedNodesAround(admin, worldId, cx, cy) {
+  const rows = [];
+  for (let i = 0; i < NODE_SEED_COUNT; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = NODE_SEED_MIN_R + Math.random() * (NODE_SEED_MAX_R - NODE_SEED_MIN_R);
+    const x = Math.round(cx + Math.cos(ang) * r), y = Math.round(cy + Math.sin(ang) * r);
+    const lv = 1 + Math.floor(Math.random() * 3); // 1..3 — новичкам не нужны жилы 5 уровня под боком
+    const amount = Math.round(6000 * Math.pow(2.6, lv - 1)); // index.html:3111 (EV.nodeback) — та же формула
+    const res = RES[Math.floor(Math.random() * RES.length)];
+    rows.push({ world_id: worldId, x, y, t: "node", data: { res, lv, amount, max: amount } });
+  }
+  // ignoreDuplicates: true = ON CONFLICT DO NOTHING на (world_id,x,y) —
+  // ошибка изредка возможной коллизии координат никого не должна ронять.
+  const { error } = await admin.from("map_cells").upsert(rows, { onConflict: "world_id,x,y", ignoreDuplicates: true });
+  if (error) throw error; // не критично для самого mp-join, но лучше видеть в логах, если формат данных разъехался
+}
+
+// Фаза 8, кусочек 2 — лагеря варваров (map_cells, t:"camp"). Тот же приём,
+// что и seedNodesAround, отдельным кольцом — лагерей на карте одиночной
+// игры заметно меньше, чем точек сбора (NODE_CHUNK_CHANCE/CAMP_CHUNK_CHANCE
+// = 22/13, index.html:3156), тот же порядок и здесь (5 узлов / 3 лагеря).
+// Уровень 1..5 (не 1..3, как у узлов) — новичку нужно во что расти, но
+// campRawAt-хэш-плотность (index.html:2974) с самой первой минуты партии
+// заточена под уже освоенную карту, а не под спавн, поэтому тот же честный
+// разброс "случайный уровень в разумных пределах", что и у узлов.
+const CAMP_SEED_COUNT = 3, CAMP_SEED_MIN_R = 8, CAMP_SEED_MAX_R = 25;
+async function seedCampsAround(admin, worldId, cx, cy) {
+  const rows = [];
+  for (let i = 0; i < CAMP_SEED_COUNT; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = CAMP_SEED_MIN_R + Math.random() * (CAMP_SEED_MAX_R - CAMP_SEED_MIN_R);
+    const x = Math.round(cx + Math.cos(ang) * r), y = Math.round(cy + Math.sin(ang) * r);
+    const lv = 1 + Math.floor(Math.random() * 5); // 1..5 — уровни 15+ (форт) новичку рядом не нужны
+    rows.push({ world_id: worldId, x, y, t: "camp", data: { lv } });
+  }
+  const { error } = await admin.from("map_cells").upsert(rows, { onConflict: "world_id,x,y", ignoreDuplicates: true });
+  if (error) throw error;
+}
+
 Deno.serve(async (req) => {
   const pre = handleOptions(req);
   if (pre) return pre;
@@ -500,6 +588,13 @@ Deno.serve(async (req) => {
       x, y, state: newPlayerState(race, nowSec),
     }).select().single();
     if (ins.error) return jsonResponse({ err: ins.error.message }, 500);
+
+    // Фаза 8, кусочек 1 — только при создании НОВОГО игрока, не на каждый
+    // повторный join/опрос (см. seedNodesAround выше). Ошибка сева узлов не
+    // должна ронять сам вход игрока — он уже создан, точки сбора можно
+    // досеять и позже, поэтому не return jsonResponse на исключении.
+    try { await seedNodesAround(admin, world.id, x, y); } catch (_) { /* см. комментарий */ }
+    try { await seedCampsAround(admin, world.id, x, y); } catch (_) { /* см. тот же комментарий */ }
 
     return jsonResponse({ ok: true, world_id: world.id, player: ins.data });
   } catch (e) {

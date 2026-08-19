@@ -80,6 +80,9 @@ Deno.serve(async (req) => {
         else if (ev.type === "heal") await applyHeal(admin, ev);
         else if (ev.type === "scout_arrive") await applyScoutArrive(admin, ev);
         else if (ev.type === "research") await applyResearch(admin, ev);
+        else if (ev.type === "gathered") await applyGathered(admin, ev);
+        else if (ev.type === "node_respawn") await applyNodeRespawn(admin, ev);
+        else if (ev.type === "camp_respawn") await applyCampRespawn(admin, ev);
         // else: неизвестный/ещё не перенесённый тип — оставляем как есть,
         // не помечаем processed, чтобы не потерять событие молча; заберётся
         // следующим тиком после того, как для него появится case.
@@ -284,6 +287,46 @@ async function applyBuild(admin, ev) {
 // разбор в _shared/rules.js и в заголовке mp-attack) — буквальная копия
 // оттуда, самодостаточная копия (см. пояснение о Dashboard-редакторе выше).
 const TKEYS = ["inf", "arc", "cav", "sie"];
+const RES = ["food", "wood", "stone", "gold"]; // Фаза 8, кусочек 1 — applyMarchHome зачисляет добычу сбора
+// Фаза 8, кусочек 3 — респаун истощённой точки/разгромленного лагеря.
+// Те же задержки, что CFG.NODE_RESPAWN/CFG.RESPAWN_CAMP в index.html:
+// 1717-1718 (45мин/1ч). Новое место — небольшое смещение от старого
+// (не полноценный findFreeCellInChunk с перебором чанка, как в index.html
+// — тот же честный уровень упрощения, что и у seedNodesAround/
+// seedCampsAround в mp-join): upsert с ignoreDuplicates молча пропускает
+// редкую коллизию координат, следующий respawn всё равно рано или поздно
+// найдёт свободное место где-то ещё.
+const NODE_RESPAWN_SEC = 3600, CAMP_RESPAWN_SEC = 2700;
+const RESPAWN_MIN_R = 3, RESPAWN_MAX_R = 12;
+function respawnOffset(ox, oy) {
+  const ang = Math.random() * Math.PI * 2;
+  const r = RESPAWN_MIN_R + Math.random() * (RESPAWN_MAX_R - RESPAWN_MIN_R);
+  return { x: Math.round(ox + Math.cos(ang) * r), y: Math.round(oy + Math.sin(ang) * r) };
+}
+async function applyNodeRespawn(admin, ev) {
+  const ox = ev.data && ev.data.x, oy = ev.data && ev.data.y;
+  if (ox == null || oy == null) return;
+  const { x, y } = respawnOffset(ox, oy);
+  const lv = 1 + Math.floor(Math.random() * 3); // тот же диапазон, что seedNodesAround в mp-join
+  const amount = Math.round(6000 * Math.pow(2.6, lv - 1));
+  const res = RES[Math.floor(Math.random() * RES.length)];
+  const { error } = await admin.from("map_cells").upsert(
+    { world_id: ev.world_id, x, y, t: "node", data: { res, lv, amount, max: amount } },
+    { onConflict: "world_id,x,y", ignoreDuplicates: true },
+  );
+  if (error) throw error;
+}
+async function applyCampRespawn(admin, ev) {
+  const ox = ev.data && ev.data.x, oy = ev.data && ev.data.y;
+  if (ox == null || oy == null) return;
+  const { x, y } = respawnOffset(ox, oy);
+  const lv = 1 + Math.floor(Math.random() * 5); // тот же диапазон, что seedCampsAround в mp-join
+  const { error } = await admin.from("map_cells").upsert(
+    { world_id: ev.world_id, x, y, t: "camp", data: { lv } },
+    { onConflict: "world_id,x,y", ignoreDuplicates: true },
+  );
+  if (error) throw error;
+}
 const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];
 const TROOP_TYPES = {
   inf: { atk: 34, def: 46, hp: 44, speed: 1.00, magicAtk: 8, magicDef: 18, beats: "arc", losesTo: "cav" },
@@ -564,6 +607,17 @@ function bonuses(p, defending = false) {
   }
   GENERALS[p.race][(p.gen && p.gen.id) || 0].apply(b);
   b.march *= 1 + portalMarchBonus((p.b && p.b.portal) || 0);
+  // index.html:3760-3767 TALENTS (war/dev/gath) — Фаза 10, кусочек 3: раньше
+  // p.gen.tal было гарантированно {} (очков взять было неоткуда), теперь
+  // mp-talent (кусочек 2) реально его заполняет — здесь наконец читаем эффект.
+  const T = (p.gen && p.gen.tal) || {};
+  const g = (id) => T[id] || 0;
+  b.atk += g("w1") * .02; b.def += g("w2") * .02; b.hp += g("w3") * .02;
+  b.bandit += g("w4") * .05; b.mercy += g("w5") * .03;
+  b.build *= 1 + g("d1") * .03; b.prodFW += g("d2") * .04; b.prodSG += g("d3") * .04;
+  b.hosp += g("d4") * .05; b.cap += g("d5") * .04;
+  b.load += g("g1") * .04; b.gather += g("g2") * .04; b.march *= 1 + g("g3") * .03;
+  b.gatherFW = g("g4") * .05; b.gatherSG = g("g5") * .05;
   const tech = p.tech || {};
   const multAcc = {};
   [ACADEMY_TREE.eco, ACADEMY_TREE.mil].forEach((arr) => arr.forEach((n) => {
@@ -576,6 +630,32 @@ function bonuses(p, defending = false) {
     });
   }));
   Object.keys(multAcc).forEach((f) => b[f] *= (1 + multAcc[f]));
+  // index.html:3780-3787 GENERAL_TREE (город/армия) — тот же T, что и выше.
+  const GENERAL_TREE_NODES = [
+    { id: "gt_c1", per: .03, kind: "mult", field: "build" },
+    { id: "gt_c2", per: .03, kind: "add", field: "buildCostCut" },
+    { id: "gt_c3", per: .04, kind: "add", field: "trainSpeed" },
+    { id: "gt_c4", per: .03, kind: "add", field: "prodAll" },
+    { id: "gt_c5", per: .03, kind: "add", field: "cap" },
+    { id: "gt_a1", per: .03, kind: "add", field: "genAtkMod" },
+    { id: "gt_a2", per: .03, kind: "add", field: "genDefMod" },
+    { id: "gt_a3", per: .03, kind: "add", field: "genHpMod" },
+    { id: "gt_a4", per: .02, kind: "add", field: "atk" },
+    { id: "gt_a5", per: .02, kind: "add", field: "def" },
+    { id: "gt_a6", per: .02, kind: "add", field: "hp" },
+    { id: "gt_a7", per: .03, kind: "mult", field: "march" },
+    { id: "gt_a8", per: .03, kind: "add", field: "load" },
+    { id: "gt_a9", per: .05, kind: "add", field: "bandit" },
+    { id: "gt_a10", per: .03, kind: "add", field: "mercy" },
+  ];
+  const multAcc2 = {};
+  GENERAL_TREE_NODES.forEach((n) => {
+    const lv = T[n.id] || 0; if (!lv) return;
+    const inc = n.per * lv;
+    if (n.kind === "mult") multAcc2[n.field] = (multAcc2[n.field] || 0) + inc;
+    else b[n.field] = (b[n.field] || 0) + inc;
+  });
+  Object.keys(multAcc2).forEach((f) => b[f] *= (1 + multAcc2[f]));
   return b;
 }
 
@@ -629,7 +709,11 @@ const WATCH_TABLE = [
   { atk: 136000 }, { atk: 144000 }, { atk: 152000 }, { atk: 160000 }, { atk: 500000 },
 ];
 // index.html:4057 garrisonVolley — см. подробный комментарий в
-// _shared/rules.js (буквальная копия оттуда).
+// _shared/rules.js (буквальная копия оттуда). Фаза 9, кусочек 2: не
+// хватало множителя BATTLE_PACE (index.html:4066) — в однообменной модели
+// (Фаза 4) это было незаметно (масштаб урона не менял исход одного
+// обмена), теперь, когда бой раундовый, залп без этого множителя бил
+// вчетверо сильнее источника. Честный баг, не упрощение — исправлен.
 function garrisonVolley(defGarrisonLv, attS) {
   if (defGarrisonLv <= 0) return null;
   const dmg = tblRow(WATCH_TABLE, defGarrisonLv).atk;
@@ -638,7 +722,7 @@ function garrisonVolley(defGarrisonLv, attS) {
     if (attS[t].n <= 0) { out[t] = 0; return; }
     const share = dmg * (attS[t].hp / Math.max(1, attS.totalHp));
     const mitig = 1 + (attS[t].def / Math.max(1, attS[t].n)) / 70;
-    out[t] = share / mitig;
+    out[t] = share * BATTLE_PACE / mitig;
   });
   return out;
 }
@@ -653,9 +737,47 @@ const SIDE_TYPE_ATK = { inf: "atkInf", arc: "atkArc", cav: "atkCav", sie: "atkSi
 const SIDE_TYPE_DEF = { inf: "defInf", arc: "defArc", cav: "defCav", sie: "defSie" };
 const SIDE_TYPE_MATK = { inf: "matkInf", arc: "matkArc", cav: "matkCav", sie: "matkSie" };
 const SIDE_TYPE_MDEF = { inf: "mdefInf", arc: "mdefArc", cav: "mdefCav", sie: "mdefSie" };
+// index.html:2603-2614 DISCIPLINE/RACE_DISCIPLINE_BONUS/disciplineThreshold
+// — дословно. Доля потерь ТИПА-ТИРА войск (от его стартового числа В ЭТОМ
+// БОЮ, не за раунд) — после превышения порога тир "дрогнул" на весь
+// оставшийся бой (атака/защита −30%, не смертельно и не навсегда снаружи
+// боя). Порог растёт по тирам (элита держится дольше) и у каждой расы
+// свой род войск держится чуть дольше остальных; нежить не ломается по
+// осадным вообще ("immune").
+const DISCIPLINE = {
+  inf: [65, 72, 78, 84, 90], arc: [40, 48, 55, 62, 70], cav: [55, 60, 65, 70, 78], sie: [75, 78, 81, 84, 88],
+};
+const RACE_DISCIPLINE_BONUS = { dwarf: { inf: 15 }, human: { cav: 15 }, elf: { arc: 15 }, undead: { sie: "immune" } };
+function disciplineThreshold(t, i, race) {
+  const bonus = RACE_DISCIPLINE_BONUS[race] && RACE_DISCIPLINE_BONUS[race][t];
+  if (bonus === "immune") return Infinity;
+  return (DISCIPLINE[t][i - 1] + (bonus || 0)) / 100;
+}
+// index.html:4317-4328 checkDiscipline — дословно, но БЕЗ хроники (broke
+// список имён нигде не читается в MP — тут нет боевого лога). start —
+// СТАРТОВЫЙ состав стороны на начало всего боя (не текущий, не за раунд);
+// lossTotal — накопленные потери с начала боя (attLossTotal/defLossTotal
+// в resolvePvp/resolveBanditRaid ниже — они уже считались, просто раньше
+// никем не читались); broken — мутируется на месте, тот же объект и до, и
+// после вызова, ровно как f.broken в источнике.
+function checkDiscipline(start, lossTotal, race, broken) {
+  TKEYS.forEach((t) => {
+    for (let i = 1; i <= 5; i++) {
+      if (broken[t][i]) continue;
+      const startN = (start[t] && start[t][i]) || 0; if (!startN) continue;
+      const thr = disciplineThreshold(t, i, race); if (thr === Infinity) continue;
+      const lostN = (lossTotal[t] && lossTotal[t][i]) || 0;
+      if (lostN / startN > thr) broken[t][i] = 1;
+    }
+  });
+}
 // index.html:3974 sideStats — Фаза 6: принимает готовый B (bonuses(p) или
 // bonuses(p,true) для защитника), см. подробный комментарий в _shared/rules.js.
-function sideStats(units, race, B) {
+// broken — Фаза 9, кусочек 3: необязательный четвёртый параметр (index.html:
+// 3987 f.broken) — если тир сломлен, его вклад в atk/def/matk/mdef (НЕ в
+// hp — дисциплина не убивает, только бьёт хуже) умножается на 0.70, тем же
+// способом, что и остальные модификаторы этого же цикла.
+function sideStats(units, race, B, broken) {
   const s = {};
   TKEYS.forEach((t) => {
     let atk = 0, def = 0, matk = 0, mdef = 0, hp = 0, n = 0;
@@ -664,14 +786,15 @@ function sideStats(units, race, B) {
     for (let i = 1; i <= 5; i++) {
       const c = (units[t] && units[t][i]) || 0;
       if (!c) continue;
+      const brk = broken && broken[t] && broken[t][i] ? 0.70 : 1;
       const w = TIER_MULT[i - 1];
       let a = TROOP_TYPES[t].atk * w * troopMod(race, t, "atk") * atkMod;
       if (t === "arc") a *= 1 + (B.archer || 0);
       const d = TROOP_TYPES[t].def * w * troopMod(race, t, "def") * defMod;
       const ma = TROOP_TYPES[t].magicAtk * w * troopMod(race, t, "atk") * matkMod;
       const md = TROOP_TYPES[t].magicDef * w * troopMod(race, t, "def") * mdefMod;
-      atk += c * a * (1 + B.atk); def += c * d * (1 + B.def);
-      matk += c * ma * (1 + B.matk); mdef += c * md * (1 + B.mdef);
+      atk += c * a * brk * (1 + B.atk); def += c * d * brk * (1 + B.def);
+      matk += c * ma * brk * (1 + B.matk); mdef += c * md * brk * (1 + B.mdef);
       hp += c * TROOP_TYPES[t].hp * w * troopMod(race, t, "hp") * (1 + B.hp);
       n += c;
     }
@@ -681,9 +804,57 @@ function sideStats(units, race, B) {
   s.totalN = TKEYS.reduce((a, t) => a + s[t].n, 0);
   return s;
 }
+// index.html:1716 CFG.BATTLE_PACE — общий множитель, замедляющий урон ОДНОГО
+// раунда, чтобы бой из Фазы 9, кусочек 1 реально растягивался на несколько
+// раундов, а не решался в первом же (без него — как оказалось после
+// кусочка 1 — было именно так, см. заголовок resolvePvp ниже).
+const BATTLE_PACE = 0.45;
+// index.html:4100-4108 BATTLE_WEATHER — дословно: общая для ОБЕИХ сторон
+// погода за бой (не "везение одной стороны"), бьёт по РОДУ войск
+// атакующего в конкретном ударе (см. wMod(at) в dmgTo ниже), веса w —
+// вероятность выпадения (ясно намеренно вдвое вероятнее всего остального).
+const BATTLE_WEATHER = [
+  { id: "clear", w: 50, name: "Ясно", mod: {} },
+  { id: "rain", w: 11, name: "Проливной дождь", mod: { arc: 0.82 } },
+  { id: "mud", w: 11, name: "Распутица", mod: { cav: 0.82 } },
+  { id: "fog", w: 9, name: "Густой туман", mod: { arc: 0.85, sie: 0.80 } },
+  { id: "wind", w: 8, name: "Порывистый ветер", mod: { arc: 0.88, sie: 0.88 } },
+  { id: "heat", w: 7, name: "Палящий зной", mod: { inf: 0.92, arc: 0.92, cav: 0.92, sie: 0.92 } },
+  { id: "storm", w: 4, name: "Гроза", mod: { arc: 0.85 }, jitter: 0.14 },
+];
+// index.html:2692 mulberry — тот же генератор, дословно.
+function mulberry(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+// index.html:4118 battleRng сеет от W.seed/W.t — единого "тика мира"
+// одиночной игры, которого у общего мира нет (mp-tick резолвит каждое
+// событие в свой момент по расписанию, не по общему такту). Честная
+// замена: сеем от РЕАЛЬНОГО времени резолва + id марша/сторон — тот же
+// смысл ("разные бои — разная погода"), без требования побитовой
+// воспроизводимости по несуществующему здесь "тику".
+function battleRngMp(marchId) {
+  const s = (Date.now() ^ Math.imul((marchId || 0) | 0, 2654435761)) | 0;
+  return mulberry(s);
+}
+// index.html:4123 pickWeather — дословно.
+function pickWeather(rnd) {
+  const total = BATTLE_WEATHER.reduce((s, x) => s + x.w, 0);
+  let r = rnd() * total;
+  for (const x of BATTLE_WEATHER) { r -= x.w; if (r <= 0) return x; }
+  return BATTLE_WEATHER[0];
+}
 // defWallLv — уровень стены защитника; wallBonus — bonuses(p).wallBonus
 // (Фаза 6, было захардкожено 0), см. подробный комментарий в _shared/rules.js.
-function dmgTo(attS, defS, defWallLv = 0, wallBonus = 0) {
+// wMod(at) — index.html:4204 — погода бьёт по роду войск БЬЮЩЕГО (мокрая
+// тетива у лучника), одинаково применяется к обеим сторонам. shake —
+// index.html:4218 roll(), разброс ±jitter вокруг единицы на раунд, свой
+// для каждого вызова dmgTo (у каждой стороны свой бросок).
+function dmgTo(attS, defS, defWallLv = 0, wallBonus = 0, wMod = null, shake = 1) {
   const defWall = 1 + wallDefBonus(defWallLv) * (1 + wallBonus);
   const out = {};
   TKEYS.forEach((dt) => {
@@ -692,12 +863,13 @@ function dmgTo(attS, defS, defWallLv = 0, wallBonus = 0) {
     TKEYS.forEach((at) => {
       if (attS[at].n <= 0) return;
       const share = defS[dt].hp / Math.max(1, defS.totalHp);
-      d += attS[at].atk * counterMult(at, dt) * share;
-      dm += attS[at].matk * counterMult(at, dt) * share;
+      const w = wMod ? wMod(at) : 1;
+      d += attS[at].atk * counterMult(at, dt) * share * w;
+      dm += attS[at].matk * counterMult(at, dt) * share * w;
     });
     const mitig = 1 + (defS[dt].def / Math.max(1, defS[dt].n)) / 70 * defWall;
     const mitigM = 1 + (defS[dt].mdef / Math.max(1, defS[dt].n)) / 70 * defWall;
-    out[dt] = d / mitig + dm / mitigM;
+    out[dt] = (d / mitig + dm / mitigM) * BATTLE_PACE * shake;
   });
   return out;
 }
@@ -721,22 +893,142 @@ function applyLosses(units, dmgByType, race, hpBonus = 0) {
   });
   return { units: lost, hpLost };
 }
+// index.html:3706 genStats — эфемерный боевой снимок полководца (atk/def/
+// hp), НЕ p.gen (постоянная запись игрока: lv/xp/pts/tal). Строится заново
+// на каждый вызов resolvePvp/resolveBanditRaid из p.gen.lv — как и в
+// источнике, полководец не "лечится между боями" и не "умирает навсегда":
+// каждый следующий бой начинается с полным HP независимо от исхода
+// предыдущего. Честное упрощение: БЕЗ gearBonus(p) (index.html:3709) — в
+// общем мире нет ни кузницы, ни снаряжения вообще (Фаза 11, 0% перенесено,
+// см. supabase/README.md), gear-вклад в источнике был бы 0 для абсолютно
+// любого игрока прямо сейчас, добавлять его тут значило бы копировать код,
+// который гарантированно ничего не считает.
+function genStats(p) {
+  if (!p.gen || p.gen.id == null) return null;
+  const B = bonuses(p), lv = p.gen.lv || 1, g = Math.pow(lv, 1.15);
+  return {
+    hp: Math.round((250 + 30 * g) * (1 + B.genHpMod)),
+    atk: Math.round((200 + 40 * g) * (1 + B.genAtkMod)),
+    def: Math.round((170 + 30 * g) * (1 + B.genDefMod)),
+  };
+}
+// index.html:4070 generalDamage — полководец бьёт по всем родам войск
+// сразу, вне треугольника контр (не считается ни "пехотой", ни "лучником").
+// gen — снимок genStats() выше, а не p.gen; hp<=0 просто гасит урон до
+// конца ЭТОГО боя, не убивает полководца навсегда.
+function generalDamage(gen, defS) {
+  if (!gen || gen.hp <= 0) return null;
+  const out = {};
+  TKEYS.forEach((dt) => {
+    if (defS[dt].n <= 0) { out[dt] = 0; return; }
+    const share = gen.atk * (defS[dt].hp / Math.max(1, defS.totalHp));
+    const mitig = 1 + (defS[dt].def / Math.max(1, defS[dt].n)) / 70;
+    out[dt] = share * BATTLE_PACE / mitig;
+  });
+  return out;
+}
+// index.html:4082 damageToGeneral — получает урон от ВСЕХ родов войск
+// противника усреднённо (под прикрытием собственной армии — не тонет в
+// общем количестве вражеских ударов, как тонул бы обычный боец).
+function damageToGeneral(gen, enemyS) {
+  if (!gen || gen.hp <= 0 || enemyS.totalN <= 0) return 0;
+  const avgAtk = TKEYS.reduce((s, t) => s + enemyS[t].atk, 0) / enemyS.totalN;
+  const mitig = 1 + gen.def / 70;
+  return avgAtk * BATTLE_PACE * 0.4 / mitig;
+}
+// index.html:4129 resolveBattle — Фаза 9, кусочек 1: настоящий раундовый
+// бой (до ROUND_CAP схваток подряд, войска тают постепенно) вместо
+// единственного обмена ударами, которым эта функция была с Фазы 4.
+// Кусочек 2: добавлена погода (BATTLE_WEATHER/pickWeather/wMod/jitter,
+// дословно index.html:4100-4167) — раз на весь бой, бьёт по роду войск
+// бьющего в каждом ударе каждого раунда, плюс мелкий раунд-к-раунду
+// разброс (roll(), шире в грозу) — и найден/исправлен честный баг
+// кусочка 1: не было множителя BATTLE_PACE (index.html:4210), из-за чего
+// бои решались быстрее источника (см. заголовок BATTLE_PACE выше).
+// Кусочек 3: слом дисциплины (checkDiscipline/sideStats(...,broken), см.
+// их заголовки выше) — тир, потерявший в этом бою больше своего порога
+// (растёт по тирам, у своей расы свой род войск держится дольше), бьётся
+// −30% атаки/защиты до конца боя. Проверяется КАЖДЫЙ раунд по накопленным
+// потерям (attLossTotal/defLossTotal, которые уже считались и раньше —
+// просто раньше никто их не читал для этого), как и в источнике.
+// Кусочек 4: урон по/от полководцам в бою (generalDamage/damageToGeneral/
+// genStats выше) — только если игрок вообще выбрал полководца (mp-pickgen,
+// Фаза 7); без него f.gen===null и оба урона тихо гасятся, как и в SP.
+// Честно ЕЩЁ НЕ входит (см. supabase/README.md, каждое — отдельный
+// следующий кусочек): поднятие нежити прямо в бою (raiseSkeletons — раз в
+// момент прибытия оно уже применяется отдельно, здесь речь о ПОРАУНДОВОМ
+// подъёме), контрудар гарнизона (dwarf B.counter), первый залп лучников
+// без ответа (elf firstStrike, index.html:4176-4181 — сейчас есть только
+// залп СТОРОЖЕВОЙ БАШНИ защитника, он был и раньше), досрочное отступление
+// атакующего при 72% потерь (rout), ничья по armyPower при исчерпании
+// ROUND_CAP раундов (сейчас ничья — по остатку totalHp, как и раньше).
 // Фаза 6: attP/defP теперь полные объекты игрока (race+b+gen+tech), не
 // голые строки расы — нужны для bonuses(attP)/bonuses(defP,true) (defP
 // считается С defending=true — 5-я эпоха, defMods). См. подробный
 // комментарий в _shared/rules.js.
-function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv = 0) {
+// marchId — Фаза 9, кусочек 2: сеет battleRngMp (см. её заголовок), без
+// него дефолт 0 — детерминированная (но не менее честная) погода на бой.
+const ROUND_CAP = 60; // index.html:4190 while(round<60) — то же число
+function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv = 0, marchId = 0) {
   const attB = bonuses(attP), defB = bonuses(defP, true);
-  const attS = sideStats(attUnits, attP.race, attB), defS = sideStats(defUnits, defP.race, defB);
-  const dmgToDef = dmgTo(attS, defS, defWallLv, defB.wallBonus), dmgToAtt = dmgTo(defS, attS);
-  const openG = garrisonVolley(defGarrisonLv, attS);
-  if (openG) TKEYS.forEach((t) => { dmgToAtt[t] = (dmgToAtt[t] || 0) + (openG[t] || 0); });
-  const defLoss = applyLosses(defUnits, dmgToDef, defP.race, defB.hp);
-  const attLoss = applyLosses(attUnits, dmgToAtt, attP.race, attB.hp);
-  const defHpLeft = Math.max(0, defS.totalHp - defLoss.hpLost);
-  const attHpLeft = Math.max(0, attS.totalHp - attLoss.hpLost);
+  let attU = attUnits, defU = defUnits;
+  let attLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} }, defLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} };
+  const attBroken = { inf: {}, arc: {}, cav: {}, sie: {} }, defBroken = { inf: {}, arc: {}, cav: {}, sie: {} };
+  const rnd = battleRngMp(marchId);
+  const weather = pickWeather(rnd);
+  const wMod = (t) => (weather.mod && weather.mod[t]) || 1;
+  const jit = weather.jitter || 0.05;
+  const roll = () => 1 + (rnd() * 2 - 1) * jit;
+  // Залп Сторожевой башни защитника — до общей схватки (Фаза 4, шестой
+  // кусочек), теперь перед раундовым циклом, а не влит в единственный
+  // обмен. Погоду НЕ ловит (index.html:4183 тоже вызывает его без wMod) —
+  // только BATTLE_PACE, который у него был и раньше своей формулой.
+  const openG = garrisonVolley(defGarrisonLv, sideStats(attU, attP.race, attB));
+  if (openG) {
+    const l = applyLosses(attU, openG, attP.race, attB.hp);
+    attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
+    // index.html:4186-4188 brk0A/brk0D — дисциплина проверяется и до общей
+    // схватки, по потерям от одних лишь стартовых залпов (тут — только
+    // залп башни защитника, у нас нет ни firstStrike, ни залпа A по D).
+    checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
+  }
+  let round = 0;
+  // index.html:3958-3964 f.gen — эфемерный, строится один раз на бой (не
+  // за раунд), полководец без выбора (p.gen.id==null) даёт null и просто
+  // не участвует, как и в источнике.
+  let attGen = genStats(attP), defGen = genStats(defP);
+  while (round < ROUND_CAP) {
+    const attS = sideStats(attU, attP.race, attB, attBroken), defS = sideStats(defU, defP.race, defB, defBroken);
+    if (attS.totalN <= 0 || defS.totalN <= 0) break;
+    round++;
+    const dmgToDef = dmgTo(attS, defS, defWallLv, defB.wallBonus, wMod, roll());
+    const dmgToAtt = dmgTo(defS, attS, 0, 0, wMod, roll());
+    const defLoss = applyLosses(defU, dmgToDef, defP.race, defB.hp);
+    const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp);
+    defU = unitsSub(defU, defLoss.units); defLossTotal = unitsAdd(defLossTotal, defLoss.units);
+    attU = unitsSub(attU, attLoss.units); attLossTotal = unitsAdd(attLossTotal, attLoss.units);
+    // index.html:4222-4228 — полководцы бьют/получают на тех же attS/defS,
+    // что и основной обмен этого раунда (снятые ДО применения урона выше —
+    // тот же порядок, что и в источнике).
+    const genDmgToDef = generalDamage(attGen, defS);
+    if (genDmgToDef) {
+      const l = applyLosses(defU, genDmgToDef, defP.race, defB.hp);
+      defU = unitsSub(defU, l.units); defLossTotal = unitsAdd(defLossTotal, l.units);
+    }
+    const genDmgToAtt = generalDamage(defGen, attS);
+    if (genDmgToAtt) {
+      const l = applyLosses(attU, genDmgToAtt, attP.race, attB.hp);
+      attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
+    }
+    if (attGen) attGen.hp = Math.max(0, attGen.hp - damageToGeneral(attGen, defS));
+    if (defGen) defGen.hp = Math.max(0, defGen.hp - damageToGeneral(defGen, attS));
+    checkDiscipline(defUnits, defLossTotal, defP.race, defBroken);
+    checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
+  }
+  const attHpLeft = sideStats(attU, attP.race, attB).totalHp;
+  const defHpLeft = sideStats(defU, defP.race, defB).totalHp;
   const winner = defHpLeft <= 0 && attHpLeft > 0 ? "att" : attHpLeft <= 0 && defHpLeft > 0 ? "def" : (attHpLeft > defHpLeft ? "att" : "def");
-  return { attLoss: attLoss.units, defLoss: defLoss.units, attHpLeft, defHpLeft, winner };
+  return { attLoss: attLossTotal, defLoss: defLossTotal, attHpLeft, defHpLeft, winner, rounds: round, weather: weather.id, weatherName: weather.name };
 }
 // index.html:2867 HOSPITAL_CAP_TABLE / hospitalCap / totalHospitalCap —
 // сколько раненых вмещает лазарет (сумма по всем 4 построенным участкам,
@@ -808,6 +1100,110 @@ function unitsTotal(units) {
   return TKEYS.reduce((s, t) => s + [1, 2, 3, 4, 5].reduce((s2, i) => s2 + ((units[t] && units[t][i]) || 0), 0), 0);
 }
 
+// Фаза 8, кусочек 2 — лагеря варваров. BANDIT_TROOPS/banditTier/banditArmy
+// дословно из index.html:3187-3195 — тот же гарнизон, что и в одиночной
+// игре, для того же уровня лагеря. ~~BANDIT_XP не перенесён~~ — закрыто в
+// Фазе 10, кусочек 1 (см. addXp/BANDIT_XP ниже, applyRaidArrive начисляет
+// его победителю).
+const BANDIT_TROOPS = [20000,23000,26000,29000,32000,35000,38000,42000,46000,50000,55000,60000,66000,73000,80000,88000,96000,105000,115000,125000,135000,145000,157000,170000,185000,200000,215000,230000,245000,260000];
+const banditTier = (lv) => (lv <= 5 ? 1 : lv <= 12 ? 2 : lv <= 20 ? 3 : 4);
+// Фаза 10, кусочек 1 — опыт и уровень генерала. Дословно из index.html:
+// 2848-2849 (GEN_XP_NEED/genXpNeed) и 5136-5147 (addXp) — тот же
+// суммарный ~50.12 млн опыта к 60 уровню, интерполированный по контрольным
+// точкам легендарного командира. BANDIT_XP — index.html:3188, опыт за
+// победу над лагерем разбойников, тот же индекс (уровень лагеря 1..30), что
+// у BANDIT_TROOPS выше.
+const GEN_XP_NEED=[210,210,276,483,846,1482,2594,4541,7950,7950,7950,7950,8449,10471,12978,16084,19935,24707,30621,30621,33942,40093,47360,55943,66083,78060,92207,108919,128659,128659,142186,163193,187303,214974,246734,283186,323079,370524,424937,424937,478776,540017,609091,687001,774876,873992,985786,1111879,1254102,1660595,1909956,2196763,2526638,2906048,3921926,4612964,5425762,6381774,7506234];
+const genXpNeed = (lv) => GEN_XP_NEED[lv - 1] || GEN_XP_NEED[GEN_XP_NEED.length - 1];
+const BANDIT_XP=[100,120,140,160,180,200,220,240,260,300,330,360,390,420,450,480,510,540,570,600,640,680,720,760,800,840,880,920,960,1000];
+// ~~Только уровень/опыт/очки~~ — трата очков (mp-talent, Фаза 10 кусочек 2)
+// и эффект вложенных талантов в bonuses() (Фаза 10, кусочек 3, см. bonuses()
+// в этом же файле) закрыты; addXp тут по-прежнему только копит очки в
+// p.gen.pts — трата отдельным действием, addXp её не делает и не обязана.
+function addXp(p, xp) {
+  if (!p.gen) p.gen = { lv: 1, xp: 0, pts: 5, tal: {}, id: null, away: null }; // самоисцеление легаси-записей
+  p.gen.xp = (p.gen.xp || 0) + xp;
+  const cap = Math.min(60, epochOf(p.b && p.b.hall) * 12);
+  while (p.gen.xp >= genXpNeed(p.gen.lv) && p.gen.lv < cap) {
+    p.gen.xp -= genXpNeed(p.gen.lv);
+    p.gen.lv++; p.gen.pts = (p.gen.pts || 0) + 1;
+  }
+}
+function banditArmy(lv) {
+  const u = { inf: {}, arc: {}, cav: {}, sie: {} };
+  TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) u[t][i] = 0; });
+  const i = Math.max(1, Math.min(30, Math.round(lv)));
+  const tier = banditTier(i), n = BANDIT_TROOPS[i - 1];
+  u.inf[tier] = Math.round(n * 0.45); u.arc[tier] = Math.round(n * 0.30); u.cav[tier] = Math.round(n * 0.25);
+  return u;
+}
+// Разбойники не имеют ни расы, ни бонусов вообще — тот же явный ноль, что
+// D.B={atk:0,def:0,hp:0,matk:0,mdef:0,archer:0,raise:0} в index.html:5139
+// (arriveMarch, ветка camp/fort). Явные нули, не пустой объект — sideStats
+// делает "(1+B.atk)" без страховки ||0, пустой объект дал бы NaN.
+const BANDIT_B = { atk: 0, def: 0, hp: 0, matk: 0, mdef: 0, archer: 0 };
+// Зеркало ветки camp/fort в arriveMarch (index.html:5133-5158) — но не
+// resolveBattle() целиком (раундовый бой с погодой и т.д., см. заголовок
+// resolvePvp выше), а тот же однообменный resolvePvp, что и у PvP —
+// честная общая упрощённая боевая модель общего мира, не два разных стиля
+// боя под одной крышей.
+// Фаза 9, кусочки 1-4 — тот же переход на раундовый цикл + погоду +
+// дисциплину + урон полководца, что и у resolvePvp выше (см. её заголовок
+// насчёт честных пробелов, здесь те же самые: без контрудара/первого
+// залпа — у разбойников и так нет ни стены, ни башни, ни первого залпа
+// лучников). attP.race=null для лагеря (banditArmy) — disciplineThreshold
+// (t,i,null) просто не находит расового бонуса
+// (RACE_DISCIPLINE_BONUS[null]===undefined), даёт голый порог без надбавки,
+// ровно как и было задумано для "разбойников и т.п." в источнике. У самого
+// лагеря НЕТ полководца (banditArmy — просто гарнизон, не игрок) — бьёт и
+// получает удары только полководец АТАКУЮЩЕГО, если тот его выбрал.
+function resolveBanditRaid(attUnits, attP, campLv, marchId = 0) {
+  const attB = bonuses(attP);
+  const bandStart = banditArmy(campLv);
+  let attU = attUnits, bandU = bandStart;
+  let attLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} }, bandLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} };
+  const attBroken = { inf: {}, arc: {}, cav: {}, sie: {} }, bandBroken = { inf: {}, arc: {}, cav: {}, sie: {} };
+  const rnd = battleRngMp(marchId);
+  const weather = pickWeather(rnd);
+  const wMod = (t) => (weather.mod && weather.mod[t]) || 1;
+  const jit = weather.jitter || 0.05;
+  const roll = () => 1 + (rnd() * 2 - 1) * jit;
+  let round = 0;
+  let attGen = genStats(attP);
+  while (round < ROUND_CAP) {
+    const attS = sideStats(attU, attP.race, attB, attBroken), bandS = sideStats(bandU, null, BANDIT_B, bandBroken);
+    if (attS.totalN <= 0 || bandS.totalN <= 0) break;
+    round++;
+    const dmgToBand = dmgTo(attS, bandS, 0, 0, wMod, roll()); // лагерь без стены/башни
+    const dmgToAtt = dmgTo(bandS, attS, 0, 0, wMod, roll());
+    const bandLoss = applyLosses(bandU, dmgToBand, null, 0);
+    const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp);
+    bandU = unitsSub(bandU, bandLoss.units); bandLossTotal = unitsAdd(bandLossTotal, bandLoss.units);
+    attU = unitsSub(attU, attLoss.units); attLossTotal = unitsAdd(attLossTotal, attLoss.units);
+    const genDmgToBand = generalDamage(attGen, bandS);
+    if (genDmgToBand) {
+      const l = applyLosses(bandU, genDmgToBand, null, 0);
+      bandU = unitsSub(bandU, l.units); bandLossTotal = unitsAdd(bandLossTotal, l.units);
+    }
+    if (attGen) attGen.hp = Math.max(0, attGen.hp - damageToGeneral(attGen, bandS));
+    checkDiscipline(bandStart, bandLossTotal, null, bandBroken);
+    checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
+  }
+  const attHpLeft = sideStats(attU, attP.race, attB).totalHp;
+  const bandHpLeft = sideStats(bandU, null, BANDIT_B).totalHp;
+  const winner = bandHpLeft <= 0 && attHpLeft > 0 ? "att" : attHpLeft <= 0 && bandHpLeft > 0 ? "band" : (attHpLeft > bandHpLeft ? "att" : "band");
+  return { attLoss: attLossTotal, winner, rounds: round, weather: weather.id, weatherName: weather.name };
+}
+// index.html:5148-5150 — та же добыча с разгромленного лагеря, что и в
+// одиночной игре (книги опыта генерала — bookDrop — не перенесены по той
+// же причине, что и BANDIT_XP выше).
+function banditLoot(campLv) {
+  const base = Math.round(1800 * Math.pow(1.28, campLv - 1));
+  const loot = {};
+  RES.forEach((r) => { loot[r] = Math.round(base * (r === "gold" ? 0.25 : r === "stone" ? 0.6 : 1)); });
+  return loot;
+}
+
 // Зеркало arriveMarch->battleCity (index.html:5018/5363) для mode:"attack" —
 // бой при подходе, затем зеркало recallMarch (index.html:4770) — обратная
 // дорога с выжившими. gather/camp/fort/scout — не перенесены, mp-attack
@@ -818,6 +1214,18 @@ async function applyMarchArrive(admin, ev) {
   const { data: m, error: mErr } = await admin.from("marches").select("*").eq("id", marchId).maybeSingle();
   if (mErr) throw mErr;
   if (!m || m.state !== "go") return; // уже разобрано/отменено
+
+  // Фаза 8, кусочек 1 — марш на сбор ресурсов: отряд дошёл до точки, но
+  // это не бой (нет defender_id) — начинается отдельный отсчёт сбора,
+  // см. applyGatherStart/applyGathered ниже. Ветка целиком отдельная от
+  // боевой логики (которая ниже подряд читает defenderId/defRow) — иначе
+  // gather-марш прошёл бы через неё как "бой без защитника" и вернулся бы
+  // домой пустым, ничего не собрав.
+  if (m.mode === "gather") { await applyGatherStart(admin, m); return; }
+  // Фаза 8, кусочек 2 — поход на лагерь варваров: бой с готовым уровнем
+  // лагеря (m.data.camp_lv, снят на отправке в mp-raid), не с игроком —
+  // отдельная функция ниже, та же причина отдельной ветки, что у gather.
+  if (m.mode === "raid") { await applyRaidArrive(admin, m); return; }
 
   const { data: attRow, error: aErr } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
   if (aErr) throw aErr;
@@ -840,7 +1248,7 @@ async function applyMarchArrive(admin, ev) {
     defP.race = defP.race || defRow.race;
     const defWallLv = (defP.b && typeof defP.b.wall === "number") ? defP.b.wall : 0;
     const defGarrisonLv = (defP.b && typeof defP.b.garrison === "number") ? defP.b.garrison : 0;
-    const result = resolvePvp(m.units, attP, defP.troops, defP, defWallLv, defGarrisonLv);
+    const result = resolvePvp(m.units, attP, defP.troops, defP, defWallLv, defGarrisonLv, m.id);
     defP.troops = unitsSub(defP.troops, result.defLoss);
     // Фаза 4, шестой кусочек: лазарет защитника (index.html:4351/4411-4423)
     // — часть потерь не гибнет насмерть. Слегка раненые (12%) немедленно
@@ -855,6 +1263,15 @@ async function applyMarchArrive(admin, ev) {
     defP.wounded = unitsAdd(defP.wounded, hs.hurtUnits);
     survivors = unitsSub(m.units, result.attLoss);
 
+    // Фаза 10, кусочек 1 — опыт генерала за победу над игроком (только
+    // атакующему, зеркало addXp(att,...) в battleCity, index.html:5093 —
+    // защитник опыта за отражение штурма не получает, как и в клиенте).
+    // Раньше эта функция вообще не писала обратно строку атакующего (его
+    // войска возвращались только через марш домой) — теперь нужно, чтобы
+    // сохранить level/xp/pts.
+    if (result.winner === "att") addXp(attP, Math.round(200 + (defP.b && defP.b.hall || 0) * 60));
+    const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
+    if (updA) throw updA;
     const { error: updD } = await admin.from("players").update({ state: defP, updated_at: new Date().toISOString() }).eq("id", defRow.id);
     if (updD) throw updD;
 
@@ -862,6 +1279,7 @@ async function applyMarchArrive(admin, ev) {
       winner: result.winner, sent: m.units, attLoss: result.attLoss, defLoss: result.defLoss,
       attHpLeft: Math.round(result.attHpLeft), defHpLeft: Math.round(result.defHpLeft),
       defDead: hs.dead, defHurt: hs.hurt, defSlight: hs.slight,
+      rounds: result.rounds, // Фаза 9, кусочек 1 — теперь бой честно может занять не один обмен
     };
     const mailRows = [
       { world_id: m.world_id, player_id: attRow.id, kind: "battle", data: { role: "attacker", opponent_id: defRow.id, opponent_nick: defRow.nick, ...summary } },
@@ -902,8 +1320,155 @@ async function applyMarchHome(admin, ev) {
   if (row) {
     const p = row.state;
     p.troops = unitsAdd(p.troops, m.units);
+    // Фаза 8, кусочек 1 — зеркало gain(p,m.carry) из EV.home (index.html:
+    // 4959-4964). Только gather-марши несут m.data.carry (см. applyGathered
+    // ниже) — у атакующих маршей этого поля никогда не было и не будет,
+    // для них ничего не меняется.
+    if (m.data && m.data.carry) {
+      RES.forEach((r) => { if (m.data.carry[r]) p.res[r] = (p.res[r] || 0) + m.data.carry[r]; });
+    }
     const { error: updErr } = await admin.from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
     if (updErr) throw updErr;
   }
   await admin.from("marches").delete().eq("id", m.id);
+}
+
+// Фаза 8, кусочек 1 — отряд дошёл до точки сбора: начинается отдельный
+// отсчёт сбора (gather_secs посчитан заранее в mp-gather, на отправке —
+// зависит от бонусов игрока на тот момент, тот же принцип "снимок при
+// отправке", что и у dist/spd для дороги). Зеркало перехода
+// m.state="gather" в arriveMarch (index.html:5030-5031).
+async function applyGatherStart(admin, m) {
+  const nowSec = Date.now() / 1000;
+  const gatherSecs = Math.max(0, (m.data && m.data.gather_secs) || 0);
+  const { error: updM } = await admin.from("marches")
+    .update({ state: "gather", t0: nowSec, t1: nowSec + gatherSecs }).eq("id", m.id);
+  if (updM) throw updM;
+  const { error: evErr } = await admin.from("events").insert({
+    world_id: m.world_id, fire_at: new Date((nowSec + gatherSecs) * 1000).toISOString(),
+    type: "gathered", data: { march_id: m.id },
+  });
+  if (evErr) throw evErr;
+}
+
+// Фаза 8, кусочек 1 — сбор закончен: отряд разворачивается домой с
+// добычей (m.data.take/res, посчитаны в mp-gather — количество уже
+// списано с точки авансом при отправке, здесь пересчитывать нечего).
+// Зеркало EV.gathered (index.html:4970-4977) — без переноса respawn
+// истощённой точки (см. заголовок mp-gather, честное упрощение №3).
+async function applyGathered(admin, ev) {
+  const marchId = ev.data && ev.data.march_id;
+  if (marchId == null) return;
+  const { data: m, error: mErr } = await admin.from("marches").select("*").eq("id", marchId).maybeSingle();
+  if (mErr) throw mErr;
+  if (!m || m.state !== "gather") return; // уже разобрано/отозвано
+
+  const nowSec = Date.now() / 1000;
+  const dist = (m.data && m.data.dist) || 0, spd = (m.data && m.data.spd) || 1;
+  const travelBack = Math.max(15, (dist / spd) * 60);
+  const carry = {}; if (m.data && m.data.res) carry[m.data.res] = m.data.take || 0;
+  const { error: updM } = await admin.from("marches")
+    .update({ state: "back", t0: nowSec, t1: nowSec + travelBack, data: { ...m.data, carry } }).eq("id", m.id);
+  if (updM) throw updM;
+  const { error: evErr } = await admin.from("events").insert({
+    world_id: m.world_id, fire_at: new Date((nowSec + travelBack) * 1000).toISOString(),
+    type: "march_home", data: { march_id: m.id },
+  });
+  if (evErr) throw evErr;
+
+  // Фаза 8, кусочек 3 — точка истощена (amount уже списан до нуля в
+  // mp-gather на отправке) — сносим клетку и заводим respawn, зеркало
+  // mapDelete+schedule(CFG.NODE_RESPAWN,"nodeback",...) из index.html
+  // (EV.gathered, index.html:4993-4997). Раньше (кусочек 1) пустая точка
+  // просто оставалась на карте навсегда — честный пробел, закрытый здесь.
+  const cellX = m.data && m.data.cell_x, cellY = m.data && m.data.cell_y;
+  if (cellX != null && cellY != null) {
+    const { data: cell } = await admin.from("map_cells")
+      .select("data").eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY).maybeSingle();
+    if (cell && (cell.data && cell.data.amount) <= 0) {
+      await admin.from("map_cells").delete().eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY);
+      await admin.from("events").insert({
+        world_id: m.world_id, fire_at: new Date((nowSec + NODE_RESPAWN_SEC) * 1000).toISOString(),
+        type: "node_respawn", data: { x: cellX, y: cellY },
+      });
+    }
+  }
+}
+
+
+// Фаза 8, кусочек 2 — отряд дошёл до лагеря варваров: бой разрешается
+// сразу (resolveBanditRaid, однообменный — см. заголовок функции выше),
+// результат зачисляется игроку НЕМЕДЛЕННО (не ждёт возвращения марша
+// домой — тот же принцип "текущее состояние, не снимок", что и у обороны
+// города): лёгкие потери (hospitalSplit, mode:"hospital" — НЕ
+// "siege-attack", лагерь не чужой город) сразу возвращаются в строй/
+// лазарет, а домой физически марширует остаток, который вообще не
+// пострадал (unitsSub(m.units, attLoss) — attLoss уже разложен
+// hospitalSplit'ом на "лёгкие"/"лазарет"/"насмерть", сумма которых и есть
+// attLoss, так что вычесть его целиком из отправленных войск и добавить
+// "лёгких" назад отдельно — не двойной счёт, а то же число, разложенное на
+// "уже дома" и "ещё в пути").
+async function applyRaidArrive(admin, m) {
+  const { data: attRow, error: aErr } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
+  if (aErr) throw aErr;
+  if (!attRow) { await admin.from("marches").delete().eq("id", m.id); return; }
+
+  const attP = attRow.state;
+  attP.race = attP.race || attRow.race;
+  if (!attP.wounded) attP.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
+  TKEYS.forEach((t) => { if (!attP.wounded[t]) attP.wounded[t] = {}; });
+
+  const cellX = m.data && m.data.cell_x, cellY = m.data && m.data.cell_y;
+  const { data: cell, error: cErr } = await admin.from("map_cells")
+    .select("*").eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY).maybeSingle();
+  if (cErr) throw cErr;
+
+  const nowSec = Date.now() / 1000;
+  let survivors = m.units, carry = {};
+  // Лагерь уже разгромлен кем-то другим, пока отряд шёл — бой не
+  // случается, отряд просто разворачивается пустым (как gather на
+  // истощённую точку, как attack на пропавшего защитника).
+  if (cell && (cell.t === "camp" || cell.t === "fort")) {
+    const campLv = (m.data && m.data.camp_lv) || 1;
+    const result = resolveBanditRaid(m.units, attP, campLv, m.id);
+    const hs = hospitalSplit(attP, result.attLoss, "hospital");
+    attP.troops = unitsAdd(attP.troops, hs.slightUnits);
+    attP.wounded = unitsAdd(attP.wounded, hs.hurtUnits);
+    survivors = unitsSub(m.units, result.attLoss);
+
+    if (result.winner === "att") {
+      carry = banditLoot(campLv);
+      addXp(attP, BANDIT_XP[Math.max(1, Math.min(30, campLv)) - 1]); // Фаза 10, кусочек 1
+      await admin.from("map_cells").delete().eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY);
+      // Фаза 8, кусочек 3 — зеркало mapDelete+schedule(CFG.RESPAWN_CAMP,
+      // "respawn",...) из index.html (arriveMarch, camp/fort-ветка,
+      // index.html:5151-5152). Раньше (кусочек 2) разгромленный лагерь
+      // просто исчезал навсегда — честный пробел, закрытый здесь.
+      await admin.from("events").insert({
+        world_id: m.world_id, fire_at: new Date((nowSec + CAMP_RESPAWN_SEC) * 1000).toISOString(),
+        type: "camp_respawn", data: { x: cellX, y: cellY },
+      });
+    }
+
+    const { error: mailErr } = await admin.from("mail").insert({
+      world_id: m.world_id, player_id: attRow.id, kind: "raid",
+      data: { camp_lv: campLv, win: result.winner === "att", loot: carry, attLoss: result.attLoss, dead: hs.dead, hurt: hs.hurt, slight: hs.slight, rounds: result.rounds },
+    });
+    if (mailErr) throw mailErr;
+  }
+
+  const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
+  if (updA) throw updA;
+
+  if (unitsTotal(survivors) <= 0) { await admin.from("marches").delete().eq("id", m.id); return; }
+  const dist = (m.data && m.data.dist) || 0, spd = (m.data && m.data.spd) || 1;
+  const travelBack = Math.max(15, (dist / spd) * 60);
+  const { error: updM } = await admin.from("marches")
+    .update({ state: "back", t0: nowSec, t1: nowSec + travelBack, units: survivors, data: { ...m.data, carry } }).eq("id", m.id);
+  if (updM) throw updM;
+  const { error: evErr } = await admin.from("events").insert({
+    world_id: m.world_id, fire_at: new Date((nowSec + travelBack) * 1000).toISOString(),
+    type: "march_home", data: { march_id: m.id },
+  });
+  if (evErr) throw evErr;
 }
