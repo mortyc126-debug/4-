@@ -7042,6 +7042,98 @@ function mpCellForgeHtml(st){
   }
   return h;
 }
+// ===== Фаза 19, кусочек 5 — Горн: абсолютная копия одиночной
+// forgeInfoHtml() (index.html, чуть ниже по файлу) — вкладки Изготовление/
+// Чертежи (data-mp='forgetab'), сетка карточек .mat-card с иконкой
+// материала/пипами по редкости и кнопкой "Добыть", пип-пикер редкости
+// (data-mp='forgerarity') и раздельные кнопки "Бастион"/"Буря" (не
+// <select>, как раньше) — сменяет mpCellForgeHtml() выше (та функция НЕ
+// тронута — тестируется, но больше не вызывается, тот же приём, что и у
+// mpCellTrainHtml/mpHospitalHtml в предыдущих кусочках). Используется в
+// ДВУХ местах — внутри иллюстрированной модалки здания (клик по Горну на
+// карте) И внутри рубрики "Горн" на полной странице "Общий мир" (та же
+// причина, что и у mpAcademyHtml/mpHospitalInfoHtml: автор попросил
+// дословную копию, а не отдельно поддерживаемую пару вариантов).
+// mpDoCraft() тоже поменял сигнатуру: раньше читал школу/редкость из
+// <select id='mp-craft-order-<slot>'>/<select id='mp-craft-rarity-<slot>'>
+// (тот select и был как раз тем упрощением, что мы теперь снимаем) —
+// теперь принимает их параметрами прямо из data-order/data-rarity кнопки,
+// тем же приёмом, что уже давно работает у mpDoEquip(slot,order,rarity).
+// pShim не нужен вовсе: gearItemStats/craftCost/epochOf/gearIconSrc — все
+// чистые функции, ни разу не читающие p целиком, только конкретные поля
+// параметрами (cat/order/r, mat/tier/r, hallLv, slot/order) — то же самое,
+// что уже верно для этой функции и в одиночке (её forgeInfoHtml(p) читает
+// p только ради p.craft/p.materials/p.b.hall, все три уже есть в st).
+let mpForgeTab=null, mpForgeRarity=null;
+function mpForgeInfoHtml(st){
+  let h="<div id='bm-tree'>";
+  if(st.craft){
+    const cf=(Date.now()/1000-st.craft.t0)/Math.max(1,st.craft.t1-st.craft.t0);
+    const title = st.craft.kind==="material" ? MATERIALS[st.craft.mat].name+" ×"+st.craft.n
+                : GEAR_NAMES[st.craft.slot][st.craft.order][st.craft.rarity-1];
+    h+="<div class='rgroup'>На горне</div>"+
+       "<div class='rnode'><div class='rnode-hd'><b>"+title+"</b></div>"+
+       "<div class='progress'><i style='width:"+(cf*100).toFixed(1)+"%'></i></div>"+
+       "<div class='rnode-eff'>Готово через <em>"+fmtDur(st.craft.t1-Date.now()/1000)+"</em></div></div>";
+  }
+  h+="<div id='ac-tabs'>"+
+    "<button class='"+(mpForgeTab==="make"?"on":"")+"' data-mp='forgetab' data-t='make'>Изготовление</button>"+
+    "<button class='"+(mpForgeTab==="blueprint"?"on":"")+"' data-mp='forgetab' data-t='blueprint'>Чертежи</button>"+
+    "</div>";
+
+  if(!mpForgeTab){
+    // ничего не выбрано — ждём, пока откроют одну из вкладок
+  } else if(mpForgeTab==="make"){
+    h+="<div class='rgroup'>Материалы</div><div class='note' style='margin:-6px 0 10px;font-size:12px;color:#6b5230'>"+
+      "Добыча даёт только обычное качество — редкость получают слиянием 4-в-1.</div>";
+    Object.keys(MATERIALS).forEach(mat=>{
+      const stock=(st.materials&&st.materials[mat])||[0,0,0,0,0];
+      h+="<div class='mat-card'>"+
+        "<div class='mat-icon-wrap'><img class='mat-icon' src='images/ui/material-"+mat+".png' alt='' onerror=\"this.style.display='none'\"></div>"+
+        "<div class='mat-info'><div class='mat-name'>"+MATERIALS[mat].name+"</div>"+
+        "<div class='mat-pips'>"+RARITY_NAMES.map((rn,i)=>
+          "<span class='pip' style='--pc:"+RARITY_COLOR[i]+"' title='"+rn+"'>"+(stock[i]||0)+"</span>").join("")+
+        "</div></div>"+
+        "<button class='rnode-go mat-go' data-mp='forge' data-mat='"+mat+"' "+(st.craft||mpState.loading?"disabled":"")+">Добыть</button>"+
+        "</div>";
+      h+="<div class='mat-upgrades'>"+[0,1,2,3].map(t=>
+        "<button class='rnode-go' data-mp='matup' data-mat='"+mat+"' data-tier='"+t+"' "+
+        ((stock[t]||0)<4||mpState.loading?"disabled":"")+">4&times;<span class='pip mini' style='--pc:"+RARITY_COLOR[t]+"'></span>&rarr;"+
+        "<span class='pip mini' style='--pc:"+RARITY_COLOR[t+1]+"'></span></button>"
+      ).join("")+"</div>";
+    });
+  } else {
+    const hallLv=st.b.hall||0;
+    const maxRarity=Math.min(5,epochOf(hallLv));
+    if(!mpForgeRarity||mpForgeRarity>maxRarity) mpForgeRarity=maxRarity;
+    const r=mpForgeRarity, need=CRAFT_MAT_NEED[r-1], chance=CRAFT_CHANCE[r-1];
+    h+="<div class='rgroup'>Чертежи</div>"+
+      "<div class='mat-pips' style='margin-bottom:10px'>"+[1,2,3,4,5].map(rr=>
+        "<span class='pip"+(rr===r?" on":"")+"' style='--pc:"+RARITY_COLOR[rr-1]+(rr>maxRarity?";opacity:.3":"")+"' "+
+        (rr<=maxRarity?"data-mp='forgerarity' data-r='"+rr+"'":"")+" title='"+RARITY_NAMES[rr-1]+
+        (rr>maxRarity?" — откроется позже":"")+"'>"+rr+"</span>").join("")+
+      "</div>"+
+      "<div class='note' style='margin:-4px 0 10px;font-size:12px;color:#6b5230'>"+
+      "<span style='color:"+RARITY_COLOR[r-1]+"'>"+RARITY_NAMES[r-1]+"</span> · шанс успеха ковки "+Math.round(chance*100)+"%"+
+      (chance<1?" — при неудаче материал и время сгорают":"")+"</div>";
+    GEAR_SLOTS.forEach(s=>{
+      const matStock=(st.materials&&st.materials[s.mat])||[0,0,0,0,0];
+      const have=matStock[r-1]||0, haveMat=have>=need;
+      h+="<div class='rnode'><div class='rnode-hd'>"+
+        "<span class='mat-icon-wrap' style='width:28px;height:28px'><img class='mat-icon' src='"+gearIconSrc(s.id,"bastion")+"' alt=''></span>"+
+        "<b>"+s.name+"</b></div>"+
+        "<div class='rnode-eff'>нужно: "+need+"&times;<span class='pip mini' style='--pc:"+RARITY_COLOR[r-1]+"'></span> "+
+        MATERIALS[s.mat].name+" ("+have+"/"+need+") · "+
+        "бастион "+statTxt(gearItemStats(s.cat,"bastion",r))+" · буря "+statTxt(gearItemStats(s.cat,"storm",r))+"</div>"+
+        "<button class='rnode-go' data-mp='craft' data-slot='"+s.id+"' data-order='bastion' data-rarity='"+r+"' "+
+        (st.craft||!haveMat||mpState.loading?"disabled":"")+">Бастион</button>"+
+        "<button class='rnode-go' data-mp='craft' data-slot='"+s.id+"' data-order='storm' data-rarity='"+r+"' "+
+        (st.craft||!haveMat||mpState.loading?"disabled":"")+">Буря</button></div>";
+    });
+  }
+  h+="</div>";
+  return h;
+}
 // Фаза 17, кусочек 1 — дословная копия buildingStatDeltaHtml() (index.html,
 // см. её же комментарий чуть ниже по файлу), но БЕЗ обращения к me(): та
 // функция почти целиком чистая (bk/lv/nx + глобальные таблицы), кроме ОДНОЙ
@@ -7259,6 +7351,7 @@ function mpOpenUnitCarousel(type){
   // (минуя закрытие модалки) оставил бы позади мёртвый mpHealCtx/
   // mpResearchCtx, который потом ловил бы mpRerender().
   mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
+  mpForgeTab=null; mpForgeRarity=null;
   mpCarouselCtx={type};
   const max=trainMax(pShim,type,maxT);
   mpTrainCtx={type,tier:maxT,mode:"train",max,n:max,lastLocked:!!(st.train&&st.train[type])||max<1};
@@ -7372,7 +7465,7 @@ async function mpDoTrainGo(){
 // шлёт настоящий mpHealCtx.tier — честная починка, не новый функционал. =====
 let mpHealCtx=null, mpHealCarouselOpen=false;
 function mpOpenHealCarousel(){
-  mpCarouselCtx=null; mpTrainCtx=null; mpResearchCtx=null; // та же чистка контекста, что и у одиночного openHealCarousel()
+  mpCarouselCtx=null; mpTrainCtx=null; mpResearchCtx=null; mpForgeTab=null; mpForgeRarity=null; // та же чистка контекста, что и у одиночного openHealCarousel()
   mpHealCarouselOpen=true; mpHealCtx=null;
   $("#bm-body").innerHTML = mpHealCarouselHtml();
   $("#building-modal").classList.add("open");
@@ -7506,6 +7599,7 @@ function mpOpenResearchCarousel(branch,startId){
   const st=mpState.player.state, pShim=mpFullShim(mpState.player,st);
   // Та же чистка чужих контекстов карусели, что и у остальных mpOpen*Carousel().
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false;
+  mpForgeTab=null; mpForgeRarity=null;
   const list=researchNodeList(branch,pShim);
   const idx=Math.max(0,list.findIndex(n=>n.id===startId));
   mpResearchCtx={branch,idx};
@@ -7645,7 +7739,7 @@ function mpBuildingModalHtml(idx){
   if(bld==="store") h+=storeInfoHtml(mpFullShim(mpState.player,st));
   h+=mpTrainInfoHtml(bld,pShim,st);
   if(bld==="hospital") h+=mpHospitalInfoHtml(pShim,st);
-  if(bld==="forge" && lv>0) h+=mpCellForgeHtml(st);
+  if(bld==="forge" && lv>0) h+=mpForgeInfoHtml(st);
   // Фаза 18, кусочек 1 — Академия на карте города: та же mpAcademyHtml(),
   // что и в полной странице "Общий мир" (см. её комментарий) — раньше клик
   // по ячейке Академии показывал только базовую карточку (арт/уровень/
@@ -7674,7 +7768,13 @@ function mpOpenBuildingModal(idx){
   // считать, что карусель всё ещё активна.
   // Фаза 19, кусочек 2 — та же чистка и для карусели лазарета.
   // Фаза 19, кусочек 3 — и для карусели исследований Академии.
+  // Фаза 19, кусочек 5 — и для вкладки/редкости Горна (mpForgeTab/
+  // mpForgeRarity) — та же честная копия одиночного openBuildingModal(),
+  // который тоже сбрасывает forgeTab/forgeRarity при открытии ЛЮБОЙ
+  // ячейки (но НЕ при закрытии — closeBuildingModal() их не трогает, та же
+  // асимметрия сохранена и здесь, см. mpCloseBuildingModal() ниже).
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
+  mpForgeTab=null; mpForgeRarity=null;
   mpCitySel=idx;
   $("#bm-body").innerHTML = mpBuildingModalHtml(idx);
   $("#building-modal").classList.add("open");
@@ -9909,12 +10009,25 @@ function handleMpAct(e){
   if(healBtn){ mpDoHeal(healBtn.dataset.t); return; }
   const buildBtn=e.target.closest("[data-mp='build']");
   if(buildBtn){ mpDoBuild(buildBtn.dataset.bk, buildBtn.dataset.plot==null?null:+buildBtn.dataset.plot); return; }
+  // Фаза 19, кусочек 5 — Горн (абсолютная копия одиночных forgetab/
+  // forgerarity, см. их же ветки в handleAct()). Ни та, ни другая не
+  // сбрасывают контексты остальных каруселей — тот же приём, что и в
+  // одиночке: пока открыта модалка на Горне, никакая другая карусель
+  // одновременно открыта быть не может.
+  const forgeTabBtn=e.target.closest("[data-mp='forgetab']");
+  if(forgeTabBtn){ mpForgeTab=forgeTabBtn.dataset.t; mpRerender(); return; }
+  const forgeRarityBtn=e.target.closest("[data-mp='forgerarity']");
+  if(forgeRarityBtn){ mpForgeRarity=+forgeRarityBtn.dataset.r; mpRerender(); return; }
   const forgeBtn=e.target.closest("[data-mp='forge']");
   if(forgeBtn){ mpDoForge(forgeBtn.dataset.mat); return; }
   const matupBtn=e.target.closest("[data-mp='matup']");
   if(matupBtn){ mpDoUpgrade(matupBtn.dataset.mat,+matupBtn.dataset.tier); return; }
+  // Фаза 19, кусочек 5 — раньше читал школу/редкость из <select> по id
+  // (mpDoCraft(slot), см. её собственный комментарий у прежней сигнатуры) —
+  // теперь оба явно приходят с самой кнопки, тот же приём, что и у
+  // mpDoEquip(slot,order,rarity) чуть ниже.
   const craftBtn=e.target.closest("[data-mp='craft']");
-  if(craftBtn){ mpDoCraft(craftBtn.dataset.slot); return; }
+  if(craftBtn){ mpDoCraft(craftBtn.dataset.slot,craftBtn.dataset.order,+craftBtn.dataset.rarity); return; }
   const usetomeBtn=e.target.closest("[data-mp='usetome']");
   if(usetomeBtn){ mpDoUsetome(+usetomeBtn.dataset.v); return; }
   const equipBtn=e.target.closest("[data-mp='equip']");
@@ -10711,14 +10824,14 @@ async function mpDoUpgrade(mat,tier){
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
-// Фаза 11, кусочек 3 — ковка снаряжения (mp-craft), см. рубрику «Ковка
-// снаряжения» в foMultiplayer. Читает выбор школы/редкости из <select>
-// (id='mp-craft-order-<slot>'/'mp-craft-rarity-<slot>'), тот же приём, что
-// и у полей набора войск (mp-n-<t>).
-async function mpDoCraft(slot){
-  const orderEl=document.getElementById("mp-craft-order-"+slot);
-  const rarityEl=document.getElementById("mp-craft-rarity-"+slot);
-  const order=orderEl?orderEl.value:"bastion", rarity=rarityEl?+rarityEl.value:1;
+// Фаза 11, кусочек 3 — ковка снаряжения (mp-craft), см. рубрику «Горн» в
+// foMultiplayer/mpForgeInfoHtml().
+// Фаза 19, кусочек 5 — раньше читал школу/редкость из <select> по id
+// (id='mp-craft-order-<slot>'/'mp-craft-rarity-<slot>') — та форма вместе
+// со <select> заменена абсолютной копией одиночной карточки Горна
+// (mpForgeInfoHtml), где школа/редкость приходят прямо с кнопки, как и у
+// mpDoEquip(slot,order,rarity).
+async function mpDoCraft(slot,order,rarity){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-craft",{slot,order,rarity}); await mpRefreshPlayer(); }
   catch(e){ mpState.err=e.message; }
@@ -11280,62 +11393,22 @@ function foMultiplayer(embedded){
   // (mp-upgrade); кусочек 3 — ковка снаряжения (mp-craft, kind:"item"),
   // предмет при удаче доезжает до склада (p.inventory) — надеть его
   // (equipItem) пока нельзя, отдельный следующий кусочек.
-  h+=rubric("Горн","добыча и слияние материалов");
+  // Фаза 19, кусочек 5 — два отдельных плоских рубричных блока (добыча +
+  // отдельно ковка через <select>) заменены одной mpForgeInfoHtml() —
+  // абсолютной копией одиночной forgeInfoHtml() (вкладки Изготовление/
+  // Чертежи, карточки материалов, пип-пикер редкости, кнопки Бастион/Буря
+  // без select), той же самой, что теперь используется и в модалке здания
+  // (клик по Горну на карте) — см. её собственный комментарий выше по
+  // файлу. "Нужно построить Горн" — честная MP-специфичная обёртка: в
+  // одиночке этот случай попросту невозможен (forgeInfoHtml зовётся только
+  // из уже открытой ячейки Горна), а здесь раздел виден на полной странице
+  // всегда, даже до постройки.
+  h+=rubric("Горн","добыча, слияние материалов и ковка снаряжения");
   if(!(mpBuildLv("forge")>0)){
     h+="<div class='entry'><div class='line'><div class='fill'>"+
        "<div class='note'>Нужно построить Горн (см. «Постройки» выше).</div></div></div></div>";
   } else {
-    const craft=st.craft;
-    if(craft && craft.kind==="material"){
-      const left=Math.max(0,craft.t1-Date.now()/1000);
-      h+="<div class='entry'><div class='line'><div class='fill'>"+
-         "<div class='title'>Добывается: "+MATERIALS[craft.mat].name+" ×"+craft.n+"</div>"+
-         "<div class='note'>Осталось: "+fmtDur(left)+"</div></div></div></div>";
-    } else if(craft && craft.kind==="item"){
-      const left=Math.max(0,craft.t1-Date.now()/1000);
-      const orderName=craft.order==="storm"?"Буря":"Бастион";
-      h+="<div class='entry'><div class='line'><div class='fill'>"+
-         "<div class='title'>Куётся: "+GEAR_NAMES[craft.slot][craft.order][craft.rarity-1]+"</div>"+
-         "<div class='note'>"+orderName+", "+RARITY_NAMES[craft.rarity-1]+" · осталось "+fmtDur(left)+"</div></div></div></div>";
-    } else {
-      Object.keys(MATERIALS).forEach(mat=>{
-        const stock=(st.materials&&st.materials[mat])||[0,0,0,0,0];
-        h+="<div class='entry'><div class='line'><div class='fill'>"+
-           "<div class='title'>"+MATERIALS[mat].name+"</div>"+
-           "<div class='note'>"+RARITY_NAMES.map((rn,i)=>rn+": "+RU(stock[i]||0)).join(" · ")+"</div>"+
-           "<button class='seal' data-mp='forge' data-mat='"+mat+"'"+(mpState.loading?" disabled":"")+">Добыть обычного (×3 · 100 золота · "+fmtDur(2400)+")</button> "+
-           [0,1,2,3].map(t=>
-             "<button class='seal' data-mp='matup' data-mat='"+mat+"' data-tier='"+t+"'"+
-             (mpState.loading||(stock[t]||0)<4?" disabled":"")+">4×"+RARITY_NAMES[t]+" → "+RARITY_NAMES[t+1]+"</button>"
-           ).join(" ")+
-           "</div></div></div>";
-      });
-    }
-  }
-
-  if(mpBuildLv("forge")>0){
-    h+=rubric("Ковка снаряжения","Горн");
-    if(st.craft){
-      h+="<div class='entry'><div class='line'><div class='fill'>"+
-         "<div class='note'>Горн занят — дождитесь окончания текущей работы выше.</div></div></div></div>";
-    } else {
-      const hallLvFull=Array.isArray(st.b.hall)?Math.max(0,...st.b.hall):(st.b.hall||0);
-      const maxRarity=Math.min(5,epochOf(hallLvFull));
-      GEAR_SLOTS.forEach(s=>{
-        const matStock=(st.materials&&st.materials[s.mat])||[0,0,0,0,0];
-        h+="<div class='entry'><div class='line'><div class='fill'>"+
-           "<div class='title'>"+s.name+" ("+MATERIALS[s.mat].name+")</div>"+
-           "<select id='mp-craft-order-"+s.id+"'><option value='bastion'>Бастион</option><option value='storm'>Буря</option></select> "+
-           "<select id='mp-craft-rarity-"+s.id+"'>"+
-             Array.from({length:maxRarity},(_,i)=>i+1).map(r=>{
-               const need=CRAFT_MAT_NEED[r-1], have=matStock[r-1]||0, c=craftCost(s.mat,r-1,r);
-               return "<option value='"+r+"'"+(have<need?" disabled":"")+">"+RARITY_NAMES[r-1]+" — нужно "+need+"× ("+have+" есть) · "+RU(c.gold)+" золота · "+fmtDur(1800*r*r)+"</option>";
-             }).join("")+
-           "</select> "+
-           "<button class='seal' data-mp='craft' data-slot='"+s.id+"'"+(mpState.loading?" disabled":"")+">Ковать</button>"+
-           "</div></div></div>";
-      });
-    }
+    h+=mpForgeInfoHtml(st);
   }
 
   // Новый кусочек (после Портала) — книги опыта генерала (mp-usetome),
