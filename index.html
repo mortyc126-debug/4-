@@ -9569,10 +9569,24 @@ function mpRerender(){
 function mpStartPolling(){ mpStopPolling(); mpPollTimer=setInterval(mpPollTick,5000); }
 function mpStopPolling(){ if(mpPollTimer){ clearInterval(mpPollTimer); mpPollTimer=null; } }
 async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); }
+// Баг-фикс — автор пожаловался: очередь стройки/тренировки/боя показывается
+// сразу, но САМ результат (новый уровень здания, исход боя) применял только
+// общий тикер (mp-tick), а тот раньше крутился раз в минуту — до минуты
+// ожидания, даже если сама стройка была на 10 секунд. Раньше mpRefreshPlayer()
+// был голым select с players — просто ЧИТАЛ то, что уже есть в базе, сам
+// ничего не применял. Теперь зовёт mp-join вместо голого select: та функция
+// (единственная причина этой правки) толкает тикер ПЕРЕД собственным чтением
+// строки игрока (см. triggerTick() в mp-join/index.js) — тот же секрет/путь,
+// что и у pg_cron, БЕЗ дублирования ~1900 строк резолва боя/построек. Раз
+// опрос и так идёт каждые 5с (mpPollTick), собственные постройки/бои
+// применяются в течение тех же 5с, не дожидаясь общего расписания тикера
+// (которое можно оставить куда реже — см. supabase/migrations/0003).
 async function mpRefreshPlayer(){
   if(!mpState.player) return;
-  const { data, error } = await sb.from("players").select("*").eq("id",mpState.player.id).maybeSingle();
-  if(!error && data){ mpState.player=data; mpRerender(); }
+  try{
+    const j=await mpCall("mp-join",{});
+    if(j && j.player){ mpState.player=j.player; mpRerender(); }
+  }catch(_){ /* сеть моргнула — оставляем прежнее состояние, следующий опрос через 5с попробует снова */ }
 }
 // Фаза 3 — общая видимость: остальные игроки того же мира читаются напрямую
 // клиентом (RLS players_select_world из миграции 0001 уже разрешает SELECT
