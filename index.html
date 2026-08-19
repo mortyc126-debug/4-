@@ -6773,6 +6773,7 @@ function mpCellPanelHtml(idx){
       "<button class='seal' data-mp='build' data-bk='"+bld+"'"+(plot!=null?" data-plot='"+plot+"'":"")+(mpState.loading?" disabled":"")+">"+(lv?"Улучшить":"Построить")+"</button>";
   }
   body+=mpCellTrainHtml(bld,pShim,st);
+  if(bld==="hospital") body+=mpCellHealHtml(pShim,st);
   body+=" <button class='seal' data-mp='citycellclose'>Закрыть</button>";
   return "<div class='mp-cell-panel entry'><div class='line'><div class='fill'>"+body+"</div></div></div>";
 }
@@ -6805,6 +6806,50 @@ function mpCellTrainHtml(bld,pShim,st){
        "<input id='mp-n-"+t+"' type='number' min='1' max='"+cap+"' value='"+Math.min(cap,10)+"'> "+
        "<button class='seal' data-mp='train' data-t='"+t+"'"+(mpState.loading?" disabled":"")+">Обучить</button>";
   }
+  return h;
+}
+// Фаза 14, кусочек 6 — лечение раненых прямо с карты: клик по любому из 4
+// участков Госпиталя показывает лазарет. Ёмкость лазарета ОДНА на все 4
+// участка сразу (по максимальному уровню среди них — та же формула
+// mpHospLv/mpHealCap, что и в рубрике "Лазарет" внутри foMultiplayer() и
+// в mpDoHeal()), не зависит от того, какой именно участок кликнули —
+// поэтому это отдельная функция, а не ветка внутри mpCellTrainHtml (та
+// завязана на КОНКРЕТНОЕ здание bld, тут же нужен максимум по всем 4).
+// Та же ветвящаяся логика (нет раненых — пусто / лечится другой род войск /
+// лазарет занят тем же родом / нужен госпиталь / обычная цена+форма), что
+// и в foMultiplayer() — намеренно не рефакторено в общую функцию по той же
+// причине, что и mpCellPanelHtml/mpCellTrainHtml. Форма — id='mp-heal-n-<t>'
+// + data-mp='heal' data-t='<t>' — те же атрибуты, что уже читает
+// существующий mpDoHeal() — новой проводки в handleAct() не понадобилось.
+function mpCellHealHtml(pShim,st){
+  const hospLv=Array.isArray(st.b.hospital)?Math.max(0,...st.b.hospital):(st.b.hospital||0);
+  const healCap=trainCap(hospLv);
+  const healing=st.heal;
+  const anyWounded=TKEYS.some(t=>(st.wounded&&st.wounded[t]&&st.wounded[t][1])||0);
+  if(!anyWounded && !healing) return "";
+  let h="<div class='title' style='margin-top:10px'>Лазарет</div>";
+  TKEYS.forEach(t=>{
+    const wounded=(st.wounded&&st.wounded[t]&&st.wounded[t][1])||0;
+    const healingThis=healing&&healing.type===t&&healing.tier===1;
+    if(!wounded && !healingThis) return;
+    h+="<div class='note'>"+unitName(t,1,pShim.race)+" — ранено "+RU(wounded)+"</div>";
+    if(healingThis){
+      const left=Math.max(0,healing.t1-Date.now()/1000);
+      h+="<div class='note'>Лечится: ×"+RU(healing.n)+", осталось "+fmtDur(left)+"</div>";
+    } else if(healing){
+      h+="<div class='note'>Лазарет занят лечением другого рода войск.</div>";
+    } else if(healCap<=0){
+      h+="<div class='note'>Нужен построенный госпиталь.</div>";
+    } else {
+      const tc=troopCost(t,1);
+      const c={food:Math.round((tc.food||0)/2),wood:Math.round((tc.wood||0)/2),stone:Math.round((tc.stone||0)/2),gold:0};
+      const maxN=Math.min(wounded,healCap);
+      h+="<div class='note'>Цена за штуку: "+(RES.some(r=>c[r])?RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", "):"бесплатно")+
+         " · максимум за раз: "+healCap+"</div>"+
+         "<input id='mp-heal-n-"+t+"' type='number' min='1' max='"+maxN+"' value='"+Math.min(maxN,10)+"'> "+
+         "<button class='seal' data-mp='heal' data-t='"+t+"'"+(mpState.loading?" disabled":"")+">Лечить</button>";
+    }
+  });
   return h;
 }
 // Тот же приём диффа/сохранения scrollTop, что и у renderFolio() —
