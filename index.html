@@ -7042,6 +7042,314 @@ function mpCellForgeHtml(st){
   }
   return h;
 }
+// ===== Фаза 19, кусочек 5 — Горн: абсолютная копия одиночной
+// forgeInfoHtml() (index.html, чуть ниже по файлу) — вкладки Изготовление/
+// Чертежи (data-mp='forgetab'), сетка карточек .mat-card с иконкой
+// материала/пипами по редкости и кнопкой "Добыть", пип-пикер редкости
+// (data-mp='forgerarity') и раздельные кнопки "Бастион"/"Буря" (не
+// <select>, как раньше) — сменяет mpCellForgeHtml() выше (та функция НЕ
+// тронута — тестируется, но больше не вызывается, тот же приём, что и у
+// mpCellTrainHtml/mpHospitalHtml в предыдущих кусочках). Используется в
+// ДВУХ местах — внутри иллюстрированной модалки здания (клик по Горну на
+// карте) И внутри рубрики "Горн" на полной странице "Общий мир" (та же
+// причина, что и у mpAcademyHtml/mpHospitalInfoHtml: автор попросил
+// дословную копию, а не отдельно поддерживаемую пару вариантов).
+// mpDoCraft() тоже поменял сигнатуру: раньше читал школу/редкость из
+// <select id='mp-craft-order-<slot>'>/<select id='mp-craft-rarity-<slot>'>
+// (тот select и был как раз тем упрощением, что мы теперь снимаем) —
+// теперь принимает их параметрами прямо из data-order/data-rarity кнопки,
+// тем же приёмом, что уже давно работает у mpDoEquip(slot,order,rarity).
+// pShim не нужен вовсе: gearItemStats/craftCost/epochOf/gearIconSrc — все
+// чистые функции, ни разу не читающие p целиком, только конкретные поля
+// параметрами (cat/order/r, mat/tier/r, hallLv, slot/order) — то же самое,
+// что уже верно для этой функции и в одиночке (её forgeInfoHtml(p) читает
+// p только ради p.craft/p.materials/p.b.hall, все три уже есть в st).
+let mpForgeTab=null, mpForgeRarity=null;
+function mpForgeInfoHtml(st){
+  let h="<div id='bm-tree'>";
+  if(st.craft){
+    const cf=(Date.now()/1000-st.craft.t0)/Math.max(1,st.craft.t1-st.craft.t0);
+    const title = st.craft.kind==="material" ? MATERIALS[st.craft.mat].name+" ×"+st.craft.n
+                : GEAR_NAMES[st.craft.slot][st.craft.order][st.craft.rarity-1];
+    h+="<div class='rgroup'>На горне</div>"+
+       "<div class='rnode'><div class='rnode-hd'><b>"+title+"</b></div>"+
+       "<div class='progress'><i style='width:"+(cf*100).toFixed(1)+"%'></i></div>"+
+       "<div class='rnode-eff'>Готово через <em>"+fmtDur(st.craft.t1-Date.now()/1000)+"</em></div></div>";
+  }
+  h+="<div id='ac-tabs'>"+
+    "<button class='"+(mpForgeTab==="make"?"on":"")+"' data-mp='forgetab' data-t='make'>Изготовление</button>"+
+    "<button class='"+(mpForgeTab==="blueprint"?"on":"")+"' data-mp='forgetab' data-t='blueprint'>Чертежи</button>"+
+    "</div>";
+
+  if(!mpForgeTab){
+    // ничего не выбрано — ждём, пока откроют одну из вкладок
+  } else if(mpForgeTab==="make"){
+    h+="<div class='rgroup'>Материалы</div><div class='note' style='margin:-6px 0 10px;font-size:12px;color:#6b5230'>"+
+      "Добыча даёт только обычное качество — редкость получают слиянием 4-в-1.</div>";
+    Object.keys(MATERIALS).forEach(mat=>{
+      const stock=(st.materials&&st.materials[mat])||[0,0,0,0,0];
+      h+="<div class='mat-card'>"+
+        "<div class='mat-icon-wrap'><img class='mat-icon' src='images/ui/material-"+mat+".png' alt='' onerror=\"this.style.display='none'\"></div>"+
+        "<div class='mat-info'><div class='mat-name'>"+MATERIALS[mat].name+"</div>"+
+        "<div class='mat-pips'>"+RARITY_NAMES.map((rn,i)=>
+          "<span class='pip' style='--pc:"+RARITY_COLOR[i]+"' title='"+rn+"'>"+(stock[i]||0)+"</span>").join("")+
+        "</div></div>"+
+        "<button class='rnode-go mat-go' data-mp='forge' data-mat='"+mat+"' "+(st.craft||mpState.loading?"disabled":"")+">Добыть</button>"+
+        "</div>";
+      h+="<div class='mat-upgrades'>"+[0,1,2,3].map(t=>
+        "<button class='rnode-go' data-mp='matup' data-mat='"+mat+"' data-tier='"+t+"' "+
+        ((stock[t]||0)<4||mpState.loading?"disabled":"")+">4&times;<span class='pip mini' style='--pc:"+RARITY_COLOR[t]+"'></span>&rarr;"+
+        "<span class='pip mini' style='--pc:"+RARITY_COLOR[t+1]+"'></span></button>"
+      ).join("")+"</div>";
+    });
+  } else {
+    const hallLv=st.b.hall||0;
+    const maxRarity=Math.min(5,epochOf(hallLv));
+    if(!mpForgeRarity||mpForgeRarity>maxRarity) mpForgeRarity=maxRarity;
+    const r=mpForgeRarity, need=CRAFT_MAT_NEED[r-1], chance=CRAFT_CHANCE[r-1];
+    h+="<div class='rgroup'>Чертежи</div>"+
+      "<div class='mat-pips' style='margin-bottom:10px'>"+[1,2,3,4,5].map(rr=>
+        "<span class='pip"+(rr===r?" on":"")+"' style='--pc:"+RARITY_COLOR[rr-1]+(rr>maxRarity?";opacity:.3":"")+"' "+
+        (rr<=maxRarity?"data-mp='forgerarity' data-r='"+rr+"'":"")+" title='"+RARITY_NAMES[rr-1]+
+        (rr>maxRarity?" — откроется позже":"")+"'>"+rr+"</span>").join("")+
+      "</div>"+
+      "<div class='note' style='margin:-4px 0 10px;font-size:12px;color:#6b5230'>"+
+      "<span style='color:"+RARITY_COLOR[r-1]+"'>"+RARITY_NAMES[r-1]+"</span> · шанс успеха ковки "+Math.round(chance*100)+"%"+
+      (chance<1?" — при неудаче материал и время сгорают":"")+"</div>";
+    GEAR_SLOTS.forEach(s=>{
+      const matStock=(st.materials&&st.materials[s.mat])||[0,0,0,0,0];
+      const have=matStock[r-1]||0, haveMat=have>=need;
+      h+="<div class='rnode'><div class='rnode-hd'>"+
+        "<span class='mat-icon-wrap' style='width:28px;height:28px'><img class='mat-icon' src='"+gearIconSrc(s.id,"bastion")+"' alt=''></span>"+
+        "<b>"+s.name+"</b></div>"+
+        "<div class='rnode-eff'>нужно: "+need+"&times;<span class='pip mini' style='--pc:"+RARITY_COLOR[r-1]+"'></span> "+
+        MATERIALS[s.mat].name+" ("+have+"/"+need+") · "+
+        "бастион "+statTxt(gearItemStats(s.cat,"bastion",r))+" · буря "+statTxt(gearItemStats(s.cat,"storm",r))+"</div>"+
+        "<button class='rnode-go' data-mp='craft' data-slot='"+s.id+"' data-order='bastion' data-rarity='"+r+"' "+
+        (st.craft||!haveMat||mpState.loading?"disabled":"")+">Бастион</button>"+
+        "<button class='rnode-go' data-mp='craft' data-slot='"+s.id+"' data-order='storm' data-rarity='"+r+"' "+
+        (st.craft||!haveMat||mpState.loading?"disabled":"")+">Буря</button></div>";
+    });
+  }
+  h+="</div>";
+  return h;
+}
+// ===== Фаза 19, кусочек 6 — экран Генерала: абсолютная копия одиночной
+// foGen() (index.html, чуть ниже по файлу) — портрет+фигура персонажа,
+// кольцо опыта (ring()), звёзды ранга, вкладки Обзор/Таланты/Экипировка,
+// сетка .gear-slot для экипировки. Раньше (Фаза 7/10/11) это были ЧЕТЫРЕ
+// независимых плоских рубричных блока прямо внутри foMultiplayer()
+// ("Полководец"/"Книги опыта"/"Снаряжение"/"Таланты") — функционально
+// полные (выбор генерала, XP, оба дерева талантов через TALENT_BRANCHES,
+// все бонусы честно считаются через bonuses()), но визуально это был голый
+// список вместо портрета/колец/вкладок одиночного экрана. Единая
+// mpGenHtml() сменяет все четыре разом — вызывается ОДИН раз внутри
+// foMultiplayer(), оборачивается тем же rubric("Полководец",...,
+// "mp-anchor-gen"), что и раньше (см. её вызов там же).
+// pShim нужен полный (mpFullShim) — genStats/bonuses/genOf/genPowerOf/
+// genSkillBadges читают p.gen.tal/p.tech/p.gear/p.race целиком, бару
+// {race,b} тут не хватит (то же обоснование, что и у Ратуши/Склада в
+// прошлом кусочке).
+let mpGenTab="overview", mpGenTomesOpen=false;
+function mpGenHtml(pShim,st){
+  if(!st.gen||st.gen.id==null){
+    let h="";
+    GENERALS[pShim.race].forEach((g,i)=>{
+      h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
+        genPortraitHtml(pShim.race,i)+shieldSvg(pShim.race,26)+"</div><div class='fill'>"+
+        "<div class='title'>"+g.name+"<span class='tag gilt'>"+g.role+"</span></div>"+
+        "<div class='note'>"+g.flavor+"<span class='gen-stat'>"+g.stat+"</span></div></div></div>"+
+        "<button class='seal' data-mp='pickgen' data-id='"+i+"'"+(mpState.loading?" disabled":"")+">Выбрать</button></div>";
+    });
+    return h;
+  }
+  const G=genOf(pShim), B=bonuses(pShim), S=genStats(pShim);
+  const lv=st.gen.lv||1, xp=st.gen.xp||0, pts=st.gen.pts||0;
+  const need=genXpNeed(lv), f=xp/need, lvCap=Math.min(60,epochOf(st.b.hall||0)*12);
+  const stars=Math.min(6,1+Math.floor(lv/10));
+  const genPower=genPowerOf(pShim);
+  let h="<div class='gen-figure-wrap'>"+genFigureHtml(pShim.race,st.gen.id||0)+"</div>";
+  h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
+    genPortraitHtml(pShim.race,st.gen.id||0)+"</div>"+ring(lv,60)+"<div class='fill'>"+
+    "<div class='title'>"+G.name+"<span class='tag gilt'>"+G.role+"</span></div>"+
+    "<div class='stars'>"+"&#9733;".repeat(stars)+"&#9734;".repeat(6-stars)+"</div>"+
+    "<div class='note'>"+G.flavor+"<span class='gen-stat'>"+G.stat+
+    (pts>0?" · очков к раздаче: "+pts:"")+
+    (lv>=lvCap&&lvCap<60?" · потолок эпохи: "+lvCap:"")+"</span></div>"+
+    // Честный MP-довесок без одиночного аналога: генерал делится с
+    // походами/обороной (см. takeGen), достаточно важно, чтобы показать
+    // сразу на карточке, а не только косвенно через занятость казарм.
+    "<div class='note'>"+(st.gen.away!=null?"В походе — недоступен для другого марша и обороны города.":"Дома — доступен для похода и обороны города.")+"</div>"+
+    "</div></div>"+
+    "<div class='line' style='margin-top:7px;gap:8px'><div class='progress' style='flex:1;margin-top:0'>"+
+    "<i style='width:"+(f*100).toFixed(1)+"%'></i></div>"+
+    "<button class='seal' data-mp='togglegentomes' title='Использовать книгу опыта' "+
+    "style='flex:0 0 auto;padding:0;width:30px;height:30px;font-size:17px;line-height:28px;text-align:center'"+
+    (mpState.loading?" disabled":"")+">"+
+    (mpGenTomesOpen?"&#8722;":"+")+"</button></div>"+
+    (mpGenTomesOpen?mpTomesPanelHtml(st,lvCap):"")+
+    "<table class='roll' style='margin-top:9px'><tr><td>Сила полководца</td><td>"+RU(genPower)+"</td></tr></table>"+
+    genSkillBadges(pShim)+
+    "</div>";
+
+  h+="<div id='inv-tabs'>"+
+    "<button class='"+(mpGenTab==="overview"?"on":"")+"' data-mp='gentab' data-t='overview'>Обзор</button>"+
+    "<button class='"+(mpGenTab==="talents"?"on":"")+"' data-mp='gentab' data-t='talents'>Таланты</button>"+
+    "<button class='"+(mpGenTab==="gear"?"on":"")+"' data-mp='gentab' data-t='gear'>Экипировка</button>"+
+    "</div>";
+
+  if(mpGenTab==="gear") return h+mpGenGearHtml(pShim,st);
+
+  if(mpGenTab==="talents"){
+    TALENT_BRANCHES.forEach(([key,br])=>{
+      let spent=0; br.nodes.forEach(n=>spent+=((st.gen.tal&&st.gen.tal[n.id])||0));
+      const totalMax=br.nodes.reduce((a,n)=>a+(n.max||5),0);
+      h+=rubric(br.name, spent+" из "+totalMax);
+      br.nodes.forEach(n=>{
+        const max=n.max||5, lv2=(st.gen.tal&&st.gen.tal[n.id])||0, full=lv2>=max;
+        h+="<div class='entry"+(lv2>0?" hot":"")+"'><div class='line'><div class='fill'>"+
+          "<div class='title'>"+n.name+"<span class='tag"+(full?" gilt":"")+"'>"+lv2+"/"+max+"</span></div>"+
+          "<div class='note'>"+n.txt+" · сейчас <em>+"+(lv2*n.per*100).toFixed(0)+"%</em></div></div>"+
+          "<button class='seal' data-mp='talent' data-id='"+n.id+"' "+
+          (pts<=0||full||mpState.loading?"disabled":"")+">Вложить</button></div></div>";
+      });
+    });
+    return h;
+  }
+
+  h+=rubric("Характеристики");
+  h+="<div class='entry'><table class='roll'>"+
+    "<tr><td>"+statIcon("hp")+"Здоровье</td><td>"+RU(S.hp)+"</td></tr>"+
+    "<tr><td>"+statIcon("atk")+"Атака</td><td>"+RU(S.atk)+"</td></tr>"+
+    "<tr><td>"+statIcon("def")+"Защита</td><td>"+RU(S.def)+"</td></tr></table></div>";
+
+  h+=rubric("Итог бонусов");
+  h+="<div class='entry'><table class='roll'>"+
+    "<tr><td>"+statIcon("atk")+"Атака войск</td><td class='"+(B.atk>0?"good":"")+"'>"+(B.atk>=0?"+":"")+(B.atk*100).toFixed(0)+"%</td></tr>"+
+    "<tr><td>"+statIcon("def")+"Защита войск</td><td class='"+(B.def<0?"bad":B.def>0?"good":"")+"'>"+(B.def>=0?"+":"")+(B.def*100).toFixed(0)+"%</td></tr>"+
+    "<tr><td>"+statIcon("hp")+"Здоровье войск</td><td class='"+(B.hp>0?"good":"")+"'>+"+(B.hp*100).toFixed(0)+"%</td></tr>"+
+    "<tr><td>"+statIcon("speed")+"Скорость марша</td><td>×"+B.march.toFixed(2)+"</td></tr>"+
+    "<tr><td>Скорость стройки</td><td>×"+B.build.toFixed(2)+"</td></tr>"+
+    "<tr><td>Скорость сбора</td><td>+"+(B.gather*100).toFixed(0)+"%</td></tr>"+
+    "<tr><td>Поднятие павших</td><td class='"+(B.raise>0?"good":"")+"'>"+(B.raise*100).toFixed(0)+"%</td></tr>"+
+    "</table></div>";
+  return h;
+}
+// Дословная копия genGearHtml(p) (см. её исходник ниже по файлу) — сетка
+// .gear-slot (9 слотов GEAR_LAYOUT: что надето сейчас, кнопка "Снять") +
+// склад (что лежит, кнопки "Надеть"/"Разобрать"). Меняет data-act на
+// data-mp, читает st.gear/st.inventory вместо p.gear/p.inventory — то же
+// самое, что и раньше делали отдельная плоская рубрика "Снаряжение" внутри
+// foMultiplayer(), просто оформлено сеткой, как в одиночке.
+function mpGenGearHtml(pShim,st){
+  let h=rubric("Экипировка");
+  h+="<div class='gear-slots'>";
+  GEAR_LAYOUT.forEach(id=>{
+    const s=findGearSlot(id), it=st.gear&&st.gear[id];
+    h+="<div class='gear-slot"+(it?" filled":"")+(id==="helmet"?" crown":"")+"' "+(it?"style='--pc:"+RARITY_COLOR[it.rarity-1]+"'":"")+">"+
+      "<div class='gear-slot-icon'>"+(it?"<img src='"+gearIconSrc(s.id,it.order)+"' alt=''>":"")+"</div>"+
+      "<div class='gear-slot-name'>"+s.name+"</div>"+
+      "<div class='gear-slot-item'>"+(it?GEAR_NAMES[s.id][it.order][it.rarity-1]+"<span class='tag gilt'>"+RARITY_NAMES[it.rarity-1]+"</span>"
+        +"<div class='note'>"+statTxt(gearItemStats(s.cat,it.order,it.rarity))+" · мощь "+RU(GEAR_POWER[it.rarity-1])+"</div>":"пусто")+"</div>"+
+      (it?"<button class='seal' data-mp='unequip' data-slot='"+s.id+"'"+(mpState.loading?" disabled":"")+">Снять</button>":"")+
+      "</div>";
+  });
+  h+="</div>";
+
+  let any=false, stored="";
+  GEAR_SLOTS.forEach(s=>{
+    ["bastion","storm"].forEach(order=>{
+      for(let r=1;r<=5;r++){
+        const cnt=(st.inventory&&st.inventory[s.id]&&st.inventory[s.id][order]&&st.inventory[s.id][order][r-1])||0; if(!cnt) continue;
+        any=true;
+        stored+="<div class='entry'><div class='line'>"+
+          "<div class='mat-icon-wrap' style='--pc:"+RARITY_COLOR[r-1]+";box-shadow:inset 0 0 8px var(--pc)'>"+
+          "<img class='mat-icon' src='"+gearIconSrc(s.id,order)+"' alt=''></div>"+
+          "<div class='fill'>"+
+          "<div class='title'>"+GEAR_NAMES[s.id][order][r-1]+"<span class='tag'>×"+cnt+"</span></div>"+
+          "<div class='note'>"+s.name+" · "+statTxt(gearItemStats(s.cat,order,r))+" · мощь "+RU(GEAR_POWER[r-1])+"</div></div>"+
+          "<button class='seal' data-mp='equip' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'"+(mpState.loading?" disabled":"")+">Надеть</button>"+
+          "<button class='seal' data-mp='dismantle' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+r+"'"+(mpState.loading?" disabled":"")+">Разобрать</button></div>";
+      }
+    });
+  });
+  h+=rubric("На складе","можно надеть или разобрать");
+  h+= any ? stored : hollow("&#9884;","Склад снаряжения пуст — куйте в горне.");
+  return h;
+}
+// Дословная копия tomesPanelHtml(p,lvCap) (см. её исходник ниже по файлу) —
+// раскрывающаяся панель книг опыта под полоской XP, вместо отдельной
+// рубрики "Книги опыта" где-то ниже страницы (Фаза "после Портала"). Та
+// рубрика была честной, но структурно отдельной от статус-карточки — в
+// одиночке книги открываются кнопкой "+" ПРЯМО на полоске опыта генерала.
+function mpTomesPanelHtml(st,lvCap){
+  const owned=TOME_VALUES.filter(v=>(st.tomes&&st.tomes[v])||0);
+  if(!owned.length) return "<div class='hint' style='margin-top:7px'>Книг опыта нет на складе — они выпадают за победу над лагерями разбойников в мире.</div>";
+  return "<div style='margin-top:7px'>"+owned.map(v=>{
+    const cnt=st.tomes[v];
+    return "<div class='entry'><div class='line'>"+
+      "<img src='images/ui/"+TOME_ICON[v]+".png' alt='' style='width:26px;height:26px;object-fit:contain;flex:0 0 auto'>"+
+      "<div class='fill'><div class='title'>"+TOME_NAME[v]+"<span class='tag'>×"+cnt+"</span></div>"+
+      "<div class='note'>восполняет "+RU(v)+" опыта</div></div>"+
+      "<button class='seal' data-mp='usetome' data-v='"+v+"' "+((st.gen.lv||1)>=lvCap||mpState.loading?"disabled":"")+">Использовать</button>"+
+      "</div></div>";
+  }).join("")+"</div>";
+}
+// ===== Фаза 19, кусочек 7 — Инвентарь: абсолютная копия одиночной foInv()
+// (index.html, чуть ниже по файлу) — отдельный экран-каталог с тремя
+// вкладками (Ресурсы/Материалы/Снаряжение), ПОЛНОСТЬЮ read-only: надеть
+// снаряжение — у генерала (вкладка "Экипировка" внутри mpGenHtml, кусочек
+// 6), сковать — в горне (mpForgeInfoHtml, кусочек 5), у самого каталога ни
+// одной кнопки действия — ровно как и у одиночного foInv().
+// Раньше (в кусочке 6) "Инвентарь" в общем мире был просто ярлыком,
+// скроллящим прямо к вкладке "Экипировка" внутри карточки генерала —
+// рабочий, но не структурно идентичный компромисс: та вкладка ДЕЙСТВУЕТ
+// (надеть/снять), а одиночный foInv() только ПОКАЗЫВАЕТ. Автор явно
+// попросил "всё как в одиночной" — теперь оба существуют раздельно, как и
+// там: mpGenHtml's "Экипировка" остаётся действием, mpInvHtml() — свой
+// отдельный каталог, с собственными вкладками и якорем.
+let mpInvTab="res";
+function mpInvHtml(pShim,st){
+  const tabsHtml="<div id='inv-tabs'>"+
+    [["res","Ресурсы"],["mat","Материалы"],["gear","Снаряжение"]].map(([k,label])=>
+      "<button class='"+(mpInvTab===k?"on":"")+"' data-mp='invtab' data-t='"+k+"'>"+label+"</button>").join("")+
+    "</div>";
+
+  if(mpInvTab==="res"){
+    let h=tabsHtml+rubric("Ресурсы");
+    h+=hollow("&#9884;","Пока нет ни одного предмета, дающего ресурсы.");
+    return h;
+  }
+
+  if(mpInvTab==="mat"){
+    let h=tabsHtml+rubric("Материалы","добываются и куются в горне");
+    Object.keys(MATERIALS).forEach(mat=>{
+      const stock=(st.materials&&st.materials[mat])||[0,0,0,0,0];
+      h+="<div class='entry'><div class='line'><div class='fill'>"+
+        "<div class='title'>"+MATERIALS[mat].name+"</div>"+
+        "<div class='note'>"+RARITY_NAMES.map((rn,i)=>rn.slice(0,3)+": "+(stock[i]||0)).join(" · ")+"</div></div></div></div>";
+    });
+    return h;
+  }
+
+  // Снаряжение: только каталог того, что есть (надето и на складе) — рядом иконками, как в RoK.
+  let h=tabsHtml+rubric("Снаряжение","каталог; надеть — у генерала, сковать — в горне");
+  const cells=[];
+  GEAR_SLOTS.forEach(s=>{
+    const it=st.gear&&st.gear[s.id];
+    if(it) cells.push("<div class='gear-cell equipped' style='--pc:"+RARITY_COLOR[it.rarity-1]+"' title='"+GEAR_NAMES[s.id][it.order][it.rarity-1]+" ("+s.name+", надето)'>"+
+      "<img src='"+gearIconSrc(s.id,it.order)+"' alt=''><span class='eq'>&#9733;</span></div>");
+    ["bastion","storm"].forEach(order=>{
+      for(let r=1;r<=5;r++){
+        const cnt=(st.inventory&&st.inventory[s.id]&&st.inventory[s.id][order]&&st.inventory[s.id][order][r-1])||0; if(!cnt) continue;
+        cells.push("<div class='gear-cell' style='--pc:"+RARITY_COLOR[r-1]+"' title='"+GEAR_NAMES[s.id][order][r-1]+" ("+s.name+")'>"+
+          "<img src='"+gearIconSrc(s.id,order)+"' alt=''><span class='cnt'>×"+cnt+"</span></div>");
+      }
+    });
+  });
+  h+= cells.length ? "<div class='gear-grid'>"+cells.join("")+"</div>" : hollow("&#9884;","Пока нет ни одного предмета — куйте в горне.");
+  return h;
+}
 // Фаза 17, кусочек 1 — дословная копия buildingStatDeltaHtml() (index.html,
 // см. её же комментарий чуть ниже по файлу), но БЕЗ обращения к me(): та
 // функция почти целиком чистая (bk/lv/nx + глобальные таблицы), кроме ОДНОЙ
@@ -7095,18 +7403,18 @@ function mpBuildingStatDeltaHtml(bk,lv,nx,hallLv){
   }
   return "";
 }
-// Фаза 18, кусочек 1 — дословная копия renderTreeMap() (index.html, чуть
-// ниже по файлу) БЕЗ одной детали: узлы сетки там несут data-act='rtreejump'
-// (клик открывает openResearchCarousel() — читает me()/W, полноценная
-// одиночная карусель выбора уровня исследования). В общем мире это чужая,
-// невидимая партия, а самой карусели для общего мира не заведено (см.
-// mpAcademyHtml() ниже — настоящее действие там уже есть, в карточках
-// .rnode под сеткой, той же data-mp='research', что была и в плоском
-// списке раньше). Сетка тут ПОЛНОСТЬЮ визуальная (ориентир "что где", какие
-// узлы открыты/заперты/докачаны) — без клика, чтобы случайно не задеть
-// одиночный rtreejump. computeRows/researchLocked/nodeImgSrc/nodeTitle —
-// те же чистые функции, что уже вызывает существующий плоский список ниже
-// (bonuses(pShim2) и т.п.) — ничего не дублирует, кроме самой этой разметки.
+// Фаза 19, кусочек 3 — теперь дословная копия одиночной renderTreeMap()
+// (index.html, чуть ниже по файлу) ВКЛЮЧАЯ клик по узлу: раньше (Фаза 18)
+// сетка была ПОЛНОСТЬЮ визуальной, без rtreejump — честный компромисс на
+// то время (карусели для общего мира ещё не было, действие жило в плоском
+// списке под сеткой, см. старую версию mpAcademyHtml() в истории коммитов).
+// Автор явно попросил абсолютную копию — компромисс снят: узлы несут
+// data-mp='rtreejump' (не data-act — общий #building-modal слушает свой
+// отдельный обработчик, см. handleMpAct()) и открывают ту же карусель, что
+// и одиночный rtreejump (mpOpenResearchCarousel(), см. её исходник в Фазе
+// 19, кусочек 3, вместе с mpResearchCarouselHtml()). computeRows/
+// researchLocked/nodeImgSrc/nodeTitle — те же чистые функции одиночки,
+// переиспользуются напрямую, ничего не дублируют.
 function mpRenderTreeMap(arr,p){
   const rows=computeRows(arr,p);
   let h="<div class='rtree'>";
@@ -7116,7 +7424,7 @@ function mpRenderTreeMap(arr,p){
       row.map(n=>{
         const lv=p.tech[n.id]||0, maxed=lv>=n.max, locked=researchLocked(n,p);
         const state=maxed?"maxed":locked?"locked":lv>0?"started":"open";
-        return "<div class='rtree-node "+state+"' title='"+nodeTitle(n)+"'>"+
+        return "<div class='rtree-node "+state+"' data-mp='rtreejump' data-id='"+n.id+"' title='"+nodeTitle(n)+"'>"+
           "<img src='"+nodeImgSrc(n,p)+"'"+(n.unlock?" style='object-position:"+unitHeadPos(p.race,n.unlock.type,n.unlock.tier)+"'":"")+" alt='' onerror=\"this.style.display='none'\">"+
           "<span class='rtree-node-lv'>"+lv+"/"+n.max+"</span></div>";
       }).join("")+
@@ -7132,13 +7440,17 @@ function mpRenderTreeMap(arr,p){
 // местах — там же (foMultiplayer(), полная страница) И внутри
 // иллюстрированного меню здания (mpBuildingModalHtml(), клик по ячейке
 // Академии на карте) — автор попросил дерево исследований именно там же,
-// где и остальные постройки. Визуальная сетка (mpRenderTreeMap) сверху —
-// сразу узнаваемо "это дерево", как в одиночке; сами действия — карточки
-// .rnode ниже (та же цена/время/кнопка "Исследовать", что была и в плоском
-// списке, только оформление под стиль остальных #bm-tree разделов —
-// hallInfoHtml/forgeInfoHtml и т.п. в одиночке используют те же классы).
+// где и остальные постройки.
+// Фаза 19, кусочек 3 — плоский список карточек .rnode под сеткой (был
+// здесь с Фазы 18) убран: в одиночке academyTreeHtml() — это статус-
+// карточка "Исследуется" + вкладки + СЕТКА, и всё, никакого списка под ней
+// нет вовсе — действие идёт исключительно через тап по узлу сетки
+// (rtreejump), открывающий карусель. Список был честным функционально
+// полным компромиссом Фазы 18 (карусели для общего мира ещё не было),
+// теперь, когда mpRenderTreeMap() несёт настоящий data-mp='rtreejump' и
+// mpOpenResearchCarousel()/mpResearchCarouselHtml() перенесены дословно,
+// список стал лишним отступлением от структуры одиночки — снят.
 function mpAcademyHtml(pShim2,st){
-  const rschB=bonuses(pShim2);
   const rsch=st.rsch;
   let h="<div id='bm-tree'>";
   if(rsch){
@@ -7156,24 +7468,6 @@ function mpAcademyHtml(pShim2,st){
      "</div>";
   const branch=mpState.rschTab==="mil"?"mil":"eco";
   h+=mpRenderTreeMap(ACADEMY_TREE[branch],pShim2);
-  ACADEMY_TREE[branch].filter(n=>nodeVisibleFor(n,pShim2)).forEach(n=>{
-    const lv=(st.tech&&st.tech[n.id])||0, maxed=lv>=n.max;
-    h+="<div class='rnode'><div class='rnode-hd'><b>"+nodeTitle(n)+"</b><span class='rnode-lv"+(maxed?" maxed":"")+"'>"+lv+"/"+n.max+"</span></div>";
-    if(maxed){
-      h+="<div class='rnode-eff'>Максимальный уровень.</div>";
-    } else if(researchLocked(n,pShim2)){
-      h+="<div class='rnode-eff'>"+lockReason(n,pShim2)+"</div>";
-    } else if(rsch){
-      h+="<div class='rnode-eff'>Академия уже занята другим исследованием.</div>";
-    } else {
-      const nlv=lv+1, c=researchCost(n,nlv), t=researchTime(n,nlv)/(1+rschB.researchSpeed);
-      h+="<div class='rnode-eff'>До "+nlv+" ур.: "+
-         (RES.some(r=>c[r])?RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", "):"бесплатно")+
-         " · "+fmtDur(t)+"</div>"+
-         "<button class='rnode-go' data-mp='research' data-id='"+n.id+"'"+(mpState.loading?" disabled":"")+">Исследовать</button>";
-    }
-    h+="</div>";
-  });
   h+="</div>";
   return h;
 }
@@ -7268,6 +7562,12 @@ function mpTrainInfoHtml(bld,pShim,st){
 function mpOpenUnitCarousel(type){
   const st=mpState.player.state, pShim=mpFullShim(mpState.player,st);
   const maxT=tierUnlockedFor(pShim,type);
+  // Та же чистка чужих контекстов карусели, что и у одиночного
+  // openUnitCarousel() — иначе прыжок из одной карусели сразу в другую
+  // (минуя закрытие модалки) оставил бы позади мёртвый mpHealCtx/
+  // mpResearchCtx, который потом ловил бы mpRerender().
+  mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
+  mpForgeTab=null; mpForgeRarity=null;
   mpCarouselCtx={type};
   const max=trainMax(pShim,type,maxT);
   mpTrainCtx={type,tier:maxT,mode:"train",max,n:max,lastLocked:!!(st.train&&st.train[type])||max<1};
@@ -7381,7 +7681,7 @@ async function mpDoTrainGo(){
 // шлёт настоящий mpHealCtx.tier — честная починка, не новый функционал. =====
 let mpHealCtx=null, mpHealCarouselOpen=false;
 function mpOpenHealCarousel(){
-  mpCarouselCtx=null; mpTrainCtx=null; // та же чистка контекста, что и у одиночного openHealCarousel()
+  mpCarouselCtx=null; mpTrainCtx=null; mpResearchCtx=null; mpForgeTab=null; mpForgeRarity=null; // та же чистка контекста, что и у одиночного openHealCarousel()
   mpHealCarouselOpen=true; mpHealCtx=null;
   $("#bm-body").innerHTML = mpHealCarouselHtml();
   $("#building-modal").classList.add("open");
@@ -7487,6 +7787,88 @@ function mpHospitalInfoHtml(pShim,st){
   h+="</div>";
   return h;
 }
+// ===== Фаза 19, кусочек 3 — карусель исследований Академии: абсолютная
+// копия одиночной academyTreeHtml()/renderTreeMap()/researchCarouselHtml()/
+// openResearchCarousel() (см. их же исходники ниже по файлу). Раньше
+// (Фаза 18) mpAcademyHtml() рисовала сетку И плоский список карточек с
+// ценой/кнопкой "Исследовать" ПРЯМО под ней — функционально полный, но не
+// структурно идентичный интерфейс: в одиночке модалка здания при клике на
+// Академию показывает ТОЛЬКО сетку (academyTreeHtml), никакого списка под
+// ней нет вовсе, а само действие открывается тапом по узлу сетки
+// (data-act='rtreejump'), ведущим в отдельную карусель — свайп по узлам
+// одной ветки с раскрытой карточкой (портрет/эффекты/мощь/цена/кнопка).
+// Список в mpAcademyHtml() убран (см. её же комментарий), узлы сетки
+// (mpRenderTreeMap) теперь несут data-mp='rtreejump' и ведут сюда.
+// mpAcademyHtml() по-прежнему используется в двух местах (foMultiplayer(),
+// полная страница, И mpBuildingModalHtml(), клик по ячейке Академии) — тап
+// по узлу из ЛЮБОГО места одинаково открывает #building-modal
+// (z-index:27 выше z-index:25 у #menu-modal — открытие поверх уже открытой
+// страницы "Общий мир" работает корректно, тот же приём, что уже
+// используют карусели обучения/лазарета выше). Разница с одиночной
+// версией — та же самая, что и у них: читает mpState.player/mpResearchCtx
+// вместо me()/researchCtx, действие идёт через настоящий сетевой
+// mpDoResearch() (data-mp='research', уже был заведён и работал —
+// исследование само по себе никогда не было сломано, менялось только
+// оформление карточки вокруг него).
+let mpResearchCtx=null;
+function mpOpenResearchCarousel(branch,startId){
+  const st=mpState.player.state, pShim=mpFullShim(mpState.player,st);
+  // Та же чистка чужих контекстов карусели, что и у остальных mpOpen*Carousel().
+  mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false;
+  mpForgeTab=null; mpForgeRarity=null;
+  const list=researchNodeList(branch,pShim);
+  const idx=Math.max(0,list.findIndex(n=>n.id===startId));
+  mpResearchCtx={branch,idx};
+  $("#bm-body").innerHTML = mpResearchCarouselHtml();
+  $("#building-modal").classList.add("open");
+  requestAnimationFrame(()=>{
+    const track=$("#uc-track"), card=track&&track.querySelectorAll(".uc-card")[idx];
+    if(track&&card) track.scrollLeft = card.offsetLeft;
+  });
+}
+// Дословная копия researchCarouselHtml() (см. её исходник ниже по файлу):
+// W.t (игровые часы одиночки) заменён на Date.now()/1000 — тот же приём,
+// что и во всех остальных mpX-функциях этого файла (mpTrainInfoHtml и
+// т.п.), общий мир не ведёт свой W.
+function mpResearchCarouselHtml(){
+  const st=mpState.player.state, pShim=mpFullShim(mpState.player,st), B=bonuses(pShim);
+  const list=researchNodeList(mpResearchCtx.branch,pShim);
+  let h="<div id='bm-title'>"+(mpResearchCtx.branch==="mil"?"Военные исследования":"Экономические исследования")+"</div>";
+  h+="<div id='uc-track'>";
+  list.forEach(n=>{
+    const lv=pShim.tech[n.id]||0, maxed=lv>=n.max, nx=lv+1, gated=pShim.b.academy<=0;
+    const locked=researchLocked(n,pShim);
+    const c = maxed||locked||gated?null:researchCost(n,nx);
+    const powNow=researchPower(n,lv), powNext=researchPower(n,nx);
+    const rows=nodeEffectRows(n,lv,nx);
+    h+="<div class='uc-card"+(locked?" locked":"")+"'>"+
+      "<img class='uc-img' style='max-height:170px;border-radius:50%' src='"+nodeImgSrc(n,pShim)+"' alt='' onerror=\"this.style.display='none'\">"+
+      "<div class='uc-name'>"+nodeTitle(n)+(n.race?" · венец":"")+"</div>"+
+      "<div class='uc-have'>"+waveLabel(n.wave)+" · уровень "+lv+"/"+n.max+"</div>"+
+      (locked?"<div class='uc-lock'>&#128274; "+lockReason(n,pShim)+"</div>":"")+
+      "<table id='bm-stats'>"+
+        rows.map(r=>"<tr><td>"+(r.icon?"<img class='stat-ico' src='images/ui/"+r.icon+".png' alt='' onerror=\"this.remove()\">":"")+
+          r.label+"</td><td>"+r.now+(r.next?" &rarr; "+r.next:"")+"</td></tr>").join("")+
+        "<tr><td><img class='stat-ico' src='images/ui/icon-power.png' alt=''>Мощь</td><td>"+fmt(powNow)+(maxed?"":" &rarr; "+fmt(powNext))+"</td></tr>"+
+      "</table>"+
+      (c?"<div id='bm-reqs'>"+RES.filter(r=>c[r]).map(r=>
+        "<div class='req-row'><img src='images/ui/res-"+r+".png' alt=''>"+
+        "<span class='req-name'>"+RES_NAME[r]+"</span>"+
+        "<span class='req-amt"+(pShim.res[r]<c[r]?" short":"")+"'>"+fmt(c[r])+"</span></div>").join("")+"</div>":"")+
+      (st.rsch&&st.rsch.id===n.id ?
+        "<div class='progress'><i style='width:"+(Math.min(1,(Date.now()/1000-st.rsch.t0)/Math.max(1,st.rsch.t1-st.rsch.t0))*100).toFixed(1)+"%'></i></div>"+
+        "<div class='rnode-eff'>Готово через <em>"+fmtDur(st.rsch.t1-Date.now()/1000)+"</em></div>"
+      : "<button class='rnode-go uc-go' data-mp='research' data-id='"+n.id+"' "+(maxed||gated||locked||st.rsch||mpState.loading?"disabled":"")+">"+
+        (maxed?"Предел":gated?"Нужна академия":locked?lockReason(n,pShim):st.rsch?"Академия занята":
+          "Исследовать · "+fmtDur(researchTime(n,nx)/(1+B.researchSpeed)))+
+        "</button>")+
+      "</div>";
+  });
+  h+="</div>";
+  h+="<div id='uc-nav'><button data-act='ucnav' data-dir='-1'>&lsaquo; Назад</button>"+
+    "<button data-act='ucnav' data-dir='1'>Вперёд &rsaquo;</button></div>";
+  return h;
+}
 // Фаза 17, кусочек 1 — иллюстрированное меню здания в общем мире: та же
 // разметка/CSS-классы, что и у одиночного #building-modal/buildingModalHtml()
 // чуть ниже по файлу (#bm-art/#bm-title/#bm-sub/#bm-desc/#bm-stats/#bm-reqs/
@@ -7557,9 +7939,23 @@ function mpBuildingModalHtml(idx){
   const actionLabel=lv<=0?"Построить":"Улучшить";
   h+="<button id='bm-btn' data-mp='build' data-bk='"+bld+"' "+(plot!=null?"data-plot='"+plot+"' ":"")+
      (canGo&&!mpState.loading?"":"disabled")+">"+(maxed?"Предел уровня":queued?"Уже строится":canGo?actionLabel:"Недоступно")+"</button>";
+  // Фаза 19, кусочек 4 — Ратуша/Склад: раньше клик по ним в модалке
+  // показывал ТОЛЬКО базовую карточку (арт/уровень/мощь/цена) — hallInfoHtml
+  // (эпоха, отряды в поле, вместимость марша, черты расы, список эпох
+  // открыто/закрыто) и storeInfoHtml (защищено ресурсов по каждому виду)
+  // не звались вовсе, хотя обе функции ЧИСТЫЕ (принимают p параметром) и
+  // безопасны для прямого переиспользования — не копируем, зовём как есть.
+  // Нужен mpFullShim (не голый pShim=mpCityShim(), там только race/b) —
+  // marchCapacity/capacity внутри дергают bonuses(p), которой нужны
+  // p.gen.tal/p.tech/p.b.portal, отсутствующие в mpCityShim().
+  if(bld==="hall"){
+    if(epochOf(nextLv)>epochOf(lv)) h+="<div id='bm-opens'>Открывает: "+RACE_EPOCHS[pShim.race][epochOf(nextLv)-1].title+"</div>";
+    h+=hallInfoHtml(mpFullShim(mpState.player,st));
+  }
+  if(bld==="store") h+=storeInfoHtml(mpFullShim(mpState.player,st));
   h+=mpTrainInfoHtml(bld,pShim,st);
   if(bld==="hospital") h+=mpHospitalInfoHtml(pShim,st);
-  if(bld==="forge" && lv>0) h+=mpCellForgeHtml(st);
+  if(bld==="forge" && lv>0) h+=mpForgeInfoHtml(st);
   // Фаза 18, кусочек 1 — Академия на карте города: та же mpAcademyHtml(),
   // что и в полной странице "Общий мир" (см. её комментарий) — раньше клик
   // по ячейке Академии показывал только базовую карточку (арт/уровень/
@@ -7587,7 +7983,14 @@ function mpOpenBuildingModal(idx){
   // mpCarouselCtx/mpTrainCtx старыми, и mpRerender() ошибочно продолжил бы
   // считать, что карусель всё ещё активна.
   // Фаза 19, кусочек 2 — та же чистка и для карусели лазарета.
-  mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false;
+  // Фаза 19, кусочек 3 — и для карусели исследований Академии.
+  // Фаза 19, кусочек 5 — и для вкладки/редкости Горна (mpForgeTab/
+  // mpForgeRarity) — та же честная копия одиночного openBuildingModal(),
+  // который тоже сбрасывает forgeTab/forgeRarity при открытии ЛЮБОЙ
+  // ячейки (но НЕ при закрытии — closeBuildingModal() их не трогает, та же
+  // асимметрия сохранена и здесь, см. mpCloseBuildingModal() ниже).
+  mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
+  mpForgeTab=null; mpForgeRarity=null;
   mpCitySel=idx;
   $("#bm-body").innerHTML = mpBuildingModalHtml(idx);
   $("#building-modal").classList.add("open");
@@ -7601,7 +8004,9 @@ function mpCloseBuildingModal(){
   // mpDoTrainGo()/mpDoHealGo()) — иначе mpRerender() при следующем открытии
   // ДРУГОЙ ячейки ошибочно решил бы, что карусель всё ещё активна (см. её
   // же проверки mpCarouselCtx&&mpTrainCtx / mpHealCarouselOpen).
-  mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false;
+  // Фаза 19, кусочек 3 — и mpResearchCtx (карусель исследований) той же
+  // причине.
+  mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpRenderFolio();
 }
 // Тот же приём диффа/сохранения scrollTop, что и у renderFolio() —
@@ -9347,7 +9752,7 @@ function closeBuildingModal(){
   // (см. тот же довод в mpCloseBuildingModal() выше) — крестик/подложка
   // могут закрыть модалку, пока открыта карусель обучения, минуя
   // mpDoTrainGo()/mpDoHealGo() (Фаза 19, кусочки 1-2).
-  if(!SP_UNLOCKED && mpCitySel>=0){ mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpCitySel=-1; mpRenderFolio(); }
+  if(!SP_UNLOCKED && mpCitySel>=0){ mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null; mpCitySel=-1; mpRenderFolio(); }
 }
 $("#building-modal").addEventListener("click",e=>{ if(e.target.id==="building-modal") closeBuildingModal(); });
 $("#building-modal").addEventListener("click",handleAct);
@@ -9820,12 +10225,25 @@ function handleMpAct(e){
   if(healBtn){ mpDoHeal(healBtn.dataset.t); return; }
   const buildBtn=e.target.closest("[data-mp='build']");
   if(buildBtn){ mpDoBuild(buildBtn.dataset.bk, buildBtn.dataset.plot==null?null:+buildBtn.dataset.plot); return; }
+  // Фаза 19, кусочек 5 — Горн (абсолютная копия одиночных forgetab/
+  // forgerarity, см. их же ветки в handleAct()). Ни та, ни другая не
+  // сбрасывают контексты остальных каруселей — тот же приём, что и в
+  // одиночке: пока открыта модалка на Горне, никакая другая карусель
+  // одновременно открыта быть не может.
+  const forgeTabBtn=e.target.closest("[data-mp='forgetab']");
+  if(forgeTabBtn){ mpForgeTab=forgeTabBtn.dataset.t; mpRerender(); return; }
+  const forgeRarityBtn=e.target.closest("[data-mp='forgerarity']");
+  if(forgeRarityBtn){ mpForgeRarity=+forgeRarityBtn.dataset.r; mpRerender(); return; }
   const forgeBtn=e.target.closest("[data-mp='forge']");
   if(forgeBtn){ mpDoForge(forgeBtn.dataset.mat); return; }
   const matupBtn=e.target.closest("[data-mp='matup']");
   if(matupBtn){ mpDoUpgrade(matupBtn.dataset.mat,+matupBtn.dataset.tier); return; }
+  // Фаза 19, кусочек 5 — раньше читал школу/редкость из <select> по id
+  // (mpDoCraft(slot), см. её собственный комментарий у прежней сигнатуры) —
+  // теперь оба явно приходят с самой кнопки, тот же приём, что и у
+  // mpDoEquip(slot,order,rarity) чуть ниже.
   const craftBtn=e.target.closest("[data-mp='craft']");
-  if(craftBtn){ mpDoCraft(craftBtn.dataset.slot); return; }
+  if(craftBtn){ mpDoCraft(craftBtn.dataset.slot,craftBtn.dataset.order,+craftBtn.dataset.rarity); return; }
   const usetomeBtn=e.target.closest("[data-mp='usetome']");
   if(usetomeBtn){ mpDoUsetome(+usetomeBtn.dataset.v); return; }
   const equipBtn=e.target.closest("[data-mp='equip']");
@@ -9858,12 +10276,26 @@ function handleMpAct(e){
   if(recallBtn){ mpDoRecall(+recallBtn.dataset.id); return; }
   const rschTabBtn=e.target.closest("[data-mp='rschtab']");
   if(rschTabBtn){ mpState.rschTab=rschTabBtn.dataset.t; mpRerender(); return; }
+  // Фаза 19, кусочек 3 — карусель исследований Академии (абсолютная копия
+  // одиночного rtreejump, см. её же ветку в handleAct()).
+  const rtreejumpBtn=e.target.closest("[data-mp='rtreejump']");
+  if(rtreejumpBtn){ const n=findNode(rtreejumpBtn.dataset.id); if(n) mpOpenResearchCarousel(n.branch,n.id); return; }
   const researchBtn=e.target.closest("[data-mp='research']");
   if(researchBtn){ mpDoResearch(researchBtn.dataset.id); return; }
   const pickgenBtn=e.target.closest("[data-mp='pickgen']");
   if(pickgenBtn){ mpDoPickGen(+pickgenBtn.dataset.id); return; }
   const talentBtn=e.target.closest("[data-mp='talent']");
   if(talentBtn){ mpDoTalent(talentBtn.dataset.id); return; }
+  // Фаза 19, кусочек 6 — экран Генерала (абсолютная копия одиночных
+  // gentab/toggletomes, см. их же ветки в handleAct()).
+  const genTabBtn=e.target.closest("[data-mp='gentab']");
+  if(genTabBtn){ mpGenTab=genTabBtn.dataset.t; mpRerender(); return; }
+  const toggleGenTomesBtn=e.target.closest("[data-mp='togglegentomes']");
+  if(toggleGenTomesBtn){ mpGenTomesOpen=!mpGenTomesOpen; mpRerender(); return; }
+  // Фаза 19, кусочек 7 — Инвентарь (абсолютная копия одиночного invtab, см.
+  // её же ветку в handleAct()).
+  const invTabBtn=e.target.closest("[data-mp='invtab']");
+  if(invTabBtn){ mpInvTab=invTabBtn.dataset.t; mpRerender(); return; }
 }
 $("#menu-modal-body").addEventListener("click",e=>{
   if($("#menu-modal").dataset.tab!=="mp") return;
@@ -10431,6 +10863,15 @@ function mpRerender(){
     // пересчёт цифр (mpUpdateHealSheet), не перестройка #bm-body целиком.
     } else if(mpHealCarouselOpen){
       mpUpdateHealSheet();
+    // Фаза 19, кусочек 3 — карусель исследований: одиночный refreshOpenModal()
+    // для researchCtx НЕ делает диф-проверку в отличие от train/heal выше —
+    // просто перестраивает всю карусель заново на каждый тик, сохраняя
+    // прокрутку вручную (keepScroll). Тот же приём здесь — честная копия,
+    // а не изобретение нового поведения.
+    } else if(mpResearchCtx){
+      const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
+      $("#bm-body").innerHTML=mpResearchCarouselHtml();
+      const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
     } else if(mpCitySel>=0){
       $("#bm-body").innerHTML = mpBuildingModalHtml(mpCitySel);
     }
@@ -10609,14 +11050,14 @@ async function mpDoUpgrade(mat,tier){
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
-// Фаза 11, кусочек 3 — ковка снаряжения (mp-craft), см. рубрику «Ковка
-// снаряжения» в foMultiplayer. Читает выбор школы/редкости из <select>
-// (id='mp-craft-order-<slot>'/'mp-craft-rarity-<slot>'), тот же приём, что
-// и у полей набора войск (mp-n-<t>).
-async function mpDoCraft(slot){
-  const orderEl=document.getElementById("mp-craft-order-"+slot);
-  const rarityEl=document.getElementById("mp-craft-rarity-"+slot);
-  const order=orderEl?orderEl.value:"bastion", rarity=rarityEl?+rarityEl.value:1;
+// Фаза 11, кусочек 3 — ковка снаряжения (mp-craft), см. рубрику «Горн» в
+// foMultiplayer/mpForgeInfoHtml().
+// Фаза 19, кусочек 5 — раньше читал школу/редкость из <select> по id
+// (id='mp-craft-order-<slot>'/'mp-craft-rarity-<slot>') — та форма вместе
+// со <select> заменена абсолютной копией одиночной карточки Горна
+// (mpForgeInfoHtml), где школа/редкость приходят прямо с кнопки, как и у
+// mpDoEquip(slot,order,rarity).
+async function mpDoCraft(slot,order,rarity){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-craft",{slot,order,rarity}); await mpRefreshPlayer(); }
   catch(e){ mpState.err=e.message; }
@@ -11178,116 +11619,23 @@ function foMultiplayer(embedded){
   // (mp-upgrade); кусочек 3 — ковка снаряжения (mp-craft, kind:"item"),
   // предмет при удаче доезжает до склада (p.inventory) — надеть его
   // (equipItem) пока нельзя, отдельный следующий кусочек.
-  h+=rubric("Горн","добыча и слияние материалов");
+  // Фаза 19, кусочек 5 — два отдельных плоских рубричных блока (добыча +
+  // отдельно ковка через <select>) заменены одной mpForgeInfoHtml() —
+  // абсолютной копией одиночной forgeInfoHtml() (вкладки Изготовление/
+  // Чертежи, карточки материалов, пип-пикер редкости, кнопки Бастион/Буря
+  // без select), той же самой, что теперь используется и в модалке здания
+  // (клик по Горну на карте) — см. её собственный комментарий выше по
+  // файлу. "Нужно построить Горн" — честная MP-специфичная обёртка: в
+  // одиночке этот случай попросту невозможен (forgeInfoHtml зовётся только
+  // из уже открытой ячейки Горна), а здесь раздел виден на полной странице
+  // всегда, даже до постройки.
+  h+=rubric("Горн","добыча, слияние материалов и ковка снаряжения");
   if(!(mpBuildLv("forge")>0)){
     h+="<div class='entry'><div class='line'><div class='fill'>"+
        "<div class='note'>Нужно построить Горн (см. «Постройки» выше).</div></div></div></div>";
   } else {
-    const craft=st.craft;
-    if(craft && craft.kind==="material"){
-      const left=Math.max(0,craft.t1-Date.now()/1000);
-      h+="<div class='entry'><div class='line'><div class='fill'>"+
-         "<div class='title'>Добывается: "+MATERIALS[craft.mat].name+" ×"+craft.n+"</div>"+
-         "<div class='note'>Осталось: "+fmtDur(left)+"</div></div></div></div>";
-    } else if(craft && craft.kind==="item"){
-      const left=Math.max(0,craft.t1-Date.now()/1000);
-      const orderName=craft.order==="storm"?"Буря":"Бастион";
-      h+="<div class='entry'><div class='line'><div class='fill'>"+
-         "<div class='title'>Куётся: "+GEAR_NAMES[craft.slot][craft.order][craft.rarity-1]+"</div>"+
-         "<div class='note'>"+orderName+", "+RARITY_NAMES[craft.rarity-1]+" · осталось "+fmtDur(left)+"</div></div></div></div>";
-    } else {
-      Object.keys(MATERIALS).forEach(mat=>{
-        const stock=(st.materials&&st.materials[mat])||[0,0,0,0,0];
-        h+="<div class='entry'><div class='line'><div class='fill'>"+
-           "<div class='title'>"+MATERIALS[mat].name+"</div>"+
-           "<div class='note'>"+RARITY_NAMES.map((rn,i)=>rn+": "+RU(stock[i]||0)).join(" · ")+"</div>"+
-           "<button class='seal' data-mp='forge' data-mat='"+mat+"'"+(mpState.loading?" disabled":"")+">Добыть обычного (×3 · 100 золота · "+fmtDur(2400)+")</button> "+
-           [0,1,2,3].map(t=>
-             "<button class='seal' data-mp='matup' data-mat='"+mat+"' data-tier='"+t+"'"+
-             (mpState.loading||(stock[t]||0)<4?" disabled":"")+">4×"+RARITY_NAMES[t]+" → "+RARITY_NAMES[t+1]+"</button>"
-           ).join(" ")+
-           "</div></div></div>";
-      });
-    }
+    h+=mpForgeInfoHtml(st);
   }
-
-  if(mpBuildLv("forge")>0){
-    h+=rubric("Ковка снаряжения","Горн");
-    if(st.craft){
-      h+="<div class='entry'><div class='line'><div class='fill'>"+
-         "<div class='note'>Горн занят — дождитесь окончания текущей работы выше.</div></div></div></div>";
-    } else {
-      const hallLvFull=Array.isArray(st.b.hall)?Math.max(0,...st.b.hall):(st.b.hall||0);
-      const maxRarity=Math.min(5,epochOf(hallLvFull));
-      GEAR_SLOTS.forEach(s=>{
-        const matStock=(st.materials&&st.materials[s.mat])||[0,0,0,0,0];
-        h+="<div class='entry'><div class='line'><div class='fill'>"+
-           "<div class='title'>"+s.name+" ("+MATERIALS[s.mat].name+")</div>"+
-           "<select id='mp-craft-order-"+s.id+"'><option value='bastion'>Бастион</option><option value='storm'>Буря</option></select> "+
-           "<select id='mp-craft-rarity-"+s.id+"'>"+
-             Array.from({length:maxRarity},(_,i)=>i+1).map(r=>{
-               const need=CRAFT_MAT_NEED[r-1], have=matStock[r-1]||0, c=craftCost(s.mat,r-1,r);
-               return "<option value='"+r+"'"+(have<need?" disabled":"")+">"+RARITY_NAMES[r-1]+" — нужно "+need+"× ("+have+" есть) · "+RU(c.gold)+" золота · "+fmtDur(1800*r*r)+"</option>";
-             }).join("")+
-           "</select> "+
-           "<button class='seal' data-mp='craft' data-slot='"+s.id+"'"+(mpState.loading?" disabled":"")+">Ковать</button>"+
-           "</div></div></div>";
-      });
-    }
-  }
-
-  // Новый кусочек (после Портала) — книги опыта генерала (mp-usetome),
-  // зеркало клиентского "usetome" (index.html:7943-7950). Появляются с
-  // разгрома лагерей разбойников (mp-tick, applyRaidArrive — bookDrop
-  // тем же коммитом наконец подключён, раньше честно не переносился).
-  {
-    const owned=TOME_VALUES.filter(v=>(st.tomes&&st.tomes[v])||0);
-    const hallLvT=Array.isArray(st.b.hall)?Math.max(0,...st.b.hall):(st.b.hall||0);
-    const lvCap=Math.min(60,epochOf(hallLvT)*12);
-    const genLv=(st.gen&&st.gen.lv)||1;
-    if(owned.length){
-      h+=rubric("Книги опыта","+"+RU(genLv)+" ур. генерала из "+lvCap);
-      owned.forEach(v=>{
-        const cnt=st.tomes[v];
-        h+="<div class='entry'><div class='line'><div class='fill'>"+
-           "<div class='title'>"+TOME_NAME[v]+" ×"+RU(cnt)+"</div>"+
-           "<div class='note'>+"+RU(v)+" опыта генералу"+(genLv>=lvCap?" (генерал уже на максимуме эпохи)":"")+"</div>"+
-           "<button class='seal' data-mp='usetome' data-v='"+v+"'"+(mpState.loading||genLv>=lvCap?" disabled":"")+">Использовать</button>"+
-           "</div></div></div>";
-      });
-    }
-  }
-
-  // Фаза 11, кусочек 4 — надеть/снять/разобрать. Зеркало equipItem/
-  // unequipItem/dismantleItem (index.html:5895-5917). Показываем 9 слотов
-  // GEAR_SLOTS: что надето сейчас (с бонусом через statTxt+gearItemStats,
-  // как в SP genGearHtml) и что лежит на складе (st.inventory[slot][order][r-1]).
-  h+=rubric("Снаряжение","надето и склад","mp-anchor-inv");
-  GEAR_SLOTS.forEach(s=>{
-    const cur=st.gear&&st.gear[s.id];
-    h+="<div class='entry'><div class='line'><div class='fill'>"+
-       "<div class='title'>"+s.name+"</div>";
-    if(cur){
-      const stat=gearItemStats(s.cat,cur.order,cur.rarity);
-      h+="<div class='note'>"+GEAR_NAMES[s.id][cur.order][cur.rarity-1]+" · "+RARITY_NAMES[cur.rarity-1]+" · "+statTxt(stat)+"</div>"+
-         "<button class='seal' data-mp='unequip' data-slot='"+s.id+"'"+(mpState.loading?" disabled":"")+">Снять</button>";
-    } else {
-      h+="<div class='note'>Пусто</div>";
-    }
-    const inv=(st.inventory&&st.inventory[s.id])||{};
-    ["bastion","storm"].forEach(order=>{
-      const stock=inv[order]||[0,0,0,0,0];
-      stock.forEach((n,i)=>{
-        if(!n) return;
-        const rarity=i+1, orderName=order==="storm"?"Буря":"Бастион";
-        h+="<div class='note'>"+GEAR_NAMES[s.id][order][i]+" ("+orderName+", "+RARITY_NAMES[i]+") ×"+RU(n)+" — "+
-           "<button class='seal' data-mp='equip' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+rarity+"'"+(mpState.loading?" disabled":"")+">Надеть</button> "+
-           "<button class='seal' data-mp='dismantle' data-slot='"+s.id+"' data-order='"+order+"' data-rarity='"+rarity+"'"+(mpState.loading?" disabled":"")+">Разобрать ("+RU(Math.round(200*rarity*rarity*0.5))+" золота)</button>"+
-           "</div>";
-      });
-    });
-    h+="</div></div></div>";
-  });
 
   h+=rubric("Набор войск","тир 1");
   TKEYS.forEach(t=>{
@@ -11387,64 +11735,25 @@ function foMultiplayer(embedded){
     });
   }
 
-  // Фаза 7 — выбор полководца (mp-pickgen), зеркало foGen()'s "Выбор
-  // полководца" (index.html:7414-7426) и клика (index.html:7951-7953).
-  // Честно переиспользует ту же самую глобальную таблицу GENERALS, что и
-  // одиночная игра — один файл, отдельной копии не заводим. Одноразово,
-  // бесплатно, необратимо: как только st.gen.id не null, кнопка выбора
-  // больше не показывается вообще (переиграть нельзя, ровно как в клиенте).
-  // Фаза 10, кусочек 1 — уровень/опыт генерала наконец начисляются
-  // (addXp в mp-tick, на победу над лагерем/игроком) — переиспользует те
-  // же самые genXpNeed/epochOf, что и одиночная игра (тот же файл, приём
-  // как у mpProdPerHour ниже). Очки таланта (p.gen.pts) уже копятся
-  // по-настоящему, но тратить их пока негде — mp-talent и подключение
-  // самих бонусов в bonuses() отдельными следующими кусочками, см.
-  // supabase/README.md.
-  h+=rubric("Полководец","решение окончательное","mp-anchor-gen");
-  if(!st.gen||st.gen.id==null){
-    GENERALS[p.race].forEach((g,i)=>{
-      h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
-        genPortraitHtml(p.race,i)+shieldSvg(p.race,26)+"</div><div class='fill'>"+
-        "<div class='title'>"+g.name+"<span class='tag gilt'>"+g.role+"</span></div>"+
-        "<div class='note'>"+g.flavor+"<span class='gen-stat'>"+g.stat+"</span></div></div></div>"+
-        "<button class='seal' data-mp='pickgen' data-id='"+i+"'"+(mpState.loading?" disabled":"")+">Выбрать</button></div>";
-    });
-  } else {
-    const g=GENERALS[p.race][st.gen.id];
-    const lv=st.gen.lv||1, xp=st.gen.xp||0, pts=st.gen.pts||0;
-    const lvCap=Math.min(60,epochOf(st.b.hall||0)*12), need=genXpNeed(lv);
-    h+="<div class='entry'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
-      genPortraitHtml(p.race,st.gen.id)+shieldSvg(p.race,26)+"</div><div class='fill'>"+
-      "<div class='title'>"+g.name+"<span class='tag gilt'>"+g.role+"</span> · "+lv+" ур."+"</div>"+
-      "<div class='note'>"+g.flavor+"<span class='gen-stat'>"+g.stat+"</span></div>"+
-      "<div class='note'>Опыт: "+RU(xp)+" / "+RU(need)+(lv>=lvCap?" · потолок эпохи":"")+
-      (pts>0?" · очков таланта: "+pts:"")+"</div>"+
-      "<div class='note'>"+(st.gen.away!=null?"В походе — недоступен для другого марша и обороны города.":"Дома — доступен для похода и обороны города.")+"</div>"+
-      "</div></div></div>";
-  }
+  // Фаза 19, кусочек 6 — экран Генерала: раньше это были ЧЕТЫРЕ независимых
+  // плоских блока (Полководец/Книги опыта/Снаряжение/Таланты — см. их
+  // историю в git) — mpGenHtml() сменяет их все разом абсолютной копией
+  // одиночного foGen() (портрет/фигура/кольцо опыта/звёзды/вкладки
+  // Обзор-Таланты-Экипировка), см. её собственный комментарий у объявления
+  // чуть выше по файлу.
+  // Фаза 19, кусочек 7 — Инвентарь: отдельный read-only каталог-экран, та
+  // же абсолютная копия одиночного foInv(), что и mpGenHtml/mpForgeInfoHtml
+  // выше — см. её собственный комментарий у объявления mpInvHtml() выше по
+  // файлу. mp-anchor-inv — тот же голый якорь-обёртка, что и раньше (сама
+  // mpInvHtml() ведёт свои вкладки через rubric() без id, id ставить некуда
+  // вглубь функции), только теперь стоит перед настоящим разделом, а не
+  // пустышкой: страница снова структурно как в одиночке — "Инвентарь"
+  // ПОКАЗЫВАЕТ, "Экипировка" у генерала ДЕЙСТВУЕТ.
+  h+="<div id='mp-anchor-inv'></div>";
+  h+=mpInvHtml(mpFullShim(p,st),st);
 
-  // Фаза 10, кусочек 2 — трата очков таланта (mp-talent). Честно
-  // переиспользует TALENT_BRANCHES/TALENTS/GENERAL_TREE одиночной игры
-  // (тот же файл, как и GENERALS выше) — пять веток (Город/Армия/Война/
-  // Развитие/Сбор), максимум узла — n.max у GENERAL_TREE, ||5 у голых
-  // TALENTS (там своего max нет, тот же приём, что findTalentNode в
-  // index.html:7935). Сам эффект вложенных очков в bonuses() подключён
-  // кусочком 3 той же Фазы 10 (см. supabase/README.md).
-  if(st.gen && st.gen.id!=null){
-    h+=rubric("Таланты",(st.gen.pts||0)+" очков свободно");
-    TALENT_BRANCHES.forEach(([key,br])=>{
-      let spent=0; br.nodes.forEach(n=>spent+=((st.gen.tal&&st.gen.tal[n.id])||0));
-      h+="<div class='entry'><div class='line'><div class='fill'><div class='title'>"+br.name+"</div></div></div>";
-      br.nodes.forEach(n=>{
-        const max=n.max||5, lv2=(st.gen.tal&&st.gen.tal[n.id])||0, full=lv2>=max;
-        h+="<div class='line' style='margin-top:4px'><div class='fill'>"+
-           "<div class='note'>"+n.name+" — "+n.txt+" <span class='tag"+(full?" gilt":"")+"'>"+lv2+"/"+max+"</span></div></div>"+
-           "<button class='seal' data-mp='talent' data-id='"+n.id+"'"+
-           ((st.gen.pts||0)<=0||full||mpState.loading?" disabled":"")+">Вложить</button></div>";
-      });
-      h+="</div>";
-    });
-  }
+  h+=rubric("Полководец","решение окончательное","mp-anchor-gen");
+  h+=mpGenHtml(mpFullShim(p,st),st);
 
   // Фаза 5, Академия — дерево исследований (ACADEMY_TREE, зеркало
   // startResearch(p,id) из index.html:5848-5863, см. mp-research). Честно
