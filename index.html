@@ -7095,6 +7095,278 @@ function mpBuildingStatDeltaHtml(bk,lv,nx,hallLv){
   }
   return "";
 }
+// Фаза 18, кусочек 1 — дословная копия renderTreeMap() (index.html, чуть
+// ниже по файлу) БЕЗ одной детали: узлы сетки там несут data-act='rtreejump'
+// (клик открывает openResearchCarousel() — читает me()/W, полноценная
+// одиночная карусель выбора уровня исследования). В общем мире это чужая,
+// невидимая партия, а самой карусели для общего мира не заведено (см.
+// mpAcademyHtml() ниже — настоящее действие там уже есть, в карточках
+// .rnode под сеткой, той же data-mp='research', что была и в плоском
+// списке раньше). Сетка тут ПОЛНОСТЬЮ визуальная (ориентир "что где", какие
+// узлы открыты/заперты/докачаны) — без клика, чтобы случайно не задеть
+// одиночный rtreejump. computeRows/researchLocked/nodeImgSrc/nodeTitle —
+// те же чистые функции, что уже вызывает существующий плоский список ниже
+// (bonuses(pShim2) и т.п.) — ничего не дублирует, кроме самой этой разметки.
+function mpRenderTreeMap(arr,p){
+  const rows=computeRows(arr,p);
+  let h="<div class='rtree'>";
+  rows.forEach((row,ri)=>{
+    if(ri>0) h+="<div class='rtree-link'></div>";
+    h+="<div class='rtree-row'><div class='rtree-nodes'>"+
+      row.map(n=>{
+        const lv=p.tech[n.id]||0, maxed=lv>=n.max, locked=researchLocked(n,p);
+        const state=maxed?"maxed":locked?"locked":lv>0?"started":"open";
+        return "<div class='rtree-node "+state+"' title='"+nodeTitle(n)+"'>"+
+          "<img src='"+nodeImgSrc(n,p)+"'"+(n.unlock?" style='object-position:"+unitHeadPos(p.race,n.unlock.type,n.unlock.tier)+"'":"")+" alt='' onerror=\"this.style.display='none'\">"+
+          "<span class='rtree-node-lv'>"+lv+"/"+n.max+"</span></div>";
+      }).join("")+
+      "</div></div>";
+  });
+  h+="</div>";
+  return h;
+}
+// Фаза 18, кусочек 1 — общее тело раздела "Академия" для общего мира:
+// раньше это была плоская рубрика прямо внутри foMultiplayer() (см. её же
+// комментарий там — переносится сюда дословно, ничего в логике/цифрах не
+// меняется), теперь заведена отдельной функцией и используется В ДВУХ
+// местах — там же (foMultiplayer(), полная страница) И внутри
+// иллюстрированного меню здания (mpBuildingModalHtml(), клик по ячейке
+// Академии на карте) — автор попросил дерево исследований именно там же,
+// где и остальные постройки. Визуальная сетка (mpRenderTreeMap) сверху —
+// сразу узнаваемо "это дерево", как в одиночке; сами действия — карточки
+// .rnode ниже (та же цена/время/кнопка "Исследовать", что была и в плоском
+// списке, только оформление под стиль остальных #bm-tree разделов —
+// hallInfoHtml/forgeInfoHtml и т.п. в одиночке используют те же классы).
+function mpAcademyHtml(pShim2,st){
+  const rschB=bonuses(pShim2);
+  const rsch=st.rsch;
+  let h="<div id='bm-tree'>";
+  if(rsch){
+    const rn=findNode(rsch.id);
+    const left=Math.max(0,rsch.t1-Date.now()/1000);
+    const f=Math.min(1,1-left/Math.max(1,rsch.t1-rsch.t0));
+    h+="<div class='rgroup'>Исследуется</div>"+
+       "<div class='rnode'><div class='rnode-hd'><b>"+(rn?nodeTitle(rn):rsch.id)+" &rarr; ур. "+rsch.lv+"</b></div>"+
+       "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div>"+
+       "<div class='rnode-eff'>Готово через <em>"+fmtDur(left)+"</em></div></div>";
+  }
+  h+="<div id='ac-tabs'>"+
+     "<button class='"+(mpState.rschTab==="mil"?"on":"")+"' data-mp='rschtab' data-t='mil'>Военные</button>"+
+     "<button class='"+(mpState.rschTab!=="mil"?"on":"")+"' data-mp='rschtab' data-t='eco'>Экономические</button>"+
+     "</div>";
+  const branch=mpState.rschTab==="mil"?"mil":"eco";
+  h+=mpRenderTreeMap(ACADEMY_TREE[branch],pShim2);
+  ACADEMY_TREE[branch].filter(n=>nodeVisibleFor(n,pShim2)).forEach(n=>{
+    const lv=(st.tech&&st.tech[n.id])||0, maxed=lv>=n.max;
+    h+="<div class='rnode'><div class='rnode-hd'><b>"+nodeTitle(n)+"</b><span class='rnode-lv"+(maxed?" maxed":"")+"'>"+lv+"/"+n.max+"</span></div>";
+    if(maxed){
+      h+="<div class='rnode-eff'>Максимальный уровень.</div>";
+    } else if(researchLocked(n,pShim2)){
+      h+="<div class='rnode-eff'>"+lockReason(n,pShim2)+"</div>";
+    } else if(rsch){
+      h+="<div class='rnode-eff'>Академия уже занята другим исследованием.</div>";
+    } else {
+      const nlv=lv+1, c=researchCost(n,nlv), t=researchTime(n,nlv)/(1+rschB.researchSpeed);
+      h+="<div class='rnode-eff'>До "+nlv+" ур.: "+
+         (RES.some(r=>c[r])?RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", "):"бесплатно")+
+         " · "+fmtDur(t)+"</div>"+
+         "<button class='rnode-go' data-mp='research' data-id='"+n.id+"'"+(mpState.loading?" disabled":"")+">Исследовать</button>";
+    }
+    h+="</div>";
+  });
+  h+="</div>";
+  return h;
+}
+// Фаза 18, кусочек 1 — Госпиталь для иллюстрированного меню здания: та же
+// информация, что и mpCellHealHtml() (Фаза 14, кусочек 6 — та функция
+// НЕ трогается, остаётся как была: используется старой mpCellPanelHtml(),
+// сейчас нигде не вызываемой, но по-прежнему тестируемой, см. её
+// комментарий), только оформлена карточками .rnode/unitThumb() — тот же
+// визуальный язык, что и у hospitalInfoHtml()/trainInfoHtml() в одиночке
+// (портрет юнита + rnode-hd/rnode-eff), а не голым текстом "title"/"note".
+// Форма набора количества/кнопка "Лечить" — та же самая (id='mp-heal-n-<t>'
+// + data-mp='heal'), функционал не менялся, только карточка вокруг неё.
+function mpHospitalHtml(pShim,st){
+  const hospLv=Array.isArray(st.b.hospital)?Math.max(0,...st.b.hospital):(st.b.hospital||0);
+  const healCap=trainCap(hospLv);
+  const healing=st.heal;
+  const anyWounded=TKEYS.some(t=>(st.wounded&&st.wounded[t]&&st.wounded[t][1])||0);
+  let h="<div id='bm-tree'>";
+  if(healing){
+    const left=Math.max(0,healing.t1-Date.now()/1000);
+    h+="<div class='rgroup'>Идёт лечение</div>"+
+       "<div class='rnode'><div class='rnode-hd'>"+unitThumb(pShim,healing.type,healing.tier)+"<b>"+unitName(healing.type,healing.tier,pShim.race)+"</b>"+
+       "<span class='rnode-lv'>&times;"+RU(healing.n)+"</span></div>"+
+       "<div class='rnode-eff'>Готовы через <em>"+fmtDur(left)+"</em></div></div>";
+  }
+  if(!anyWounded && !healing){
+    h+="<div class='rgroup'>Раненых нет</div></div>";
+    return h;
+  }
+  TKEYS.forEach(t=>{
+    const wounded=(st.wounded&&st.wounded[t]&&st.wounded[t][1])||0;
+    const healingThis=healing&&healing.type===t&&healing.tier===1;
+    if(!wounded || healingThis) return; // уже занятый лечением род войск показан отдельной карточкой выше
+    h+="<div class='rnode'><div class='rnode-hd'>"+unitThumb(pShim,t,1)+"<b>"+unitName(t,1,pShim.race)+"</b>"+
+       "<span class='rnode-lv'>ранено "+RU(wounded)+"</span></div>";
+    if(healing){
+      h+="<div class='rnode-eff'>Лазарет занят лечением другого рода войск.</div>";
+    } else if(healCap<=0){
+      h+="<div class='rnode-eff'>Нужен построенный госпиталь.</div>";
+    } else {
+      const tc=troopCost(t,1);
+      const c={food:Math.round((tc.food||0)/2),wood:Math.round((tc.wood||0)/2),stone:Math.round((tc.stone||0)/2),gold:0};
+      const maxN=Math.min(wounded,healCap);
+      h+="<div class='rnode-eff'>Цена за штуку: "+(RES.some(r=>c[r])?RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", "):"бесплатно")+
+         " · максимум за раз: "+healCap+"</div>"+
+         "<input id='mp-heal-n-"+t+"' type='number' min='1' max='"+maxN+"' value='"+Math.min(maxN,10)+"'> "+
+         "<button class='rnode-go' data-mp='heal' data-t='"+t+"'"+(mpState.loading?" disabled":"")+">Лечить</button>";
+    }
+    h+="</div>";
+  });
+  h+="</div>";
+  return h;
+}
+// ===== Фаза 19, кусочек 1 — карусель обучения войск: абсолютная копия
+// одиночной unitCarouselHtml()/openUnitCarousel()/trainInlineHtml()/
+// updateTrainSheet() (см. их же исходники чуть ниже по файлу), а не
+// упрощённая инлайн-форма (та мысль была честным компромиссом Фазы 14 —
+// автор явно попросил абсолютную копию, компромисс снят). Разница с
+// одиночными версиями ровно одна и та же везде: читают mpState.player/
+// mpTrainCtx/mpCarouselCtx (свои, MP-версии), а не me()/trainCtx/
+// carouselCtx, и действие идёт через настоящий сетевой mpDoTrainGo(), а не
+// синхронную мутацию startTrain/startRetrain. Сами PURE-хелперы
+// (unitCardStatsHtml/trainMax/trainDuration/retrainMax/retrainDuration/
+// troopCost/retrainCost/tierUnlockedFor/unitName/TROOP_TYPES) переиспользуются
+// НАПРЯМУЮ — принимают p обычным параметром, ничего не читают из me()/W. =====
+let mpTrainCtx=null, mpCarouselCtx=null;
+// Собирает p-совместимый объект из mpState.player (race — из колонки
+// players.race) + state (b/gen/tech/res/troops/wounded/train/heal) —
+// этого достаточно для ВСЕХ чистых функций одиночки, которые тут
+// переиспользуются напрямую. portal:0 — тот же приём, что и в
+// mpAcademyHtml()/mpProdPerHour() (Портал не входит в BKEYS newPlayerState,
+// без явного 0 некоторые формулы внутри bonuses() уходят в NaN).
+function mpFullShim(mp,st){
+  return Object.assign({}, st, { race: mp.race, b: Object.assign({portal:0}, st.b) });
+}
+// Дословная копия trainInfoHtml(p,type) (см. её исходник ниже) — статус-
+// карточка, пока идёт набор/переобучение, иначе одна кнопка "Тренировать",
+// открывающая карусель. Меняет mpCellTrainHtml() внутри mpBuildingModalHtml
+// (та функция НЕ тронута — используется старой mpCellPanelHtml(), нигде не
+// вызываемой сейчас, но по-прежнему тестируемой).
+function mpTrainInfoHtml(bld,pShim,st){
+  const type=TKEYS.find(tt=>TRAIN_BLD[tt]===bld); if(!type) return "";
+  const T=st.train&&st.train[type];
+  if(T){
+    return "<div id='bm-tree'><div class='rgroup'>"+(T.retrain?"Идёт переобучение":"Идёт набор")+"</div>"+
+       "<div class='rnode'><div class='rnode-hd'>"+unitThumb(pShim,T.type,T.tier)+"<b>"+unitName(T.type,T.tier,pShim.race)+"</b>"+
+       "<span class='rnode-lv'>&times;"+RU(T.n)+"</span></div>"+
+       "<div class='rnode-eff'>Готовы через <em>"+fmtDur(Math.max(0,T.t1-Date.now()/1000))+"</em></div></div></div>";
+  }
+  return "<div id='bm-tree'><button class='rnode-go' data-mp='browsetrain' data-t='"+type+"'>Тренировать</button></div>";
+}
+function mpOpenUnitCarousel(type){
+  const st=mpState.player.state, pShim=mpFullShim(mpState.player,st);
+  const maxT=tierUnlockedFor(pShim,type);
+  mpCarouselCtx={type};
+  const max=trainMax(pShim,type,maxT);
+  mpTrainCtx={type,tier:maxT,mode:"train",max,n:max,lastLocked:!!(st.train&&st.train[type])||max<1};
+  $("#bm-body").innerHTML = mpUnitCarouselHtml();
+  $("#building-modal").classList.add("open");
+  mpUpdateTrainSheet();
+  requestAnimationFrame(()=>{
+    const track=$("#uc-track"), card=track&&track.querySelectorAll(".uc-card")[maxT-1];
+    if(track&&card) track.scrollLeft = card.offsetLeft;
+  });
+}
+function mpTrainInlineHtml(){
+  const st=mpState.player.state, {type,tier,max,n,fromTier}=mpTrainCtx, isRetrain=mpTrainCtx.mode==="retrain";
+  const busy=!!(st.train&&st.train[type]), locked=busy||max<1;
+  let h="<div id='bm-qty'><div class='cap'><span>Доступно максимум</span><b>"+RU(max)+"</b></div>"+
+     "<div class='row'><input type='range' id='mp-qty-range' min='0' max='"+max+"' value='"+n+"' "+(locked?"disabled":"")+">"+
+     "<input type='number' id='mp-qty-num' min='0' max='"+max+"' value='"+n+"' "+(locked?"disabled":"")+"></div></div>";
+  if(busy){
+    h+="<div id='bm-time'>Казармы заняты другим набором.</div>";
+  } else if(max<1){
+    h+="<div id='bm-time'>"+(isRetrain?"Нет воинов этого тира или не хватает ресурсов на переобучение.":"Не хватает ресурсов ни на одного воина.")+"</div>";
+  } else {
+    const c=isRetrain?retrainCost(type,fromTier,1):troopCost(type,tier);
+    h+="<div id='bm-reqs'>"+RES.map(r=>{
+      if(!c[r]) return "";
+      return "<div class='req-row' data-r='"+r+"'><img src='images/ui/res-"+r+".png'>"+
+        "<span class='req-name'>"+RES_NAME[r]+"</span><span class='req-amt'></span></div>";
+    }).join("")+"</div>";
+    h+="<div id='bm-time'></div>";
+  }
+  h+="<button id='bm-btn' class='uc-go' data-mp='traingo' "+((busy||max<1||n<=0||mpState.loading)?"disabled":"")+">"+(isRetrain?"Переобучить":"Обучить")+"</button>";
+  return h;
+}
+function mpUnitCarouselHtml(){
+  const st=mpState.player.state, pShim=mpFullShim(mpState.player,st);
+  const type=mpCarouselCtx.type, maxT=tierUnlockedFor(pShim,type);
+  let h="<div id='bm-title'>"+TROOP_TYPES[type].name+"</div>";
+  h+="<div id='uc-track'>";
+  for(let tier=1; tier<=5; tier++){
+    const locked=tier>maxT, have=(st.troops[type]&&st.troops[type][tier])||0;
+    const active = mpTrainCtx && mpTrainCtx.type===type &&
+      (mpTrainCtx.mode==="train" ? mpTrainCtx.tier===tier : mpTrainCtx.fromTier===tier);
+    h+="<div class='uc-card"+(locked?" locked":"")+"'>"+
+      "<img class='uc-img' src='images/units/"+pShim.race+"-"+type+tier+".png' alt=''>"+
+      "<div class='uc-name'>"+unitName(type,tier,pShim.race)+"</div>"+
+      (locked?"<div class='uc-lock'>&#128274; чтобы обучить, нужно исследование в академии</div>":"")+
+      unitCardStatsHtml(pShim,type,tier)+
+      (have>0?"<div class='uc-have'>в строю: "+RU(have)+"</div>":"");
+    if(!locked && active) h+=mpTrainInlineHtml();
+    else if(!locked && tier===maxT) h+="<button class='rnode-go uc-go' data-mp='ucfocus' data-mode='train' data-tier='"+tier+"'>Обучить</button>";
+    else if(!locked && tier<maxT && have>0) h+="<button class='rnode-go uc-go' data-mp='ucfocus' data-mode='retrain' data-tier='"+tier+"'>Переобучить</button>";
+    h+="</div>";
+  }
+  h+="</div>";
+  h+="<div id='uc-nav'><button data-act='ucnav' data-dir='-1'>&lsaquo; Назад</button>"+
+    "<button data-act='ucnav' data-dir='1'>Вперёд &rsaquo;</button></div>";
+  return h;
+}
+// data-act='ucnav' (не data-mp) — тот же атрибут/кнопка, что и у одиночки,
+// намеренно НЕ дублируется: обработчик в handleAct() ниже по файлу чисто
+// DOM'ный (двигает #uc-track.scrollLeft), ни разу не читает me()/W —
+// безопасно делить между режимами буквально, как есть.
+function mpUpdateTrainSheet(){
+  const st=mpState.player.state, {type,tier,max,n,fromTier}=mpTrainCtx, isRetrain=mpTrainCtx.mode==="retrain";
+  if(!$("#mp-qty-range")) return;
+  $("#mp-qty-range").value=n; $("#mp-qty-num").value=n;
+  const unitC=isRetrain?retrainCost(type,fromTier,1):troopCost(type,tier);
+  const totC=isRetrain?retrainCost(type,fromTier,n):null;
+  RES.forEach(r=>{
+    if(!unitC[r]) return;
+    const need=isRetrain?totC[r]:Math.round(unitC[r]*n), short=st.res[r]<need;
+    const el=document.querySelector("#bm-reqs [data-r='"+r+"'] .req-amt");
+    if(el){ el.textContent=fmt(need)+" / "+fmt(st.res[r]); el.classList.toggle("short",short) }
+  });
+  if($("#bm-reqs")){
+    const pShim=mpFullShim(mpState.player,st);
+    const dur=isRetrain?retrainDuration(pShim,type,fromTier,n):trainDuration(pShim,type,tier,n);
+    $("#bm-time").textContent = n>0 ? "Время "+(isRetrain?"переобучения: ":"набора: ")+fmtDur(dur) : "Выберите хотя бы одного воина.";
+  }
+  $("#bm-btn").disabled = !!(st.train&&st.train[type]) || max<1 || n<=0 || mpState.loading;
+}
+// Отправка набора/переобучения из карусели — читает mpTrainCtx напрямую
+// (то же количество, что уже стоит на ползунке, никакого отдельного
+// input#mp-n-<t> искать не нужно — тот приём остаётся только у СТАРОЙ
+// mpDoTrain()/mpDoRetrain(), используемых плоским списком "Набор войск"
+// внутри foMultiplayer(), см. их комментарии — их НЕ трогаем).
+async function mpDoTrainGo(){
+  if(!mpTrainCtx) return;
+  const isRetrain=mpTrainCtx.mode==="retrain";
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{
+    if(isRetrain) await mpCall("mp-retrain",{type:mpTrainCtx.type,fromTier:mpTrainCtx.fromTier,n:mpTrainCtx.n});
+    else await mpCall("mp-train",{type:mpTrainCtx.type,tier:1,n:mpTrainCtx.n});
+    await mpRefreshPlayer();
+    mpTrainCtx=null; mpCarouselCtx=null;
+    mpCloseBuildingModal();
+  }catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
 // Фаза 17, кусочек 1 — иллюстрированное меню здания в общем мире: та же
 // разметка/CSS-классы, что и у одиночного #building-modal/buildingModalHtml()
 // чуть ниже по файлу (#bm-art/#bm-title/#bm-sub/#bm-desc/#bm-stats/#bm-reqs/
@@ -7109,11 +7381,13 @@ function mpBuildingStatDeltaHtml(bk,lv,nx,hallLv){
 // плоский <div class='mp-cell-panel'>, тут нужен текст веток БЕЗ обёртки,
 // встроенный в другую разметку (тот же приём и тот же довод, что и у
 // mpCellPanelHtml про renderPlotRow() в её собственном комментарии).
-// Специализированные блоки (набор войск/лечение/ковка) — БУКВАЛЬНО те же
-// mpCellTrainHtml/mpCellHealHtml/mpCellForgeHtml, что уже жили в
-// .mp-cell-panel: их data-mp-атрибуты уже слушает #building-modal
-// (addEventListener("click",handleAct), та же проводка, что и у карты) —
-// заводить новую не пришлось, только перенести вызовы в новую обёртку.
+// Специализированные блоки (лечение/ковка) — БУКВАЛЬНО те же
+// mpCellHealHtml/mpCellForgeHtml, что уже жили в .mp-cell-panel; набор войск
+// с Фазы 19 идёт через mpTrainInfoHtml() (карусель) вместо инлайн-формы
+// mpCellTrainHtml (та НЕ тронута — используется старой mpCellPanelHtml).
+// Все data-mp-кнопки внутри слушает handleMpAct(), навешанная и на
+// #building-modal (см. Фазу 19 у её объявления — раньше висел только
+// handleAct(), про data-mp не знавший, кнопки были мёртвыми).
 function mpBuildingModalHtml(idx){
   const c=CITY_CELLS[idx]; if(!c||!c.bk) return "";
   const st=mpState.player.state, pShim=mpCityShim();
@@ -7162,9 +7436,19 @@ function mpBuildingModalHtml(idx){
   const actionLabel=lv<=0?"Построить":"Улучшить";
   h+="<button id='bm-btn' data-mp='build' data-bk='"+bld+"' "+(plot!=null?"data-plot='"+plot+"' ":"")+
      (canGo&&!mpState.loading?"":"disabled")+">"+(maxed?"Предел уровня":queued?"Уже строится":canGo?actionLabel:"Недоступно")+"</button>";
-  h+=mpCellTrainHtml(bld,pShim,st);
-  if(bld==="hospital") h+=mpCellHealHtml(pShim,st);
+  h+=mpTrainInfoHtml(bld,pShim,st);
+  if(bld==="hospital") h+=mpHospitalHtml(pShim,st);
   if(bld==="forge" && lv>0) h+=mpCellForgeHtml(st);
+  // Фаза 18, кусочек 1 — Академия на карте города: та же mpAcademyHtml(),
+  // что и в полной странице "Общий мир" (см. её комментарий) — раньше клик
+  // по ячейке Академии показывал только базовую карточку (арт/уровень/
+  // мощь/цена), дерево исследований было доступно лишь через длинную
+  // прокручиваемую страницу. pShim2 — тот же набор полей (race/b/gen/tech),
+  // что и там же, portal:0 по той же причине (см. её комментарий).
+  if(bld==="academy" && lv>0){
+    const pShim2={race:pShim.race,b:Object.assign({portal:0},st.b),gen:st.gen||{id:null},tech:st.tech||{}};
+    h+=mpAcademyHtml(pShim2,st);
+  }
   return h;
 }
 // Фаза 17, кусочек 1 — открыть/закрыть иллюстрированное меню здания общего
@@ -7175,6 +7459,13 @@ function mpBuildingModalHtml(idx){
 // сама была расширена (см. её же комментарий) под mpCitySel — эта пара
 // нужна только для открытия/переключения выбранной ячейки на карте.
 function mpOpenBuildingModal(idx){
+  // Фаза 19, кусочек 1 — сброс карусели при открытии ЛЮБОЙ ячейки (тот же
+  // приём, что и у одиночного openBuildingModal() ниже по файлу, который
+  // сбрасывает trainCtx/carouselCtx/researchCtx/healCtx на входе) — иначе
+  // переключение на другую ячейку с ещё открытой каруселью оставило бы
+  // mpCarouselCtx/mpTrainCtx старыми, и mpRerender() ошибочно продолжил бы
+  // считать, что карусель всё ещё активна.
+  mpCarouselCtx=null; mpTrainCtx=null;
   mpCitySel=idx;
   $("#bm-body").innerHTML = mpBuildingModalHtml(idx);
   $("#building-modal").classList.add("open");
@@ -7183,6 +7474,11 @@ function mpOpenBuildingModal(idx){
 function mpCloseBuildingModal(){
   $("#building-modal").classList.remove("open");
   mpCitySel=-1;
+  // Фаза 19, кусочек 1 — сбрасывает и карусель обучения, если она была
+  // открыта (крестик/подложка закрывают модалку МИНУЯ mpDoTrainGo) — иначе
+  // mpRerender() при следующем открытии ДРУГОЙ ячейки ошибочно решил бы,
+  // что карусель всё ещё активна (см. её же проверку mpCarouselCtx&&mpTrainCtx).
+  mpCarouselCtx=null; mpTrainCtx=null;
   mpRenderFolio();
 }
 // Тот же приём диффа/сохранения scrollTop, что и у renderFolio() —
@@ -8924,7 +9220,11 @@ function openBuildingModal(ci){
 // no-op в одиночке (mpCitySel там всегда -1, условие не пройдёт).
 function closeBuildingModal(){
   $("#building-modal").classList.remove("open"); buildingModalSel=-1; trainCtx=null; carouselCtx=null; researchCtx=null; healCarouselOpen=false; healCtx=null;
-  if(!SP_UNLOCKED && mpCitySel>=0){ mpCitySel=-1; mpRenderFolio(); }
+  // Фаза 19, кусочек 1 — mpCarouselCtx/mpTrainCtx тоже сбрасываются здесь
+  // (см. тот же довод в mpCloseBuildingModal() выше) — крестик/подложка
+  // могут закрыть модалку, пока открыта карусель обучения, минуя
+  // mpDoTrainGo().
+  if(!SP_UNLOCKED && mpCitySel>=0){ mpCarouselCtx=null; mpTrainCtx=null; mpCitySel=-1; mpRenderFolio(); }
 }
 $("#building-modal").addEventListener("click",e=>{ if(e.target.id==="building-modal") closeBuildingModal(); });
 $("#building-modal").addEventListener("click",handleAct);
@@ -8936,6 +9236,13 @@ $("#building-modal").addEventListener("input",e=>{
   } else if((s==="hqty-range"||s==="hqty-num")&&healCtx){
     healCtx.n=clamp(Math.round(+e.target.value||0),0,healCtx.max);
     updateHealSheet();
+  // Фаза 19, кусочек 1 — mp-qty-* (не qty-*, тот же приём отдельных id, что
+  // и у mp-n-<t>/mp-heal-n-<t> — общий #building-modal делит DOM с
+  // одиночкой, id не должны пересекаться) — ползунок карусели набора войск
+  // общего мира, живой пересчёт цены/времени через mpUpdateTrainSheet().
+  } else if((s==="mp-qty-range"||s==="mp-qty-num")&&mpTrainCtx){
+    mpTrainCtx.n=clamp(Math.round(+e.target.value||0),0,mpTrainCtx.max);
+    mpUpdateTrainSheet();
   }
 });
 
@@ -9314,8 +9621,21 @@ $("#crest").addEventListener("click",()=>openMenuModal("profile"));
 // Общий мир — свой делегированный обработчик, отдельно от handleAct
 // (data-mp вместо data-act): панель полностью изолирована от одиночной
 // игры, ничего в handleAct трогать не пришлось.
-$("#menu-modal-body").addEventListener("click",e=>{
-  if($("#menu-modal").dataset.tab!=="mp") return;
+// Фаза 19 — НАЙДЕН реальный баг при сверке на "абсолютную копию": этот
+// обработчик висел ТОЛЬКО на #menu-modal-body (с гейтом dataset.tab==="mp").
+// Иллюстрированное меню здания (#building-modal/#bm-body, Фаза 17) рисует
+// ТЕ ЖЕ САМЫЕ data-mp='build'/'train'/'heal'/'forge'/'matup'/'craft'/
+// 'research'/'rschtab' кнопки — но #building-modal слушает только
+// handleAct() (data-act), который про data-mp вообще не знает. Кнопки
+// внутри модалки здания были МЁРТВЫМИ: тап не делал ничего, ни ошибки, ни
+// действия — молча. Комментарий "их data-mp-атрибуты уже слушает
+// #building-modal" в Фазе 17 был неверен, не перепроверен на живом клике.
+// Починено: тело вынесено в именованную handleMpAct(), навешанную на ОБА
+// узла — на #menu-modal-body с прежним гейтом по вкладке (обёрткой), и
+// напрямую на #building-modal (там гейта не нужно — сама модалка и есть
+// однозначный контекст общего мира, одиночная openBuildingModal() рисует
+// туда data-act, не data-mp, атрибуты не пересекаются).
+function handleMpAct(e){
   const raceBtn=e.target.closest("[data-mp='race']");
   if(raceBtn){
     const nickInp=$("#mp-nick"); if(nickInp) mpState.nick=nickInp.value; // не терять уже набранный ник
@@ -9323,6 +9643,29 @@ $("#menu-modal-body").addEventListener("click",e=>{
   }
   const joinBtn=e.target.closest("[data-mp='join']");
   if(joinBtn){ const nickInp=$("#mp-nick"); mpState.nick=nickInp?nickInp.value:""; mpDoJoin(); return; }
+  // Фаза 19, кусочек 1 — карусель обучения войск (абсолютная копия
+  // одиночных browsetrain/ucfocus/traingo, см. их же ветки в handleAct()).
+  const browseTrainBtn=e.target.closest("[data-mp='browsetrain']");
+  if(browseTrainBtn){ mpOpenUnitCarousel(browseTrainBtn.dataset.t); return; }
+  const ucFocusBtn=e.target.closest("[data-mp='ucfocus']");
+  if(ucFocusBtn){
+    const st=mpState.player.state, pShim=mpFullShim(mpState.player,st);
+    const type=mpCarouselCtx.type, tier=+ucFocusBtn.dataset.tier;
+    const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
+    if(ucFocusBtn.dataset.mode==="train"){
+      const max=trainMax(pShim,type,tier);
+      mpTrainCtx={type,tier,mode:"train",max,n:max,lastLocked:!!(st.train&&st.train[type])||max<1};
+    } else {
+      const max=retrainMax(pShim,type,tier);
+      mpTrainCtx={type,tier:tier+1,fromTier:tier,mode:"retrain",max,n:max,lastLocked:!!(st.train&&st.train[type])||max<1};
+    }
+    $("#bm-body").innerHTML=mpUnitCarouselHtml();
+    mpUpdateTrainSheet();
+    const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
+    return;
+  }
+  const trainGoBtn=e.target.closest("[data-mp='traingo']");
+  if(trainGoBtn){ mpDoTrainGo(); return; }
   const trainBtn=e.target.closest("[data-mp='train']");
   if(trainBtn){ mpDoTrain(trainBtn.dataset.t); return; }
   const retrainBtn=e.target.closest("[data-mp='retrain']");
@@ -9375,7 +9718,16 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(pickgenBtn){ mpDoPickGen(+pickgenBtn.dataset.id); return; }
   const talentBtn=e.target.closest("[data-mp='talent']");
   if(talentBtn){ mpDoTalent(talentBtn.dataset.id); return; }
+}
+$("#menu-modal-body").addEventListener("click",e=>{
+  if($("#menu-modal").dataset.tab!=="mp") return;
+  handleMpAct(e);
 });
+// Фаза 19 — см. комментарий у handleMpAct() выше: та же самая функция,
+// напрямую на #building-modal (иллюстрированное меню здания, Фаза 17,
+// рисует те же data-mp-кнопки в #bm-body, но ЖИЛО без единого слушателя
+// для них — только handleAct(), который data-mp не знает).
+$("#building-modal").addEventListener("click",handleMpAct);
 
 // Двойной тап по чужой клетке в 3D сразу открывал лист похода (openLevy) —
 // удобный ярлык поверх обычного тапа+кнопки в cartouche, но не необходимый:
@@ -9920,8 +10272,18 @@ function mpRerender(){
   // (mpOpenBuildingModal): постройка могла завершиться, набор/лечение/ковка
   // подойти к концу, ресурсы истратиться — без этого кнопка "Улучшить"
   // висела бы устаревшей до следующего клика по карте.
-  if(!SP_UNLOCKED && mpCitySel>=0 && $("#building-modal").classList.contains("open")){
-    $("#bm-body").innerHTML = mpBuildingModalHtml(mpCitySel);
+  // Фаза 19, кусочек 1 — если открыта карусель обучения (mpCarouselCtx),
+  // НЕ перестраиваем #bm-body целиком на каждый опрос (снесло бы прокрутку
+  // и любой начатый жест ровно как предупреждает комментарий у одиночного
+  // refreshOpenModal() чуть ниже про #uc-track/scroll-snap) — просто
+  // освежаем цифры (mpUpdateTrainSheet, живая замена цены/времени по
+  // текущим ресурсам, тот же приём, что и у ползунка).
+  if(!SP_UNLOCKED && $("#building-modal").classList.contains("open")){
+    if(mpCarouselCtx && mpTrainCtx){
+      mpUpdateTrainSheet();
+    } else if(mpCitySel>=0){
+      $("#bm-body").innerHTML = mpBuildingModalHtml(mpCitySel);
+    }
   }
   // Фаза 17, кусочек 2 — #side-menu значки (см. menuBadges()) должны
   // обновляться живьём на опрос, не только при открытии/закрытии меню —
@@ -10944,6 +11306,11 @@ function foMultiplayer(embedded){
   // нужно, включая настоящий bonuses(pShim2) (Фаза 6): предпросмотр времени
   // исследования теперь совпадает с тем, что реально спишет сервер
   // (researchTime(n,lv)/(1+B.researchSpeed), см. mp-research).
+  // Фаза 18, кусочек 1 — само тело раздела вынесено в mpAcademyHtml() (см.
+  // её комментарий чуть выше по файлу): теперь используется и здесь, и
+  // внутри иллюстрированного меню здания (клик по ячейке Академии на карте
+  // города) — раньше дерево исследований было доступно ТОЛЬКО через эту
+  // длинную страницу, без визуальной сетки (просто плоский список).
   const academyLv=st.b.academy||0;
   if(academyLv>0){
     h+=rubric("Академия","дерево исследований");
@@ -10951,39 +11318,7 @@ function foMultiplayer(embedded){
     // постройки общего мира, без явного 0 portalMarchBonus(undefined) внутри
     // bonuses() уходит в NaN — не влияет на B.researchSpeed, но так чище).
     const pShim2={race:p.race,b:Object.assign({portal:0},st.b),gen:st.gen||{id:null},tech:st.tech||{}};
-    const rschB=bonuses(pShim2);
-    const rsch=st.rsch;
-    if(rsch){
-      const rn=findNode(rsch.id);
-      const left=Math.max(0,rsch.t1-Date.now()/1000);
-      h+="<div class='entry hot'><div class='line'><div class='fill'>"+
-         "<div class='title'>Исследуется: "+(rn?nodeTitle(rn):rsch.id)+" ур. "+rsch.lv+"</div>"+
-         "<div class='note'>Осталось: "+fmtDur(left)+"</div></div></div></div>";
-    }
-    h+="<div class='entry'><div class='line'><div class='fill'><div id='ac-tabs'>"+
-       "<button class='"+(mpState.rschTab==="mil"?"on":"")+"' data-mp='rschtab' data-t='mil'>Военные</button>"+
-       "<button class='"+(mpState.rschTab!=="mil"?"on":"")+"' data-mp='rschtab' data-t='eco'>Экономические</button>"+
-       "</div></div></div></div>";
-    const branch=mpState.rschTab==="mil"?"mil":"eco";
-    ACADEMY_TREE[branch].filter(n=>nodeVisibleFor(n,pShim2)).forEach(n=>{
-      const lv=(st.tech&&st.tech[n.id])||0, maxed=lv>=n.max;
-      h+="<div class='entry'><div class='line'><div class='fill'>"+
-         "<div class='title'>"+nodeTitle(n)+" — "+lv+"/"+n.max+"</div>";
-      if(maxed){
-        h+="<div class='note'>Максимальный уровень.</div>";
-      } else if(researchLocked(n,pShim2)){
-        h+="<div class='note'>"+lockReason(n,pShim2)+"</div>";
-      } else if(rsch){
-        h+="<div class='note'>Академия уже занята другим исследованием.</div>";
-      } else {
-        const nlv=lv+1, c=researchCost(n,nlv), t=researchTime(n,nlv)/(1+rschB.researchSpeed);
-        h+="<div class='note'>До "+nlv+" ур.: "+
-           (RES.some(r=>c[r])?RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", "):"бесплатно")+
-           " · "+fmtDur(t)+"</div>"+
-           "<button class='seal' data-mp='research' data-id='"+n.id+"'"+(mpState.loading?" disabled":"")+">Исследовать</button>";
-      }
-      h+="</div></div></div>";
-    });
+    h+=mpAcademyHtml(pShim2,st);
   }
 
   if(mpState.err) h+="<div class='entry'><div class='line'><div class='fill'><div class='note' style='color:#e08'>"+mpState.err+"</div></div></div></div>";
