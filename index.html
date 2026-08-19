@@ -476,9 +476,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    видна объёмная карта, а не пустота, как было до этого кусочка. */
 /* Фаза 14, кусочек 2 — #view-toggle больше не в списке: теперь есть на что
    переключать (#folio показывает mpRenderCityMap(), см. ниже), 2D-город
-   общего мира больше не "нечего показать". #side-menu по-прежнему спрятан —
-   единственный вход в меню общего мира — прямой #menu-btn (toggleMenu()). */
-.mp-gated #side-menu{display:none}
+   общего мира больше не "нечего показать".
+   Фаза 17, кусочек 2 — #side-menu (Почта/Войско/Генерал/Инвентарь/Общий
+   мир, тот же значок-пикер, что и в одиночке) раньше был спрятан целиком:
+   единственным входом был прямой #menu-btn (toggleMenu()), сразу
+   открывавший foMultiplayer() без выбора раздела. Автор сообщил "где мои
+   менюшки" и прислал референс (те же иконки, что тут) — теперь #side-menu
+   снова виден и в этом режиме (см. toggleMenu()/openMenuModal() ниже —
+   иконки ведут в ТОТ ЖЕ foMultiplayer(), просто с прокруткой к нужному
+   разделу, честно как есть, полного отдельного экрана на каждую иконку
+   пока нет). */
 /* #amber-badge — янтарь как ресурс у общего мира ещё не заведён (см.
    комментарий у mpRenderTop()), показывать там нечего — остаётся спрятан.
    #top — Фаза 14, кусочек 1 прятала его тем же общим правилом, что и
@@ -5302,6 +5309,26 @@ function pushMail(entry){
    который ставится в момент пополнения и гаснет при открытии раздела. */
 function markInvNew(p){ if(p && !p.isBot) p.invNew=true; }
 function menuBadges(){
+  // Фаза 17, кусочек 2 — раньше это было безвредно: #side-menu целиком
+  // прятался при .mp-gated (см. её CSS), значки этой функции никто не
+  // видел. Теперь #side-menu снова виден в этом режиме — если оставить как
+  // было, значки читали бы NEVEr-видимую одиночную партию (W/me()) вместо
+  // настоящих данных общего мира: "0 писем" даже при входящей атаке, чужой
+  // счётчик очков таланта и т.д. — честный отдельный источник вместо W/me().
+  // "Инвентарь" — как и у одиночки, честный 0: общий мир не отслеживает
+  // "предмет добавился" отдельным флагом (см. p.invNew там же), выдумывать
+  // тут нечего. "Войско" — 0 и у одиночки (последняя строка ниже), тот же
+  // выбор, не регрессия.
+  if(!SP_UNLOCKED){
+    if(!mpState.joined || !mpState.player) return { mail:0, gen:0, inv:0, army:0 };
+    const st=mpState.player.state;
+    return {
+      mail: mpState.incoming.length,
+      gen:  (st.gen&&st.gen.pts)||0,
+      inv:  0,
+      army: 0,
+    };
+  }
   // Фаза 13 — при .mp-gated (см. SP_UNLOCKED) openMenuModal("mp") зовётся
   // ДО того, как одиночная W вообще успевает создаться (нарочно — иначе
   // регистрация в общем мире ждала бы одиночную загрузку) — честный ноль
@@ -6421,8 +6448,12 @@ function priceRow(p,c){
   }).join("");
   return out?"<div class='price'>"+out+"</div>":"";
 }
-function rubric(text,note){
-  return "<div class='rubric'>"+text+(note?"<span class='n'>"+note+"</span>":"")+"</div>";
+// Фаза 17, кусочек 2 — необязательный id (3-й параметр, аддитивный — все
+// существующие 2-аргументные вызовы по всему файлу не меняют поведения)
+// нужен только foMultiplayer(): openMenuModal() при .mp-gated прокручивает
+// к нужному разделу по клику на иконку #side-menu (см. её комментарий).
+function rubric(text,note,id){
+  return "<div class='rubric'"+(id?" id='"+id+"'":"")+">"+text+(note?"<span class='n'>"+note+"</span>":"")+"</div>";
 }
 function hollow(mark,text){
   return "<div class='hollow'><span class='big'>"+mark+"</span>"+text+"</div>";
@@ -8871,11 +8902,11 @@ function toggleView(){
     if(w3d && !w3d.src) w3d.src="engine/dist/index.html";
   }
 }
-// Фаза 14, кусочек 1 — при .mp-gated единственный пункт меню и есть сама
-// панель общего мира: открываем её напрямую, минуя выбор вкладки
-// (#side-menu спрятан CSS-ом, переключать там нечего).
+// Фаза 17, кусочек 2 — #side-menu теперь виден и при .mp-gated (см. CSS
+// выше), значит гамбургер снова открывает ЕГО (пикер разделов), а не сразу
+// foMultiplayer() — тот же клик по значку внутри (data-menu, см. слушатель
+// ниже) уже открывает нужный раздел через openMenuModal().
 function toggleMenu(){
-  if(!SP_UNLOCKED){ openMenuModal("mp"); return; }
   $("#side-menu").classList.toggle("open");
 }
 let buildingModalSel=-1;
@@ -9149,8 +9180,11 @@ function openMenuModal(t){
   if(t==="inv") me().invNew=false;
   // Общий мир — отдельная вкладка со своим опросом сервера (см. mpStartPolling
   // ниже): уходя с неё, глушим таймер, чтобы не дёргать Supabase впустую,
-  // пока игрок смотрит другую вкладку.
-  if($("#menu-modal").dataset.tab==="mp" && t!=="mp") mpStopPolling();
+  // пока игрок смотрит другую вкладку. Только в одиночке (SP_UNLOCKED) —
+  // при .mp-gated ЛЮБАЯ вкладка меню теперь показывает mp-контент (см.
+  // gatedTab ниже, Фаза 17, кусочек 2), опрос никогда не должен глохнуть
+  // просто от смены вкладки внутри одного и того же общего мира.
+  if(SP_UNLOCKED && $("#menu-modal").dataset.tab==="mp" && t!=="mp") mpStopPolling();
   $("#menu-modal").dataset.tab = t;
   // Фаза 14, кусочек 5 — панель ячейки на карте (mpCellPanelHtml) и список
   // "Набор войск" внутри foMultiplayer() могут отрисовать один и тот же
@@ -9160,13 +9194,29 @@ function openMenuModal(t){
   // общего мира через меню, чтобы дублей не возникало вовсе: клик в модалке
   // всегда читает свой собственный, единственный на странице инпут.
   if(t==="mp" && mpCitySel>=0){ mpCitySel=-1; mpRenderFolio(); }
-  const html = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): t==="mp"?foMultiplayer(!SP_UNLOCKED): foInv();
+  // Фаза 17, кусочек 2 — при .mp-gated #side-menu снова виден (см. её CSS),
+  // и её иконки (Почта/Войско/Генерал/Инвентарь) должны вести на настоящие
+  // данные общего мира, а не на невидимую одиночную партию (foArmy()/foGen()/
+  // foInv()/foMail() читают W/me() — в этом режиме это чужая, никому не
+  // видимая партия, см. заголовок .mp-gated в CSS). Честный компромисс, не
+  // полноценный отдельный экран на каждую иконку: те же foMultiplayer(),
+  // что и раньше открывала "Общий мир", просто с прокруткой к нужному
+  // разделу (id='mp-anchor-<t>', см. rubric() внутри foMultiplayer()) —
+  // остальные разделы всё ещё на месте прокруткой вниз/вверх, ничего не
+  // потеряно, просто нет изоляции по вкладкам, как в одиночке.
+  const gatedTab = !SP_UNLOCKED && (t==="army"||t==="gen"||t==="inv"||t==="mail");
+  const html = gatedTab ? foMultiplayer(true)
+    : t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): t==="mp"?foMultiplayer(!SP_UNLOCKED): foInv();
   lastMenuBody = html;
   $("#menu-modal-body").innerHTML = html;
   $("#menu-modal").classList.add("open");
   $("#side-menu").classList.remove("open");
   renderBadges();
-  if(t==="mp") mpOpen();
+  if(t==="mp" || gatedTab) mpOpen();
+  if(gatedTab){
+    const anchor=$("#mp-anchor-"+t);
+    if(anchor) anchor.scrollIntoView({block:"start"});
+  }
 }
 // Метки перерисовываются в общем такте с шапкой (renderTop раз в секунду) —
 // отдельного таймера им не нужно.
@@ -9844,9 +9894,18 @@ async function mpCall(fn, body){
   return j;
 }
 function mpRerender(){
-  if($("#menu-modal").classList.contains("open") && $("#menu-modal").dataset.tab==="mp"){
-    lastMenuBody = foMultiplayer(!SP_UNLOCKED);
-    $("#menu-modal-body").innerHTML = lastMenuBody;
+  // Фаза 17, кусочек 2 — при .mp-gated ЛЮБАЯ вкладка меню (не только "mp")
+  // может показывать foMultiplayer() (см. gatedTab в openMenuModal()) —
+  // держим её свежей на опросе точно так же. Добавлен и диф по содержимому
+  // (раньше тут писали innerHTML безусловно на каждый вызов, а mpRerender()
+  // зовётся на каждый опрос/действие, не только раз в 5с) — иначе прокрутка
+  // к разделу (см. scrollIntoView в openMenuModal()) сбрасывалась бы к
+  // началу страницы почти сразу же, как и сама эта прокрутка теряла смысл.
+  const menuTab=$("#menu-modal").dataset.tab;
+  const showsMp = menuTab==="mp" || (!SP_UNLOCKED && (menuTab==="army"||menuTab==="gen"||menuTab==="inv"||menuTab==="mail"));
+  if($("#menu-modal").classList.contains("open") && showsMp){
+    const html=foMultiplayer(!SP_UNLOCKED);
+    if(html!==lastMenuBody){ lastMenuBody=html; $("#menu-modal-body").innerHTML=html; }
   }
   // Фаза 14, кусочек 2 — держим 2D-карту города (#folio) свежей на каждый
   // опрос/действие, не только пока открыта модалка "Общий мир": пользователь
@@ -9864,6 +9923,11 @@ function mpRerender(){
   if(!SP_UNLOCKED && mpCitySel>=0 && $("#building-modal").classList.contains("open")){
     $("#bm-body").innerHTML = mpBuildingModalHtml(mpCitySel);
   }
+  // Фаза 17, кусочек 2 — #side-menu значки (см. menuBadges()) должны
+  // обновляться живьём на опрос, не только при открытии/закрытии меню —
+  // иначе входящая атака не подсветила бы гамбургер, пока игрок сам не
+  // откроет меню и не увидит её текстом.
+  if(!SP_UNLOCKED) renderBadges();
 }
 function mpStartPolling(){ mpStopPolling(); mpPollTimer=setInterval(mpPollTick,5000); }
 function mpStopPolling(){ if(mpPollTimer){ clearInterval(mpPollTimer); mpPollTimer=null; } }
@@ -10309,7 +10373,7 @@ function foMultiplayer(embedded){
   // 3D-карты (та рассчитана на локальных ботов одного браузера — встроить
   // туда настоящих других игроков отдельная большая задача, следующий шаг
   // после этого). Отсортировано по расстоянию — ближайшие сверху.
-  h+=rubric("Соседи",embedded?"":"общий мир");
+  h+=rubric("Соседи",embedded?"":"общий мир","mp-anchor-mp");
   if(!mpState.neighbors.length){
     h+="<div class='entry'><div class='line'><div class='fill'><div class='note'>"+
        "Пока никого рядом — позовите друга, он увидит вас здесь же, как только зайдёт.</div></div></div></div>";
@@ -10419,7 +10483,7 @@ function foMultiplayer(embedded){
   }
 
   if(mpState.marches.length){
-    h+=rubric("Отряды в поле",mpState.marches.length+" из "+mpMarchSlots(st.b.hall||0));
+    h+=rubric("Отряды в поле",mpState.marches.length+" из "+mpMarchSlots(st.b.hall||0),"mp-anchor-army");
     mpState.marches.forEach(m=>{
       const left=Math.max(0,m.t1-Date.now()/1000);
       const going=m.state==="go", gathering=m.state==="gather", isGather=m.mode==="gather", isRaid=m.mode==="raid";
@@ -10445,7 +10509,7 @@ function foMultiplayer(embedded){
   }
 
   if(mpState.mail.length){
-    h+=rubric("Бой","последние стычки");
+    h+=rubric("Бой","последние стычки","mp-anchor-mail");
     mpState.mail.forEach(m=>{
       const d=m.data, mine=d.role==="attacker";
       const myLoss=mine?d.attLoss:d.defLoss, oppLoss=mine?d.defLoss:d.attLoss;
@@ -10686,7 +10750,7 @@ function foMultiplayer(embedded){
   // unequipItem/dismantleItem (index.html:5895-5917). Показываем 9 слотов
   // GEAR_SLOTS: что надето сейчас (с бонусом через statTxt+gearItemStats,
   // как в SP genGearHtml) и что лежит на складе (st.inventory[slot][order][r-1]).
-  h+=rubric("Снаряжение","надето и склад");
+  h+=rubric("Снаряжение","надето и склад","mp-anchor-inv");
   GEAR_SLOTS.forEach(s=>{
     const cur=st.gear&&st.gear[s.id];
     h+="<div class='entry'><div class='line'><div class='fill'>"+
@@ -10824,7 +10888,7 @@ function foMultiplayer(embedded){
   // по-настоящему, но тратить их пока негде — mp-talent и подключение
   // самих бонусов в bonuses() отдельными следующими кусочками, см.
   // supabase/README.md.
-  h+=rubric("Полководец","решение окончательное");
+  h+=rubric("Полководец","решение окончательное","mp-anchor-gen");
   if(!st.gen||st.gen.id==null){
     GENERALS[p.race].forEach((g,i)=>{
       h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
