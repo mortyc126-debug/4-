@@ -20,7 +20,37 @@ import { loadRealEntities, getOwnCityPos, type RealEntity } from "./realData";
 import { loadLiveMarches, type LiveMarchPos } from "./marchData";
 
 const statusEl = document.getElementById("status") as HTMLDivElement;
+// Фаза 16 — #status раньше показывался КАЖДОМУ игроку постоянно (не только
+// разработчику): "инициализация…", потом "модели: загружено X/Y", "рельеф:
+// чанков N..." — и висел так до конца сессии. Автор сообщил "у тебя
+// наложились две загрузки друг на друга" — это оно и было: второй, отдельный
+// от видео-заставки родительской страницы (index.html, #mp-loading)
+// текстовый индикатор в том же верхнем углу. Полезен при живой отладке (см.
+// историю этого файла — не раз спасал на телефоне без доступа к devtools),
+// поэтому не убираем совсем, а прячем за ?debug=1: разработчик добавляет
+// его вручную в адресе игры (проверяем location родителя, раз движок открыт
+// внутри iframe — сам он никакого query не получает), обычный игрок этого
+// параметра никогда не наберёт.
+const DEBUG_STATUS = (() => {
+  try {
+    if (/[?&]debug=1\b/.test(location.search)) return true;
+    if (window.parent && window.parent !== window) return /[?&]debug=1\b/.test(window.parent.location.search);
+  } catch (_) {
+    /* кросс-origin — считаем, что отладка не запрошена */
+  }
+  return false;
+})();
+if (DEBUG_STATUS) statusEl.style.display = "block";
 function setStatus(lines: string[]) {
+  if (!DEBUG_STATUS) return;
+  statusEl.textContent = lines.join("\n");
+}
+// Настоящий сбой (main().catch ниже) — не рутинная диагностика, скрывать её
+// за ?debug=1 нельзя: без неё игрок увидел бы совсем пустой экран без
+// единой подсказки, что вообще произошло (тот же довод, что и у
+// #gpu-error-banner при потере устройства — честная причина лучше тишины).
+function setErrorStatus(lines: string[]) {
+  statusEl.style.display = "block";
   statusEl.textContent = lines.join("\n");
 }
 
@@ -164,13 +194,28 @@ async function main() {
   lines.push(`bitECS: сущностей — ${found.length}`);
 
   // ---- WebGPU ----
+  // Фаза 16 — если WebGPU в принципе недоступен (нет navigator.gpu/адаптера/
+  // контекста — обычно старый браузер или устройство без поддержки), нет
+  // смысла ждать "вдруг заработает": сразу откатываем на 2D-карту города, тем
+  // же forceCityView(), что и у повторной потери уже работавшего устройства
+  // (см. device.lost ниже) — не оставляем игрока перед пустой канвой.
+  function bailNoWebGpu(message: string): void {
+    setErrorStatus([...lines, message]);
+    try {
+      if (window.parent && window.parent !== window && typeof (window.parent as any).forceCityView === "function") {
+        (window.parent as any).forceCityView();
+      }
+    } catch (_) {
+      /* кросс-origin — баннер/статус остаётся единственной обратной связью */
+    }
+  }
   if (!("gpu" in navigator)) {
-    setStatus([...lines, "WebGPU: navigator.gpu отсутствует."]);
+    bailNoWebGpu("WebGPU: navigator.gpu отсутствует.");
     return;
   }
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) {
-    setStatus([...lines, "WebGPU: адаптер не найден."]);
+    bailNoWebGpu("WebGPU: адаптер не найден.");
     return;
   }
   const device = await adapter.requestDevice();
@@ -252,7 +297,7 @@ async function main() {
   const canvas = document.getElementById("gpu") as HTMLCanvasElement;
   const ctx = canvas.getContext("webgpu");
   if (!ctx) {
-    setStatus([...lines, "WebGPU: getContext('webgpu') вернул null."]);
+    bailNoWebGpu("WebGPU: getContext('webgpu') вернул null.");
     return;
   }
   const format = navigator.gpu.getPreferredCanvasFormat();
@@ -1462,6 +1507,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  setStatus([`Ошибка: ${err instanceof Error ? err.message : String(err)}`]);
+  setErrorStatus([`Ошибка: ${err instanceof Error ? err.message : String(err)}`]);
   console.error(err);
 });
