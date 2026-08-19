@@ -48,10 +48,26 @@ interface LiveWorld {
   players: Array<{ id: number; race: string; nick?: string; x: number; y: number; b: { hall: number } }>;
 }
 
+// Фаза 12, кусочек 2 — общий мир (mp-*) вместо локальных ботов одиночки.
+// window.parent.mpWorldSnapshot — новая функция в index.html (см. её же
+// комментарий там): собирает W-подобный объект из mpState (соседи/точки/
+// лагеря/походы общего мира), возвращает null, пока игрок не вошёл в общий
+// мир (mpState.joined===false) — тогда откатываемся на обычный W с
+// локальными ботами, как и было. Проверяется ПЕРВЫМ: если игрок одновременно
+// держит открытой одиночную партию (W существует) И уже вошёл в общий мир,
+// карта должна показывать настоящих соседей, а не смесь с ботами — путать
+// одно с другим было бы хуже, чем просто ничего не показывать.
 function readLiveWorld(): LiveWorld | null {
   try {
     const w = window.parent;
-    if (w && w !== window && (w as any).W) return (w as any).W as LiveWorld;
+    if (w && w !== window) {
+      const snap = (w as any).mpWorldSnapshot;
+      if (typeof snap === "function") {
+        const mp = snap();
+        if (mp) return mp as LiveWorld;
+      }
+      if ((w as any).W) return (w as any).W as LiveWorld;
+    }
   } catch (_) {
     /* кросс-origin — считаем, что настоящих данных нет */
   }

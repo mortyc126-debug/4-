@@ -8547,6 +8547,95 @@ function world3dWin(){
   try{ return (f && f.contentWindow && f.contentWindow.cam) ? f.contentWindow : null; }
   catch(_){ return null; }
 }
+// Фаза 12, кусочек 2 — мост к объёмной карте (engine/src/realData.ts +
+// marchData.ts, см. их readLiveWorld/readLiveWorldMarches): раньше 3D-вкладка
+// "Мир" всегда читала window.parent.W — локальную партию с ботами. Эта
+// функция даёт ей вместо этого W-подобный снимок общего мира, собранный из
+// mpState (mpRefreshNeighbors/Nodes/Camps/Marches/Incoming, тот же опрос
+// раз в 5с, что уже крутит панель «Общий мир»). Возвращает null, пока игрок
+// не вошёл в общий мир — тогда 3D сама откатывается на обычный W с ботами,
+// ни одна строчка одиночной игры не трогается.
+//
+// Собирается заново на каждый вызов — дешёво (десятки объектов, не тысячи),
+// кэшировать пока незачем. НЕ подменяет сам глобальный W: локальная партия
+// (если она у игрока тоже открыта) продолжает жить своей жизнью — общий
+// мир это отдельный, паралелльный источник данных для той же 3D-сцены.
+//
+// Честные упрощения этого кусочка (см. supabase/README.md):
+//   - mapChunks не строится — loadRealEntities() в движке сама откатывается
+//     на полный перебор карты без него (тот же путь, что и у одиночной
+//     партии до первого сохранения с индексом чанков). При размере общего
+//     мира на сегодня (десятки записей) разницы не видно; понадобится,
+//     когда точек/лагерей/городов станет действительно много.
+//   - Только СВОИ походы (mpState.marches) и походы, идущие НА тебя
+//     (mpState.incoming) — чужие походы, тебя не касающиеся, не показаны:
+//     меньше трафика, меньше визуального шума (см. план, "Открытые
+//     вопросы").
+//   - Путь похода — прямая от текущего города отправителя до цели (path
+//     синтезируется тут же, двумя точками): так же честно, как и вся
+//     остальная система маршей общего мира (mp-attack/mp-recall) — реального
+//     waterPath() по рельефу для общего мира по-прежнему нет.
+function mpWorldSnapshot(){
+  if(!mpState.joined || !mpState.player) return null;
+  const me=mpState.player, st=me.state||{};
+  const meHall=(st.b&&st.b.hall)||1;
+  const players=[{id:me.id, race:me.race, nick:me.nick, x:me.x, y:me.y, b:{hall:meHall}}];
+  const byId={}; byId[me.id]=players[0];
+  mpState.neighbors.forEach(n=>{
+    const p={id:n.id, race:n.race, nick:n.nick, x:n.x, y:n.y, b:{hall:Number(n.hall)||1}};
+    players.push(p); byId[n.id]=p;
+  });
+  const map={};
+  players.forEach(p=>{ map[p.x+","+p.y]={t:"city", x:p.x, y:p.y, pid:p.id}; });
+  mpState.nodes.forEach(c=>{
+    const d=c.data||{};
+    map[c.x+","+c.y]={t:"node", x:c.x, y:c.y, res:d.res, lv:d.lv, amount:d.amount, max:d.max};
+  });
+  mpState.camps.forEach(c=>{
+    const d=c.data||{};
+    map[c.x+","+c.y]={t:c.t, x:c.x, y:c.y, lv:d.lv};
+  });
+  // withPath(m,home) — та же честная прямая, что и marchPos у recall/gather/
+  // raid-маршей общего мира: путь всегда из ДВУХ точек (текущий дом
+  // отправителя → цель), а не настоящий рельефный path[] одиночки. pathCum/
+  // pathLen — тот же формат, что pathPointAt(m,f) в index.html уже умеет
+  // читать (дословный порт в marchData.ts), поэтому дальше 3D ничего
+  // отдельного знать не должно.
+  function withPath(m,home){
+    const dist=Math.hypot(m.tx-home.x, m.ty-home.y);
+    return Object.assign({}, m, { path:[{x:home.x,y:home.y},{x:m.tx,y:m.ty}], pathCum:[0,dist], pathLen:dist });
+  }
+  const marches=[];
+  mpState.marches.forEach(m=>{ marches.push(withPath(Object.assign({pid:me.id},m), me)); });
+  mpState.incoming.forEach(m=>{
+    const att=byId[m.player_id]; if(!att) return; // соседа уже нет в mpState.neighbors — не рисуем повисший маркер
+    marches.push(withPath(Object.assign({pid:m.player_id},m), att));
+  });
+  return { t: Date.now()/1000, map, players, marches };
+}
+// Фаза 12, кусочек 3 — переключатель показа. mpWorldSnapshot() выше уже
+// подключён в движке (readLiveWorld/readLiveWorldMarches предпочитают его
+// обычному W) — движок САМ подхватит общий мир на ближайшем 3-секундном
+// опросе (syncLiveEntities в engine/src/main.ts), без единой правки здесь.
+// Но радиус выборки сущностей центрирован на cam.target, а если "Мир" был
+// открыт ДО входа в общий мир, cam.target всё ещё смотрит на столицу
+// ОДИНОЧНОЙ партии — от столицы общего мира она может быть сколь угодно
+// далеко. Без явного перевода камеры игрок увидел бы пустую карту: все
+// сущности общего мира просто не попали бы в радиус выборки вокруг
+// устаревшего центра. window.cam.tx/tz — тот же готовый мост "к своему
+// городу", что уже использует кнопка "Домой" ($("#t-home") ниже), просто
+// нацеленный на настоящую столицу общего мира, а не на me() из одиночки.
+// Если "Мир" ещё не открывали вовсе (iframe без src, world3dWin()===null)
+// — трогать нечего, самый первый рендер и так возьмёт верную точку через
+// getOwnCityPos()→mpWorldSnapshot() (см. её же комментарий).
+function mpFocusWorld3D(){
+  const w=world3dWin();
+  if(!w || !mpState.player) return;
+  const p=mpState.player;
+  w.cam.tx=p.x; w.cam.tz=p.y;
+  if(typeof w.H==="function") w.cam.ty=w.H(p.x,p.y)+2;
+  w.cam.dist=40; w.cam.pitch=0.5;
+}
 $("#t-in").onclick=()=>zoomAt(1.35);
 $("#t-out").onclick=()=>zoomAt(1/1.35);
 $("#t-home").onclick=()=>{
@@ -8808,7 +8897,13 @@ async function mpRefreshPlayer(){
 // список соседей нарочно не тянем, хотя RLS формально это тоже позволяет.
 async function mpRefreshNeighbors(){
   if(!mpState.player) return;
-  const { data, error } = await sb.from("players").select("id,nick,race,x,y,is_bot")
+  // hall добавился для Фазы 12 (объёмная карта) — 3D-модели замка нужна
+  // эпоха (epochOf(hall)), иначе все чужие города рисовались бы деревней
+  // 1 уровня. Именно уровень ратуши, а не весь state — гарнизон/ресурсы
+  // соседей по-прежнему нарочно не тянем (то же решение, что и раньше),
+  // ровно как в RoK: размер замка на карте виден всем без разведки, состав
+  // войск — нет.
+  const { data, error } = await sb.from("players").select("id,nick,race,x,y,is_bot,hall:state->b->>hall")
     .eq("world_id", mpState.player.world_id).neq("id", mpState.player.id).order("id");
   if(!error && data){ mpState.neighbors=data; mpRerender(); }
 }
@@ -8834,10 +8929,19 @@ async function mpRefreshScoutMail(){
 // существующего игрока — сразу дашборд, без анкеты. Если нет — тихо ловим
 // ожидаемую ошибку "Нужна раса" и показываем анкету, это не сбой.
 async function mpOpen(){
+  // wasJoined — mpOpen() зовётся КАЖДЫЙ раз при открытии вкладки «Общий
+  // мир», не только при первом входе (это же и есть авто-резюме уже
+  // существующего игрока, см. комментарий выше). mpFocusWorld3D() ниже не
+  // должен дёргаться на каждое такое открытие — иначе игрока, который сам
+  // отъехал по 3D-карте куда-то ещё, молча одёргивало бы обратно к столице
+  // при каждом заходе в этот же folio-таб. Фокусируем только на переходе
+  // false→true — тот самый момент, когда камера впервые может смотреть в
+  // устаревшую точку (см. mpFocusWorld3D()).
+  const wasJoined=mpState.joined;
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{});
-    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail();
+    mpState.joined=true; mpState.player=j.player; if(!wasJoined) mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail();
   }catch(e){ mpState.joined=false; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -8846,7 +8950,7 @@ async function mpDoJoin(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{race:mpState.race,nick:mpState.nick||""});
-    mpState.joined=true; mpState.player=j.player; mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail();
+    mpState.joined=true; mpState.player=j.player; mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail();
   }catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -9070,7 +9174,10 @@ async function mpRefreshRaidMail(){
 // мире всё ещё нет, а RoK тоже не раскрывает состав без неё.
 async function mpRefreshIncoming(){
   if(!mpState.player) return;
-  const { data, error } = await sb.from("marches").select("id,player_id,t0,t1")
+  // tx/ty/units добавились для Фазы 12 (объёмная карта, mpWorldSnapshot
+  // ниже) — маркеру похода в 3D нужны координаты и состав отряда (для
+  // подписи по тапу), раньше хватало только времени подхода для текста.
+  const { data, error } = await sb.from("marches").select("id,player_id,t0,t1,tx,ty,units")
     .eq("data->>defender_id", String(mpState.player.id)).eq("state","go").order("t1");
   if(!error && data){ mpState.incoming=data; mpRerender(); }
 }

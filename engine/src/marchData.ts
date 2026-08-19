@@ -51,10 +51,20 @@ function countUnits(units: Record<string, Record<number, number>>): number {
   return n;
 }
 
+// Фаза 12, кусочек 2 — тот же приём, что и readLiveWorld в realData.ts:
+// window.parent.mpWorldSnapshot (когда есть и не null — игрок в общем
+// мире) первее обычного W, иначе прежнее поведение с локальными ботами.
 function readLiveWorldMarches(): LiveWorldMarches | null {
   try {
     const w = window.parent;
-    if (w && w !== window && (w as any).W) return (w as any).W as LiveWorldMarches;
+    if (w && w !== window) {
+      const snap = (w as any).mpWorldSnapshot;
+      if (typeof snap === "function") {
+        const mp = snap();
+        if (mp) return mp as LiveWorldMarches;
+      }
+      if ((w as any).W) return (w as any).W as LiveWorldMarches;
+    }
   } catch (_) {
     /* кросс-origin — считаем, что настоящих данных нет */
   }
