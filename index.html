@@ -6786,7 +6786,13 @@ function mpRenderCityMap(){
        (built?(c.bk!=="wall"?"<img class='bimg' src='"+cityCellImg(c)+"'>":"")+"<span class='lvl'>"+lv+"</span>":"")+
        "</div>";
   });
-  if(mpCitySel>=0) h+=mpCellPanelHtml(mpCitySel);
+  // Фаза 17, кусочек 1 — панель под картой (mpCellPanelHtml) больше не
+  // разворачивается тут: клик по ячейке (см. data-mpcell в handleAct)
+  // теперь открывает mpOpenBuildingModal() — то же иллюстрированное меню
+  // здания, что и в одиночке (#building-modal/#bm-body). mpCitySel всё
+  // ещё нужен — только для подсветки .sel выше (какая ячейка выбрана),
+  // сама mpCellPanelHtml остаётся нетронутой и протестированной, просто
+  // больше отсюда не зовётся.
   h+="</div>";
   return h;
 }
@@ -7004,6 +7010,149 @@ function mpCellForgeHtml(st){
     });
   }
   return h;
+}
+// Фаза 17, кусочек 1 — дословная копия buildingStatDeltaHtml() (index.html,
+// см. её же комментарий чуть ниже по файлу), но БЕЗ обращения к me(): та
+// функция почти целиком чистая (bk/lv/nx + глобальные таблицы), кроме ОДНОЙ
+// ветки (bk==="portal") — там she зовёт me() напрямую, чтобы узнать уровень
+// ратуши игрока (эпоху). В общем мире свой Портал — реальное здание (см.
+// самоисцеление st.b.portal в mp-join), клик по нему звал бы buildingStatDeltaHtml
+// с me() — НЕВИДИМОЙ одиночной партией текущей вкладки, а не настоящим
+// уровнем ратуши этого игрока в общем мире: гейт "откроется на эпохе N"
+// считался бы неверно. Дублируем всю функцию (не только ветку) — прямое
+// переиспользование чистой функции было бы честнее, но раз в ней есть эта
+// одна нечистая ветка, безопаснее скопировать целиком и передать hallLv
+// параметром, чем модифицировать сам buildingStatDeltaHtml() (см. правило
+// в README — интерактивные/нечистые функции одиночки не трогаем, заводим
+// параллельную копию).
+function mpBuildingStatDeltaHtml(bk,lv,nx,hallLv){
+  const B=BUILDINGS[bk];
+  if(B.prod){
+    const mult={food:1,wood:1,stone:0.75,gold:0.5}[B.prod];
+    const cur=Math.round(prodRate(lv)*mult), next=Math.round(prodRate(nx)*mult);
+    return "<table id='bm-stats'><tr><td>Добыча "+RES_NAME[B.prod].toLowerCase()+"/ч</td><td>"+fmt(cur)+" &rarr; "+fmt(next)+"</td></tr></table>";
+  }
+  if(bk==="store"){
+    return "<table id='bm-stats'><tr><td>Базовая защита склада</td><td>"+fmt(storeCap(lv))+" &rarr; "+fmt(storeCap(nx))+"</td></tr></table>";
+  }
+  if(bk==="hospital"){
+    return "<table id='bm-stats'><tr><td>Мест в лазарете</td><td>"+fmt(hospitalCap(lv))+" &rarr; "+fmt(hospitalCap(nx))+"</td></tr></table>";
+  }
+  if(bk==="wall"){
+    return "<table id='bm-stats'>"+
+      "<tr><td>Прочность стены</td><td>"+fmt(maxWallHp(lv))+" &rarr; "+fmt(maxWallHp(nx))+"</td></tr>"+
+      "<tr><td>Защита при обороне</td><td>+"+(wallDefBonus(lv)*100).toFixed(1)+"% &rarr; +"+(wallDefBonus(nx)*100).toFixed(1)+"%</td></tr></table>";
+  }
+  if(bk==="portal"){
+    const gated=epochOf(hallLv)<3;
+    const sc=l=>Math.max(0,Math.min(0.5,(l-PORTAL_GATE_LV)/(CFG.MAX_LEVEL-PORTAL_GATE_LV)*0.5));
+    return "<table id='bm-stats'>"+
+      "<tr><td>Скорость марша</td><td>+"+(portalMarchBonus(lv)*100).toFixed(1)+"% &rarr; +"+(portalMarchBonus(nx)*100).toFixed(1)+"%</td></tr>"+
+      "<tr><td>Сокращение пути отряда</td><td>"+(gated?"откроется на 3 эпохе":"&minus;"+(sc(lv)*100).toFixed(0)+"% &rarr; &minus;"+(sc(nx)*100).toFixed(0)+"%")+"</td></tr></table>";
+  }
+  if(bk==="garrison"){
+    return "<table id='bm-stats'><tr><td>Урон залпа гарнизона</td><td>"+fmt(WATCH_TABLE[lv-1].atk)+" &rarr; "+fmt(WATCH_TABLE[nx-1].atk)+"</td></tr></table>";
+  }
+  if(bk==="scout"){
+    const c=SCOUT_TABLE[lv-1], n=SCOUT_TABLE[nx-1];
+    return "<table id='bm-stats'>"+
+      "<tr><td>Бонус скорости разведки</td><td>+"+c.bonus+"% &rarr; +"+n.bonus+"%</td></tr>"+
+      "<tr><td>Разведчиков одновременно</td><td>"+c.scouts+" &rarr; "+n.scouts+"</td></tr></table>";
+  }
+  if(BLD_TRAIN[bk]){
+    return "<table id='bm-stats'><tr><td>Воинов за один заказ</td><td>"+fmt(trainCap(lv))+" &rarr; "+fmt(trainCap(nx))+"</td></tr></table>";
+  }
+  return "";
+}
+// Фаза 17, кусочек 1 — иллюстрированное меню здания в общем мире: та же
+// разметка/CSS-классы, что и у одиночного #building-modal/buildingModalHtml()
+// чуть ниже по файлу (#bm-art/#bm-title/#bm-sub/#bm-desc/#bm-stats/#bm-reqs/
+// #bm-time/#bm-btn — те же правила стилей, ни одного нового). Автор прямо
+// попросил вернуть "то самое оформление" вместо плоского .mp-cell-panel
+// (mpCellPanelHtml выше, теперь ей на смену — сама функция и её данные
+// остаются нетронутыми и по-прежнему покрыты тестами, просто больше не
+// вызывается из mpRenderCityMap(), см. её комментарий). Ветвление гейтинга
+// (участок ещё закрыт / уже строится / макс. уровень / нужна ратуша / ратуше
+// не хватает построек-требований / обычная цена) намеренно ПОВТОРЯЕТ
+// mpCellPanelHtml, а не переиспользует её целиком — та возвращает готовый
+// плоский <div class='mp-cell-panel'>, тут нужен текст веток БЕЗ обёртки,
+// встроенный в другую разметку (тот же приём и тот же довод, что и у
+// mpCellPanelHtml про renderPlotRow() в её собственном комментарии).
+// Специализированные блоки (набор войск/лечение/ковка) — БУКВАЛЬНО те же
+// mpCellTrainHtml/mpCellHealHtml/mpCellForgeHtml, что уже жили в
+// .mp-cell-panel: их data-mp-атрибуты уже слушает #building-modal
+// (addEventListener("click",handleAct), та же проводка, что и у карты) —
+// заводить новую не пришлось, только перенести вызовы в новую обёртку.
+function mpBuildingModalHtml(idx){
+  const c=CITY_CELLS[idx]; if(!c||!c.bk) return "";
+  const st=mpState.player.state, pShim=mpCityShim();
+  const bld=c.bk, isMultiBld=BUILD_MP_MULTI.has(bld), plot=isMultiBld?c.pl:null;
+  const lv=cityCellLevel(pShim,c)||0, nextLv=lv+1, hallLv=st.b.hall||0;
+  const maxed=nextLv>buildingMax(bld);
+  const queued=st.queues.find(q=>q&&q.b===bld&&q.plot===plot);
+  let gated=false, gateTxt="";
+  if(isMultiBld && !plotUnlocked(bld,plot,hallLv)){
+    gated=true; gateTxt="Участок откроется позже (нужна ратуша "+([0,7,13,19][plot])+" ур.).";
+  } else if(bld==="hall"){
+    const need=HALL_REQ.filter(k=>{
+      const raw=st.b[k]; return (BUILD_MP_MULTI.has(k)?((Array.isArray(raw)?raw[0]:raw)||0):(raw||0))<hallLv;
+    });
+    if(need.length){ gated=true; gateTxt="Сначала до "+hallLv+" ур.: "+need.map(k=>buildingName(k,pShim)).join(", "); }
+  } else if(nextLv>hallLv){
+    gated=true; gateTxt="Требуется ратуша "+nextLv+" уровня (сейчас "+hallLv+").";
+  }
+  const canGo=!maxed&&!gated&&!queued;
+  const cst=buildCost(bld,nextLv), t=buildTime(bld,nextLv);
+  const img=cityCellImg(c);
+  const desc=(BUILDINGS[bld]&&BUILDINGS[bld].desc)||"";
+  let h="<img id='bm-art' src='"+img+"'>";
+  h+="<div id='bm-title'>"+buildingName(bld,pShim)+(plot!=null?" · участок&nbsp;"+(plot+1):"")+"</div>";
+  h+="<div id='bm-sub'>уровень "+lv+(maxed?" (максимум)":" &rarr; "+nextLv)+"</div>";
+  if(desc) h+="<div id='bm-desc'>"+desc+"</div>";
+  if(!maxed && lv>0){
+    h+="<table id='bm-stats'><tr><td>Мощь здания</td><td>"+fmt(buildingPower(bld,lv))+" &rarr; "+fmt(buildingPower(bld,nextLv))+"</td></tr></table>";
+    h+=mpBuildingStatDeltaHtml(bld,lv,nextLv,hallLv);
+  }
+  if(canGo){
+    h+="<div id='bm-reqs'>"+RES.map(r=>{
+      const need=cst[r]||0; if(!need) return "";
+      const short=st.res[r]<need;
+      return "<div class='req-row'><img src='images/ui/res-"+r+".png'>"+
+        "<span class='req-name'>"+RES_NAME[r]+"</span>"+
+        "<span class='req-amt"+(short?" short":"")+"'>"+fmt(need)+" / "+fmt(st.res[r])+"</span></div>";
+    }).join("")+"</div>";
+    h+="<div id='bm-time'>Время строительства: "+fmtDur(t)+"</div>";
+  } else if(queued){
+    const left=Math.max(0,queued.t1-Date.now()/1000);
+    h+="<div id='bm-time'>Уже строится — готово через "+fmtDur(left)+"</div>";
+  } else if(gated){
+    h+="<div id='bm-time'>"+gateTxt+"</div>";
+  }
+  const actionLabel=lv<=0?"Построить":"Улучшить";
+  h+="<button id='bm-btn' data-mp='build' data-bk='"+bld+"' "+(plot!=null?"data-plot='"+plot+"' ":"")+
+     (canGo&&!mpState.loading?"":"disabled")+">"+(maxed?"Предел уровня":queued?"Уже строится":canGo?actionLabel:"Недоступно")+"</button>";
+  h+=mpCellTrainHtml(bld,pShim,st);
+  if(bld==="hospital") h+=mpCellHealHtml(pShim,st);
+  if(bld==="forge" && lv>0) h+=mpCellForgeHtml(st);
+  return h;
+}
+// Фаза 17, кусочек 1 — открыть/закрыть иллюстрированное меню здания общего
+// мира: тот же #building-modal/#bm-body, что и у одиночного
+// openBuildingModal()/closeBuildingModal() (см. их комментарии ниже по
+// файлу) — тот же DOM-узел, то же CSS, тот же обработчик клика/ввода уже
+// на нём висит (не заводим новых addEventListener). closeBuildingModal()
+// сама была расширена (см. её же комментарий) под mpCitySel — эта пара
+// нужна только для открытия/переключения выбранной ячейки на карте.
+function mpOpenBuildingModal(idx){
+  mpCitySel=idx;
+  $("#bm-body").innerHTML = mpBuildingModalHtml(idx);
+  $("#building-modal").classList.add("open");
+  mpRenderFolio();
+}
+function mpCloseBuildingModal(){
+  $("#building-modal").classList.remove("open");
+  mpCitySel=-1;
+  mpRenderFolio();
 }
 // Тот же приём диффа/сохранения scrollTop, что и у renderFolio() —
 // #folio делит DOM-узел с одиночкой (той же разметкой), но текст сюда
@@ -8400,17 +8549,18 @@ function handleAct(e){
   if(cartGatherPick){ mpState.gatherTarget=cartGatherPick.dataset.k; sel=null; selMarch=null; openMenuModal("mp"); return; }
   const cartRaidPick=e.target.closest("[data-mp='cartraidpick']");
   if(cartRaidPick){ mpState.raidTarget=cartRaidPick.dataset.k; sel=null; selMarch=null; openMenuModal("mp"); return; }
-  // Фаза 14, кусочек 4 — клик по ячейке mpRenderCityMap(): в отличие от
-  // одиночного data-cell (открывает openBuildingModal() — синхронная
-  // мутация me(), см. заголовок Фазы 14 в README), тут просто выделение
-  // (mpCitySel) — mpRenderCityMap() сама разворачивает mpCellPanelHtml()
-  // с настоящим действием (data-mp='build', уже обрабатывается ниже).
-  // Повторный клик по той же ячейке снимает выделение.
+  // Фаза 17, кусочек 1 — клик по ячейке mpRenderCityMap(): открывает то же
+  // иллюстрированное меню здания, что и одиночный data-cell/openBuildingModal()
+  // чуть ниже (#building-modal/#bm-body), только своей mpOpenBuildingModal()
+  // (см. её комментарий выше) — те же данные и действия (mpBuildingModalHtml,
+  // data-mp='build'), что раньше разворачивались плоской панелью прямо под
+  // картой (Фаза 14, кусочек 4 — mpCellPanelHtml, теперь не вызывается
+  // отсюда, но осталась нетронутой). Повторный клик по той же ячейке
+  // закрывает модалку.
   const mpCell=e.target.closest("[data-mpcell]");
   if(mpCell){
     const idx=+mpCell.dataset.mpcell;
-    mpCitySel = mpCitySel===idx ? -1 : idx;
-    mpRenderFolio();
+    if(mpCitySel===idx) mpCloseBuildingModal(); else mpOpenBuildingModal(idx);
     return;
   }
   const mpCellClose=e.target.closest("[data-mp='citycellclose']");
@@ -8735,7 +8885,16 @@ function openBuildingModal(ci){
   $("#bm-body").innerHTML = buildingModalHtml(ci);
   $("#building-modal").classList.add("open");
 }
-function closeBuildingModal(){ $("#building-modal").classList.remove("open"); buildingModalSel=-1; trainCtx=null; carouselCtx=null; researchCtx=null; healCarouselOpen=false; healCtx=null; }
+// Фаза 17, кусочек 1 — общий #bm-close (data-act='closebuilding', обработан
+// в handleAct ниже, и клик по подложке чуть ниже) должен закрывать модалку
+// одинаково в обоих режимах: одиночная ветка (buildingModalSel/trainCtx/…)
+// остаётся как была, добавлена только mpCitySel-очистка для общего мира
+// (см. mpCloseBuildingModal() выше) — SP_UNLOCKED делает вторую ветку
+// no-op в одиночке (mpCitySel там всегда -1, условие не пройдёт).
+function closeBuildingModal(){
+  $("#building-modal").classList.remove("open"); buildingModalSel=-1; trainCtx=null; carouselCtx=null; researchCtx=null; healCarouselOpen=false; healCtx=null;
+  if(!SP_UNLOCKED && mpCitySel>=0){ mpCitySel=-1; mpRenderFolio(); }
+}
 $("#building-modal").addEventListener("click",e=>{ if(e.target.id==="building-modal") closeBuildingModal(); });
 $("#building-modal").addEventListener("click",handleAct);
 $("#building-modal").addEventListener("input",e=>{
@@ -9698,6 +9857,13 @@ function mpRerender(){
   // запасы с добычей/час должны обновляться сами, а не только пока открыта
   // модалка меню — шапка видна поверх и карты, и города одновременно.
   if(!SP_UNLOCKED) mpRenderTop();
+  // Фаза 17, кусочек 1 — тот же довод для открытого меню здания
+  // (mpOpenBuildingModal): постройка могла завершиться, набор/лечение/ковка
+  // подойти к концу, ресурсы истратиться — без этого кнопка "Улучшить"
+  // висела бы устаревшей до следующего клика по карте.
+  if(!SP_UNLOCKED && mpCitySel>=0 && $("#building-modal").classList.contains("open")){
+    $("#bm-body").innerHTML = mpBuildingModalHtml(mpCitySel);
+  }
 }
 function mpStartPolling(){ mpStopPolling(); mpPollTimer=setInterval(mpPollTick,5000); }
 function mpStopPolling(){ if(mpPollTimer){ clearInterval(mpPollTimer); mpPollTimer=null; } }
