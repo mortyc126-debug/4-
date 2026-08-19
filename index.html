@@ -6774,6 +6774,7 @@ function mpCellPanelHtml(idx){
   }
   body+=mpCellTrainHtml(bld,pShim,st);
   if(bld==="hospital") body+=mpCellHealHtml(pShim,st);
+  if(bld==="forge" && lv>0) body+=mpCellForgeHtml(st);
   body+=" <button class='seal' data-mp='citycellclose'>Закрыть</button>";
   return "<div class='mp-cell-panel entry'><div class='line'><div class='fill'>"+body+"</div></div></div>";
 }
@@ -6850,6 +6851,60 @@ function mpCellHealHtml(pShim,st){
          "<button class='seal' data-mp='heal' data-t='"+t+"'"+(mpState.loading?" disabled":"")+">Лечить</button>";
     }
   });
+  return h;
+}
+// Фаза 14, кусочек 7 — Горн прямо с карты: добыча/слияние сырых материалов
+// (mp-forge/mp-upgrade, Фаза 11, кусочки 1-2) и ковка снаряжения (mp-craft,
+// кусочек 3) — дословно те же два блока, что и рубрики "Горн"/"Ковка
+// снаряжения" внутри foMultiplayer() (та же ветвящаяся логика: идёт
+// добыча/куётся предмет/обычный список — и раздельно занят ли Горн для
+// самой ковки), просто без rubric()-обёртки списка. Кнопки/поля — те же
+// data-mp='forge'|'matup'|'craft' и id='mp-craft-order-<slot>'/
+// 'mp-craft-rarity-<slot>', что уже читают существующие mpDoForge()/
+// mpDoUpgrade()/mpDoCraft() — новой проводки в handleAct() не понадобилось.
+// Не рефакторено в общую функцию со списком foMultiplayer() по той же
+// причине, что и остальные mpCell*Html — список уже отгружен и
+// протестирован, лишний риск регресса без пользы.
+function mpCellForgeHtml(st){
+  let h="<div class='title' style='margin-top:10px'>Горн</div>";
+  const craft=st.craft;
+  if(craft && craft.kind==="material"){
+    const left=Math.max(0,craft.t1-Date.now()/1000);
+    h+="<div class='note'>Добывается: "+MATERIALS[craft.mat].name+" ×"+craft.n+" — осталось "+fmtDur(left)+"</div>";
+  } else if(craft && craft.kind==="item"){
+    const left=Math.max(0,craft.t1-Date.now()/1000);
+    const orderName=craft.order==="storm"?"Буря":"Бастион";
+    h+="<div class='note'>Куётся: "+GEAR_NAMES[craft.slot][craft.order][craft.rarity-1]+" ("+orderName+", "+RARITY_NAMES[craft.rarity-1]+") — осталось "+fmtDur(left)+"</div>";
+  } else {
+    Object.keys(MATERIALS).forEach(mat=>{
+      const stock=(st.materials&&st.materials[mat])||[0,0,0,0,0];
+      h+="<div class='note'><b>"+MATERIALS[mat].name+"</b>: "+RARITY_NAMES.map((rn,i)=>rn+": "+RU(stock[i]||0)).join(" · ")+"</div>"+
+         "<button class='seal' data-mp='forge' data-mat='"+mat+"'"+(mpState.loading?" disabled":"")+">Добыть обычного (×3 · 100 золота · "+fmtDur(2400)+")</button> "+
+         [0,1,2,3].map(t=>
+           "<button class='seal' data-mp='matup' data-mat='"+mat+"' data-tier='"+t+"'"+
+           (mpState.loading||(stock[t]||0)<4?" disabled":"")+">4×"+RARITY_NAMES[t]+" → "+RARITY_NAMES[t+1]+"</button>"
+         ).join(" ")+"<br>";
+    });
+  }
+  h+="<div class='title' style='margin-top:10px'>Ковка снаряжения</div>";
+  if(craft){
+    h+="<div class='note'>Горн занят — дождитесь окончания текущей работы выше.</div>";
+  } else {
+    const hallLvFull=Array.isArray(st.b.hall)?Math.max(0,...st.b.hall):(st.b.hall||0);
+    const maxRarity=Math.min(5,epochOf(hallLvFull));
+    GEAR_SLOTS.forEach(s=>{
+      const matStock=(st.materials&&st.materials[s.mat])||[0,0,0,0,0];
+      h+="<div class='note'><b>"+s.name+"</b> ("+MATERIALS[s.mat].name+")</div>"+
+         "<select id='mp-craft-order-"+s.id+"'><option value='bastion'>Бастион</option><option value='storm'>Буря</option></select> "+
+         "<select id='mp-craft-rarity-"+s.id+"'>"+
+           Array.from({length:maxRarity},(_,i)=>i+1).map(r=>{
+             const need=CRAFT_MAT_NEED[r-1], have=matStock[r-1]||0, c=craftCost(s.mat,r-1,r);
+             return "<option value='"+r+"'"+(have<need?" disabled":"")+">"+RARITY_NAMES[r-1]+" — нужно "+need+"× ("+have+" есть) · "+RU(c.gold)+" золота · "+fmtDur(1800*r*r)+"</option>";
+           }).join("")+
+         "</select> "+
+         "<button class='seal' data-mp='craft' data-slot='"+s.id+"'"+(mpState.loading?" disabled":"")+">Ковать</button><br>";
+    });
+  }
   return h;
 }
 // Тот же приём диффа/сохранения scrollTop, что и у renderFolio() —
