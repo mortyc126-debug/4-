@@ -831,6 +831,28 @@ function sideStats(units, race, B, broken) {
   s.totalN = TKEYS.reduce((a, t) => a + s[t].n, 0);
   return s;
 }
+// index.html:3902-3918 armyPower — дословно: та же взвешенная сумма всех
+// пяти статов (не только HP), что и в клиентском "силе войска" везде
+// по игре. Нужна здесь для честной ничьей (см. заголовок resolvePvp) —
+// раньше (Фаза 6-9.1) ничья решалась по остатку totalHp, что ближе, но не
+// то же самое, что и в источнике (_shared/rules.js честно отмечал это
+// приближение отдельным комментарием — он теперь устарел, см. правку там же).
+function armyPower(units, B, race) {
+  let v = 0;
+  TKEYS.forEach((t) => {
+    for (let i = 1; i <= 5; i++) {
+      const n = (units[t] && units[t][i]) || 0; if (!n) continue;
+      let a = TROOP_TYPES[t].atk * TIER_MULT[i - 1] * troopMod(race, t, "atk") * (1 + ((B && B[SIDE_TYPE_ATK[t]]) || 0));
+      if (t === "arc") a *= 1 + ((B && B.archer) || 0);
+      const d = TROOP_TYPES[t].def * TIER_MULT[i - 1] * troopMod(race, t, "def") * (1 + ((B && B[SIDE_TYPE_DEF[t]]) || 0));
+      const ma = TROOP_TYPES[t].magicAtk * TIER_MULT[i - 1] * troopMod(race, t, "magicAtk") * (1 + ((B && B[SIDE_TYPE_MATK[t]]) || 0));
+      const md = TROOP_TYPES[t].magicDef * TIER_MULT[i - 1] * troopMod(race, t, "magicDef") * (1 + ((B && B[SIDE_TYPE_MDEF[t]]) || 0));
+      const hp = TROOP_TYPES[t].hp * TIER_MULT[i - 1] * troopMod(race, t, "hp");
+      v += n * (a * (1 + (B ? B.atk : 0)) + d * (1 + (B ? B.def : 0)) + ma * (1 + (B ? B.matk : 0)) + md * (1 + (B ? B.mdef : 0)) + hp * (1 + (B ? B.hp : 0)));
+    }
+  });
+  return Math.round(v / 150); // T1 пехота без бонусов = 150 суммарных статов -> ~1 сила за юнита T1
+}
 // index.html:1716 CFG.BATTLE_PACE — общий множитель, замедляющий урон ОДНОГО
 // раунда, чтобы бой из Фазы 9, кусочек 1 реально растягивался на несколько
 // раундов, а не решался в первом же (без него — как оказалось после
@@ -987,14 +1009,19 @@ function damageToGeneral(gen, enemyS) {
 // при обороне) — доля урона, нанесённого атакующим в этом раунде, летит
 // обратно в него же по HP-долям его войск (см. комментарий у if(defB.counter)
 // внутри цикла).
-// Честно ЕЩЁ НЕ входит (см. supabase/README.md, каждое — отдельный
-// следующий кусочек): поднятие нежити прямо в бою (raiseSkeletons — раз в
-// момент прибытия оно уже применяется отдельно, здесь речь о ПОРАУНДОВОМ
-// подъёме — своя отдельная механика с половинным-статным вторым войском,
-// требует более крупной переделки sideStats/applyLosses, отложена
-// намеренно, не забывчивость), досрочное отступление атакующего при 72%
-// потерь (rout), ничья по armyPower при исчерпании ROUND_CAP раундов
-// (сейчас ничья — по остатку totalHp, как и раньше).
+// Кусочек 6: досрочное отступление атакующего (rout, index.html:4260-4265)
+// — потеряв больше 72% состава, с которым вошёл в ЭТОТ бой, атакующий
+// уходит, не дожидаясь ROUND_CAP и не добивая защитника. И честная ничья
+// по armyPower (index.html:3902-3918/4267-4275) вместо приближения по
+// остатку totalHp — если обе стороны уцелели (round cap или rout), решает
+// взвешенная сила оставшихся войск, а не просто HP; полное истребление
+// стороны по-прежнему решает исход напрямую, тут не изменилось ничего.
+// Честно ЕЩЁ НЕ входит (см. supabase/README.md): поднятие нежити прямо в
+// бою (raiseSkeletons — раз в момент прибытия оно уже применяется
+// отдельно, здесь речь о ПОРАУНДОВОМ подъёме — своя отдельная механика с
+// половинным-статным вторым войском, требует более крупной переделки
+// sideStats/applyLosses, отложена намеренно, не забывчивость) — это
+// последний оставшийся пробел этой Фазы.
 // Фаза 6: attP/defP теперь полные объекты игрока (race+b+gen+tech), не
 // голые строки расы — нужны для bonuses(attP)/bonuses(defP,true) (defP
 // считается С defending=true — 5-я эпоха, defMods). См. подробный
@@ -1048,6 +1075,13 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
   // за раунд), полководец без выбора (p.gen.id==null) даёт null и просто
   // не участвует, как и в источнике.
   let attGen = genStats(attP), defGen = genStats(defP);
+  // index.html:5066/5374 ctx.startA — состав похода на момент ВХОДА в этот
+  // бой (не изначальный набор при отправке — если что-то уже отбилось
+  // раньше по дороге, отступать он будет от уже уменьшенного числа, как и
+  // в источнике). ctx.toDeath нигде в SP не выставлен в true — отступление
+  // всегда активно, отдельный флаг сюда не переносим, он был бы мёртвым
+  // кодом и там, и тут.
+  const attStartN = unitsTotal(attUnits);
   while (round < ROUND_CAP) {
     const attS = sideStats(attU, attP.race, attB, attBroken), defS = sideStats(defU, defP.race, defB, defBroken);
     if (attS.totalN <= 0 || defS.totalN <= 0) break;
@@ -1090,10 +1124,21 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
     if (defGen) defGen.hp = Math.max(0, defGen.hp - damageToGeneral(defGen, attS));
     checkDiscipline(defUnits, defLossTotal, defP.race, defBroken);
     checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
+    // index.html:4260-4265 rout — атакующий отступает, потеряв больше 72%
+    // состава, с которым вошёл в этот бой (attStartN выше), не дожидаясь
+    // ROUND_CAP и не добивая защитника. Проверяется раз в конце раунда,
+    // после всего урона этого раунда (включая контрудар/полководцев).
+    if (unitsTotal(attU) / Math.max(1, attStartN) < 0.28) break;
   }
   const attHpLeft = sideStats(attU, attP.race, attB).totalHp;
   const defHpLeft = sideStats(defU, defP.race, defB).totalHp;
-  const winner = defHpLeft <= 0 && attHpLeft > 0 ? "att" : attHpLeft <= 0 && defHpLeft > 0 ? "def" : (attHpLeft > defHpLeft ? "att" : "def");
+  // index.html:4267-4275 — если обе стороны уцелели (упёрлись в ROUND_CAP
+  // или атакующий отступил по rout выше), победа по armyPower ОСТАВШИХСЯ
+  // войск, не по HP. Полное истребление одной из сторон по-прежнему решает
+  // исход напрямую, тут ничего не поменялось.
+  const attAlive = unitsTotal(attU), defAlive = unitsTotal(defU);
+  const powA = armyPower(attU, attB, attP.race), powD = armyPower(defU, defB, defP.race);
+  const winner = attAlive > 0 && defAlive <= 0 ? "att" : defAlive > 0 && attAlive <= 0 ? "def" : (powA > powD ? "att" : "def");
   return { attLoss: attLossTotal, defLoss: defLossTotal, attHpLeft, defHpLeft, winner, rounds: round, weather: weather.id, weatherName: weather.name };
 }
 // index.html:2867 HOSPITAL_CAP_TABLE / hospitalCap / totalHospitalCap —
@@ -1226,7 +1271,10 @@ const BANDIT_B = { atk: 0, def: 0, hp: 0, matk: 0, mdef: 0, archer: 0 };
 // порог без надбавки, ровно как и было задумано для "разбойников и т.п."
 // в источнике. У самого лагеря НЕТ полководца (banditArmy — просто
 // гарнизон, не игрок) — бьёт и получает удары только полководец
-// АТАКУЮЩЕГО, если тот его выбрал.
+// АТАКУЮЩЕГО, если тот его выбрал. Кусочек 6 (см. заголовок resolvePvp) —
+// rout и честная ничья по armyPower — распространены и на лагеря
+// (index.html:5066 тоже отправляет resolveBattle без toDeath, то есть с
+// тем же rout, что и обычный поход на игрока).
 function resolveBanditRaid(attUnits, attP, campLv, marchId = 0) {
   const attB = bonuses(attP);
   const bandStart = banditArmy(campLv);
@@ -1247,6 +1295,7 @@ function resolveBanditRaid(attUnits, attP, campLv, marchId = 0) {
   }
   let round = 0;
   let attGen = genStats(attP);
+  const attStartN = unitsTotal(attUnits); // Фаза 9, кусочек 6 — см. заголовок resolvePvp
   while (round < ROUND_CAP) {
     const attS = sideStats(attU, attP.race, attB, attBroken), bandS = sideStats(bandU, null, BANDIT_B, bandBroken);
     if (attS.totalN <= 0 || bandS.totalN <= 0) break;
@@ -1265,10 +1314,13 @@ function resolveBanditRaid(attUnits, attP, campLv, marchId = 0) {
     if (attGen) attGen.hp = Math.max(0, attGen.hp - damageToGeneral(attGen, bandS));
     checkDiscipline(bandStart, bandLossTotal, null, bandBroken);
     checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
+    if (unitsTotal(attU) / Math.max(1, attStartN) < 0.28) break; // rout, index.html:5066 — тоже roundует с бандитами
   }
   const attHpLeft = sideStats(attU, attP.race, attB).totalHp;
   const bandHpLeft = sideStats(bandU, null, BANDIT_B).totalHp;
-  const winner = bandHpLeft <= 0 && attHpLeft > 0 ? "att" : attHpLeft <= 0 && bandHpLeft > 0 ? "band" : (attHpLeft > bandHpLeft ? "att" : "band");
+  const attAlive = unitsTotal(attU), bandAlive = unitsTotal(bandU);
+  const powA = armyPower(attU, attB, attP.race), powBand = armyPower(bandU, BANDIT_B, null);
+  const winner = attAlive > 0 && bandAlive <= 0 ? "att" : bandAlive > 0 && attAlive <= 0 ? "band" : (powA > powBand ? "att" : "band");
   return { attLoss: attLossTotal, winner, rounds: round, weather: weather.id, weatherName: weather.name };
 }
 // index.html:5148-5150 — та же добыча с разгромленного лагеря, что и в
