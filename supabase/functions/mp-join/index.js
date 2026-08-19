@@ -650,6 +650,16 @@ Deno.serve(async (req) => {
       const ins = await admin.from("worlds").insert({ seed }).select().single();
       if (ins.error) return jsonResponse({ err: ins.error.message }, 500);
       world = ins.data;
+      // Фаза 15 — фоновый respawn точек/лагерей (не по истощению, см.
+      // applyAmbientSeed в mp-tick/index.js): самоподдерживающаяся цепочка
+      // событий, заводится ровно один раз — при создании мира. Существующий
+      // на сегодня мир (создан до этой правки) сюда не попадёт — для него
+      // цепочку заводит миграция 0003_faster_tick.sql отдельной строкой.
+      try {
+        await admin.from("events").insert({
+          world_id: world.id, fire_at: new Date().toISOString(), type: "ambient_seed", data: {},
+        });
+      } catch (_) { /* не критично — цепочка respawn'а просто не начнётся сама, можно завести вручную */ }
     }
 
     const nowSec = Date.now() / 1000;

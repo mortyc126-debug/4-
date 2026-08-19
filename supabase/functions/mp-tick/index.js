@@ -84,6 +84,7 @@ Deno.serve(async (req) => {
         else if (ev.type === "gathered") await applyGathered(admin, ev);
         else if (ev.type === "node_respawn") await applyNodeRespawn(admin, ev);
         else if (ev.type === "camp_respawn") await applyCampRespawn(admin, ev);
+        else if (ev.type === "ambient_seed") await applyAmbientSeed(admin, ev);
         // else: неизвестный/ещё не перенесённый тип — оставляем как есть,
         // не помечаем processed, чтобы не потерять событие молча; заберётся
         // следующим тиком после того, как для него появится case.
@@ -369,6 +370,95 @@ async function applyCampRespawn(admin, ev) {
     { onConflict: "world_id,x,y", ignoreDuplicates: true },
   );
   if (error) throw error;
+}
+
+// Фаза 15 — фоновый respawn НЕ по истощению: автор попросил ту же механику,
+// что и в RoK, "украденную и адаптированную" — карта сама подсевает новые
+// точки/лагеря по расписанию, не дожидаясь, пока кто-то выберет старые до
+// дна (respawnOffset выше срабатывает только ПОСЛЕ чьей-то добычи — далеко
+// от городов, куда ещё никто не дошёл, точек как не было, так и нет).
+//
+// Самоподдерживающаяся цепочка событий (тот же приём, что и node_respawn/
+// camp_respawn) — КАЖДЫЙ отработавший ambient_seed сам заводит следующий
+// через AMBIENT_SEED_INTERVAL_SEC, независимо от того, реально ли досеял
+// что-то в этот раз (см. return-ветки ниже — досев может быть пропущен, а
+// цепочка всё равно продолжается). Первое звено заводится один раз в
+// mp-join при создании мира (или миграцией 0003 — для уже существующего).
+//
+// Анти-переизбыток — ДВЕ независимые защиты, обе дешёвые (по одному
+// count-запросу, без выгрузки самих строк):
+//   1. Потолок пропорционален числу игроков (не абсолютное число) — чем
+//      больше народу в мире, тем больше точек ему разумно нужно, тем же
+//      духом, что и density-по-удалению-от-столицы в RoK, только тут проще
+//      (пропорция к населению, не к географии).
+//   2. Малая порция за раз (2 точки + 1 лагерь на КАЖДОЕ звено цепочки, раз
+//      в AMBIENT_SEED_INTERVAL_SEC=10 минут) — даже если потолок далёк,
+//      карта не зальётся точками за один тик.
+// Анти-нагрузка на сервер — сама работа приходится не на каждый тик
+// (BATCH=200 событий, могут прилетать раз в 15с), а на раз в 10 минут (эта
+// цепочка сама себя планирует не чаще) — по стоимости не отличается от
+// любого другого события в этой же таблице.
+//
+// Честное упрощение (тот же уровень, что и у respawnOffset выше — тот
+// тоже не проверяет воду): без isRealWater — полный перенос рельефной
+// воды сюда значил бы дублировать hash2/noise/ridge/rwHeightAt из mp-join
+// (~80 строк) ради ambient-точек, у которых и так есть запасной путь —
+// следующее звено цепочки просто попробует другое случайное место.
+const AMBIENT_SEED_INTERVAL_SEC = 600; // 10 минут — не тема "раз в секунду", это фоновый прирост контента, не отклик на действие игрока
+const AMBIENT_NODE_MIN_R = 30, AMBIENT_NODE_MAX_R = 90; // шире собственного кольца новичка (8-25) — свободная территория МЕЖДУ городами, не чей-то персональный задний двор
+const AMBIENT_NODE_PER_PLAYER = 3, AMBIENT_NODE_FLOOR = 20; // потолок узлов = max(20, игроков×3)
+const AMBIENT_CAMP_PER_PLAYER = 1.5, AMBIENT_CAMP_FLOOR = 10;
+const AMBIENT_NODE_BATCH = 2, AMBIENT_CAMP_BATCH = 1;
+async function applyAmbientSeed(admin, ev) {
+  const worldId = ev.world_id;
+  try {
+    const { count: playerCount } = await admin.from("players").select("id", { count: "exact", head: true }).eq("world_id", worldId);
+    const { count: nodeCount } = await admin.from("map_cells").select("x", { count: "exact", head: true }).eq("world_id", worldId).eq("t", "node");
+    const { count: campCount } = await admin.from("map_cells").select("x", { count: "exact", head: true }).eq("world_id", worldId).in("t", ["camp", "fort"]);
+    const nodeCap = Math.max(AMBIENT_NODE_FLOOR, Math.round((playerCount || 0) * AMBIENT_NODE_PER_PLAYER));
+    const campCap = Math.max(AMBIENT_CAMP_FLOOR, Math.round((playerCount || 0) * AMBIENT_CAMP_PER_PLAYER));
+
+    if ((nodeCount || 0) < nodeCap || (campCount || 0) < campCap) {
+      // Центр для случайного смещения — реальный игрок (не центр карты, не
+      // 0,0) — новые точки ложатся рядом с уже освоенной территорией, а не
+      // в произвольной пустоте, куда ещё никто не добрался.
+      const { data: players } = await admin.from("players").select("x,y").eq("world_id", worldId).limit(200);
+      if (players && players.length) {
+        if ((nodeCount || 0) < nodeCap) {
+          const rows = [];
+          for (let i = 0; i < AMBIENT_NODE_BATCH; i++) {
+            const c = players[Math.floor(Math.random() * players.length)];
+            const ang = Math.random() * Math.PI * 2, r = AMBIENT_NODE_MIN_R + Math.random() * (AMBIENT_NODE_MAX_R - AMBIENT_NODE_MIN_R);
+            const x = Math.round(c.x + Math.cos(ang) * r), y = Math.round(c.y + Math.sin(ang) * r);
+            const lv = 1 + Math.floor(Math.random() * 3);
+            const amount = Math.round(6000 * Math.pow(2.6, lv - 1));
+            const res = RES[Math.floor(Math.random() * RES.length)];
+            rows.push({ world_id: worldId, x, y, t: "node", data: { res, lv, amount, max: amount } });
+          }
+          await admin.from("map_cells").upsert(rows, { onConflict: "world_id,x,y", ignoreDuplicates: true });
+        }
+        if ((campCount || 0) < campCap) {
+          const rows = [];
+          for (let i = 0; i < AMBIENT_CAMP_BATCH; i++) {
+            const c = players[Math.floor(Math.random() * players.length)];
+            const ang = Math.random() * Math.PI * 2, r = AMBIENT_NODE_MIN_R + Math.random() * (AMBIENT_NODE_MAX_R - AMBIENT_NODE_MIN_R);
+            const x = Math.round(c.x + Math.cos(ang) * r), y = Math.round(c.y + Math.sin(ang) * r);
+            const lv = 1 + Math.floor(Math.random() * 5);
+            rows.push({ world_id: worldId, x, y, t: "camp", data: { lv } });
+          }
+          await admin.from("map_cells").upsert(rows, { onConflict: "world_id,x,y", ignoreDuplicates: true });
+        }
+      }
+    }
+  } finally {
+    // Цепочка продолжается ДАЖЕ если досев выше пропущен (потолок достигнут)
+    // или упал (players-запрос пуст/ошибка внутри try) — finally, не конец
+    // try-блока, чтобы редкий сбой одного звена не оборвал respawn навсегда.
+    await admin.from("events").insert({
+      world_id: worldId, fire_at: new Date(Date.now() + AMBIENT_SEED_INTERVAL_SEC * 1000).toISOString(),
+      type: "ambient_seed", data: {},
+    });
+  }
 }
 const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];
 // load — index.html:2583-2588 TROOP_TYPES (там же атк/защ/хп/скорость/магия,
