@@ -709,7 +709,11 @@ const WATCH_TABLE = [
   { atk: 136000 }, { atk: 144000 }, { atk: 152000 }, { atk: 160000 }, { atk: 500000 },
 ];
 // index.html:4057 garrisonVolley — см. подробный комментарий в
-// _shared/rules.js (буквальная копия оттуда).
+// _shared/rules.js (буквальная копия оттуда). Фаза 9, кусочек 2: не
+// хватало множителя BATTLE_PACE (index.html:4066) — в однообменной модели
+// (Фаза 4) это было незаметно (масштаб урона не менял исход одного
+// обмена), теперь, когда бой раундовый, залп без этого множителя бил
+// вчетверо сильнее источника. Честный баг, не упрощение — исправлен.
 function garrisonVolley(defGarrisonLv, attS) {
   if (defGarrisonLv <= 0) return null;
   const dmg = tblRow(WATCH_TABLE, defGarrisonLv).atk;
@@ -718,7 +722,7 @@ function garrisonVolley(defGarrisonLv, attS) {
     if (attS[t].n <= 0) { out[t] = 0; return; }
     const share = dmg * (attS[t].hp / Math.max(1, attS.totalHp));
     const mitig = 1 + (attS[t].def / Math.max(1, attS[t].n)) / 70;
-    out[t] = share / mitig;
+    out[t] = share * BATTLE_PACE / mitig;
   });
   return out;
 }
@@ -761,9 +765,57 @@ function sideStats(units, race, B) {
   s.totalN = TKEYS.reduce((a, t) => a + s[t].n, 0);
   return s;
 }
+// index.html:1716 CFG.BATTLE_PACE — общий множитель, замедляющий урон ОДНОГО
+// раунда, чтобы бой из Фазы 9, кусочек 1 реально растягивался на несколько
+// раундов, а не решался в первом же (без него — как оказалось после
+// кусочка 1 — было именно так, см. заголовок resolvePvp ниже).
+const BATTLE_PACE = 0.45;
+// index.html:4100-4108 BATTLE_WEATHER — дословно: общая для ОБЕИХ сторон
+// погода за бой (не "везение одной стороны"), бьёт по РОДУ войск
+// атакующего в конкретном ударе (см. wMod(at) в dmgTo ниже), веса w —
+// вероятность выпадения (ясно намеренно вдвое вероятнее всего остального).
+const BATTLE_WEATHER = [
+  { id: "clear", w: 50, name: "Ясно", mod: {} },
+  { id: "rain", w: 11, name: "Проливной дождь", mod: { arc: 0.82 } },
+  { id: "mud", w: 11, name: "Распутица", mod: { cav: 0.82 } },
+  { id: "fog", w: 9, name: "Густой туман", mod: { arc: 0.85, sie: 0.80 } },
+  { id: "wind", w: 8, name: "Порывистый ветер", mod: { arc: 0.88, sie: 0.88 } },
+  { id: "heat", w: 7, name: "Палящий зной", mod: { inf: 0.92, arc: 0.92, cav: 0.92, sie: 0.92 } },
+  { id: "storm", w: 4, name: "Гроза", mod: { arc: 0.85 }, jitter: 0.14 },
+];
+// index.html:2692 mulberry — тот же генератор, дословно.
+function mulberry(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+// index.html:4118 battleRng сеет от W.seed/W.t — единого "тика мира"
+// одиночной игры, которого у общего мира нет (mp-tick резолвит каждое
+// событие в свой момент по расписанию, не по общему такту). Честная
+// замена: сеем от РЕАЛЬНОГО времени резолва + id марша/сторон — тот же
+// смысл ("разные бои — разная погода"), без требования побитовой
+// воспроизводимости по несуществующему здесь "тику".
+function battleRngMp(marchId) {
+  const s = (Date.now() ^ Math.imul((marchId || 0) | 0, 2654435761)) | 0;
+  return mulberry(s);
+}
+// index.html:4123 pickWeather — дословно.
+function pickWeather(rnd) {
+  const total = BATTLE_WEATHER.reduce((s, x) => s + x.w, 0);
+  let r = rnd() * total;
+  for (const x of BATTLE_WEATHER) { r -= x.w; if (r <= 0) return x; }
+  return BATTLE_WEATHER[0];
+}
 // defWallLv — уровень стены защитника; wallBonus — bonuses(p).wallBonus
 // (Фаза 6, было захардкожено 0), см. подробный комментарий в _shared/rules.js.
-function dmgTo(attS, defS, defWallLv = 0, wallBonus = 0) {
+// wMod(at) — index.html:4204 — погода бьёт по роду войск БЬЮЩЕГО (мокрая
+// тетива у лучника), одинаково применяется к обеим сторонам. shake —
+// index.html:4218 roll(), разброс ±jitter вокруг единицы на раунд, свой
+// для каждого вызова dmgTo (у каждой стороны свой бросок).
+function dmgTo(attS, defS, defWallLv = 0, wallBonus = 0, wMod = null, shake = 1) {
   const defWall = 1 + wallDefBonus(defWallLv) * (1 + wallBonus);
   const out = {};
   TKEYS.forEach((dt) => {
@@ -772,12 +824,13 @@ function dmgTo(attS, defS, defWallLv = 0, wallBonus = 0) {
     TKEYS.forEach((at) => {
       if (attS[at].n <= 0) return;
       const share = defS[dt].hp / Math.max(1, defS.totalHp);
-      d += attS[at].atk * counterMult(at, dt) * share;
-      dm += attS[at].matk * counterMult(at, dt) * share;
+      const w = wMod ? wMod(at) : 1;
+      d += attS[at].atk * counterMult(at, dt) * share * w;
+      dm += attS[at].matk * counterMult(at, dt) * share * w;
     });
     const mitig = 1 + (defS[dt].def / Math.max(1, defS[dt].n)) / 70 * defWall;
     const mitigM = 1 + (defS[dt].mdef / Math.max(1, defS[dt].n)) / 70 * defWall;
-    out[dt] = d / mitig + dm / mitigM;
+    out[dt] = (d / mitig + dm / mitigM) * BATTLE_PACE * shake;
   });
   return out;
 }
@@ -804,27 +857,42 @@ function applyLosses(units, dmgByType, race, hpBonus = 0) {
 // index.html:4129 resolveBattle — Фаза 9, кусочек 1: настоящий раундовый
 // бой (до ROUND_CAP схваток подряд, войска тают постепенно) вместо
 // единственного обмена ударами, которым эта функция была с Фазы 4.
+// Кусочек 2: добавлена погода (BATTLE_WEATHER/pickWeather/wMod/jitter,
+// дословно index.html:4100-4167) — раз на весь бой, бьёт по роду войск
+// бьющего в каждом ударе каждого раунда, плюс мелкий раунд-к-раунду
+// разброс (roll(), шире в грозу) — и найден/исправлен честный баг
+// кусочка 1: не было множителя BATTLE_PACE (index.html:4210), из-за чего
+// бои решались быстрее источника (см. заголовок BATTLE_PACE выше).
 // Честно ЕЩЁ НЕ входит (см. supabase/README.md, каждое — отдельный
-// следующий кусочек): погода (pickWeather/wMod/jitter), слом дисциплины
-// (checkDiscipline), урон по/от полководцам в бою (generalDamage/
-// damageToGeneral), поднятие нежити прямо в бою (raiseSkeletons — раз в
-// момент прибытия оно уже применяется отдельно, здесь речь о ПОРАУНДОВОМ
-// подъёме), контрудар гарнизона (dwarf B.counter), первый залп лучников
-// без ответа (elf firstStrike, index.html:4176-4181 — сейчас есть только
-// залп СТОРОЖЕВОЙ БАШНИ защитника, он был и раньше), досрочное отступление
-// атакующего при 72% потерь (rout), ничья по armyPower при исчерпании
-// ROUND_CAP раундов (сейчас ничья — по остатку totalHp, как и раньше).
+// следующий кусочек): слом дисциплины (checkDiscipline), урон по/от
+// полководцам в бою (generalDamage/damageToGeneral), поднятие нежити
+// прямо в бою (raiseSkeletons — раз в момент прибытия оно уже применяется
+// отдельно, здесь речь о ПОРАУНДОВОМ подъёме), контрудар гарнизона (dwarf
+// B.counter), первый залп лучников без ответа (elf firstStrike,
+// index.html:4176-4181 — сейчас есть только залп СТОРОЖЕВОЙ БАШНИ
+// защитника, он был и раньше), досрочное отступление атакующего при 72%
+// потерь (rout), ничья по armyPower при исчерпании ROUND_CAP раундов
+// (сейчас ничья — по остатку totalHp, как и раньше).
 // Фаза 6: attP/defP теперь полные объекты игрока (race+b+gen+tech), не
 // голые строки расы — нужны для bonuses(attP)/bonuses(defP,true) (defP
 // считается С defending=true — 5-я эпоха, defMods). См. подробный
 // комментарий в _shared/rules.js.
+// marchId — Фаза 9, кусочек 2: сеет battleRngMp (см. её заголовок), без
+// него дефолт 0 — детерминированная (но не менее честная) погода на бой.
 const ROUND_CAP = 60; // index.html:4190 while(round<60) — то же число
-function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv = 0) {
+function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv = 0, marchId = 0) {
   const attB = bonuses(attP), defB = bonuses(defP, true);
   let attU = attUnits, defU = defUnits;
   let attLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} }, defLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} };
+  const rnd = battleRngMp(marchId);
+  const weather = pickWeather(rnd);
+  const wMod = (t) => (weather.mod && weather.mod[t]) || 1;
+  const jit = weather.jitter || 0.05;
+  const roll = () => 1 + (rnd() * 2 - 1) * jit;
   // Залп Сторожевой башни защитника — до общей схватки (Фаза 4, шестой
-  // кусочек), теперь перед раундовым циклом, а не влит в единственный обмен.
+  // кусочек), теперь перед раундовым циклом, а не влит в единственный
+  // обмен. Погоду НЕ ловит (index.html:4183 тоже вызывает его без wMod) —
+  // только BATTLE_PACE, который у него был и раньше своей формулой.
   const openG = garrisonVolley(defGarrisonLv, sideStats(attU, attP.race, attB));
   if (openG) {
     const l = applyLosses(attU, openG, attP.race, attB.hp);
@@ -835,8 +903,8 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
     const attS = sideStats(attU, attP.race, attB), defS = sideStats(defU, defP.race, defB);
     if (attS.totalN <= 0 || defS.totalN <= 0) break;
     round++;
-    const dmgToDef = dmgTo(attS, defS, defWallLv, defB.wallBonus);
-    const dmgToAtt = dmgTo(defS, attS);
+    const dmgToDef = dmgTo(attS, defS, defWallLv, defB.wallBonus, wMod, roll());
+    const dmgToAtt = dmgTo(defS, attS, 0, 0, wMod, roll());
     const defLoss = applyLosses(defU, dmgToDef, defP.race, defB.hp);
     const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp);
     defU = unitsSub(defU, defLoss.units); defLossTotal = unitsAdd(defLossTotal, defLoss.units);
@@ -845,7 +913,7 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
   const attHpLeft = sideStats(attU, attP.race, attB).totalHp;
   const defHpLeft = sideStats(defU, defP.race, defB).totalHp;
   const winner = defHpLeft <= 0 && attHpLeft > 0 ? "att" : attHpLeft <= 0 && defHpLeft > 0 ? "def" : (attHpLeft > defHpLeft ? "att" : "def");
-  return { attLoss: attLossTotal, defLoss: defLossTotal, attHpLeft, defHpLeft, winner, rounds: round };
+  return { attLoss: attLossTotal, defLoss: defLossTotal, attHpLeft, defHpLeft, winner, rounds: round, weather: weather.id, weatherName: weather.name };
 }
 // index.html:2867 HOSPITAL_CAP_TABLE / hospitalCap / totalHospitalCap —
 // сколько раненых вмещает лазарет (сумма по всем 4 построенным участкам,
@@ -964,20 +1032,27 @@ const BANDIT_B = { atk: 0, def: 0, hp: 0, matk: 0, mdef: 0, archer: 0 };
 // resolvePvp выше), а тот же однообменный resolvePvp, что и у PvP —
 // честная общая упрощённая боевая модель общего мира, не два разных стиля
 // боя под одной крышей.
-// Фаза 9, кусочек 1 — тот же переход на раундовый цикл, что и у resolvePvp
-// выше (см. её заголовок насчёт честных пробелов, здесь те же самые: без
-// погоды/дисциплины/полководцев-в-бою/контрудара/первого залпа — у
-// разбойников и так нет ни стены, ни башни, ни первого залпа лучников).
-function resolveBanditRaid(attUnits, attP, campLv) {
+// Фаза 9, кусочки 1-2 — тот же переход на раундовый цикл + погоду, что и у
+// resolvePvp выше (см. её заголовок насчёт честных пробелов, здесь те же
+// самые: без дисциплины/полководцев-в-бою/контрудара/первого залпа — у
+// разбойников и так нет ни стены, ни башни, ни первого залпа лучников,
+// поэтому кроме погоды им ничего из залповых механик и не полагалось).
+function resolveBanditRaid(attUnits, attP, campLv, marchId = 0) {
   const attB = bonuses(attP);
   let attU = attUnits, bandU = banditArmy(campLv);
   let attLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} };
+  const rnd = battleRngMp(marchId);
+  const weather = pickWeather(rnd);
+  const wMod = (t) => (weather.mod && weather.mod[t]) || 1;
+  const jit = weather.jitter || 0.05;
+  const roll = () => 1 + (rnd() * 2 - 1) * jit;
   let round = 0;
   while (round < ROUND_CAP) {
     const attS = sideStats(attU, attP.race, attB), bandS = sideStats(bandU, null, BANDIT_B);
     if (attS.totalN <= 0 || bandS.totalN <= 0) break;
     round++;
-    const dmgToBand = dmgTo(attS, bandS), dmgToAtt = dmgTo(bandS, attS); // лагерь без стены/башни
+    const dmgToBand = dmgTo(attS, bandS, 0, 0, wMod, roll()); // лагерь без стены/башни
+    const dmgToAtt = dmgTo(bandS, attS, 0, 0, wMod, roll());
     const bandLoss = applyLosses(bandU, dmgToBand, null, 0);
     const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp);
     bandU = unitsSub(bandU, bandLoss.units);
@@ -986,7 +1061,7 @@ function resolveBanditRaid(attUnits, attP, campLv) {
   const attHpLeft = sideStats(attU, attP.race, attB).totalHp;
   const bandHpLeft = sideStats(bandU, null, BANDIT_B).totalHp;
   const winner = bandHpLeft <= 0 && attHpLeft > 0 ? "att" : attHpLeft <= 0 && bandHpLeft > 0 ? "band" : (attHpLeft > bandHpLeft ? "att" : "band");
-  return { attLoss: attLossTotal, winner, rounds: round };
+  return { attLoss: attLossTotal, winner, rounds: round, weather: weather.id, weatherName: weather.name };
 }
 // index.html:5148-5150 — та же добыча с разгромленного лагеря, что и в
 // одиночной игре (книги опыта генерала — bookDrop — не перенесены по той
@@ -1042,7 +1117,7 @@ async function applyMarchArrive(admin, ev) {
     defP.race = defP.race || defRow.race;
     const defWallLv = (defP.b && typeof defP.b.wall === "number") ? defP.b.wall : 0;
     const defGarrisonLv = (defP.b && typeof defP.b.garrison === "number") ? defP.b.garrison : 0;
-    const result = resolvePvp(m.units, attP, defP.troops, defP, defWallLv, defGarrisonLv);
+    const result = resolvePvp(m.units, attP, defP.troops, defP, defWallLv, defGarrisonLv, m.id);
     defP.troops = unitsSub(defP.troops, result.defLoss);
     // Фаза 4, шестой кусочек: лазарет защитника (index.html:4351/4411-4423)
     // — часть потерь не гибнет насмерть. Слегка раненые (12%) немедленно
@@ -1224,7 +1299,7 @@ async function applyRaidArrive(admin, m) {
   // истощённую точку, как attack на пропавшего защитника).
   if (cell && (cell.t === "camp" || cell.t === "fort")) {
     const campLv = (m.data && m.data.camp_lv) || 1;
-    const result = resolveBanditRaid(m.units, attP, campLv);
+    const result = resolveBanditRaid(m.units, attP, campLv, m.id);
     const hs = hospitalSplit(attP, result.attLoss, "hospital");
     attP.troops = unitsAdd(attP.troops, hs.slightUnits);
     attP.wounded = unitsAdd(attP.wounded, hs.hurtUnits);
