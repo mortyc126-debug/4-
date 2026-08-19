@@ -6807,6 +6807,36 @@ function mpCellTrainHtml(bld,pShim,st){
        "<input id='mp-n-"+t+"' type='number' min='1' max='"+cap+"' value='"+Math.min(cap,10)+"'> "+
        "<button class='seal' data-mp='train' data-t='"+t+"'"+(mpState.loading?" disabled":"")+">Обучить</button>";
   }
+  h+=mpCellRetrainHtml(t,bld,pShim,st);
+  return h;
+}
+// Фаза 14, кусочек 8 — переобучение в следующий тир прямо с карты: тот же
+// довесок, что и рубрика "Переобучение" внутри foMultiplayer() (зеркало
+// startRetrain(p,type,fromTier,n)), просто ограничен ОДНИМ родом войск t
+// (тем самым, что тренируется в этом здании) — foMultiplayer() крутит цикл
+// по всем TKEYS сразу, тут это не нужно, панель уже привязана к одному
+// зданию/роду войск. Форма — id='mp-rt-n-<t>-<fromTier>' + data-mp='retrain'
+// data-t='<t>' data-from='<fromTier>' — те же атрибуты, что уже читает
+// существующий mpDoRetrain() — новой проводки в handleAct() не понадобилось.
+function mpCellRetrainHtml(t,bld,pShim,st){
+  const maxT=tierUnlockedFor({tech:st.tech||{}},t);
+  const cap=trainCap(Array.isArray(st.b[bld])?Math.max(0,...st.b[bld]):(st.b[bld]||0));
+  const training=st.train&&st.train[t];
+  let h="";
+  for(let fromTier=1; fromTier<maxT; fromTier++){
+    const have=(st.troops[t]&&st.troops[t][fromTier])||0;
+    if(!have) continue;
+    h+="<div class='title' style='margin-top:10px'>"+unitName(t,fromTier,pShim.race)+" → "+unitName(t,fromTier+1,pShim.race)+" — есть "+RU(have)+"</div>";
+    if(training){
+      h+="<div class='note'>Здание занято набором/переобучением.</div>";
+    } else {
+      const c=retrainCost(t,fromTier,1), n=Math.min(have,cap);
+      h+="<div class='note'>Цена за штуку (сверх уже вложенного): "+RES.filter(r=>c[r]).map(r=>RES_NAME[r]+" "+RU(c[r])).join(", ")+
+         " · максимум за раз: "+cap+"</div>"+
+         "<input id='mp-rt-n-"+t+"-"+fromTier+"' type='number' min='1' max='"+n+"' value='"+n+"'> "+
+         "<button class='seal' data-mp='retrain' data-t='"+t+"' data-from='"+fromTier+"'"+(mpState.loading?" disabled":"")+">Переобучить</button>";
+    }
+  }
   return h;
 }
 // Фаза 14, кусочек 6 — лечение раненых прямо с карты: клик по любому из 4
