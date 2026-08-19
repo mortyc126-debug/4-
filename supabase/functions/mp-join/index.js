@@ -681,6 +681,20 @@ Deno.serve(async (req) => {
       // Самоисцеление легаси-записей, заведённых до Фазы 6 (race тогда не
       // дублировалась в state) — см. комментарий в newPlayerState выше.
       st.race = st.race || existing.data.race;
+      // Самоисцеление ещё одного пробела: newPlayerState's BKEYS не
+      // включает forge/portal (участок под них заводится только при
+      // реальной стройке, см. buildLv/buildLvAt в mp-build) — st.b.forge/
+      // st.b.portal были ровно undefined, а не 0, у игроков, ещё их не
+      // построивших. Клиентский mpPower()/mpCellPanelHtml (index.html)
+      // из-за этого падали на undefined.power внутри buildingPower() —
+      // автор сообщил "нет аватарки/мощи, меню как будто не дорисовывается"
+      // (mpRenderTop() рвался посередине, а mpRerender() без try/catch
+      // тянул этот обрыв дальше по всей цепочке опроса). Клиент починен
+      // отдельно (||0 везде, где раньше читали st.b[...] напрямую), но
+      // лучше не оставлять исходную причину только на клиентской защите —
+      // самоисцеляем и здесь, разом на будущее для любого другого кода,
+      // который тоже может забыть про ||0.
+      if (st.b) { st.b.forge = st.b.forge || 0; st.b.portal = st.b.portal || 0; }
       syncRes(st, nowSec);
       const upd = await admin.from("players").update({ state: st, updated_at: new Date().toISOString() })
         .eq("id", existing.data.id).select().single();
