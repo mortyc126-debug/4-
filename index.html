@@ -8527,7 +8527,7 @@ function openMenuModal(t){
   // пока игрок смотрит другую вкладку.
   if($("#menu-modal").dataset.tab==="mp" && t!=="mp") mpStopPolling();
   $("#menu-modal").dataset.tab = t;
-  const html = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): t==="mp"?foMultiplayer(): foInv();
+  const html = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): t==="mp"?foMultiplayer(!SP_UNLOCKED): foInv();
   lastMenuBody = html;
   $("#menu-modal-body").innerHTML = html;
   $("#menu-modal").classList.add("open");
@@ -8604,7 +8604,7 @@ function refreshOpenModal(){
     (document.activeElement.tagName==="INPUT"||document.activeElement.tagName==="TEXTAREA");
   if(menu.classList.contains("open") && !typingInModal){
     const t=menu.dataset.tab;
-    const html = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): t==="mp"?foMultiplayer(): foInv();
+    const html = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): t==="mp"?foMultiplayer(!SP_UNLOCKED): foInv();
     if(html!==lastMenuBody){                       // не перерисовываем зря (иначе моргает аватар)
       lastMenuBody=html;
       $("#menu-modal-body").innerHTML = html;
@@ -9041,7 +9041,7 @@ async function mpCall(fn, body){
 }
 function mpRerender(){
   if($("#menu-modal").classList.contains("open") && $("#menu-modal").dataset.tab==="mp"){
-    lastMenuBody = foMultiplayer();
+    lastMenuBody = foMultiplayer(!SP_UNLOCKED);
     $("#menu-modal-body").innerHTML = lastMenuBody;
   }
 }
@@ -9373,9 +9373,19 @@ function mpRaceCardsHtml(){
     "<button class='mp-race"+(mpState.race===r?" on":"")+"' data-mp='race' data-r='"+r+"' style='--rc:"+RACES[r].color+"'>"+
     shieldSvg(r,22)+"<b>"+RACES[r].name+"</b></button>").join("")+"</div>";
 }
-function foMultiplayer(){
-  let h=rubric("Общий мир","бета");
-  h+="<div class='entry'><div class='line'><div class='fill'>"+
+// embedded=true — Фаза 13, режим "мир как точка входа" (SP_UNLOCKED):
+// вызывается из openMenuModal/mpRerender/refreshOpenModal как
+// foMultiplayer(!SP_UNLOCKED). Гость, для которого это ЕДИНСТВЕННЫЙ
+// доступный экран, не должен видеть заголовок "Общий мир (бета)" и текст
+// про "что уже перенесено, что нет" — та рамка честна и уместна, когда это
+// один из НЕСКОЛЬКИХ режимов рядом с одиночкой (?sp=1, для автора), но не
+// когда это и есть вся игра целиком. Сама панель (rubric-и/кнопки/действия
+// ниже) не меняется ни на бит — только вступление и пара фраз с "общий
+// мир"/"в общем мире", которые в embedded-режиме звучали бы странно
+// (мир один, уточнять нечего).
+function foMultiplayer(embedded){
+  let h=embedded?"":rubric("Общий мир","бета");
+  if(!embedded) h+="<div class='entry'><div class='line'><div class='fill'>"+
      "<div class='note'>Один настоящий мир на всех, кто сюда заходит — не отдельная копия для "+
      "каждого браузера. Все постройки (включая Горн и Портал), набор и переобучение войск, "+
      "добыча ресурсов и материалов по времени, ковка и надевание снаряжения, полноценный "+
@@ -9391,7 +9401,7 @@ function foMultiplayer(){
        "<input id='mp-nick' maxlength='24' placeholder='Ник правителя' value='"+(mpState.nick||"").replace(/'/g,"&#39;")+"'>"+
        (mpState.err?"<div class='note' style='color:#e08'>"+mpState.err+"</div>":"")+
        "<button class='seal' data-mp='join'"+(mpState.race&&!mpState.loading?"":" disabled")+">"+
-       (mpState.loading?"Вхожу...":"Войти в общий мир")+"</button>"+
+       (mpState.loading?"Вхожу...":embedded?"Начать":"Войти в общий мир")+"</button>"+
        "</div></div></div>";
     return h;
   }
@@ -9408,7 +9418,7 @@ function foMultiplayer(){
   };
   h+="<div class='entry hot'><div class='line'><div class='fill'>"+
      "<div class='title'>"+(p.nick||"Безымянный лорд")+" · "+RACES[p.race].name+"</div>"+
-     "<div class='note'>Координаты в общем мире: "+p.x+", "+p.y+"</div></div></div></div>";
+     "<div class='note'>Координаты: "+p.x+", "+p.y+"</div></div></div></div>";
 
   if(mpState.incoming.length){
     h+=rubric("Входящие атаки","тревога");
@@ -9426,7 +9436,7 @@ function foMultiplayer(){
   // 3D-карты (та рассчитана на локальных ботов одного браузера — встроить
   // туда настоящих других игроков отдельная большая задача, следующий шаг
   // после этого). Отсортировано по расстоянию — ближайшие сверху.
-  h+=rubric("Соседи","общий мир");
+  h+=rubric("Соседи",embedded?"":"общий мир");
   if(!mpState.neighbors.length){
     h+="<div class='entry'><div class='line'><div class='fill'><div class='note'>"+
        "Пока никого рядом — позовите друга, он увидит вас здесь же, как только зайдёт.</div></div></div></div>";
@@ -9466,7 +9476,7 @@ function foMultiplayer(){
   // города при первом входе (seedNodesAround в mp-join) — respawn
   // истощённых точек ещё не перенесён (см. заголовок mp-gather), поэтому
   // список может со временем оскудевать, честно как есть.
-  h+=rubric("Точки сбора","общий мир");
+  h+=rubric("Точки сбора",embedded?"":"общий мир");
   if(!mpState.nodes.length){
     h+="<div class='entry'><div class='line'><div class='fill'><div class='note'>"+
        "Рядом с городом появляется несколько точек сбора при первом входе — если пусто, обновите вкладку.</div></div></div></div>";
@@ -9504,7 +9514,7 @@ function foMultiplayer(){
   // mpRefreshCamps/mpDoRaid выше. Бой — однообменный resolveBanditRaid в
   // mp-tick (та же упрощённая модель, что и у PvP), не полный resolveBattle
   // — победа сносит лагерь целиком, respawn пока не перенесён.
-  h+=rubric("Лагеря варваров","общий мир");
+  h+=rubric("Лагеря варваров",embedded?"":"общий мир");
   if(!mpState.camps.length){
     h+="<div class='entry'><div class='line'><div class='fill'><div class='note'>"+
        "Рядом с городом появляется несколько лагерей при первом входе — если пусто, обновите вкладку.</div></div></div></div>";
