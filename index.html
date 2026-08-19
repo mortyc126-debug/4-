@@ -8476,6 +8476,8 @@ $("#menu-modal-body").addEventListener("click",e=>{
   if(buildBtn){ mpDoBuild(buildBtn.dataset.bk, buildBtn.dataset.plot==null?null:+buildBtn.dataset.plot); return; }
   const forgeBtn=e.target.closest("[data-mp='forge']");
   if(forgeBtn){ mpDoForge(forgeBtn.dataset.mat); return; }
+  const matupBtn=e.target.closest("[data-mp='matup']");
+  if(matupBtn){ mpDoUpgrade(matupBtn.dataset.mat,+matupBtn.dataset.tier); return; }
   const attackPickBtn=e.target.closest("[data-mp='attackpick']");
   if(attackPickBtn){ mpState.attackTarget=+attackPickBtn.dataset.id; mpRerender(); return; }
   const attackCancelBtn=e.target.closest("[data-mp='attackcancel']");
@@ -8854,6 +8856,14 @@ async function mpDoBuild(bk,plot){
 async function mpDoForge(mat){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-forge",{mat}); await mpRefreshPlayer(); }
+  catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+// Фаза 11, кусочек 2 — слияние 4 материалов в 1 более редкий (mp-upgrade),
+// см. рубрику «Горн» в foMultiplayer.
+async function mpDoUpgrade(mat,tier){
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{ await mpCall("mp-upgrade",{mat,tier}); await mpRefreshPlayer(); }
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -9344,11 +9354,11 @@ function foMultiplayer(){
     }
   });
 
-  // Фаза 11, кусочек 1 — Горн: добыча сырых материалов (mp-forge). Только
-  // gathering (kind:"material") — ковка снаряжения (kind:"item") сюда не
-  // входит, отдельный следующий кусочек, поэтому у материалов пока нет
-  // применения кроме как копиться на складе.
-  h+=rubric("Горн","добыча материалов");
+  // Фаза 11: кусочек 1 — Горн, добыча сырых материалов (mp-forge, только
+  // kind:"material"); кусочек 2 — слияние 4-в-1 на более редкое качество
+  // (mp-upgrade). Сама ковка снаряжения (kind:"item") сюда не входит,
+  // отдельный следующий кусочек — до неё материалы копятся без применения.
+  h+=rubric("Горн","добыча и слияние материалов");
   if(!(mpBuildLv("forge")>0)){
     h+="<div class='entry'><div class='line'><div class='fill'>"+
        "<div class='note'>Нужно построить Горн (см. «Постройки» выше).</div></div></div></div>";
@@ -9361,11 +9371,15 @@ function foMultiplayer(){
          "<div class='note'>Осталось: "+fmtDur(left)+"</div></div></div></div>";
     } else {
       Object.keys(MATERIALS).forEach(mat=>{
-        const have=(st.materials&&st.materials[mat]&&st.materials[mat][0])||0;
+        const stock=(st.materials&&st.materials[mat])||[0,0,0,0,0];
         h+="<div class='entry'><div class='line'><div class='fill'>"+
-           "<div class='title'>"+MATERIALS[mat].name+" — есть "+RU(have)+" (обычного качества)</div>"+
-           "<div class='note'>Партия ×3 · 100 золота · "+fmtDur(2400)+"</div>"+
-           "<button class='seal' data-mp='forge' data-mat='"+mat+"'"+(mpState.loading?" disabled":"")+">Добыть</button>"+
+           "<div class='title'>"+MATERIALS[mat].name+"</div>"+
+           "<div class='note'>"+RARITY_NAMES.map((rn,i)=>rn+": "+RU(stock[i]||0)).join(" · ")+"</div>"+
+           "<button class='seal' data-mp='forge' data-mat='"+mat+"'"+(mpState.loading?" disabled":"")+">Добыть обычного (×3 · 100 золота · "+fmtDur(2400)+")</button> "+
+           [0,1,2,3].map(t=>
+             "<button class='seal' data-mp='matup' data-mat='"+mat+"' data-tier='"+t+"'"+
+             (mpState.loading||(stock[t]||0)<4?" disabled":"")+">4×"+RARITY_NAMES[t]+" → "+RARITY_NAMES[t+1]+"</button>"
+           ).join(" ")+
            "</div></div></div>";
       });
     }
