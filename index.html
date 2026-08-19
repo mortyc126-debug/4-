@@ -440,16 +440,15 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 /* Фаза 13 — .mp-gated (см. SP_UNLOCKED в самом начале скрипта): прячет
    ВСЮ одиночную обвязку (сама партия по-прежнему грузится и существует в
    памяти, см. комментарий у SP_UNLOCKED — просто невидима и не запускает
-   рендер-цикл), оставляя видимым только #menu-modal с общим миром.
-   #onboard — отдельно и с !important: её собственное .open-правило
-   (z-index:70, выше #menu-modal) иначе перебивало бы этот сброс и экран
-   летописи всплывал бы поверх регистрации в общем мире у совсем нового
-   посетителя (claimChronicle() в start() всё равно вызывается в фоне —
-   ей нужен валидный W, как и всему остальному коду). Крестик закрытия
-   модалки скрыт тоже — закрывать её в этом режиме некуда, под ней ничего
-   нет. */
+   рендер-цикл), оставляя видимым #menu-modal (панель общего мира) и
+   #onboard (Фаза 13, продолжение — переиспользован под регистрацию в
+   общем мире, runMpOnboarding(), тот же экран летописи, что и у
+   одиночки, см. её же CSS ниже по файлу). Одиночный claimChronicle() в
+   этом режиме НЕ зовётся вовсе (см. start()) — тот же #onboard/#ob-body
+   не должен достаться двум разным сценариям одновременно. Крестик
+   закрытия модалки скрыт — закрывать её в этом режиме некуда, под ней
+   ничего нет. */
 .mp-gated #app,.mp-gated #view-toggle,.mp-gated #menu-btn,.mp-gated #side-menu{display:none}
-.mp-gated #onboard{display:none!important}
 .mp-gated #menu-modal-close{display:none}
 #menu-modal-close:hover{border-color:var(--gilt-hi)}
 
@@ -8969,6 +8968,73 @@ function runOnboarding(demo){
   });
 }
 
+// Фаза 13, продолжение — тот же экран летописи (#onboard/#ob-body/.ob-*),
+// что и у runOnboarding() выше, но для регистрации в общем мире: всего
+// два шага (народ → имя), БЕЗ выбора полководца — тот выбирается позже,
+// уже в игре (рубрика «Полководец», mp-pickgen, Фаза 7), mp-join
+// полководца вообще не принимает. Отдельная функция, а не runOnboarding
+// с новым параметром — там шаг генерала вплетён прямо в render()/клики
+// (step===2 читает GENERALS[pick.race][pick.genId] и т.д.), городить
+// условный пропуск шага внутри и так плотной функции рискованнее, чем
+// написать свою короче на два шага. Не демо: результат реально уходит на
+// сервер (mp-join), поэтому баннера "Предпросмотр" здесь нет.
+function runMpOnboarding(){
+  return new Promise(resolve=>{
+    const wrap=$("#onboard"), body=$("#ob-body");
+    const pick={race:null, nick:""};
+    let step=1;
+    function render(){
+      let h="";
+      if(step===1){
+        h+="<div id='ob-hd'>Летопись нового правителя</div>"+
+           "<div id='ob-title'>Выберите народ</div>"+
+           "<div id='ob-lede'>Решение окончательное: народ определяет войска, "+
+           "венцы в академии и слабость, с которой придётся жить всю партию.</div>";
+        h+="<div class='ob-races'>"+RACE_KEYS.map(r=>
+          "<div class='ob-race"+(pick.race===r?" on":"")+"' data-ob='race' data-r='"+r+"' "+
+          "style='--rc:"+RACES[r].color+"'>"+shieldSvg(r)+"<b>"+RACES[r].name+"</b></div>").join("")+"</div>";
+        if(pick.race){
+          const R=RACES[pick.race];
+          h+="<div class='ob-detail' style='--rc:"+R.color+"'>"+
+             "<div class='nm'>"+R.name+"</div><div class='ds'>"+R.desc+"</div>"+
+             "<div class='mn'><b>Слабость</b><br>"+R.minus.desc+"</div></div>";
+        }
+        h+="<button class='ob-go' data-ob='next'"+(pick.race?"":" disabled")+">Далее</button>";
+      } else {
+        const R=RACES[pick.race];
+        h+="<div id='ob-hd'>"+R.name+"</div>"+
+           "<div class='ob-sum' style='--rc:"+R.color+"'>"+shieldSvg(pick.race)+
+             "<div><div class='nm'>"+R.name+"</div></div></div>"+
+           "<div id='ob-title'>Внесите своё имя</div>"+
+           "<div id='ob-lede'>Под этим именем вас запомнят соседи.</div>"+
+           "<input id='ob-name' maxlength='24' placeholder='Имя правителя' autocomplete='off'>"+
+           "<div class='ob-note'>Имя можно будет сменить позже. Народ — нет. Полководца выберете уже в игре.</div>"+
+           "<button class='ob-go' data-ob='done'>Начать</button>"+
+           "<button class='ob-back' data-ob='back'>Назад к выбору народа</button>";
+      }
+      body.innerHTML=h;
+      const inp=$("#ob-name");
+      if(inp){ inp.value=pick.nick; inp.focus(); }
+    }
+    body.onclick=e=>{
+      const el=e.target.closest("[data-ob]"); if(!el) return;
+      const a=el.dataset.ob;
+      if(a==="race"){ pick.race=el.dataset.r; render(); }
+      else if(a==="next"){ if(step===1&&pick.race) step=2; render(); }
+      else if(a==="back"){ const inp=$("#ob-name"); if(inp) pick.nick=inp.value; step=1; render(); }
+      else if(a==="done"){
+        const inp=$("#ob-name");
+        pick.nick=((inp&&inp.value)||"").trim().slice(0,24)||"Безымянный лорд";
+        wrap.classList.remove("open");
+        body.onclick=null;
+        resolve(pick);
+      }
+    };
+    wrap.classList.add("open");
+    render();
+  });
+}
+
 // Показать экран летописи и записать выбор в мир. Один путь на оба случая —
 // первый запуск и «Новый мир» из вкладки Мир, чтобы они не разъезжались.
 // Мир к этому моменту уже создан: столица на месте, соседи расставлены. Меняем
@@ -9105,7 +9171,29 @@ async function mpOpen(){
   try{
     const j=await mpCall("mp-join",{});
     mpState.joined=true; mpState.player=j.player; if(!wasJoined) mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail();
-  }catch(e){ mpState.joined=false; }
+  }catch(e){
+    mpState.joined=false;
+    // Фаза 13, продолжение — различаем ДВА разных "отказа" mp-join с
+    // пустым телом: "Нужна раса..." (mp-join/index.js) — ожидаемый ответ
+    // для СОВСЕМ НОВОГО anon-uid, не сбой — гость видит тот же красивый
+    // экран летописи, что и одиночка (runMpOnboarding — #onboard/.ob-*,
+    // см. её же комментарий), а не голую форму внутри самой панели.
+    // Любая ДРУГАЯ ошибка (сеть, 500) — настоящий сбой, не анкета: он
+    // просто оседает в mpState.err, панель его уже честно показывает
+    // (см. низ foMultiplayer), запускать визард на реальной ошибке было
+    // бы враньём "нужно выбрать расу", когда на деле просто не достучались
+    // до сервера. Только в gate-режиме: при ?sp=1 это по-прежнему один из
+    // нескольких табов в бургер-меню, там плоская форма (см. !embedded в
+    // foMultiplayer) остаётся честным быстрым путём, не первым
+    // впечатлением от игры.
+    if(!SP_UNLOCKED && !wasJoined && /Нужна раса/.test(e.message)){
+      const pick=await runMpOnboarding();
+      mpState.race=pick.race; mpState.nick=pick.nick;
+      await mpDoJoin();
+    } else {
+      mpState.err=e.message;
+    }
+  }
   finally{ mpState.loading=false; mpRerender(); }
 }
 async function mpDoJoin(){
@@ -10068,7 +10156,15 @@ function foMultiplayer(embedded){
   if(!ok) genWorld(Date.now()&0xffffff);
   // Старые сохранения флага не несут вовсе, поэтому у них экран не появится —
   // они остаются как были, и выбор полководца у них живёт во вкладке «Генерал».
-  if(W.pendingSetup) await claimChronicle();
+  // При .mp-gated claimChronicle() НЕ зовётся вовсе (не только не видна) —
+  // она использует тот же #onboard/#ob-body, что теперь занят под
+  // регистрацию в общем мире (runMpOnboarding(), см. mpOpen()); звать обе
+  // одновременно — гонка за одним и тем же DOM. W.pendingSetup остаётся
+  // true молча — newPlayer() уже создаёт валидного me() с race:"human" по
+  // умолчанию (см. genWorld), так что W/me() всё равно валидны для всего
+  // остального кода, просто раса не "подтверждена" — а раз партия никому
+  // не видна, это ничему не мешает.
+  if(SP_UNLOCKED && W.pendingSetup) await claimChronicle();
   // Одиночная партия (W/me()) должна СУЩЕСТВОВАТЬ валидной и при .mp-gated
   // (см. menuBadges/visibilitychange и другой код по всему файлу, молча на
   // это рассчитывающий) — но раз она в этом режиме никому не видна, гонять
