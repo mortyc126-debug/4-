@@ -371,11 +371,14 @@ async function applyCampRespawn(admin, ev) {
   if (error) throw error;
 }
 const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];
+// load — index.html:2583-2588 TROOP_TYPES (там же атк/защ/хп/скорость/магия,
+// но load не переносился в этот файл раньше — combat-математике он не
+// нужен, добавлен здесь ради carryCap в PvP-грабеже, см. applyMarchArrive.
 const TROOP_TYPES = {
-  inf: { atk: 34, def: 46, hp: 44, speed: 1.00, magicAtk: 8, magicDef: 18, beats: "arc", losesTo: "cav" },
-  arc: { atk: 50, def: 30, hp: 36, speed: 1.10, magicAtk: 20, magicDef: 8, beats: "cav", losesTo: "inf" },
-  cav: { atk: 46, def: 34, hp: 40, speed: 1.70, magicAtk: 12, magicDef: 12, beats: "inf", losesTo: "arc" },
-  sie: { atk: 24, def: 20, hp: 60, speed: 0.60, magicAtk: 26, magicDef: 6, beats: null, losesTo: null },
+  inf: { atk: 34, def: 46, hp: 44, load: 6, speed: 1.00, magicAtk: 8, magicDef: 18, beats: "arc", losesTo: "cav" },
+  arc: { atk: 50, def: 30, hp: 36, load: 8, speed: 1.10, magicAtk: 20, magicDef: 8, beats: "cav", losesTo: "inf" },
+  cav: { atk: 46, def: 34, hp: 40, load: 5, speed: 1.70, magicAtk: 12, magicDef: 12, beats: "inf", losesTo: "arc" },
+  sie: { atk: 24, def: 20, hp: 60, load: 30, speed: 0.60, magicAtk: 26, magicDef: 6, beats: null, losesTo: null },
 };
 const RACE_TROOP_MOD = {
   dwarf: { inf: { atk: 1.05, def: 1.05, hp: 1.05 } },
@@ -706,6 +709,20 @@ function bonuses(p, defending = false) {
 // вместо голых PROD_TABLE-чисел (тот же самый B, что течёт и в trainSpeed/
 // build/heal у остальных функций этого файла). handicap (p.isBot) в общем
 // мире не нужен — ботов здесь нет (см. syncRes выше).
+// PROD_BLD/PROD_MULT/PROD_TABLE/prodRate/plotCap — до этого кусочка
+// отсутствовали в файле целиком (production() ссылалась на них и упала бы
+// ReferenceError'ом при первом же реальном вызове — а вызовов не было,
+// функция была мёртвым кодом с самого своего появления). Нужны здесь для
+// syncRes/capacity ниже — грабёж при победе в PvP должен видеть актуальный
+// склад защитника и уважать его защиту от разграбления, как в источнике.
+const PROD_BLD = { food: "farm", wood: "lumber", stone: "quarry", gold: "mine" };
+const PROD_MULT = { food: 1, wood: 1, stone: 0.75, gold: 0.5 };
+const PROD_TABLE = [
+  400, 430, 470, 520, 580, 650, 730, 830, 950, 1100, 1300, 1550, 1850, 2200, 2700,
+  3200, 3700, 4300, 5000, 5800, 6700, 7800, 9000, 10400, 20800,
+];
+const prodRate = (lv) => (lv <= 0 ? 0 : tblRow(PROD_TABLE, lv));
+const plotCap = (lv) => (lv <= 0 ? 0 : tblRow(PROD_TABLE, lv) * 10);
 function production(p) {
   const B = bonuses(p), out = {};
   RES.forEach((r) => {
@@ -719,6 +736,48 @@ function production(p) {
     out[r] = v;
   });
   return out;
+}
+function plotFillCap(p) {
+  const out = {};
+  RES.forEach((r) => {
+    const plots = p.b[PROD_BLD[r]];
+    let extra = 0;
+    (Array.isArray(plots) ? plots : [plots || 0]).forEach((lv) => { extra += plotCap(lv) * PROD_MULT[r]; });
+    out[r] = Math.round(extra);
+  });
+  return out;
+}
+// index.html:1293-1295/2798 STORE_TABLE/storeCap — защита Склада от
+// разграбления. index.html:3820-3826 capacity(p) — своя вместимость на
+// каждый ресурс (склад + защита участков), используется ДВАЖДы в
+// источнике: как потолок для syncRes (добыча не копится сверх него) и как
+// защищённый минимум при грабеже (battleCity — грабить можно только то,
+// что выше этой планки). Оба смысла ниже, как и в источнике.
+const STORE_TABLE = [
+  300000, 320000, 350000, 380000, 410000, 450000, 500000, 550000, 600000,
+  650000, 700000, 750000, 800000, 850000, 900000, 1000000, 1100000, 1200000, 1300000, 1400000,
+  1500000, 1600000, 1800000, 2000000, 2500000,
+];
+const storeCap = (lv) => tblRow(STORE_TABLE, Math.max(1, lv));
+function capacity(p) {
+  const B = bonuses(p), base = Math.round(storeCap((p.b && p.b.store) || 0) * (1 + B.cap));
+  const extra = plotFillCap(p);
+  const out = {};
+  RES.forEach((r) => { out[r] = base + extra[r]; });
+  return out;
+}
+// index.html:3838-3844 syncRes(p) — довести p.res до текущего момента
+// перед грабежом (иначе атакующий видел бы устаревший снимок склада с
+// момента последнего ДЕЙСТВИЯ защитника, а не реальный на секунду боя).
+function syncRes(p, nowSec) {
+  const dt = (nowSec - (p.resAt || 0)) / 3600;
+  if (dt <= 0) { p.resAt = nowSec; return; }
+  const pr = production(p), cap = plotFillCap(p);
+  RES.forEach((r) => {
+    const add = Math.min(pr[r] * dt, cap[r]);
+    p.res[r] = Math.max(0, (p.res[r] || 0) + add);
+  });
+  p.resAt = nowSec;
 }
 // index.html:1305 WALL_TABLE — только колонка hp нужна для wallDefBonus.
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -1546,7 +1605,7 @@ async function applyMarchArrive(admin, ev) {
   if (dErr) throw dErr;
 
   const nowSec = Date.now() / 1000;
-  let survivors = m.units;
+  let survivors = m.units, carry = {};
   // Цель пропала или встала под щит уже после отправки марша — бой не
   // случается, отряд просто разворачивается (как recallMarch без боя).
   if (defRow && !(defRow.shield_until > nowSec)) {
@@ -1577,7 +1636,28 @@ async function applyMarchArrive(admin, ev) {
     // Раньше эта функция вообще не писала обратно строку атакующего (его
     // войска возвращались только через марш домой) — теперь нужно, чтобы
     // сохранить level/xp/pts.
-    if (result.winner === "att") addXp(attP, Math.round(200 + (defP.b && defP.b.hall || 0) * 60));
+    if (result.winner === "att") {
+      addXp(attP, Math.round(200 + (defP.b && defP.b.hall || 0) * 60));
+      // index.html:5385-5391 battleCity — грабёж склада защитника, ранее
+      // честно отсутствовавший в MP целиком (carry никогда не выставлялся,
+      // defP.res никогда не трогался). syncRes(defP) сначала — иначе
+      // грабился бы устаревший снимок с момента последнего ДЕЙСТВИЯ
+      // защитника, а не реальный на секунду боя.
+      syncRes(defP, nowSec);
+      let carryCap = 0;
+      TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) carryCap += (survivors[t][i] || 0) * TROOP_TYPES[t].load * TIER_MULT[i - 1] * troopMod(attP.race, t, "load"); });
+      const prot = capacity(defP);
+      RES.forEach((r) => {
+        const take = Math.min(Math.max(0, (defP.res[r] || 0) - prot[r]), carryCap / 4);
+        carry[r] = Math.round(take);
+        defP.res[r] = (defP.res[r] || 0) - take;
+      });
+      // index.html:5393-5403 — полный разгром бьёт по прочности стены и
+      // при обнулении переносит столицу защитника (relocate). Сознательно
+      // НЕ переносится — щит мира и перенос столицы исключены из общего
+      // мира ещё раньше в этой миграции (не были закончены даже в
+      // одиночной игре), тот же принцип, что и у wallHp вообще.
+    }
     const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
     if (updA) throw updA;
     const { error: updD } = await admin.from("players").update({ state: defP, updated_at: new Date().toISOString() }).eq("id", defRow.id);
@@ -1588,6 +1668,7 @@ async function applyMarchArrive(admin, ev) {
       attHpLeft: Math.round(result.attHpLeft), defHpLeft: Math.round(result.defHpLeft),
       defDead: hs.dead, defHurt: hs.hurt, defSlight: hs.slight,
       rounds: result.rounds, // Фаза 9, кусочек 1 — теперь бой честно может занять не один обмен
+      loot: carry, // {} при поражении/ничьей — RES.forEach выше не заполнил ни рубля
     };
     const mailRows = [
       { world_id: m.world_id, player_id: attRow.id, kind: "battle", data: { role: "attacker", opponent_id: defRow.id, opponent_nick: defRow.nick, ...summary } },
@@ -1605,7 +1686,7 @@ async function applyMarchArrive(admin, ev) {
   const dist = (m.data && m.data.dist) || 0, spd = (m.data && m.data.spd) || 1;
   const travelBack = Math.max(15, (dist / spd) * 60);
   const { error: updM } = await admin.from("marches")
-    .update({ state: "back", t0: nowSec, t1: nowSec + travelBack, units: survivors }).eq("id", m.id);
+    .update({ state: "back", t0: nowSec, t1: nowSec + travelBack, units: survivors, data: { ...m.data, carry } }).eq("id", m.id);
   if (updM) throw updM;
   const { error: evErr } = await admin.from("events").insert({
     world_id: m.world_id, fire_at: new Date((nowSec + travelBack) * 1000).toISOString(),
@@ -1629,9 +1710,11 @@ async function applyMarchHome(admin, ev) {
     const p = row.state;
     p.troops = unitsAdd(p.troops, m.units);
     // Фаза 8, кусочек 1 — зеркало gain(p,m.carry) из EV.home (index.html:
-    // 4959-4964). Только gather-марши несут m.data.carry (см. applyGathered
-    // ниже) — у атакующих маршей этого поля никогда не было и не будет,
-    // для них ничего не меняется.
+    // 4959-4964). gather/raid-марши несут m.data.carry с самого начала
+    // (см. applyGathered/applyRaidArrive); PvP-марши — с грабежа склада
+    // при победе (см. applyMarchArrive выше, добыча/отсутствие добычи
+    // одним и тем же полем carry). Если поля нет вовсе (m.data.carry
+    // undefined) — ничего не меняется, как и раньше.
     if (m.data && m.data.carry) {
       RES.forEach((r) => { if (m.data.carry[r]) p.res[r] = (p.res[r] || 0) + m.data.carry[r]; });
     }

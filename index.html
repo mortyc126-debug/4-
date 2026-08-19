@@ -9297,8 +9297,14 @@ function foMultiplayer(){
       h+="<div class='entry"+(won?" hot":" war")+"'><div class='line'><div class='fill'>"+
          "<div class='title'>"+(mine?"Напали на ":"Напали от ")+(d.opponent_nick||"Безымянный лорд")+
          " — "+(won?"победа":"поражение")+"</div>"+
-         "<div class='note'>Наши потери: "+RU(lostN(myLoss))+" · потери противника: "+RU(lostN(oppLoss))+hospNote+"</div>"+
-         "</div></div></div>";
+         "<div class='note'>Наши потери: "+RU(lostN(myLoss))+" · потери противника: "+RU(lostN(oppLoss))+hospNote+"</div>";
+      // Грабёж склада — то же поле d.loot, что и у мока mp-tick, лежит в
+      // обоих письмах (атакующему и защитнику), но реально ненулевое
+      // только когда won && mine (штурм чужого города удался).
+      const lootTxt=d.loot&&RES.filter(r=>d.loot[r]).map(r=>RES_NAME[r]+" "+RU(d.loot[r])).join(" · ");
+      if(mine&&won&&lootTxt) h+="<div class='note'>Захвачено: "+lootTxt+"</div>";
+      else if(!mine&&!won&&lootTxt) h+="<div class='note'>Разграблено: "+lootTxt+"</div>";
+      h+="</div></div></div>";
     });
   }
 
