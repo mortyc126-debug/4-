@@ -1654,6 +1654,22 @@ function hospitalSplit(p, loss, deathFrac, broken) {
   });
   return { dead, hurt, slight, slightUnits, deadUnits, hurtUnits };
 }
+// index.html addKillPoints — дословно: очки убийств (RoK), только PvP
+// (finalizePvpBattle/finalizeNodeBattle), НЕ рейд на лагерь (PvE, см.
+// finalizeRaidBattle — эта функция там не зовётся вовсе). hs — разбор
+// потерь ПРОТИВНИКА (hospitalSplit ЕГО стороны), не своей.
+const KP_TIER_MULT = [1, 2, 4, 10, 20];
+function addKillPoints(p, hs) {
+  if (!p) return;
+  if (!p.kp) p.kp = 0;
+  if (!p.kpByTier) p.kpByTier = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  let add = 0;
+  for (let i = 1; i <= 5; i++) {
+    let n = 0; TKEYS.forEach((t) => { n += (hs.deadUnits[t][i] || 0) + (hs.hurtUnits[t][i] || 0); });
+    if (n > 0) { p.kpByTier[i] = (p.kpByTier[i] || 0) + n; add += n * KP_TIER_MULT[i - 1]; }
+  }
+  p.kp += add;
+}
 // index.html:4396-4410 raiseSkeletons — Фаза 9, кусочек 7: только undead
 // (B.raise/B.raiseHurt ненулевые — обе расовые эпохи 1/4 + Кармилла, у
 // остальных трёх рас всегда 0, функция тут же выходит). rate — доля
@@ -2093,6 +2109,10 @@ async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, no
   defP.wounded = unitsAdd(defP.wounded, hs.hurtUnits);
   const attHs = hospitalSplit(attP, state.attLossTotal, state.attDeathFrac * (state.winner === "att" ? WIN_DEATH_MULT : LOSE_DEATH_MULT), state.attBroken);
   attP.wounded = unitsAdd(attP.wounded, attHs.hurtUnits);
+  // Очки убийств — штурм города PvP, обеим сторонам (index.html battleCity —
+  // тот же порядок: атакующий за потери обороны, оборона за потери атакующего).
+  addKillPoints(attP, hs);
+  addKillPoints(defP, attHs);
   // survivors — то, что реально идёт домой маршем: полные потери минус
   // легкораненые, которые возвращаются в строй немедленно и марш их не
   // теряет (тяжелораненые/убитые остаются дома в лазарете/навсегда, тем же
@@ -2639,6 +2659,10 @@ async function finalizeNodeBattle(admin, m, attRow, occRow, occMarch, attP, occP
   const occHs = hospitalSplit(occP, state.defLossTotal, state.defDeathFrac * (state.winner === "def" ? WIN_DEATH_MULT : LOSE_DEATH_MULT), state.defBroken);
   occP.troops = unitsAdd(occP.troops, occHs.slightUnits);
   occP.wounded = unitsAdd(occP.wounded, occHs.hurtUnits);
+  // Очки убийств — бой за точку тоже PvP (index.html: тот же addKillPoints,
+  // что и в battleCity).
+  addKillPoints(attP, occHs);
+  addKillPoints(occP, attHs);
 
   const attSurvivors = unitsSub(state.attStartUnits, state.attLossTotal);
   const occSurvivors = unitsSub(state.defStartUnits, state.defLossTotal);

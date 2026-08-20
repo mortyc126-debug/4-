@@ -164,6 +164,21 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    длине результата, а не только сокращаем разряды. */
 .profile-power-chip{position:absolute;top:37%;left:50%;transform:translate(-50%,-50%);
   font-family:var(--data);color:var(--gilt-hi);font-weight:bold;white-space:nowrap}
+/* Очки убийств (RoK-стиль, см. addKillPoints) — плашка под гербом мощи,
+   иконка временно текстовая ("&#9876;") — автор сам подберёт свою картинку
+   позже, тут важно только само отображение числа. */
+.profile-kp-wrap{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:10px;
+  padding:6px 14px;border-radius:10px;background:rgba(0,0,0,.18);border:1px solid var(--rule)}
+.profile-kp-ico{font-size:15px;line-height:1;color:var(--gilt)}
+.profile-kp-label{font-size:12px;color:var(--vellum-dim)}
+.profile-kp-val{font-family:var(--data);font-weight:bold;color:var(--gilt-hi)}
+.kp-info-btn{width:18px;height:18px;border-radius:50%;border:1px solid var(--gilt-dim);
+  background:transparent;color:var(--vellum-dim);font-size:11px;font-style:italic;
+  font-family:Georgia,serif;line-height:1;cursor:pointer;padding:0}
+.profile-kp-detail{margin-top:6px;width:100%;max-width:240px;display:flex;flex-direction:column;gap:2px}
+.kp-tier-row{display:flex;justify-content:space-between;gap:14px;padding:3px 12px;font-size:12.5px;
+  color:var(--vellum-dim)}
+.kp-tier-row b{color:var(--vellum);font-family:var(--data)}
 
 .gen-portrait-wrap{position:relative}
 .gen-portrait{width:44px;height:44px;object-fit:contain;display:block}
@@ -3164,6 +3179,7 @@ function newPlayer(id,race,x,y,isBot){
     inventory:Object.fromEntries(GEAR_SLOTS.map(s=>[s.id,{bastion:[0,0,0,0,0],storm:[0,0,0,0,0]}])),
     materials:{ore:[0,0,0,0,0],leather:[0,0,0,0,0],bone:[0,0,0,0,0],ebony:[0,0,0,0,0]}, craft:null,
     tomes:{},
+    kp:0, kpByTier:{1:0,2:0,3:0,4:0,5:0},   // очки убийств (RoK), см. addKillPoints
     shieldUntil:0, lostTo:null, power:0,
     ai:{aggr, greed:.4+RNG()*.5, caution:.3+RNG()*.6, nextThink:0, target:null},
   };
@@ -4640,7 +4656,32 @@ function splitLosses(p,loss,deathFrac,broken){
   // тяжелораненые едут отсюда же — конкурирующей перезаписи p.wounded
   // нигде нет, в отличие от p.troops.
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++){ const w=r.hurtUnits[t][i]||0; if(w) p.wounded[t][i]+=w; }});
-  return {dead:r.dead,hurt:r.hurt,slight:r.slight,slightUnits:r.slightUnits};
+  // deadUnits/hurtUnits — сверх прежнего возврата, только для addKillPoints
+  // (см. её заголовок): нужна разбивка ПРОТИВНИКА по тирам, а не только сумма.
+  return {dead:r.dead,hurt:r.hurt,slight:r.slight,slightUnits:r.slightUnits,deadUnits:r.deadUnits,hurtUnits:r.hurtUnits};
+}
+// Очки убийств (Kill Points), как в RoK — расчёт и пороговые числа дал сам
+// пользователь, с проверочным примером ("10000 тяжелораненых T4 + 5000 T5
+// = 10000*10 + 5000*20 = 200000"), совпадает с общеизвестной таблицей
+// множителей по тирам. Считаются только "Dead"+"Severely Wounded" (в нашей
+// модели — deadUnits+hurtUnits из hospitalSplit, БЕЗ slightUnits — те сами
+// тут же возвращаются в строй, RoK их тоже не засчитывает), и ТОЛЬКО за
+// PvP: убийства/раны нейтралов (разбойники/лагеря) в счёт не идут — поэтому
+// addKillPoints зовётся из battleCity (штурм города), но НЕ из ветки
+// camp/fort в arriveMarch (рейд на варваров).
+// hs — разбор потерь ПРОТИВНИКА (результат splitLosses/hospitalSplit ЕГО
+// стороны), а не своей: KP начисляются за урон, нанесённый ЧУЖОЙ армии.
+const KP_TIER_MULT=[1,2,4,10,20];
+function addKillPoints(p,hs){
+  if(!p) return;
+  if(!p.kp) p.kp=0;
+  if(!p.kpByTier) p.kpByTier={1:0,2:0,3:0,4:0,5:0};
+  let add=0;
+  for(let i=1;i<=5;i++){
+    let n=0; TKEYS.forEach(t=>{ n+=(hs.deadUnits[t][i]||0)+(hs.hurtUnits[t][i]||0); });
+    if(n>0){ p.kpByTier[i]=(p.kpByTier[i]||0)+n; add+=n*KP_TIER_MULT[i-1]; }
+  }
+  p.kp+=add;
 }
 
 /* =========================================================================
@@ -5637,6 +5678,12 @@ function battleCity(att,def,m){
   // этого конкретного боя гибнет заметно тяжелее победившей.
   const la=splitLosses(att,r.lossA,A.deathFrac*(r.win==="A"?WIN_DEATH_MULT:LOSE_DEATH_MULT),A.broken);
   const ld=splitLosses(def,r.lossD,D.deathFrac*(r.win==="D"?WIN_DEATH_MULT:LOSE_DEATH_MULT),D.broken);
+  // Очки убийств (см. addKillPoints) — штурм города PvP, засчитывается
+  // обеим сторонам: атакующий за потери обороны (ld), оборона за потери
+  // атакующего (la). Рейд на разбойников (arriveMarch, camp/fort) этого
+  // вызова не делает вовсе — PvE в зачёт не идёт.
+  addKillPoints(att,ld);
+  addKillPoints(def,la);
   // Легкораненые — назад в units ДО перезаписи def.troops/m.units ниже,
   // иначе перезапись их просто стёрла бы (см. addUnitsInto/splitLosses).
   // Раньше это делалось только для защитника (у атакующего "лёгких" не
@@ -8718,6 +8765,23 @@ function profilePowerFontSize(str){
 // его мощи. Сама функция только ПОКАЗЫВАЕТ (правило файла про неприкосновенные
 // интерактивные функции одиночки не нарушено), поэтому хватило параметра
 // вместо отдельной копии.
+// Разбивка очков убийств по тирам (см. addKillPoints) — свёрнута по
+// умолчанию, разворачивается кнопкой "i" рядом со счётчиком, как в RoK
+// ("нажмите на иконку i рядом со счётчиком, откроется разбивка Т1-Т5").
+let kpInfoOpen=false;
+function profileKpHtml(p){
+  const kp=p.kp||0, byT=p.kpByTier||{};
+  let h="<div class='profile-kp-wrap'><span class='profile-kp-ico'>&#9876;</span>"+
+    "<span class='profile-kp-label'>Очки убийств</span>"+
+    "<span class='profile-kp-val'>"+fmt(kp)+"</span>"+
+    "<button class='kp-info-btn' data-act='kpinfo' title='Разбивка по тирам'>i</button></div>";
+  if(kpInfoOpen){
+    h+="<div class='profile-kp-detail'>"+[1,2,3,4,5].map(i=>
+      "<div class='kp-tier-row'><span>Т"+i+" (&times;"+KP_TIER_MULT[i-1]+")</span><b>"+fmt(byT[i]||0)+"</b></div>"
+    ).join("")+"</div>";
+  }
+  return h;
+}
 function foProfile(pIn){
   const p=pIn||me();
   const avSrc=playerAvatarSrc(p);
@@ -8755,6 +8819,7 @@ function foProfile(pIn){
      "<div class='note'>"+RACES[p.race].name+"</div>"+
      "<div class='profile-power-wrap'><img class='wreath' src='images/ui/profile-wreath.png' alt=''>"+
      "<span class='profile-power-chip' style='font-size:"+profilePowerFontSize(fmt(power(p)))+"px'>"+fmt(power(p))+"</span></div>"+
+     profileKpHtml(p)+
      "</div>";
   // Предпросмотр экрана летописи — только в одиночке (SP_UNLOCKED): экран
   // относится к её собственной регистрации (runOnboarding/claimChronicle),
@@ -9666,6 +9731,17 @@ function refreshGenIfOpen(){
   const menu=$("#menu-modal");
   if(menu.classList.contains("open")&&menu.dataset.tab==="gen"){ lastMenuBody=foGen(); $("#menu-modal-body").innerHTML=lastMenuBody; }
 }
+// Профиль — единственная вкладка меню, что при .mp-gated (по умолчанию,
+// без ?sp=1) тоже рендерится через mpMenuBodyHtml, а не foProfile()
+// напрямую (см. gatedTab в openMenuModal) — та же развилка нужна и здесь,
+// иначе разворот "i" на сетевом профиле молча ничего не обновил бы.
+function refreshProfileIfOpen(){
+  const menu=$("#menu-modal");
+  if(menu.classList.contains("open")&&menu.dataset.tab==="profile"){
+    lastMenuBody = SP_UNLOCKED ? foProfile() : mpMenuBodyHtml("profile");
+    $("#menu-modal-body").innerHTML=lastMenuBody;
+  }
+}
 function handleAct(e){
   const closeBtn=e.target.closest("[data-act='closemenu']");
   if(closeBtn){ closeMenuModal(); return; }
@@ -9861,6 +9937,11 @@ function handleAct(e){
   else if(a==="gentab"){
     genTab=b.dataset.t;
     refreshGenIfOpen();
+  }
+  else if(a==="kpinfo"){
+    kpInfoOpen=!kpInfoOpen;
+    refreshProfileIfOpen();
+    return;
   }
   else if(a==="academytab"){
     academyTab=b.dataset.t;
