@@ -357,6 +357,16 @@ async function applyBuild(admin, ev) {
 // оттуда, самодостаточная копия (см. пояснение о Dashboard-редакторе выше).
 const TKEYS = ["inf", "arc", "cav", "sie"];
 const RES = ["food", "wood", "stone", "gold"]; // Фаза 8, кусочек 1 — applyMarchHome зачисляет добычу сбора
+// Янтарь (index.html:3327 AMBER_NODE_SHARE) — та же доля и формула объёма,
+// что в одиночной игре и в mp-join/seedNodesAround, дословно перенесены и
+// в оба серверных источника подсева узлов ниже (respawn/ambient_seed).
+const AMBER_NODE_SHARE = 0.12;
+function pickNodeResAndAmount(lv) {
+  const isAmber = Math.random() < AMBER_NODE_SHARE;
+  const res = isAmber ? "amber" : RES[Math.floor(Math.random() * RES.length)];
+  const amount = Math.round(isAmber ? 240 * Math.pow(1.9, lv - 1) : 6000 * Math.pow(2.6, lv - 1));
+  return { res, amount };
+}
 // Фаза 8, кусочек 3 — респаун истощённой точки/разгромленного лагеря.
 // Те же задержки, что CFG.NODE_RESPAWN/CFG.RESPAWN_CAMP в index.html:
 // 1717-1718 (45мин/1ч). Новое место — небольшое смещение от старого
@@ -377,8 +387,7 @@ async function applyNodeRespawn(admin, ev) {
   if (ox == null || oy == null) return;
   const { x, y } = respawnOffset(ox, oy);
   const lv = 1 + Math.floor(Math.random() * 3); // тот же диапазон, что seedNodesAround в mp-join
-  const amount = Math.round(6000 * Math.pow(2.6, lv - 1));
-  const res = RES[Math.floor(Math.random() * RES.length)];
+  const { res, amount } = pickNodeResAndAmount(lv);
   const { error } = await admin.from("map_cells").upsert(
     { world_id: ev.world_id, x, y, t: "node", data: { res, lv, amount, max: amount } },
     { onConflict: "world_id,x,y", ignoreDuplicates: true },
@@ -456,8 +465,7 @@ async function applyAmbientSeed(admin, ev) {
             const ang = Math.random() * Math.PI * 2, r = AMBIENT_NODE_MIN_R + Math.random() * (AMBIENT_NODE_MAX_R - AMBIENT_NODE_MIN_R);
             const x = Math.round(c.x + Math.cos(ang) * r), y = Math.round(c.y + Math.sin(ang) * r);
             const lv = 1 + Math.floor(Math.random() * 3);
-            const amount = Math.round(6000 * Math.pow(2.6, lv - 1));
-            const res = RES[Math.floor(Math.random() * RES.length)];
+            const { res, amount } = pickNodeResAndAmount(lv);
             rows.push({ world_id: worldId, x, y, t: "node", data: { res, lv, amount, max: amount } });
           }
           await admin.from("map_cells").upsert(rows, { onConflict: "world_id,x,y", ignoreDuplicates: true });
@@ -2357,6 +2365,10 @@ async function applyMarchHome(admin, ev) {
     // undefined) — ничего не меняется, как и раньше.
     if (m.data && m.data.carry) {
       RES.forEach((r) => { if (m.data.carry[r]) p.res[r] = (p.res[r] || 0) + m.data.carry[r]; });
+      // Янтарь — отдельное поле p.amber, не часть p.res (см. index.html:
+      // 2823/4963 p.amber=(p.amber||0)+m.carryAmber) — RES.forEach выше его
+      // не задевает, иначе добыча жилы молча терялась бы при возврате марша.
+      if (m.data.carry.amber) p.amber = (p.amber || 0) + m.data.carry.amber;
     }
     // index.html:4950-4957 EV.home — генерал возвращается вместе с
     // отрядом независимо от того, как поход закончился (дошёл сам, был

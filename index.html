@@ -503,15 +503,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    свой фильтр (only="mp": Соседи/Точки сбора/Лагеря варваров + Постройки/
    Горн/Набор войск/Академия — то, чему больше нет входа нигде кроме
    этой вкладки). */
-/* #amber-badge — янтарь как ресурс у общего мира ещё не заведён (см.
-   комментарий у mpRenderTop()), показывать там нечего — остаётся спрятан.
-   #top — Фаза 14, кусочек 1 прятала его тем же общим правилом, что и
-   #amber-badge (renderTop() одиночки никогда не зовётся при .mp-gated,
-   без этого правила там навсегда висело бы "Безымянный лорд"/0/0 — не
-   пустой экран, а НЕВЕРНЫЙ). Кусочек 3 завёл mpRenderTop() — те же самые
-   DOM-узлы (#purse/#crest-*), просто из mpState.player, — так что #top
-   снова можно показывать. */
-.mp-gated #amber-badge{display:none}
+/* #amber-badge раньше прятался в общем мире — Янтарь там не был заведён как
+   ресурс. Теперь newPlayerState (mp-join) хранит p.amber, узлы сеются на
+   общей карте, а mpRenderTop() пишет значение в #amber-amt так же, как
+   одиночный renderTop() — .mp-gated его больше не трогает, показывается
+   везде одинаково.
+   #top — Фаза 14, кусочек 1 прятала его тем же общим правилом (renderTop()
+   одиночки никогда не зовётся при .mp-gated, без этого правила там навсегда
+   висело бы "Безымянный лорд"/0/0 — не пустой экран, а НЕВЕРНЫЙ). Кусочек 3
+   завёл mpRenderTop() — те же самые DOM-узлы (#purse/#crest-*), просто из
+   mpState.player, — так что #top снова можно показывать. */
 #menu-modal-close:hover{border-color:var(--gilt-hi)}
 
 /* ─────────────── Модалка здания (пергамент) ─────────────── */
@@ -8147,8 +8148,8 @@ function mpMarchSheetHtml(){
     if(!n) return gone("Точка пропала");
     const dist=Math.round(Math.hypot(n.x-p.x,n.y-p.y));
     const amount=(n.data&&n.data.amount)||0, res=(n.data&&n.data.res)||"food", lv=(n.data&&n.data.lv)||1;
-    if(amount<=0) return gone(RES_NAME[res]+", жила "+lv+" ур. — истощена");
-    let h="<div class='title'>"+RES_NAME[res]+", жила "+lv+" ур.</div>"+
+    if(amount<=0) return gone(resName(res)+", жила "+lv+" ур. — истощена");
+    let h="<div class='title'>"+resName(res)+", жила "+lv+" ур.</div>"+
       "<div class='note'>"+n.x+", "+n.y+" · "+dist+" клет. · осталось "+fmt(amount)+"</div>"+errHtml;
     TKEYS.forEach(t=>{
       const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
@@ -8232,12 +8233,11 @@ function mpPower(p){
   return Math.round(v);
 }
 // Пишет в ТЕ ЖЕ DOM-узлы, что и одиночный renderTop() (#purse/#crest-name/
-// #crest-power/#crest-avatar) — тот же CSS, никаких новых правил. #amber-
-// badge и #chron (день/темп ускорения) намеренно НЕ трогаются: янтарь как
-// ресурс у общего мира ещё не заведён (см. p.amber в одиночке против
-// newPlayerState в mp-join — там такого поля просто нет), а собственных
-// суток/ускорения у общего мира не бывает — оба остаются спрятаны/скрыты,
-// как и раньше.
+// #crest-power/#crest-avatar/#amber-amt) — тот же CSS, никаких новых правил.
+// #amber-badge теперь показывается и в общем мире (newPlayerState в mp-join
+// заводит p.amber, точки Янтаря сеются на общей карте — см. AMBER_NODE_SHARE
+// в mp-join/mp-tick), #chron (день/темп ускорения) по-прежнему остаётся
+// скрыт: собственных суток/ускорения у общего мира не бывает.
 let lastMpCrestAvatar=null;
 function mpRenderTop(){
   if(!mpState.player) return;
@@ -8253,6 +8253,7 @@ function mpRenderTop(){
   }).join("");
   $("#crest-name").textContent=mp.nick||"Безымянный лорд";
   $("#crest-power").innerHTML="<img class='ico' src='images/ui/icon-power.png' alt=''>"+fmt(mpPower(pShim));
+  $("#amber-amt").textContent=fmt(st.amber||0);
   const avSrc=playerAvatarSrc(pShim);
   if(avSrc!==lastMpCrestAvatar){
     lastMpCrestAvatar=avSrc;
