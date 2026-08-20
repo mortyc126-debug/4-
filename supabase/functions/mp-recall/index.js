@@ -419,6 +419,29 @@ function marchSpeed(units, race, marchBonus = 1) {
 }
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
+// Фаза 21 — вставлено буквально из mp-join/index.js (triggerTick) — тот же
+// AbortController-таймаут (4с), тот же секрет, та же честная защита "тикер
+// недоступен/завис — не блокируем сам отзыв". Используется только веткой
+// "отступить посреди боя" ниже, чтобы отступление применилось сразу, а не
+// ждало до 15с планового pg_cron.
+async function triggerTick(SUPABASE_URL) {
+  const secret = Deno.env.get("MP_TICK_SECRET");
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 4000);
+    try {
+      await fetch(SUPABASE_URL + "/functions/v1/mp-tick", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(secret ? { "x-tick-secret": secret } : {}) },
+        body: "{}",
+        signal: ctrl.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (_) { /* тикер недоступен/завис/упал — не блокируем сам отзыв, см. заголовок выше */ }
+}
+
 Deno.serve(async (req) => {
   const pre = handleOptions(req);
   if (pre) return pre;
@@ -454,6 +477,35 @@ Deno.serve(async (req) => {
       .from("marches").select("*").eq("id", marchId).eq("player_id", attRow.id).maybeSingle();
     if (mErr) return jsonResponse({ err: mErr.message }, 500);
     if (!m) return jsonResponse({ err: "Поход не найден" }, 400);
+    // Фаза 21 — отступление посреди боя. state:"siege" (marches, зеркало
+    // mp-tick/index.js: initPvpBattle/applyBattleRound) — марш уже стоит под
+    // чужим городом и бой идёт несколько тиков подряд (живые полоски HP,
+    // см. supabase/migrations/0005_realtime_battles.sql), а не разрешается
+    // мгновенно, как раньше. Автор попросил именно такую кнопку: "отступить,
+    // если видишь что проигрываешь, или до конца воевать".
+    //
+    // НЕ дублируем сюда логику завершения боя (hospitalSplit/addXp/loot/
+    // mail — см. finalizePvpBattle в mp-tick, ~120 строк) — тот же принцип,
+    // что уже был явно заявлен в mp-join про triggerTick(): "дублировать
+    // логику применения событий рискованно, разъедется багфиксами при
+    // следующей правке". Вместо этого просто помечаем m.data.battle
+    // retreatRequested:true и толкаем тикер тем же способом, что и mp-join —
+    // applyBattleRound (mp-tick) сам увидит флаг на следующем же вызове
+    // (обычно доли секунды, а не до 15с планового тика) и честно завершит
+    // бой УЖЕ ИМЕЮЩИМСЯ, проверенным кодом: сторона отступающего забирает
+    // ровно то, что уцелело К ЭТОМУ МОМЕНТУ (ни одного нового раунда после
+    // нажатия кнопки), защитник формально победитель (штурм не удался), но
+    // без трофеев — как и при обычном поражении атакующего.
+    if (m.mode === "attack" && m.state === "siege") {
+      if (!(m.data && m.data.battle)) return jsonResponse({ err: "Бой уже завершается — подождите" }, 400);
+      if (!m.data.battle.retreatRequested) {
+        const battle = { ...m.data.battle, retreatRequested: true };
+        const { error: updM } = await admin.from("marches").update({ data: { ...m.data, battle } }).eq("id", m.id);
+        if (updM) return jsonResponse({ err: updM.message }, 500);
+      }
+      await triggerTick(SUPABASE_URL);
+      return jsonResponse({ ok: true, retreating: true });
+    }
     if (!["attack", "gather", "raid"].includes(m.mode)) return jsonResponse({ err: "Этот поход нельзя отозвать" }, 400);
     if (m.state === "back") return jsonResponse({ err: "Отряд уже возвращается" }, 400);
     // "go" — в пути, отзывается всегда; "gather" — уже стоит на точке сбора,

@@ -63,7 +63,11 @@ const troopLoadMod = (race, t) => (RACE_LOAD_MOD[race] && RACE_LOAD_MOD[race][t]
 const MARCH_SPEED_SCALE = 32;
 const marchSlots = (hall) => (hall >= 22 ? 5 : hall >= 17 ? 4 : hall >= 11 ? 3 : hall >= 5 ? 2 : 1);
 const RES = ["food", "wood", "stone", "gold"];
-const GATHER_BASE_RATE = { food: 3000, wood: 3000, stone: 2250, gold: 1000 }; // index.html:2676
+// amber:45 — index.html:2807 держит и её (точки янтаря на общей карте сейчас
+// не сеются, mp-join's seedNodesAround отдаёт только food/wood/stone/gold,
+// так что сегодня недостижимо, но при отсутствующем ключе gatherSecs ушёл бы
+// в NaN, если такая точка когда-нибудь появится — держим таблицу полной.
+const GATHER_BASE_RATE = { food: 3000, wood: 3000, stone: 2250, gold: 1000, amber: 45 }; // index.html:2807
 
 const epochOf = (hall) => (hall >= 25 ? 5 : hall >= 19 ? 4 : hall >= 13 ? 3 : hall >= 7 ? 2 : 1);
 // bonuses(p) — тот же честный перенос, что и в mp-attack/_shared/rules.js
