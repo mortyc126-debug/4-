@@ -8503,8 +8503,15 @@ function profilePowerFontSize(str){
 /* ---- Профиль игрока — заглушка, полноценный экран доделаем позже.
    Сюда со временем переедут: сводка по войскам, снаряжение генерала,
    достижения и т.п. Пока только то, что раньше висело в карточке города. ---- */
-function foProfile(){
-  const p=me();
+// Фаза 20 — необязательный параметр: при .mp-gated профиль должен показывать
+// игрока ОБЩЕГО МИРА, а не невидимую одиночную партию. Раньше вкладка
+// "profile" единственная не попадала в gatedTab (см. openMenuModal) и звала
+// me() — поэтому у автора там не было ни аватарки выбранного полководца, ни
+// его мощи. Сама функция только ПОКАЗЫВАЕТ (правило файла про неприкосновенные
+// интерактивные функции одиночки не нарушено), поэтому хватило параметра
+// вместо отдельной копии.
+function foProfile(pIn){
+  const p=pIn||me();
   const avSrc=playerAvatarSrc(p);
   let h=rubric("Профиль","в разработке");
   // Круглый аватар в золотом кольце + герб расы маленьким значком поверх
@@ -8526,10 +8533,17 @@ function foProfile(){
          "<img src='images/ui/profile-shield-frame.png' alt=''></span>"
        : "")+
      "</div>"+
-     "<div class='profile-name-row'>"+
-     "<input id='nick-input' type='text' maxlength='24' value='"+(p.nick||"").replace(/'/g,"&#39;")+"' "+
-     "placeholder='Ваш ник'>"+
-     "<button class='seal' data-act='savenick'>Сохранить</button></div>"+
+     // Переименование пока только в одиночке: в общем мире ник живёт на
+     // сервере (players.nick), отдельной функции смены имени ещё нет, а
+     // data-act='savenick' записал бы его НЕВИДИМОЙ одиночной партии —
+     // игрок нажимал бы "Сохранить" и ничего бы не менялось. Честнее
+     // показать имя как есть, чем дать кнопку-обманку.
+     (SP_UNLOCKED
+       ? "<div class='profile-name-row'>"+
+         "<input id='nick-input' type='text' maxlength='24' value='"+(p.nick||"").replace(/'/g,"&#39;")+"' "+
+         "placeholder='Ваш ник'>"+
+         "<button class='seal' data-act='savenick'>Сохранить</button></div>"
+       : "<div class='profile-name-row'><div class='title'>"+(p.nick||"Безымянный лорд")+"</div></div>")+
      "<div class='note'>"+RACES[p.race].name+"</div>"+
      "<div class='profile-power-wrap'><img class='wreath' src='images/ui/profile-wreath.png' alt=''>"+
      "<span class='profile-power-chip' style='font-size:"+profilePowerFontSize(fmt(power(p)))+"px'>"+fmt(power(p))+"</span></div>"+
@@ -10065,8 +10079,8 @@ function openMenuModal(t){
   // разделу (id='mp-anchor-<t>', см. rubric() внутри foMultiplayer()) —
   // остальные разделы всё ещё на месте прокруткой вниз/вверх, ничего не
   // потеряно, просто нет изоляции по вкладкам, как в одиночке.
-  const gatedTab = !SP_UNLOCKED && (t==="army"||t==="gen"||t==="inv"||t==="mail");
-  const html = gatedTab ? foMultiplayer(true)
+  const gatedTab = !SP_UNLOCKED && (t==="army"||t==="gen"||t==="inv"||t==="mail"||t==="profile");
+  const html = gatedTab ? mpMenuBodyHtml(t)
     : t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): t==="mp"?foMultiplayer(!SP_UNLOCKED): foInv();
   lastMenuBody = html;
   $("#menu-modal-body").innerHTML = html;
@@ -10074,7 +10088,10 @@ function openMenuModal(t){
   $("#side-menu").classList.remove("open");
   renderBadges();
   if(t==="mp" || gatedTab) mpOpen();
-  if(gatedTab){
+  // Прокрутка к разделу нужна только тем вкладкам, что остались на общей
+  // странице (Войско/Почта): у Генерала и Инвентаря теперь СВОЙ экран целиком,
+  // прокручивать в нём не к чему — он и так начинается с нужного места.
+  if(gatedTab && t!=="gen" && t!=="inv"){
     const anchor=$("#mp-anchor-"+t);
     if(anchor) anchor.scrollIntoView({block:"start"});
   }
@@ -10319,7 +10336,18 @@ function handleMpAct(e){
   if(invTabBtn){ mpInvTab=invTabBtn.dataset.t; mpRerender(); return; }
 }
 $("#menu-modal-body").addEventListener("click",e=>{
-  if($("#menu-modal").dataset.tab!=="mp") return;
+  // Фаза 20 — гейт был `dataset.tab!=="mp"`, и это глушило ВСЕ кнопки
+  // общего мира на вкладках Почта/Войско/Генерал/Инвентарь: с Фазы 17
+  // они тоже показывают mp-контент (см. gatedTab в openMenuModal), но
+  // dataset.tab у них — своё имя вкладки, не "mp". Автор сообщил
+  // "не могу выбрать генерала в сетевой" — кнопка "Выбрать" (data-mp=
+  // 'pickgen') рисовалась, но клик молча не доходил; из-за невыбранного
+  // генерала не появлялась и аватарка в профиле/шапке. Ровно та же
+  // ошибка, что уже была у #building-modal (Фаза 19): разметку добавили,
+  // а слушателю про новый путь не сказали. Правильное условие — то же,
+  // что и у mpRerender(): в одиночке mp-контент только на вкладке "mp",
+  // при .mp-gated — на любой.
+  if(SP_UNLOCKED && $("#menu-modal").dataset.tab!=="mp") return;
   handleMpAct(e);
 });
 // Фаза 19 — см. комментарий у handleMpAct() выше: та же самая функция,
@@ -10551,6 +10579,33 @@ function frame(){
   // за уже отсчитанный догоном промежуток.
   if(catchingUp){ lastReal=now; requestAnimationFrame(frame); return }
   let dt=(now-lastReal)/1000; lastReal=now;
+  // Фаза 20 — при .mp-gated одиночная партия НЕВИДИМА, но её рендеры писали
+  // в ТЕ ЖЕ узлы (#top/#folio/#cartouche/#menu-modal-body), что и рендеры
+  // общего мира, причём раз в секунду: поверх свежего общего города ложился
+  // чужой, никому не показанный. Автор видел ровно это:
+  //   • "в моём городе сами по себе появляются постройки, я их не строил" —
+  //     #folio мигал между городом общего мира и городом невидимой одиночки;
+  //   • "медленно грузит замок и ресурсные точки" — два рендера дрались
+  //     каждую секунду, и вдобавок вхолостую крутилась вся симуляция
+  //     одиночки (advanceTo с ботами и чанками карты);
+  //   • "выскакивает какое-то линейное меню" — refreshOpenModal() затирал
+  //     открытый экран общего мира одиночным списком, а при непроставленной
+  //     вкладке падал в foInv() (см. её ветку по умолчанию).
+  // В этом режиме одиночному циклу нечего делать вовсе: у общего мира свои
+  // рендеры (mpRerender), а невидимую партию незачем ни считать, ни писать
+  // в localStorage — при заходе в неё (?sp=1) обычный догон по savedAt
+  // отсчитает пропущенное сам, тем же путём, что и после свёрнутой вкладки.
+  if(!SP_UNLOCKED){
+    sinceUi+=dt;
+    // Свой секундный такт: живые таймеры/цифры из уже полученного mpState,
+    // БЕЗ сети — сам опрос сервера идёт раз в 5с (mpPollTick). Раньше эту
+    // роль нечаянно играл одиночный renderTop/renderFolio выше, поэтому при
+    // его отключении такт нужно вернуть явно, иначе таймеры "готово через"
+    // задёргались бы шагом в пять секунд.
+    if(sinceUi>1.0){ sinceUi=0; if(mpState.joined && mpState.player) mpRerender(); }
+    requestAnimationFrame(frame);
+    return;
+  }
   if(dt>0){ advanceTo(W.t+dt*tempo); sinceSave+=Math.min(dt,3600); sinceUi+=dt }
   if(sinceUi>1.0){ sinceUi=0; renderTop(); renderFolio(); renderCartouche(); refreshOpenModal(); renderFieldArmyWorld() }
   if(sinceSave>20){ sinceSave=0; save() }
@@ -10564,6 +10619,14 @@ document.addEventListener("visibilitychange",()=>{
   // короткие промежутки догоняем на месте, длинные — порциями по кадру с полосой,
   // тем же путём, что и загрузка после отсутствия (см. advanceToAnimated).
   const away=Math.max(0,(Date.now()-lastReal)/1000);
+  // Фаза 20 — тот же довод, что и в frame(): при .mp-gated одиночные рендеры
+  // затирают общий мир, а догонять невидимую партию незачем. Возврат на
+  // вкладку в общем мире освежаем его собственным рендером.
+  if(!SP_UNLOCKED){
+    lastReal=Date.now();
+    if(mpState.joined && mpState.player) mpRerender();
+    return;
+  }
   const after=()=>{ renderTop(); renderFolio(); renderCartouche(); refreshOpenModal() };
   lastReal=Date.now();
   if(away>3600){
@@ -10844,6 +10907,26 @@ async function mpCall(fn, body){
   if(!r.ok || j.err) throw new Error(j.err || ("HTTP "+r.status));
   return j;
 }
+// Фаза 20 — что именно показывает меню общего мира на каждой вкладке.
+// Раньше ВСЕ иконки гамбургера открывали одну и ту же длинную страницу
+// foMultiplayer() и лишь прокручивали её к нужному разделу — автор про это
+// и сказал "выскакивает какое-то линейное меню". Теперь Генерал и Инвентарь
+// открывают СВОИ экраны (mpGenHtml/mpInvHtml — те самые абсолютные копии
+// одиночных foGen()/foInv(), Фаза 19), ровно как в одиночке. Войско и Почта
+// пока честно остаются на общей странице с прокруткой к разделу: своих
+// экранов для них ещё не заведено, это отдельный кусочек.
+// Одна функция на оба вызывающих места (openMenuModal и mpRerender) — иначе
+// секундный такт немедленно затирал бы открытый экран общей страницей.
+function mpMenuBodyHtml(t){
+  if(!mpState.joined || !mpState.player) return foMultiplayer(!SP_UNLOCKED);
+  const p=mpState.player, st=p.state;
+  if(t==="gen") return mpGenHtml(mpFullShim(p,st),st);
+  if(t==="inv") return mpInvHtml(mpFullShim(p,st),st);
+  // Профиль (тап по гербу в шапке) — тот же одиночный экран, но с игроком
+  // общего мира: nick с сервера, раса и мощь из его собственного состояния.
+  if(t==="profile") return foProfile(Object.assign(mpFullShim(p,st),{nick:p.nick}));
+  return foMultiplayer(!SP_UNLOCKED);
+}
 function mpRerender(){
   // Фаза 17, кусочек 2 — при .mp-gated ЛЮБАЯ вкладка меню (не только "mp")
   // может показывать foMultiplayer() (см. gatedTab в openMenuModal()) —
@@ -10853,9 +10936,9 @@ function mpRerender(){
   // к разделу (см. scrollIntoView в openMenuModal()) сбрасывалась бы к
   // началу страницы почти сразу же, как и сама эта прокрутка теряла смысл.
   const menuTab=$("#menu-modal").dataset.tab;
-  const showsMp = menuTab==="mp" || (!SP_UNLOCKED && (menuTab==="army"||menuTab==="gen"||menuTab==="inv"||menuTab==="mail"));
+  const showsMp = menuTab==="mp" || (!SP_UNLOCKED && (menuTab==="army"||menuTab==="gen"||menuTab==="inv"||menuTab==="mail"||menuTab==="profile"));
   if($("#menu-modal").classList.contains("open") && showsMp){
-    const html=foMultiplayer(!SP_UNLOCKED);
+    const html=mpMenuBodyHtml(menuTab);
     if(html!==lastMenuBody){ lastMenuBody=html; $("#menu-modal-body").innerHTML=html; }
   }
   // Фаза 14, кусочек 2 — держим 2D-карту города (#folio) свежей на каждый
@@ -11849,19 +11932,30 @@ function foMultiplayer(embedded){
     // mpRenderFolio() ниже), а не пустой #ledger, как было раньше.
     // src у #world3d — тот же ленивый приём, что и в toggleView() (не
     // тянуть WebGPU/модели, пока не нужно), просто здесь "нужно" сразу.
-    $("#app").className="view-world";
-    const w3d=$("#world3d"); if(w3d && !w3d.src) w3d.src="engine/dist/index.html";
+    // Фаза 20 — стартуем в СВОЁМ ГОРОДЕ, а не в общем мире. Автор: "при
+    // заходе главной страницей выступает общий мир, а не мой замок".
+    // Заодно это лечит половину жалобы на медленный старт: 3D-движок
+    // (WebGPU, модели, рельеф) больше не тянется при загрузке, а лениво,
+    // при первом заходе во вкладку "Мир" — ровно как в одиночке (см.
+    // toggleView()). Поэтому и #world3d.src тут больше не проставляем, и
+    // иконку #view-toggle не доворачиваем: разметка по умолчанию несёт
+    // icon-world.png ("жми, чтобы попасть в мир") — именно то, что нужно
+    // при старте в городе.
+    $("#app").className="view-city";
     // Иконка #view-toggle показывает пункт НАЗначения клика (см. toggleView()
     // — тот же приём для одиночки: в .view-city лежит icon-world.png, "жми,
     // чтобы попасть в мир"). Разметка по умолчанию несёт icon-world.png (под
     // одиночный старт с .view-city) — при старте сразу в .view-world её надо
     // довернуть на icon-city.png, иначе кнопка звала бы туда, где мы уже есть.
-    const vtImg=$("#view-toggle img");
-    if(vtImg){ vtImg.src="images/ui/icon-city.png"; vtImg.alt="Город"; }
     await mpOpen();
     mpRenderFolio();
     mpRenderTop();
-    openMenuModal("mp");
+    // Страницу "Общий мир" больше НЕ открываем поверх города при каждом
+    // заходе (та самая жалоба выше) — она в одном тапе по гамбургеру.
+    // Единственное исключение — если войти не удалось (сеть/ошибка): тогда
+    // без модалки игрок остался бы перед пустым городом вообще без пути
+    // внутрь, поэтому форму входа с текстом ошибки показываем сразу.
+    if(!mpState.joined) openMenuModal("mp");
   }
   const ok=await load();
   if(!ok) genWorld(Date.now()&0xffffff);
