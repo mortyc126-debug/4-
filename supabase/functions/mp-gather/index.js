@@ -52,7 +52,13 @@ const TROOP_LOAD = { inf: 6, arc: 8, cav: 5, sie: 30 }; // index.html:2583-2587 
 const TROOP_SPEED = { inf: 1.00, arc: 1.10, cav: 1.70, sie: 0.60 };
 const RACE_SPEED_MOD = { undead: { sie: 1.20 } };
 const troopSpeedMod = (race, t) => (RACE_SPEED_MOD[race] && RACE_SPEED_MOD[race][t]) || 1;
-const RACE_LOAD_MOD = {}; // index.html troopMod(race,t,"load") — сейчас ни у одной расы нет модификатора груза
+// index.html:2725 troopMod(race,t,"load"). Раньше тут стояла ПУСТАЯ таблица с
+// комментарием "сейчас ни у одной расы нет модификатора груза" — неверно:
+// у нежити осадные всегда несли load:0.80. Это её честный размен: осадные
+// нежити бьют вдвое сильнее (atk 2.20*1.05), но возят на 20% меньше. Без
+// этой строки в общем мире нежить получала силу БЕЗ обратной стороны и
+// собирала с точек на 25% больше, чем та же нежить в одиночке.
+const RACE_LOAD_MOD = { undead: { sie: 0.80 } };
 const troopLoadMod = (race, t) => (RACE_LOAD_MOD[race] && RACE_LOAD_MOD[race][t]) || 1;
 const MARCH_SPEED_SCALE = 32;
 const marchSlots = (hall) => (hall >= 22 ? 5 : hall >= 17 ? 4 : hall >= 11 ? 3 : hall >= 5 ? 2 : 1);

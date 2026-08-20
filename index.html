@@ -7153,7 +7153,12 @@ function mpForgeInfoHtml(st){
 let mpGenTab="overview", mpGenTomesOpen=false;
 function mpGenHtml(pShim,st){
   if(!st.gen||st.gen.id==null){
-    let h="";
+    // Заголовок раздела рисует сама функция, как и одиночная foGen(): у
+    // неё их ДВА разных — "Выбор полководца · решение окончательное", пока
+    // выбора нет, и просто "Полководец" после. Раньше заголовок стоял
+    // снаружи, в foMultiplayer(), и всегда нёс "решение окончательное" —
+    // после выбора генерала это уже была неправда (выбирать нечего).
+    let h=rubric("Выбор полководца","решение окончательное");
     GENERALS[pShim.race].forEach((g,i)=>{
       h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
         genPortraitHtml(pShim.race,i)+shieldSvg(pShim.race,26)+"</div><div class='fill'>"+
@@ -7168,7 +7173,8 @@ function mpGenHtml(pShim,st){
   const need=genXpNeed(lv), f=xp/need, lvCap=Math.min(60,epochOf(st.b.hall||0)*12);
   const stars=Math.min(6,1+Math.floor(lv/10));
   const genPower=genPowerOf(pShim);
-  let h="<div class='gen-figure-wrap'>"+genFigureHtml(pShim.race,st.gen.id||0)+"</div>";
+  let h=rubric("Полководец");
+  h+="<div class='gen-figure-wrap'>"+genFigureHtml(pShim.race,st.gen.id||0)+"</div>";
   h+="<div class='entry hot'><div class='line'><div style='flex:0 0 auto' class='gen-portrait-wrap'>"+
     genPortraitHtml(pShim.race,st.gen.id||0)+"</div>"+ring(lv,60)+"<div class='fill'>"+
     "<div class='title'>"+G.name+"<span class='tag gilt'>"+G.role+"</span></div>"+
@@ -7201,19 +7207,34 @@ function mpGenHtml(pShim,st){
   if(mpGenTab==="gear") return h+mpGenGearHtml(pShim,st);
 
   if(mpGenTab==="talents"){
-    TALENT_BRANCHES.forEach(([key,br])=>{
+    // Два раздельных прохода, а не один по TALENT_BRANCHES — дословно как у
+    // одиночной foGen(). Сверка текста экранов показала, что объединённый
+    // проход терял подпись "Личное дерево: " у веток Город/Армия: у игрока
+    // пропадала разница между ЛИЧНЫМ деревом выбранного полководца
+    // (GENERAL_TREE) и общими ветками талантов (TALENTS), хотя очки у них
+    // общие и выбор между ними — как раз то решение, ради которого подпись
+    // и заведена.
+    const talNodeHtml=(n,max)=>{
+      const lv2=(st.gen.tal&&st.gen.tal[n.id])||0, full=lv2>=max;
+      return "<div class='entry"+(lv2>0?" hot":"")+"'><div class='line'><div class='fill'>"+
+        "<div class='title'>"+n.name+"<span class='tag"+(full?" gilt":"")+"'>"+lv2+"/"+max+"</span></div>"+
+        "<div class='note'>"+n.txt+" · сейчас <em>+"+(lv2*n.per*100).toFixed(0)+"%</em></div></div>"+
+        "<button class='seal' data-mp='talent' data-id='"+n.id+"' "+
+        (pts<=0||full||mpState.loading?"disabled":"")+">Вложить</button></div></div>";
+    };
+    for(const bk in GENERAL_TREE){
+      const br=GENERAL_TREE[bk];
       let spent=0; br.nodes.forEach(n=>spent+=((st.gen.tal&&st.gen.tal[n.id])||0));
-      const totalMax=br.nodes.reduce((a,n)=>a+(n.max||5),0);
-      h+=rubric(br.name, spent+" из "+totalMax);
-      br.nodes.forEach(n=>{
-        const max=n.max||5, lv2=(st.gen.tal&&st.gen.tal[n.id])||0, full=lv2>=max;
-        h+="<div class='entry"+(lv2>0?" hot":"")+"'><div class='line'><div class='fill'>"+
-          "<div class='title'>"+n.name+"<span class='tag"+(full?" gilt":"")+"'>"+lv2+"/"+max+"</span></div>"+
-          "<div class='note'>"+n.txt+" · сейчас <em>+"+(lv2*n.per*100).toFixed(0)+"%</em></div></div>"+
-          "<button class='seal' data-mp='talent' data-id='"+n.id+"' "+
-          (pts<=0||full||mpState.loading?"disabled":"")+">Вложить</button></div></div>";
-      });
-    });
+      const totalMax=br.nodes.reduce((a,n)=>a+n.max,0);
+      h+=rubric("Личное дерево: "+br.name, spent+" из "+totalMax);
+      br.nodes.forEach(n=>{ h+=talNodeHtml(n,n.max); });
+    }
+    for(const bk in TALENTS){
+      const br=TALENTS[bk];
+      let spent=0; br.nodes.forEach(n=>spent+=((st.gen.tal&&st.gen.tal[n.id])||0));
+      h+=rubric(br.name, spent+" из 25");
+      br.nodes.forEach(n=>{ h+=talNodeHtml(n,5); });
+    }
     return h;
   }
 
@@ -8482,8 +8503,15 @@ function profilePowerFontSize(str){
 /* ---- Профиль игрока — заглушка, полноценный экран доделаем позже.
    Сюда со временем переедут: сводка по войскам, снаряжение генерала,
    достижения и т.п. Пока только то, что раньше висело в карточке города. ---- */
-function foProfile(){
-  const p=me();
+// Фаза 20 — необязательный параметр: при .mp-gated профиль должен показывать
+// игрока ОБЩЕГО МИРА, а не невидимую одиночную партию. Раньше вкладка
+// "profile" единственная не попадала в gatedTab (см. openMenuModal) и звала
+// me() — поэтому у автора там не было ни аватарки выбранного полководца, ни
+// его мощи. Сама функция только ПОКАЗЫВАЕТ (правило файла про неприкосновенные
+// интерактивные функции одиночки не нарушено), поэтому хватило параметра
+// вместо отдельной копии.
+function foProfile(pIn){
+  const p=pIn||me();
   const avSrc=playerAvatarSrc(p);
   let h=rubric("Профиль","в разработке");
   // Круглый аватар в золотом кольце + герб расы маленьким значком поверх
@@ -8505,10 +8533,17 @@ function foProfile(){
          "<img src='images/ui/profile-shield-frame.png' alt=''></span>"
        : "")+
      "</div>"+
-     "<div class='profile-name-row'>"+
-     "<input id='nick-input' type='text' maxlength='24' value='"+(p.nick||"").replace(/'/g,"&#39;")+"' "+
-     "placeholder='Ваш ник'>"+
-     "<button class='seal' data-act='savenick'>Сохранить</button></div>"+
+     // Переименование пока только в одиночке: в общем мире ник живёт на
+     // сервере (players.nick), отдельной функции смены имени ещё нет, а
+     // data-act='savenick' записал бы его НЕВИДИМОЙ одиночной партии —
+     // игрок нажимал бы "Сохранить" и ничего бы не менялось. Честнее
+     // показать имя как есть, чем дать кнопку-обманку.
+     (SP_UNLOCKED
+       ? "<div class='profile-name-row'>"+
+         "<input id='nick-input' type='text' maxlength='24' value='"+(p.nick||"").replace(/'/g,"&#39;")+"' "+
+         "placeholder='Ваш ник'>"+
+         "<button class='seal' data-act='savenick'>Сохранить</button></div>"
+       : "<div class='profile-name-row'><div class='title'>"+(p.nick||"Безымянный лорд")+"</div></div>")+
      "<div class='note'>"+RACES[p.race].name+"</div>"+
      "<div class='profile-power-wrap'><img class='wreath' src='images/ui/profile-wreath.png' alt=''>"+
      "<span class='profile-power-chip' style='font-size:"+profilePowerFontSize(fmt(power(p)))+"px'>"+fmt(power(p))+"</span></div>"+
@@ -10044,8 +10079,8 @@ function openMenuModal(t){
   // разделу (id='mp-anchor-<t>', см. rubric() внутри foMultiplayer()) —
   // остальные разделы всё ещё на месте прокруткой вниз/вверх, ничего не
   // потеряно, просто нет изоляции по вкладкам, как в одиночке.
-  const gatedTab = !SP_UNLOCKED && (t==="army"||t==="gen"||t==="inv"||t==="mail");
-  const html = gatedTab ? foMultiplayer(true)
+  const gatedTab = !SP_UNLOCKED && (t==="army"||t==="gen"||t==="inv"||t==="mail"||t==="profile");
+  const html = gatedTab ? mpMenuBodyHtml(t)
     : t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): t==="mp"?foMultiplayer(!SP_UNLOCKED): foInv();
   lastMenuBody = html;
   $("#menu-modal-body").innerHTML = html;
@@ -10053,10 +10088,10 @@ function openMenuModal(t){
   $("#side-menu").classList.remove("open");
   renderBadges();
   if(t==="mp" || gatedTab) mpOpen();
-  if(gatedTab){
-    const anchor=$("#mp-anchor-"+t);
-    if(anchor) anchor.scrollIntoView({block:"start"});
-  }
+  // Прокрутка к разделу больше не нужна вовсе: у КАЖДОЙ иконки гамбургера
+  // теперь свой экран целиком (Генерал/Инвентарь/Профиль/Войско/Почта), он и
+  // так начинается с нужного места. Якоря (mp-anchor-*) остались только на
+  // длинной странице «Общий мир», где по ним по-прежнему удобно ориентироваться.
 }
 // Метки перерисовываются в общем такте с шапкой (renderTop раз в секунду) —
 // отдельного таймера им не нужно.
@@ -10298,7 +10333,18 @@ function handleMpAct(e){
   if(invTabBtn){ mpInvTab=invTabBtn.dataset.t; mpRerender(); return; }
 }
 $("#menu-modal-body").addEventListener("click",e=>{
-  if($("#menu-modal").dataset.tab!=="mp") return;
+  // Фаза 20 — гейт был `dataset.tab!=="mp"`, и это глушило ВСЕ кнопки
+  // общего мира на вкладках Почта/Войско/Генерал/Инвентарь: с Фазы 17
+  // они тоже показывают mp-контент (см. gatedTab в openMenuModal), но
+  // dataset.tab у них — своё имя вкладки, не "mp". Автор сообщил
+  // "не могу выбрать генерала в сетевой" — кнопка "Выбрать" (data-mp=
+  // 'pickgen') рисовалась, но клик молча не доходил; из-за невыбранного
+  // генерала не появлялась и аватарка в профиле/шапке. Ровно та же
+  // ошибка, что уже была у #building-modal (Фаза 19): разметку добавили,
+  // а слушателю про новый путь не сказали. Правильное условие — то же,
+  // что и у mpRerender(): в одиночке mp-контент только на вкладке "mp",
+  // при .mp-gated — на любой.
+  if(SP_UNLOCKED && $("#menu-modal").dataset.tab!=="mp") return;
   handleMpAct(e);
 });
 // Фаза 19 — см. комментарий у handleMpAct() выше: та же самая функция,
@@ -10530,6 +10576,33 @@ function frame(){
   // за уже отсчитанный догоном промежуток.
   if(catchingUp){ lastReal=now; requestAnimationFrame(frame); return }
   let dt=(now-lastReal)/1000; lastReal=now;
+  // Фаза 20 — при .mp-gated одиночная партия НЕВИДИМА, но её рендеры писали
+  // в ТЕ ЖЕ узлы (#top/#folio/#cartouche/#menu-modal-body), что и рендеры
+  // общего мира, причём раз в секунду: поверх свежего общего города ложился
+  // чужой, никому не показанный. Автор видел ровно это:
+  //   • "в моём городе сами по себе появляются постройки, я их не строил" —
+  //     #folio мигал между городом общего мира и городом невидимой одиночки;
+  //   • "медленно грузит замок и ресурсные точки" — два рендера дрались
+  //     каждую секунду, и вдобавок вхолостую крутилась вся симуляция
+  //     одиночки (advanceTo с ботами и чанками карты);
+  //   • "выскакивает какое-то линейное меню" — refreshOpenModal() затирал
+  //     открытый экран общего мира одиночным списком, а при непроставленной
+  //     вкладке падал в foInv() (см. её ветку по умолчанию).
+  // В этом режиме одиночному циклу нечего делать вовсе: у общего мира свои
+  // рендеры (mpRerender), а невидимую партию незачем ни считать, ни писать
+  // в localStorage — при заходе в неё (?sp=1) обычный догон по savedAt
+  // отсчитает пропущенное сам, тем же путём, что и после свёрнутой вкладки.
+  if(!SP_UNLOCKED){
+    sinceUi+=dt;
+    // Свой секундный такт: живые таймеры/цифры из уже полученного mpState,
+    // БЕЗ сети — сам опрос сервера идёт раз в 5с (mpPollTick). Раньше эту
+    // роль нечаянно играл одиночный renderTop/renderFolio выше, поэтому при
+    // его отключении такт нужно вернуть явно, иначе таймеры "готово через"
+    // задёргались бы шагом в пять секунд.
+    if(sinceUi>1.0){ sinceUi=0; if(mpState.joined && mpState.player) mpRerender(); }
+    requestAnimationFrame(frame);
+    return;
+  }
   if(dt>0){ advanceTo(W.t+dt*tempo); sinceSave+=Math.min(dt,3600); sinceUi+=dt }
   if(sinceUi>1.0){ sinceUi=0; renderTop(); renderFolio(); renderCartouche(); refreshOpenModal(); renderFieldArmyWorld() }
   if(sinceSave>20){ sinceSave=0; save() }
@@ -10543,6 +10616,14 @@ document.addEventListener("visibilitychange",()=>{
   // короткие промежутки догоняем на месте, длинные — порциями по кадру с полосой,
   // тем же путём, что и загрузка после отсутствия (см. advanceToAnimated).
   const away=Math.max(0,(Date.now()-lastReal)/1000);
+  // Фаза 20 — тот же довод, что и в frame(): при .mp-gated одиночные рендеры
+  // затирают общий мир, а догонять невидимую партию незачем. Возврат на
+  // вкладку в общем мире освежаем его собственным рендером.
+  if(!SP_UNLOCKED){
+    lastReal=Date.now();
+    if(mpState.joined && mpState.player) mpRerender();
+    return;
+  }
   const after=()=>{ renderTop(); renderFolio(); renderCartouche(); refreshOpenModal() };
   lastReal=Date.now();
   if(away>3600){
@@ -10782,6 +10863,43 @@ async function claimChronicle(){
    ========================================================================= */
 let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[] };
 let mpPollTimer = null;
+// ===== Фаза 20, кусочек 3 — местный кэш последнего known-состояния общего
+// мира. Автор: "медленно грузит мой замок и ресурсные точки, может их
+// держать уже загруженными?". Раньше при каждом заходе город и точки сбора
+// были пусты до первого ответа сервера (mp-join + семь дочитываний) — на
+// телефоне это заметная пауза перед ЛЮБОЙ картинкой. Теперь последнее
+// виденное состояние кладётся в localStorage и рисуется сразу при старте, а
+// сеть догоняет и заменяет его в течение того же опроса.
+// Честные оговорки: (1) это ровно то, что игрок видел в прошлый раз, а не
+// "живые" данные — ресурсы/таймеры могут отставать на время между заходами,
+// но первый же ответ сервера (1-2 с) их выправляет; (2) кэш привязан к
+// DEVICE_ID и id игрока: чужой замок с общего браузера не покажется;
+// (3) на действия кэш не влияет вовсе — они все идут на сервер и он решает.
+const MP_CACHE_KEY="fourbanners:mpcache1";
+function mpSaveCache(){
+  if(!mpState.joined || !mpState.player) return;
+  try{
+    localStorage.setItem(MP_CACHE_KEY, JSON.stringify({
+      v:1, dev:DEVICE_ID, at:Date.now(),
+      player:mpState.player, neighbors:mpState.neighbors, nodes:mpState.nodes,
+      camps:mpState.camps, marches:mpState.marches, incoming:mpState.incoming,
+      mail:mpState.mail, scoutMail:mpState.scoutMail, raidMail:mpState.raidMail,
+    }));
+  }catch(e){ /* приватный режим/переполнение — кэш не обязателен, молча живём без него */ }
+}
+function mpLoadCache(){
+  try{
+    const raw=localStorage.getItem(MP_CACHE_KEY); if(!raw) return false;
+    const c=JSON.parse(raw);
+    // dev — чтобы на общем браузере не показать чужой город до ответа сервера.
+    if(!c || c.v!==1 || c.dev!==DEVICE_ID || !c.player || !c.player.state) return false;
+    mpState.player=c.player; mpState.race=c.player.race; mpState.joined=true;
+    mpState.neighbors=c.neighbors||[]; mpState.nodes=c.nodes||[]; mpState.camps=c.camps||[];
+    mpState.marches=c.marches||[]; mpState.incoming=c.incoming||[];
+    mpState.mail=c.mail||[]; mpState.scoutMail=c.scoutMail||[]; mpState.raidMail=c.raidMail||[];
+    return true;
+  }catch(e){ return false }
+}
 // Все здания BUILDINGS (index.html) перенесены на сервер (mp-build): 4
 // разблокируют mp-train (barracks/range/stable/siege), ещё 5 — это
 // HALL_REQ плюс сама ратуша (wall/store/academy/hospital + hall), без
@@ -10823,6 +10941,31 @@ async function mpCall(fn, body){
   if(!r.ok || j.err) throw new Error(j.err || ("HTTP "+r.status));
   return j;
 }
+// Фаза 20 — что именно показывает меню общего мира на каждой вкладке.
+// Раньше ВСЕ иконки гамбургера открывали одну и ту же длинную страницу
+// foMultiplayer() и лишь прокручивали её к нужному разделу — автор про это
+// и сказал "выскакивает какое-то линейное меню". Теперь Генерал и Инвентарь
+// открывают СВОИ экраны (mpGenHtml/mpInvHtml — те самые абсолютные копии
+// одиночных foGen()/foInv(), Фаза 19), ровно как в одиночке. Войско и Почта
+// пока честно остаются на общей странице с прокруткой к разделу: своих
+// экранов для них ещё не заведено, это отдельный кусочек.
+// Одна функция на оба вызывающих места (openMenuModal и mpRerender) — иначе
+// секундный такт немедленно затирал бы открытый экран общей страницей.
+function mpMenuBodyHtml(t){
+  if(!mpState.joined || !mpState.player) return foMultiplayer(!SP_UNLOCKED);
+  const p=mpState.player, st=p.state;
+  if(t==="gen") return mpGenHtml(mpFullShim(p,st),st);
+  if(t==="inv") return mpInvHtml(mpFullShim(p,st),st);
+  // Профиль (тап по гербу в шапке) — тот же одиночный экран, но с игроком
+  // общего мира: nick с сервера, раса и мощь из его собственного состояния.
+  if(t==="profile") return foProfile(Object.assign(mpFullShim(p,st),{nick:p.nick}));
+  // Войско и Почта — те же самые блоки общей страницы, собранные фильтром
+  // (см. `only` у foMultiplayer): отдельных копий разметки не заводим, иначе
+  // страница и экраны разъехались бы при первой же правке.
+  if(t==="army") return foMultiplayer(true,"army");
+  if(t==="mail") return foMultiplayer(true,"mail");
+  return foMultiplayer(!SP_UNLOCKED);
+}
 function mpRerender(){
   // Фаза 17, кусочек 2 — при .mp-gated ЛЮБАЯ вкладка меню (не только "mp")
   // может показывать foMultiplayer() (см. gatedTab в openMenuModal()) —
@@ -10832,9 +10975,9 @@ function mpRerender(){
   // к разделу (см. scrollIntoView в openMenuModal()) сбрасывалась бы к
   // началу страницы почти сразу же, как и сама эта прокрутка теряла смысл.
   const menuTab=$("#menu-modal").dataset.tab;
-  const showsMp = menuTab==="mp" || (!SP_UNLOCKED && (menuTab==="army"||menuTab==="gen"||menuTab==="inv"||menuTab==="mail"));
+  const showsMp = menuTab==="mp" || (!SP_UNLOCKED && (menuTab==="army"||menuTab==="gen"||menuTab==="inv"||menuTab==="mail"||menuTab==="profile"));
   if($("#menu-modal").classList.contains("open") && showsMp){
-    const html=foMultiplayer(!SP_UNLOCKED);
+    const html=mpMenuBodyHtml(menuTab);
     if(html!==lastMenuBody){ lastMenuBody=html; $("#menu-modal-body").innerHTML=html; }
   }
   // Фаза 14, кусочек 2 — держим 2D-карту города (#folio) свежей на каждый
@@ -10884,7 +11027,7 @@ function mpRerender(){
 }
 function mpStartPolling(){ mpStopPolling(); mpPollTimer=setInterval(mpPollTick,5000); }
 function mpStopPolling(){ if(mpPollTimer){ clearInterval(mpPollTimer); mpPollTimer=null; } }
-async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); }
+async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); mpSaveCache(); }
 // Баг-фикс — автор пожаловался: очередь стройки/тренировки/боя показывается
 // сразу, но САМ результат (новый уровень здания, исход боя) применял только
 // общий тикер (mp-tick), а тот раньше крутился раз в минуту — до минуты
@@ -10955,9 +11098,15 @@ async function mpOpen(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{});
-    mpState.joined=true; mpState.player=j.player; if(!wasJoined) mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail();
+    mpState.joined=true; mpState.player=j.player; if(!wasJoined) mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); mpSaveCache();
   }catch(e){
-    mpState.joined=false;
+    // Фаза 20, кусочек 3 — если состояние уже показано из кэша, а сеть
+    // моргнула, НЕ сбрасываем joined: игрок остаётся при своём городе (пусть
+    // и слегка устаревшем) с честной пометкой об ошибке внизу панели, а не
+    // получает вместо замка форму входа. Ветка "Нужна раса" ниже к кэшу не
+    // относится вовсе: там игрока в мире действительно нет.
+    const keepCached = mpState.joined && mpState.player && !/Нужна раса/.test(e.message||"");
+    if(!keepCached) mpState.joined=false;
     // Фаза 13, продолжение — различаем ДВА разных "отказа" mp-join с
     // пустым телом: "Нужна раса..." (mp-join/index.js) — ожидаемый ответ
     // для СОВСЕМ НОВОГО anon-uid, не сбой — гость видит тот же красивый
@@ -11273,7 +11422,16 @@ function mpRaceCardsHtml(){
 // ниже) не меняется ни на бит — только вступление и пара фраз с "общий
 // мир"/"в общем мире", которые в embedded-режиме звучали бы странно
 // (мир один, уточнять нечего).
-function foMultiplayer(embedded){
+// Фаза 20 — необязательный `only`: какой РАЗДЕЛ страницы собрать. Иконки
+// гамбургера открывают теперь свои экраны, а не одну длинную страницу с
+// прокруткой (автор: "выскакивает какое-то линейное меню"). Разделять
+// фильтром, а не копиями блоков, — чтобы длинная страница и отдельные экраны
+// не разъехались: разметка у них буквально одна и та же.
+//   only не задан → вся страница (вкладка "Общий мир", как была);
+//   "army" → смотр войск, лазарет, отряды в поле, входящие атаки;
+//   "mail" → бой, разведка, походы на лагеря.
+function foMultiplayer(embedded, only){
+  const show = k => !only || only===k;
   let h=embedded?"":rubric("Общий мир","бета");
   if(!embedded) h+="<div class='entry'><div class='line'><div class='fill'>"+
      "<div class='note'>Один настоящий мир на всех, кто сюда заходит — не отдельная копия для "+
@@ -11310,7 +11468,32 @@ function foMultiplayer(embedded){
      "<div class='title'>"+(p.nick||"Безымянный лорд")+" · "+RACES[p.race].name+"</div>"+
      "<div class='note'>Координаты: "+p.x+", "+p.y+"</div></div></div></div>";
 
-  if(mpState.incoming.length){
+  // Фаза 20 — смотр войск. Раньше страница общего мира вообще не показывала,
+  // КАКОЕ у игрока войско: только "есть N" тира 1 внутри формы набора. А это
+  // ровно содержимое одиночного экрана «Войско» (foArmy), поэтому блок собран
+  // теми же самыми troopRowHtml()/armyPower() — обе чистые, копий не нужно.
+  if(show("army")){
+    const armyShim=mpFullShim(p,st), armyB=bonuses(armyShim);
+    let hurt=0; TKEYS.forEach(t=>{ for(let i=1;i<=5;i++) hurt+=(st.wounded[t]&&st.wounded[t][i])||0; });
+    h+=rubric("Смотр войск",fmt(armyPower(st.troops,armyB,p.race))+" силы","mp-anchor-army");
+    const troopRows=[];
+    TKEYS.forEach(t=>{ for(let i=1;i<=5;i++){ const n=(st.troops[t]&&st.troops[t][i])||0; if(n) troopRows.push(troopRowHtml(armyShim,t,i,n)); } });
+    h+= troopRows.length ? "<div class='entry troop-list'>"+troopRows.join("")+"</div>"
+      : hollow("&#9876;","В столице пусто. Наберите войско в казармах, на стрельбище, в конюшне или мастерской на карте города.");
+    // Статус лазарета — только на ЭКРАНЕ «Войско» (как в одиночной foArmy).
+    // На длинной странице ниже уже есть свой раздел «Лазарет» с формой
+    // лечения, и второй заголовок там был бы просто дублем.
+    if(only==="army" && (hurt>0||st.heal)){
+      h+=rubric("Лазарет");
+      h+="<div class='entry "+(st.heal?"hot":"war")+"'><div class='line'><div class='fill'>"+
+         "<div class='title'>Раненых: "+RU(hurt)+"</div>"+
+         "<div class='note'>"+(st.heal
+            ? "Лечится "+RU(st.heal.n)+" — готово через "+fmtDur(Math.max(0,st.heal.t1-Date.now()/1000))
+            : "Лечение — в госпитале на карте города")+"</div></div></div></div>";
+    }
+  }
+
+  if(show("army") && mpState.incoming.length){
     h+=rubric("Входящие атаки","тревога");
     mpState.incoming.forEach(m=>{
       const left=Math.max(0,m.t1-Date.now()/1000);
@@ -11322,6 +11505,10 @@ function foMultiplayer(embedded){
     });
   }
 
+  // Фаза 20 — разделы общего мира (соседи/точки/лагеря на карте) нужны
+  // только на самой странице «Общий мир»: на экранах Войска и Почты им не
+  // место, там своё содержимое (см. `only` у foMultiplayer выше).
+  if(show("mp")){
   // Фаза 3, первый кусочек — общая видимость: список соседей вместо самой
   // 3D-карты (та рассчитана на локальных ботов одного браузера — встроить
   // туда настоящих других игроков отдельная большая задача, следующий шаг
@@ -11435,8 +11622,10 @@ function foMultiplayer(embedded){
     });
   }
 
-  if(mpState.marches.length){
-    h+=rubric("Отряды в поле",mpState.marches.length+" из "+mpMarchSlots(st.b.hall||0),"mp-anchor-army");
+  } // конец разделов «только общая страница» (участок А)
+
+  if(show("army") && mpState.marches.length){
+    h+=rubric("Отряды в поле",mpState.marches.length+" из "+mpMarchSlots(st.b.hall||0));
     mpState.marches.forEach(m=>{
       const left=Math.max(0,m.t1-Date.now()/1000);
       const going=m.state==="go", gathering=m.state==="gather", isGather=m.mode==="gather", isRaid=m.mode==="raid";
@@ -11461,12 +11650,16 @@ function foMultiplayer(embedded){
     });
   }
 
-  if(mpState.mail.length){
+  if(show("mail") && mpState.mail.length){
     h+=rubric("Бой","последние стычки","mp-anchor-mail");
     mpState.mail.forEach(m=>{
       const d=m.data, mine=d.role==="attacker";
       const myLoss=mine?d.attLoss:d.defLoss, oppLoss=mine?d.defLoss:d.attLoss;
-      const lostN=u=>TKEYS.reduce((s,t)=>s+[1,2,3,4,5].reduce((s2,i)=>s2+((u[t]&&u[t][i])||0),0),0);
+      // u=u||{} — Фаза 20: внутри уже защищено (u[t]&&u[t][i]), но сам объект
+      // мог не приехать вовсе (старая строка почты, донесение другого вида),
+      // и тогда падала ВСЯ страница общего мира — одна кривая запись гасила
+      // игроку весь экран. Письмо без разбора потерь честнее показать нулём.
+      const lostN=u=>{ u=u||{}; return TKEYS.reduce((s,t)=>s+[1,2,3,4,5].reduce((s2,i)=>s2+((u[t]&&u[t][i])||0),0),0); };
       const won=(mine&&d.winner==="att")||(!mine&&d.winner==="def");
       // Фаза 4, шестой кусочек: лазарет защитника — d.defDead/defHurt/
       // defSlight описывают ВСЕГДА защитника (одна и та же сводка лежит в
@@ -11502,7 +11695,7 @@ function foMultiplayer(embedded){
   // сервер честно шлёт null/0/[]. Ступени и пороги — те же самые se>=1..5,
   // что и в scoutSnapshot/scoutReportHtml одиночной игры (index.html:
   // 5237-5282/7080-7151), просто короче (без блочной вёрстки — тут почта).
-  if(mpState.scoutMail.length){
+  if(show("mail") && mpState.scoutMail.length){
     h+=rubric("Разведка","донесения лазутчиков");
     mpState.scoutMail.forEach(m=>{
       const d=m.data;
@@ -11536,7 +11729,7 @@ function foMultiplayer(embedded){
   }
 
   // Фаза 8, кусочек 2 — донесения о походах на лагеря (mail, kind:"raid").
-  if(mpState.raidMail.length){
+  if(show("mail") && mpState.raidMail.length){
     h+=rubric("Лагеря","походы на варваров");
     mpState.raidMail.forEach(m=>{
       const d=m.data;
@@ -11568,6 +11761,7 @@ function foMultiplayer(embedded){
   // однопользовательской игры, что и здесь; см. _shared/rules.js на сервере
   // для точного зеркала). Старые записи могли завести здание скаляром (баг
   // mp-join, уже починен) — mpBuildLv/mpBuildLvAt читают защитно.
+  if(show("mp")){
   const mpBuildLv=(bld)=>{ const raw=st.b[bld]; return BUILD_MP_MULTI.has(bld)?((Array.isArray(raw)?raw[0]:raw)||0):(raw||0) };
   const mpBuildLvAt=(bld,plot)=>{ const raw=st.b[bld]; return BUILD_MP_MULTI.has(bld)?((Array.isArray(raw)?raw[plot]:(plot===0?raw:0))||0):(raw||0) };
   const hallLv=mpBuildLv("hall");
@@ -11752,7 +11946,10 @@ function foMultiplayer(embedded){
   h+="<div id='mp-anchor-inv'></div>";
   h+=mpInvHtml(mpFullShim(p,st),st);
 
-  h+=rubric("Полководец","решение окончательное","mp-anchor-gen");
+  // Заголовок раздела теперь внутри mpGenHtml() (их там два разных, как и у
+  // одиночной foGen() — см. её комментарий), снаружи остаётся только якорь
+  // для иконки "Генерал" бокового меню, как и у Инвентаря выше.
+  h+="<div id='mp-anchor-gen'></div>";
   h+=mpGenHtml(mpFullShim(p,st),st);
 
   // Фаза 5, Академия — дерево исследований (ACADEMY_TREE, зеркало
@@ -11779,6 +11976,8 @@ function foMultiplayer(embedded){
     const pShim2={race:p.race,b:Object.assign({portal:0},st.b),gen:st.gen||{id:null},tech:st.tech||{}};
     h+=mpAcademyHtml(pShim2,st);
   }
+
+  } // конец разделов «только общая страница» (участок Б)
 
   if(mpState.err) h+="<div class='entry'><div class='line'><div class='fill'><div class='note' style='color:#e08'>"+mpState.err+"</div></div></div></div>";
   return h;
@@ -11825,19 +12024,34 @@ function foMultiplayer(embedded){
     // mpRenderFolio() ниже), а не пустой #ledger, как было раньше.
     // src у #world3d — тот же ленивый приём, что и в toggleView() (не
     // тянуть WebGPU/модели, пока не нужно), просто здесь "нужно" сразу.
-    $("#app").className="view-world";
-    const w3d=$("#world3d"); if(w3d && !w3d.src) w3d.src="engine/dist/index.html";
+    // Фаза 20 — стартуем в СВОЁМ ГОРОДЕ, а не в общем мире. Автор: "при
+    // заходе главной страницей выступает общий мир, а не мой замок".
+    // Заодно это лечит половину жалобы на медленный старт: 3D-движок
+    // (WebGPU, модели, рельеф) больше не тянется при загрузке, а лениво,
+    // при первом заходе во вкладку "Мир" — ровно как в одиночке (см.
+    // toggleView()). Поэтому и #world3d.src тут больше не проставляем, и
+    // иконку #view-toggle не доворачиваем: разметка по умолчанию несёт
+    // icon-world.png ("жми, чтобы попасть в мир") — именно то, что нужно
+    // при старте в городе.
+    $("#app").className="view-city";
     // Иконка #view-toggle показывает пункт НАЗначения клика (см. toggleView()
     // — тот же приём для одиночки: в .view-city лежит icon-world.png, "жми,
     // чтобы попасть в мир"). Разметка по умолчанию несёт icon-world.png (под
     // одиночный старт с .view-city) — при старте сразу в .view-world её надо
     // довернуть на icon-city.png, иначе кнопка звала бы туда, где мы уже есть.
-    const vtImg=$("#view-toggle img");
-    if(vtImg){ vtImg.src="images/ui/icon-city.png"; vtImg.alt="Город"; }
+    // Сначала — последнее виденное состояние из кэша (мгновенно, без сети),
+    // чтобы город и точки сбора были на экране сразу, а не после ответа
+    // сервера. Затем обычный mpOpen() догоняет и заменяет его свежим.
+    if(mpLoadCache()){ mpRenderFolio(); mpRenderTop(); }
     await mpOpen();
     mpRenderFolio();
     mpRenderTop();
-    openMenuModal("mp");
+    // Страницу "Общий мир" больше НЕ открываем поверх города при каждом
+    // заходе (та самая жалоба выше) — она в одном тапе по гамбургеру.
+    // Единственное исключение — если войти не удалось (сеть/ошибка): тогда
+    // без модалки игрок остался бы перед пустым городом вообще без пути
+    // внутрь, поэтому форму входа с текстом ошибки показываем сразу.
+    if(!mpState.joined) openMenuModal("mp");
   }
   const ok=await load();
   if(!ok) genWorld(Date.now()&0xffffff);

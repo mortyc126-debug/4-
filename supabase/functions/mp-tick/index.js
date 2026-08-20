@@ -474,7 +474,12 @@ const RACE_TROOP_MOD = {
   dwarf: { inf: { atk: 1.05, def: 1.05, hp: 1.05 } },
   human: { cav: { atk: 1.05, def: 1.05, hp: 1.05 } },
   elf: { arc: { atk: 1.05, def: 1.05, hp: 1.05 } },
-  undead: { sie: { atk: 2.20 * 1.05, def: 1.05, hp: 1.05, speed: 1.20 } },
+  // load:0.80 — честный размен нежити: осадные бьют вдвое сильнее, но возят
+  // на 20% меньше (index.html:2725). Раньше этой строки тут не было, а
+  // carryCap в applyMarchArrive ниже множит именно на troopMod(...,"load") —
+  // без неё нежить уносила из разграбленного города и лагеря на 25% больше,
+  // чем та же нежить в одиночке, получая силу без обратной стороны.
+  undead: { sie: { atk: 2.20 * 1.05, def: 1.05, hp: 1.05, speed: 1.20, load: 0.80 } },
 };
 const troopMod = (race, t, stat) => (RACE_TROOP_MOD[race] && RACE_TROOP_MOD[race][t] && RACE_TROOP_MOD[race][t][stat]) || 1;
 
