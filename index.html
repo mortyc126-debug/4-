@@ -11206,7 +11206,7 @@ function mpStopPolling(){
   // Фаза 21 — быстрый (1с) опрос боя не должен пережить выход из вкладки
   // общего мира: без этого он продолжал бы дёргать sb.from("marches")
   // каждую секунду вхолостую, пока игрок вообще не в мультиплеере.
-  if(mpBattleFastTimer){ clearInterval(mpBattleFastTimer); mpBattleFastTimer=null; mpBattleHist={}; }
+  if(mpBattleFastTimer){ clearInterval(mpBattleFastTimer); mpBattleFastTimer=null; }
 }
 async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); mpSaveCache(); }
 // Баг-фикс — автор пожаловался: очередь стройки/тренировки/боя показывается
@@ -11509,45 +11509,43 @@ async function mpDoTalent(id){
   catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
-// Фаза 21, продолжение — быстрый (1с) опрос ТОЛЬКО во время боя, не всегда.
-// Автор попросил именно так: "не постоянно, а именно при боях... чтобы не
-// превышать лимиты" — сам по себе более частый опрос той же таблицы
-// (обычный select через уже открытую RLS, БЕЗ вызова mp-tick — на порядок
-// дешевле, чем дёргать edge-функцию) видит настоящее число раньше (до 1с
-// задержки вместо обычных 5с у mpPollTick), но сервер меняет
-// attHpLeft/defHpLeft не чаще раза в BATTLE_TICK_SECONDS~15с (см.
-// supabase/functions/mp-tick/index.js) — между настоящими обновлениями
-// полоска бы всё равно стояла на месте. mpBattleHist держит два последних
-// НАСТОЯЩИХ снимка на марш (по round, не по времени опроса — незачем
-// перезаписывать "prev", если пришло то же самое число ещё раз) — по
-// разнице между ними полоска "дорисовывается" линейно в реальном времени
-// (mpBattleDisplay ниже), с потолком: экстраполяция не может утечь дальше,
-// чем сам наблюдённый интервал, если следующее настоящее число задержится
-// сильнее обычного.
-let mpBattleFastTimer=null, mpBattleHist={};
+// Фаза 22 — "развёртывание армии". Раньше полоска гадала по тренду двух
+// последних НАСТОЯЩИХ снимков (mpBattleHist) — рабочая, но всё же догадка,
+// могла и промахнуться, если темп боя менялся. Автор предложил честнее:
+// сервер и так считает следующий кусок раундов СРАЗУ (15с — не задержка
+// расчёта, а темп подачи готового результата), так что вместо гадания по
+// прошлому клиент просто ДОМАТЫВАЕТ от уже показанного значения до уже
+// ИЗВЕСТНОГО нового, ровно за то время, что реально пройдёт до следующего
+// куска — это не прогноз, а честная доводка факта, промахнуться нечем.
+// revealFromAttHp/revealFromDefHp/revealStart/revealAt лежат прямо в
+// m.data.battle (см. runPvpBattleRounds/runRaidBattleRounds в mp-tick) —
+// клиенту считать вообще ничего не нужно, кроме простой интерполяции по
+// времени. Для самого первого куска revealFrom = 100% (войска ещё "в
+// строю", урона не было) — тот самый эффект развёртывания: полоска не
+// прыгает сразу на первый настоящий результат, а плавно доезжает до него.
+function mpBattleInterp(battle, from, to){
+  if(from==null || to==null || !battle.revealAt || !battle.revealStart || battle.revealAt<=battle.revealStart) return to;
+  const frac=Math.max(0,Math.min(1,(Date.now()-battle.revealStart)/(battle.revealAt-battle.revealStart)));
+  return from+(to-from)*frac;
+}
+// Быстрый (1с) опрос ТОЛЬКО во время боя, не всегда — автор попросил именно
+// так: "не постоянно, а именно при боях... чтобы не превышать лимиты".
+// Обычный select через уже открытую RLS, БЕЗ вызова mp-tick — на порядок
+// дешевле, чем дёргать edge-функцию; сам он не ускоряет темп боя (сервер
+// всё равно меняет число не чаще раза в BATTLE_TICK_SECONDS), только
+// быстрее подхватывает уже готовый результат и чаще перерисовывает
+// интерполяцию выше, чтобы она выглядела непрерывной, а не "тик раз в 5с".
+let mpBattleFastTimer=null;
 function mpActiveSiegeIds(){
   const ids=[];
   mpState.marches.forEach(m=>{ if(m.state==="siege") ids.push(m.id); });
   mpState.incoming.forEach(m=>{ if(m.state==="siege") ids.push(m.id); });
   return ids;
 }
-function mpBattleRecordHist(id, battle){
-  if(!battle) return;
-  const h=mpBattleHist[id];
-  const snap={t:Date.now(), attHpLeft:battle.attHpLeft, defHpLeft:battle.defHpLeft};
-  if(!h || h.round!==battle.round) mpBattleHist[id]={round:battle.round, prev:(h?h.cur:snap), cur:snap};
-}
-function mpBattleDisplay(id, key, fallback){
-  const h=mpBattleHist[id];
-  if(!h || !h.prev || h.cur.t===h.prev.t) return fallback; // нет ещё пары точек — честно берём как есть
-  const dt=h.cur.t-h.prev.t, rate=(h.cur[key]-h.prev[key])/dt;
-  const elapsed=Math.min(Date.now()-h.cur.t, dt);
-  return Math.max(0, h.cur[key]+rate*elapsed);
-}
 function mpMaybeToggleBattleFastPoll(){
   const active=mpActiveSiegeIds().length>0;
   if(active && !mpBattleFastTimer) mpBattleFastTimer=setInterval(mpBattleFastPollTick,1000);
-  if(!active && mpBattleFastTimer){ clearInterval(mpBattleFastTimer); mpBattleFastTimer=null; mpBattleHist={}; }
+  if(!active && mpBattleFastTimer){ clearInterval(mpBattleFastTimer); mpBattleFastTimer=null; }
 }
 async function mpBattleFastPollTick(){
   const ids=mpActiveSiegeIds();
@@ -11557,7 +11555,6 @@ async function mpBattleFastPollTick(){
     data.forEach(row=>{
       const own=mpState.marches.find(x=>x.id===row.id); if(own){ own.state=row.state; own.data=row.data; }
       const inc=mpState.incoming.find(x=>x.id===row.id); if(inc){ inc.state=row.state; inc.data=row.data; }
-      if(row.data && row.data.battle) mpBattleRecordHist(row.id, row.data.battle);
     });
   }
   mpMaybeToggleBattleFastPoll();
@@ -11755,8 +11752,8 @@ function foMultiplayer(embedded, only){
         // боя, атакующего — как "attHpLeft" (mpHpBarHtml ниже нейтрален к
         // роли, просто рисует то, что дали).
         h+="<div class='note'>Бой идёт — раунд "+b.round+(b.weather&&b.weather.id!=="clear"?" · "+b.weather.name:"")+"</div>"+
-           mpHpBarHtml("Наша оборона",mpBattleDisplay(m.id,"defHpLeft",b.defHpLeft),b.defStartHp,b.defGenHpFrac)+
-           mpHpBarHtml("Противник",mpBattleDisplay(m.id,"attHpLeft",b.attHpLeft),b.attStartHp,b.attGenHpFrac);
+           mpHpBarHtml("Наша оборона",mpBattleInterp(b,b.revealFromDefHp,b.defHpLeft),b.defStartHp,mpBattleInterp(b,b.revealFromDefGenFrac,b.defGenHpFrac))+
+           mpHpBarHtml("Противник",mpBattleInterp(b,b.revealFromAttHp,b.attHpLeft),b.attStartHp,mpBattleInterp(b,b.revealFromAttGenFrac,b.attGenHpFrac));
       } else {
         const left=Math.max(0,m.t1-Date.now()/1000);
         h+="<div class='note'>Подход через "+fmtDur(left)+" — состав отряда неизвестен без разведки.</div>";
@@ -11792,8 +11789,8 @@ function foMultiplayer(embedded, only){
       const b=sieging&&m.data&&m.data.battle;
       if(b){
         h+="<div class='note'>Бой идёт — раунд "+b.round+(b.weather&&b.weather.id!=="clear"?" · "+b.weather.name:"")+"</div>"+
-           mpHpBarHtml("Наши",mpBattleDisplay(m.id,"attHpLeft",b.attHpLeft),b.attStartHp,b.attGenHpFrac)+
-           mpHpBarHtml("Противник",mpBattleDisplay(m.id,"defHpLeft",b.defHpLeft),b.defStartHp,b.defGenHpFrac);
+           mpHpBarHtml("Наши",mpBattleInterp(b,b.revealFromAttHp,b.attHpLeft),b.attStartHp,mpBattleInterp(b,b.revealFromAttGenFrac,b.attGenHpFrac))+
+           mpHpBarHtml("Противник",mpBattleInterp(b,b.revealFromDefHp,b.defHpLeft),b.defStartHp,mpBattleInterp(b,b.revealFromDefGenFrac,b.defGenHpFrac));
       } else {
         const left=Math.max(0,m.t1-Date.now()/1000);
         h+="<div class='note'>Осталось: "+fmtDur(left)+"</div>";
