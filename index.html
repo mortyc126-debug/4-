@@ -1071,21 +1071,18 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   pointer-events:none;-webkit-user-drag:none}
 .cbuild{position:absolute;box-sizing:border-box;cursor:pointer;touch-action:none;
   -webkit-tap-highlight-color:transparent;user-select:none}
-/* Свободный участок под застройку — рамка видна ВСЕГДА (не только на
-   :hover): на сенсорном экране hover не срабатывает вовсе, а участков без
-   собственной картинки (ещё не построено) тогда нечем и обозначить на
-   карте — репорт пользователя со скриншотом: "не отображаются
-   строительные ячейки". Тронутое здание (.built) свою рамку в покое всё
-   ещё не показывает — там и так видна картинка постройки, дублировать
-   нечем/незачем. Запертые (locked — ещё не открыт участок, либо декоративная
-   клетка без строительства вовсе, c.bk===null) остаются полностью
-   невидимыми: приглашать тапнуть туда, где строить нельзя, не нужно. */
-.cbuild .shape{position:absolute;inset:0;border:2px dashed rgba(194,153,60,.65);
-  background:rgba(194,153,60,.14);box-sizing:border-box;transition:background .15s,border-color .15s}
+/* Автор явно попросил убрать обводку контура участков с территории —
+   то, что он называл "ячейками строительства", на самом деле #brigades
+   (два круглых слота бригад слева, см. её заголовок), не эта рамка.
+   Возвращено к исходному виду: в покое прозрачно, подсветка только по
+   :hover/.sel (десктоп) — тач-разметка сама по себе видна по контуру
+   декора на самой карте, дублировать не нужно. */
+.cbuild .shape{position:absolute;inset:0;border:2px solid transparent;
+  background:transparent;box-sizing:border-box;transition:background .15s,border-color .15s}
 .cbuild:hover .shape{border-color:var(--gilt-hi);background:rgba(194,153,60,.18)}
 .cbuild.built .shape{border-color:transparent;background:transparent}
 .cbuild.built:hover .shape{border-color:var(--gilt-hi);background:rgba(194,153,60,.18)}
-.cbuild.locked .shape{border-color:transparent;background:transparent;cursor:not-allowed}
+.cbuild.locked .shape{border-color:transparent;cursor:not-allowed}
 .cbuild img.bimg{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;
   object-position:center;pointer-events:none;filter:drop-shadow(0 3px 5px rgba(0,0,0,.6))}
 .cbuild .lvl{position:absolute;bottom:2px;right:4px;font-family:var(--data);font-size:10px;
@@ -7048,6 +7045,34 @@ function mpRenderCityMap(){
   // ещё нужен — только для подсветки .sel выше (какая ячейка выбрана),
   // сама mpCellPanelHtml остаётся нетронутой и протестированной, просто
   // больше отсюда не зовётся.
+  h+="</div>";
+  h+=mpRenderBrigades();
+  return h;
+}
+// Бригады общего мира — дословно тот же #brigades/.slotcell, что и в
+// одиночке (renderBrigades, index.html:foCity): два круглых слота
+// строительной очереди слева от карты города — автор пояснил, что именно
+// это он и называл "ячейками строительства" (не рамку вокруг участков,
+// которую я сперва принял за них — та убрана обратно, см. .cbuild .shape).
+// Занятый слот — иконка + обратный отсчёт + полоска прогресса (клик открывает
+// ту самую ячейку, data-mpcell — тот же обработчик, что и у самой карты);
+// свободный — просто "бригада свободна", как и в одиночке. Единственная
+// разница с renderBrigades(p): время берётся из Date.now()/1000 (реальные
+// секунды сервера), не из W.t одиночки — та же оговорка, что и у
+// mpCellPanelHtml (queued.t1-Date.now()/1000) чуть ниже по файлу.
+function mpRenderBrigades(){
+  const p=mpCityShim(), st=mpState.player.state, nowSec=Date.now()/1000;
+  let h="<div id='brigades'>";
+  st.queues.forEach(q=>{
+    if(q){
+      const f=(nowSec-q.t0)/Math.max(1,q.t1-q.t0);
+      const idx=cityCellIndexFor(q.b,q.plot);
+      h+="<div class='slotcell' data-mpcell='"+idx+"' "+
+         "title='"+buildingName(q.b,p)+" — готово через "+fmtDur(q.t1-nowSec)+"'>"+
+         "<img src='images/ui/icon-build.png'><span class='timer'>"+fmtDur(q.t1-nowSec)+"</span>"+
+         "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
+    } else h+="<div class='slotcell empty' title='Бригада свободна'><img src='images/ui/icon-free.png'></div>";
+  });
   h+="</div>";
   return h;
 }
