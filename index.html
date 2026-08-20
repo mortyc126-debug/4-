@@ -11412,7 +11412,12 @@ async function mpCall(fn, body){
 // Одна функция на оба вызывающих места (openMenuModal и mpRerender) — иначе
 // секундный такт немедленно затирал бы открытый экран общей страницей.
 function mpMenuBodyHtml(t){
-  if(!mpState.joined || !mpState.player) return foMultiplayer(!SP_UNLOCKED);
+  // only:t (не пусто) — даже в состоянии "ещё не готово" (joined=false,
+  // или joined=true/player ещё не пришёл, см. защиту от гонки внутри
+  // foMultiplayer) должна остаться видна ЗАПРОШЕННАЯ вкладка, а не полный
+  // нефильтрованный список (тот раньше начинался с "Смотр войск" — при
+  // сбое или гонке "Почта" визуально выглядела как открывшееся "Войско").
+  if(!mpState.joined || !mpState.player) return foMultiplayer(!SP_UNLOCKED, t);
   const p=mpState.player, st=p.state;
   if(t==="gen") return mpGenHtml(mpFullShim(p,st),st);
   if(t==="inv") return mpInvHtml(mpFullShim(p,st),st);
@@ -12069,6 +12074,19 @@ function foMultiplayer(embedded, only){
     return h;
   }
 
+  // Защита от гонки: mpLoadCache() может проставить mpState.joined=true
+  // РАНЬШЕ, чем сам mpState.player реально придёт (см. заголовок
+  // mpWorld3DFocused выше — тот же самый разрыв, только там он ломал 3D-
+  // фокус, тут — саму отрисовку вкладки). Раньше следующая строка (p.state)
+  // тут же кидала исключение — оно прерывало ВЕСЬ openMenuModal() ДО
+  // перезаписи #menu-modal-body, и на экране молча оставалась ПРЕЖНЯЯ
+  // открытая вкладка. Это и был репорт "на кнопке почты открывается
+  // войско" — на самом деле войско просто НЕ ЗАКРЫЛОСЬ, потому что попытка
+  // открыть почту тихо падала прямо тут. Честная "Загрузка..." вместо падения.
+  if(!mpState.player){
+    h+="<div class='entry'><div class='line'><div class='fill'><div class='note'>Загрузка...</div></div></div></div>";
+    return h;
+  }
   const p=mpState.player, st=p.state, pShim={race:p.race,b:st.b};
   // Заголовок "ник · раса, координаты" — раньше рисовался БЕЗ show()-гейта,
   // то есть на КАЖДОЙ вкладке (Войско, Почта — не только на своём "mp"),
