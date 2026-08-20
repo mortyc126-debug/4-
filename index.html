@@ -51,8 +51,19 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #crest:hover .mark{color:var(--gilt-hi)}
 #crest .mark{font-size:17px;color:var(--gilt);line-height:1;transition:color .15s;
   width:50px;text-align:center;flex:0 0 auto}
-#crest .avatar{width:78px;height:78px;object-fit:contain;display:block;flex:0 0 auto;
-  position:relative;z-index:2;margin-right:-16px;filter:drop-shadow(0 2px 6px rgba(0,0,0,.7))}
+/* Обёртка аватара шапки — тот же приём, что у .profile-avatar-wrap/
+   .profile-ring в карточке профиля (foProfile): золотое кольцо отдельной
+   картинкой поверх аватара, крупнее его и центрировано, не искажается
+   растяжением. Раньше в шапке кольца не было вовсе — только в профиле,
+   хотя это тот же самый аватар игрока. 107px = 78px×1.375, то же
+   соотношение кольцо/аватар (132/96), что и в профиле. */
+#crest .crest-avatar-wrap{position:relative;width:78px;height:78px;flex:0 0 auto;
+  z-index:2;margin-right:-16px}
+#crest .avatar{width:78px;height:78px;object-fit:contain;display:block;
+  position:relative;z-index:2;filter:drop-shadow(0 2px 6px rgba(0,0,0,.7))}
+#crest .crest-ring{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:107px;height:auto;pointer-events:none;z-index:3;
+  filter:drop-shadow(0 3px 8px rgba(0,0,0,.6))}
 #crest .crest-card{display:flex;flex-direction:column;align-items:flex-start;gap:3px;
   min-width:0;background:rgba(0,0,0,.32);border:1px solid var(--rule-soft);
   border-radius:6px;padding:4px 8px 4px 20px}
@@ -1246,7 +1257,11 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 <div id="app" class="view-city">
   <header id="top">
     <div id="crest">
-      <span class="mark">&#9884;</span><img id="crest-avatar" class="avatar" alt="" style="display:none">
+      <span class="mark">&#9884;</span>
+      <span class="crest-avatar-wrap">
+        <img id="crest-avatar" class="avatar" alt="" style="display:none">
+        <img class="crest-ring" src="images/ui/profile-ring.png" alt="" style="display:none">
+      </span>
       <div class="crest-card">
         <b id="crest-name">Безымянный лорд</b>
         <span id="crest-power"><img class="ico" src="images/ui/icon-power.png" alt="">—</span>
@@ -6511,13 +6526,13 @@ function renderTop(){
   const avSrc=playerAvatarSrc(p);
   if(avSrc!==lastCrestAvatar){
     lastCrestAvatar=avSrc;
-    const av=$("#crest-avatar"), mark=$("#crest .mark");
+    const av=$("#crest-avatar"), mark=$("#crest .mark"), ring=$("#crest .crest-ring");
     if(avSrc){
-      av.onload=()=>{ av.style.display="block"; mark.style.display="none" };
-      av.onerror=()=>{ av.style.display="none"; mark.style.display="" };
+      av.onload=()=>{ av.style.display="block"; ring.style.display="block"; mark.style.display="none" };
+      av.onerror=()=>{ av.style.display="none"; ring.style.display="none"; mark.style.display="" };
       av.src=avSrc;
     } else {
-      av.style.display="none"; mark.style.display="";
+      av.style.display="none"; ring.style.display="none"; mark.style.display="";
     }
   }
   const d=Math.floor(W.t/86400), hh=Math.floor(W.t%86400/3600), mm=Math.floor(W.t%3600/60);
@@ -8235,13 +8250,13 @@ function mpRenderTop(){
   const avSrc=playerAvatarSrc(pShim);
   if(avSrc!==lastMpCrestAvatar){
     lastMpCrestAvatar=avSrc;
-    const av=$("#crest-avatar"), mark=$("#crest .mark");
+    const av=$("#crest-avatar"), mark=$("#crest .mark"), ring=$("#crest .crest-ring");
     if(avSrc){
-      av.onload=()=>{ av.style.display="block"; if(mark) mark.style.display="none" };
-      av.onerror=()=>{ av.style.display="none"; if(mark) mark.style.display="" };
+      av.onload=()=>{ av.style.display="block"; if(ring) ring.style.display="block"; if(mark) mark.style.display="none" };
+      av.onerror=()=>{ av.style.display="none"; if(ring) ring.style.display="none"; if(mark) mark.style.display="" };
       av.src=avSrc;
     } else if(av){
-      av.style.display="none"; if(mark) mark.style.display="";
+      av.style.display="none"; if(ring) ring.style.display="none"; if(mark) mark.style.display="";
     }
   }
 }
@@ -8675,17 +8690,18 @@ function foProfile(pIn){
      "<div class='profile-power-wrap'><img class='wreath' src='images/ui/profile-wreath.png' alt=''>"+
      "<span class='profile-power-chip' style='font-size:"+profilePowerFontSize(fmt(power(p)))+"px'>"+fmt(power(p))+"</span></div>"+
      "</div>";
-  // Предпросмотр экрана летописи. Тот же самый экран, что видит новый игрок,
-  // но выбор никуда не записывается — runOnboarding сама по себе ничего не
-  // меняет, применяет его уже claimChronicle. Нужен затем, что настоящий экран
-  // показывается ровно один раз за партию, и посмотреть на него, не сломав
-  // текущую игру, иначе было бы негде.
-  h+=rubric("Оформление","предпросмотр");
-  h+="<div class='entry'><div class='line'><div class='fill'>"+
-     "<div class='title'>Экран летописи</div>"+
-     "<div class='note'>Тот же экран, что встречает нового правителя: выбор народа, "+
-     "полководца и имени. Можно пройти целиком — ничего не изменится.</div></div>"+
-     "<button class='seal' data-act='obdemo'>Открыть</button></div></div>";
+  // Предпросмотр экрана летописи — только в одиночке (SP_UNLOCKED): экран
+  // относится к её собственной регистрации (runOnboarding/claimChronicle),
+  // в общем мире вход идёт через mp-join, этот предпросмотр там ничему не
+  // соответствует и просто путает игрока лишней кнопкой в профиле.
+  if(SP_UNLOCKED){
+    h+=rubric("Оформление","предпросмотр");
+    h+="<div class='entry'><div class='line'><div class='fill'>"+
+       "<div class='title'>Экран летописи</div>"+
+       "<div class='note'>Тот же экран, что встречает нового правителя: выбор народа, "+
+       "полководца и имени. Можно пройти целиком — ничего не изменится.</div></div>"+
+       "<button class='seal' data-act='obdemo'>Открыть</button></div></div>";
+  }
   return h;
 }
 
@@ -12068,12 +12084,13 @@ function foMultiplayer(embedded, only){
     });
   }
 
-  const perHour=mpProdPerHour(p);
-  h+="<div class='entry'><div class='line'><div class='fill'><div class='title'>Ресурсы</div>"+
-     "<div class='note'>"+RES.map(r=>RES_NAME[r]+": "+RU(st.res[r])).join(" · ")+"</div>"+
-     "<div class='note'>Добыча/час: "+RES.map(r=>RES_NAME[r]+" "+RU(perHour[r])).join(" · ")+
-     " — досчитывается при каждом действии и при опросе (раз в 5с, пока открыта вкладка).</div>"+
-     "</div></div></div>";
+  // Раньше здесь безусловно (без show()-гейта) рендерился блок "Ресурсы" —
+  // те же самые числа, что и так уже висят в шапке (#purse), просто
+  // задваивались на КАЖДОЙ вкладке (Войско/Почта/Генерал/Инвентарь), а не
+  // только там, где им было бы место. Автор пожаловался: на вкладке
+  // "Войско" (only="army") лишний список ресурсов и техническая заметка
+  // про частоту пересчёта, которым там не место. Убрано целиком — шапка
+  // и так всегда видна поверх любой вкладки.
 
   // Автор пожаловался: "Общий мир" сваливал постройку/Горн/набор войск/
   // переобучение/лазарет/Инвентарь/Генерала/Академию в один текстовый
