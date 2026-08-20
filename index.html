@@ -10863,6 +10863,43 @@ async function claimChronicle(){
    ========================================================================= */
 let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[] };
 let mpPollTimer = null;
+// ===== Фаза 20, кусочек 3 — местный кэш последнего known-состояния общего
+// мира. Автор: "медленно грузит мой замок и ресурсные точки, может их
+// держать уже загруженными?". Раньше при каждом заходе город и точки сбора
+// были пусты до первого ответа сервера (mp-join + семь дочитываний) — на
+// телефоне это заметная пауза перед ЛЮБОЙ картинкой. Теперь последнее
+// виденное состояние кладётся в localStorage и рисуется сразу при старте, а
+// сеть догоняет и заменяет его в течение того же опроса.
+// Честные оговорки: (1) это ровно то, что игрок видел в прошлый раз, а не
+// "живые" данные — ресурсы/таймеры могут отставать на время между заходами,
+// но первый же ответ сервера (1-2 с) их выправляет; (2) кэш привязан к
+// DEVICE_ID и id игрока: чужой замок с общего браузера не покажется;
+// (3) на действия кэш не влияет вовсе — они все идут на сервер и он решает.
+const MP_CACHE_KEY="fourbanners:mpcache1";
+function mpSaveCache(){
+  if(!mpState.joined || !mpState.player) return;
+  try{
+    localStorage.setItem(MP_CACHE_KEY, JSON.stringify({
+      v:1, dev:DEVICE_ID, at:Date.now(),
+      player:mpState.player, neighbors:mpState.neighbors, nodes:mpState.nodes,
+      camps:mpState.camps, marches:mpState.marches, incoming:mpState.incoming,
+      mail:mpState.mail, scoutMail:mpState.scoutMail, raidMail:mpState.raidMail,
+    }));
+  }catch(e){ /* приватный режим/переполнение — кэш не обязателен, молча живём без него */ }
+}
+function mpLoadCache(){
+  try{
+    const raw=localStorage.getItem(MP_CACHE_KEY); if(!raw) return false;
+    const c=JSON.parse(raw);
+    // dev — чтобы на общем браузере не показать чужой город до ответа сервера.
+    if(!c || c.v!==1 || c.dev!==DEVICE_ID || !c.player || !c.player.state) return false;
+    mpState.player=c.player; mpState.race=c.player.race; mpState.joined=true;
+    mpState.neighbors=c.neighbors||[]; mpState.nodes=c.nodes||[]; mpState.camps=c.camps||[];
+    mpState.marches=c.marches||[]; mpState.incoming=c.incoming||[];
+    mpState.mail=c.mail||[]; mpState.scoutMail=c.scoutMail||[]; mpState.raidMail=c.raidMail||[];
+    return true;
+  }catch(e){ return false }
+}
 // Все здания BUILDINGS (index.html) перенесены на сервер (mp-build): 4
 // разблокируют mp-train (barracks/range/stable/siege), ещё 5 — это
 // HALL_REQ плюс сама ратуша (wall/store/academy/hospital + hall), без
@@ -10990,7 +11027,7 @@ function mpRerender(){
 }
 function mpStartPolling(){ mpStopPolling(); mpPollTimer=setInterval(mpPollTick,5000); }
 function mpStopPolling(){ if(mpPollTimer){ clearInterval(mpPollTimer); mpPollTimer=null; } }
-async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); }
+async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); mpSaveCache(); }
 // Баг-фикс — автор пожаловался: очередь стройки/тренировки/боя показывается
 // сразу, но САМ результат (новый уровень здания, исход боя) применял только
 // общий тикер (mp-tick), а тот раньше крутился раз в минуту — до минуты
@@ -11061,9 +11098,15 @@ async function mpOpen(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{});
-    mpState.joined=true; mpState.player=j.player; if(!wasJoined) mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail();
+    mpState.joined=true; mpState.player=j.player; if(!wasJoined) mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); mpSaveCache();
   }catch(e){
-    mpState.joined=false;
+    // Фаза 20, кусочек 3 — если состояние уже показано из кэша, а сеть
+    // моргнула, НЕ сбрасываем joined: игрок остаётся при своём городе (пусть
+    // и слегка устаревшем) с честной пометкой об ошибке внизу панели, а не
+    // получает вместо замка форму входа. Ветка "Нужна раса" ниже к кэшу не
+    // относится вовсе: там игрока в мире действительно нет.
+    const keepCached = mpState.joined && mpState.player && !/Нужна раса/.test(e.message||"");
+    if(!keepCached) mpState.joined=false;
     // Фаза 13, продолжение — различаем ДВА разных "отказа" mp-join с
     // пустым телом: "Нужна раса..." (mp-join/index.js) — ожидаемый ответ
     // для СОВСЕМ НОВОГО anon-uid, не сбой — гость видит тот же красивый
@@ -11996,6 +12039,10 @@ function foMultiplayer(embedded, only){
     // чтобы попасть в мир"). Разметка по умолчанию несёт icon-world.png (под
     // одиночный старт с .view-city) — при старте сразу в .view-world её надо
     // довернуть на icon-city.png, иначе кнопка звала бы туда, где мы уже есть.
+    // Сначала — последнее виденное состояние из кэша (мгновенно, без сети),
+    // чтобы город и точки сбора были на экране сразу, а не после ответа
+    // сервера. Затем обычный mpOpen() догоняет и заменяет его свежим.
+    if(mpLoadCache()){ mpRenderFolio(); mpRenderTop(); }
     await mpOpen();
     mpRenderFolio();
     mpRenderTop();
