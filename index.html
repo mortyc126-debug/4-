@@ -482,10 +482,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    единственным входом был прямой #menu-btn (toggleMenu()), сразу
    открывавший foMultiplayer() без выбора раздела. Автор сообщил "где мои
    менюшки" и прислал референс (те же иконки, что тут) — теперь #side-menu
-   снова виден и в этом режиме (см. toggleMenu()/openMenuModal() ниже —
-   иконки ведут в ТОТ ЖЕ foMultiplayer(), просто с прокруткой к нужному
-   разделу, честно как есть, полного отдельного экрана на каждую иконку
-   пока нет). */
+   снова виден и в этом режиме (см. toggleMenu()/openMenuModal() ниже).
+   Фаза 20 дала каждой иконке свой собственный отдельный экран
+   (mpMenuBodyHtml, foMultiplayer(embedded,only)) — включая "Общий мир"
+   саму (кусочек 4): её значок раньше повторял icon-world.png у
+   #view-toggle (тот — переключатель Город/3D-мир, к иконке "Общий мира"
+   отношения не имеет) и открывал нефильтрованный полный лист, задваивая
+   уже вынесенные в Войско/Почту разделы — теперь свой icon-march.png и
+   свой фильтр (only="mp": Соседи/Точки сбора/Лагеря варваров + Постройки/
+   Горн/Набор войск/Академия — то, чему больше нет входа нигде кроме
+   этой вкладки). */
 /* #amber-badge — янтарь как ресурс у общего мира ещё не заведён (см.
    комментарий у mpRenderTop()), показывать там нечего — остаётся спрятан.
    #top — Фаза 14, кусочек 1 прятала его тем же общим правилом, что и
@@ -1278,7 +1284,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   <button data-menu="army" aria-label="Войско"><img src="images/ui/icon-army.png" alt=""><span>Войско</span><i class="nbadge" id="nb-army"></i></button>
   <button data-menu="gen" aria-label="Генерал"><img src="images/ui/icon-gen.png" alt=""><span>Генерал</span><i class="nbadge" id="nb-gen"></i></button>
   <button data-menu="inv" aria-label="Инвентарь"><img src="images/ui/icon-inv.png" alt=""><span>Инвентарь</span><i class="nbadge" id="nb-inv"></i></button>
-  <button data-menu="mp" aria-label="Общий мир"><img src="images/ui/icon-world.png" alt=""><span>Общий мир</span><i class="nbadge" id="nb-mp"></i></button>
+  <button data-menu="mp" aria-label="Общий мир"><img src="images/ui/icon-march.png" alt=""><span>Общий мир</span><i class="nbadge" id="nb-mp"></i></button>
 </nav>
 <div id="menu-modal">
   <img class="menu-corner tl" src="images/ui/mail-corner.png" alt="">
@@ -10073,15 +10079,18 @@ function openMenuModal(t){
   // и её иконки (Почта/Войско/Генерал/Инвентарь) должны вести на настоящие
   // данные общего мира, а не на невидимую одиночную партию (foArmy()/foGen()/
   // foInv()/foMail() читают W/me() — в этом режиме это чужая, никому не
-  // видимая партия, см. заголовок .mp-gated в CSS). Честный компромисс, не
-  // полноценный отдельный экран на каждую иконку: те же foMultiplayer(),
-  // что и раньше открывала "Общий мир", просто с прокруткой к нужному
-  // разделу (id='mp-anchor-<t>', см. rubric() внутри foMultiplayer()) —
-  // остальные разделы всё ещё на месте прокруткой вниз/вверх, ничего не
-  // потеряно, просто нет изоляции по вкладкам, как в одиночке.
+  // видимая партия, см. заголовок .mp-gated в CSS). Фаза 20 дала каждой
+  // иконке свой собственный отдельный экран (mpMenuBodyHtml) — прокрутка
+  // к разделу внутри общей длинной страницы больше не нужна.
+  // Кусочек 4 того же вкладка "mp" — раньше уходила в отдельную ветку
+  // мимо mpMenuBodyHtml() (foMultiplayer(!SP_UNLOCKED) без фильтра, тот же
+  // "старый" полный лист, что и у неприсоединившегося игрока) — из-за
+  // этого была единственной иконкой без своего фильтрованного экрана
+  // (дублировала "Смотр войск"/"Бой"/"Разведка", уже вынесенные в Войско/
+  // Почту). Теперь идёт через тот же диспетчер, что и все остальные.
   const gatedTab = !SP_UNLOCKED && (t==="army"||t==="gen"||t==="inv"||t==="mail"||t==="profile");
   const html = gatedTab ? mpMenuBodyHtml(t)
-    : t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): t==="mp"?foMultiplayer(!SP_UNLOCKED): foInv();
+    : t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): t==="mp"?mpMenuBodyHtml("mp"): foInv();
   lastMenuBody = html;
   $("#menu-modal-body").innerHTML = html;
   $("#menu-modal").classList.add("open");
@@ -10964,6 +10973,16 @@ function mpMenuBodyHtml(t){
   // страница и экраны разъехались бы при первой же правке.
   if(t==="army") return foMultiplayer(true,"army");
   if(t==="mail") return foMultiplayer(true,"mail");
+  // Фаза 20, кусочек 4 — раньше "mp" был единственной вкладкой без своего
+  // фильтра: падал в тот же foMultiplayer(!SP_UNLOCKED) без only, что и
+  // страница для НЕ вошедших игроков (первая строка выше) — то есть
+  // показывал ВЕСЬ лист целиком, включая уже вынесенные в свои экраны
+  // "Смотр войск"/"Входящие атаки" (Войско) и "Бой"/"Разведка"/"Лагеря"
+  // (Почта), задваивая их. Теперь свой фильтр, как у army/mail: только
+  // Соседи/Точки сбора/Лагеря варваров + Постройки/Горн/Набор войск/
+  // Переобучение/Академия — то, чему больше НЕТ отдельного входа нигде,
+  // кроме этой самой вкладки.
+  if(t==="mp") return foMultiplayer(true,"mp");
   return foMultiplayer(!SP_UNLOCKED);
 }
 function mpRerender(){
