@@ -1421,9 +1421,15 @@ function initPvpBattle(attUnits, attP, defUnits, defP, defWallLv, defGarrisonLv,
   const defStartHp = sideStats(defU, defP.race, defB, defBroken, defRisen).totalHp;
   const totalTroops = pvpTotalTroops(attUnits, defUnits);
   const ticksBudget = battleTicksBudget(totalTroops);
+  // Сила сторон ДО боя (armyPower от стартового состава, не текущей HP-полосы)
+  // — только для ярлыка исхода на клиенте (index.html battleOutcomeTier,
+  // "героическая победа"/"позорное поражение"), на сам бой не влияет.
+  const attStartPower = armyPower(attUnits, attB, attP.race);
+  const defStartPower = armyPower(defUnits, defB, defP.race);
   return {
     marchId, round: 0, ticksBudget, weather,
     attU, defU, attStartUnits: attUnits, defStartUnits: defUnits, attStartN,
+    attStartPower, defStartPower,
     attLossTotal, defLossTotal, attBroken, defBroken,
     attRisen, defRisen, attRaisedCum, defRaisedCum,
     // Смерти прямо в бою (см. BATTLE_DEATH_FRAC) — доля решается на завязке
@@ -1610,6 +1616,16 @@ const BATTLE_DEATH_FRAC = 0.10;
 const SIEGE_ATT_DEATH_FRAC = BATTLE_DEATH_FRAC * 3;
 const SIEGE_DEF_DEATH_FRAC = BATTLE_DEATH_FRAC / 3;
 const DISCIPLINE_BREAK_DEATH_MULT = 0.5;
+// index.html WIN_DEATH_MULT/LOSE_DEATH_MULT — дословно: проигравшая
+// сторона гибнет заметно тяжелее победившей (тот, кто в итоге проиграл,
+// обычно и есть тот, кто стоял до последнего без шансов). Применяется
+// ТОЛЬКО в финальном разборе потерь (finalizePvpBattle/finalizeNodeBattle,
+// исход уже известен), не в applyRaise по ходу боя — там исход ещё не решён.
+// (WIN+LOSE)/2=1.0 — среднее по популяции боёв держит прежний, уже принятый
+// уровень жёсткости, только перераспределяя её к проигравшему (см. подробный
+// разбор и battle-sim.mjs в index.html, тот же комментарий дословно).
+const WIN_DEATH_MULT = 0.65;
+const LOSE_DEATH_MULT = 1.35;
 function hospitalSplit(p, loss, deathFrac, broken) {
   const B = bonuses(p);
   const cap = Math.round(totalHospitalCap(p) * (1 + B.hosp + B.mercy));
@@ -1780,9 +1796,15 @@ function initRaidBattle(attUnits, attP, campLv, marchId, attHasGen) {
   const attStartHp = sideStats(attU, attP.race, attB, attBroken, attRisen).totalHp;
   const bandStartHp = sideStats(bandU, null, BANDIT_B, bandBroken).totalHp;
   const ticksBudget = battleTicksBudget(unitsTotal(attUnits) + unitsTotal(bandStart));
+  // index.html initPvpBattle:attStartPower/defStartPower — тот же смысл,
+  // только силу лагеря считаем от BANDIT_B (race=null, как и везде у
+  // разбойников).
+  const attStartPower = armyPower(attUnits, attB, attP.race);
+  const defStartPower = armyPower(bandStart, BANDIT_B, null);
   return {
     marchId, round: 0, ticksBudget, weather, campLv,
     attU, defU: bandU, attStartUnits: attUnits, defStartUnits: bandStart, attStartN,
+    attStartPower, defStartPower,
     attLossTotal, defLossTotal: bandLossTotal, attBroken, defBroken: bandBroken,
     attRisen, attRaisedCum,
     attHasGen, attGenHpFrac: null, defGenHpFrac: null, attGenMaxHp: null, defGenMaxHp: null,
@@ -2064,10 +2086,12 @@ async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, no
   TKEYS.forEach((t) => { if (!defP.wounded[t]) defP.wounded[t] = {}; });
   if (!attP.wounded) attP.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
   TKEYS.forEach((t) => { if (!attP.wounded[t]) attP.wounded[t] = {}; });
-  const hs = hospitalSplit(defP, state.defLossTotal, state.defDeathFrac, state.defBroken);
+  // WIN_DEATH_MULT/LOSE_DEATH_MULT — исход уже известен (state.winner),
+  // проигравшая сторона гибнет заметно тяжелее победившей (см. их заголовок).
+  const hs = hospitalSplit(defP, state.defLossTotal, state.defDeathFrac * (state.winner === "def" ? WIN_DEATH_MULT : LOSE_DEATH_MULT), state.defBroken);
   defP.troops = unitsAdd(defP.troops, hs.slightUnits);
   defP.wounded = unitsAdd(defP.wounded, hs.hurtUnits);
-  const attHs = hospitalSplit(attP, state.attLossTotal, state.attDeathFrac, state.attBroken);
+  const attHs = hospitalSplit(attP, state.attLossTotal, state.attDeathFrac * (state.winner === "att" ? WIN_DEATH_MULT : LOSE_DEATH_MULT), state.attBroken);
   attP.wounded = unitsAdd(attP.wounded, attHs.hurtUnits);
   // survivors — то, что реально идёт домой маршем: полные потери минус
   // легкораненые, которые возвращаются в строй немедленно и марш их не
@@ -2121,6 +2145,11 @@ async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, no
     // Фаза 28 — то же самое теперь и у атакующего (раньше не считалось —
     // "siege-attack" означал безвозвратную гибель без разбора).
     attDead: attHs.dead, attHurt: attHs.hurt, attSlight: attHs.slight,
+    // attStart/defStart/attPower/defPower — для battleOutcomeTier на клиенте
+    // (index.html): доля своих потерь от стартового состава + сила сторон
+    // ДО боя, чтобы отличить "героическую победу" слабого от рутинного разгрома.
+    attStart: state.attStartN, defStart: unitsTotal(state.defStartUnits),
+    attPower: state.attStartPower, defPower: state.defStartPower,
     rounds: state.round, weather: state.weather.id, weatherName: state.weather.name,
     loot: carry, // {} при поражении/ничьей — RES.forEach выше не заполнил ни рубля
     retreated: !!state.retreated, // Фаза 21 — честное отступление кнопкой, не обычное поражение (см. mp-recall)
@@ -2602,10 +2631,12 @@ async function finalizeNodeBattle(admin, m, attRow, occRow, occMarch, attP, occP
   if (!occP.wounded) occP.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
   TKEYS.forEach((t) => { if (!occP.wounded[t]) occP.wounded[t] = {}; });
 
-  const attHs = hospitalSplit(attP, state.attLossTotal, state.attDeathFrac, state.attBroken);
+  // WIN_DEATH_MULT/LOSE_DEATH_MULT — как и в finalizePvpBattle, исход уже
+  // известен (state.winner).
+  const attHs = hospitalSplit(attP, state.attLossTotal, state.attDeathFrac * (state.winner === "att" ? WIN_DEATH_MULT : LOSE_DEATH_MULT), state.attBroken);
   attP.troops = unitsAdd(attP.troops, attHs.slightUnits);
   attP.wounded = unitsAdd(attP.wounded, attHs.hurtUnits);
-  const occHs = hospitalSplit(occP, state.defLossTotal, state.defDeathFrac, state.defBroken);
+  const occHs = hospitalSplit(occP, state.defLossTotal, state.defDeathFrac * (state.winner === "def" ? WIN_DEATH_MULT : LOSE_DEATH_MULT), state.defBroken);
   occP.troops = unitsAdd(occP.troops, occHs.slightUnits);
   occP.wounded = unitsAdd(occP.wounded, occHs.hurtUnits);
 
@@ -2623,6 +2654,11 @@ async function finalizeNodeBattle(admin, m, attRow, occRow, occMarch, attP, occP
   const summary = {
     winner: state.winner, sent: state.attStartUnits, attLoss: state.attLossTotal, defLoss: state.defLossTotal,
     attHpLeft: state.attHpLeft, defHpLeft: state.defHpLeft,
+    attDead: attHs.dead, attHurt: attHs.hurt, attSlight: attHs.slight,
+    defDead: occHs.dead, defHurt: occHs.hurt, defSlight: occHs.slight,
+    // Те же поля, что и в finalizePvpBattle, для battleOutcomeTier на клиенте.
+    attStart: state.attStartN, defStart: unitsTotal(state.defStartUnits),
+    attPower: state.attStartPower, defPower: state.defStartPower,
     rounds: state.round, weather: state.weather.id, weatherName: state.weather.name,
     retreated: !!state.retreated, res: (m.data && m.data.res) || null,
   };
@@ -2773,6 +2809,10 @@ async function finalizeRaidBattle(admin, m, attRow, attP, state, nowSec) {
     data: {
       camp_lv: campLv, win: state.winner === "att", loot: carry, tomes: tomeDrops,
       attLoss: state.attLossTotal, dead: hs.dead, hurt: hs.hurt, slight: hs.slight, rounds: state.round,
+      // attStart/attPower/campPower — для battleOutcomeTier на клиенте
+      // (index.html): PvE, deathFrac всегда 0, но исход всё ещё бывает
+      // "героическим" (лагерь заметно сильнее) или "пирровым" (дорогой ценой).
+      attStart: state.attStartN, attPower: state.attStartPower, campPower: state.defStartPower,
       retreated: !!state.retreated, // Фаза 21 — честное отступление кнопкой, не обычное поражение (см. mp-recall)
     },
   });

@@ -4546,6 +4546,23 @@ const BATTLE_DEATH_FRAC = 0.10;
 const SIEGE_ATT_DEATH_FRAC = BATTLE_DEATH_FRAC*3;
 const SIEGE_DEF_DEATH_FRAC = BATTLE_DEATH_FRAC/3;
 const DISCIPLINE_BREAK_DEATH_MULT = 0.5;
+// Победитель и проигравший в ОДНОМ и том же бою не должны гибнуть одинаково:
+// тот, кто в итоге проиграл (полёг, отступил или уступил по силе на исходе
+// resolveBattle/r.win), обычно как раз тот, кто "стоял до последнего" и
+// продолжал битву уже без шансов, а победитель по определению додавил
+// малой кровью. Применяется ТОЛЬКО к итоговому разбору потерь (после конца
+// боя — победитель уже известен), не к промежуточному подъёму скелетов
+// нежитью в процессе (там исход ещё не решён, см. raiseSkeletons).
+// Среднее (WIN+LOSE)/2 = 1.0 НЕ случайно: при примерно равном числе побед и
+// поражений в популяции боёв средняя жёсткость остаётся ровно там же, где
+// её уже утвердили (BATTLE_DEATH_FRAC/SIEGE_*_DEATH_FRAC) — этот множитель
+// только ПЕРЕРАСПРЕДЕЛЯЕТ её в сторону проигравшего, не поднимает потолок.
+// Проверено симуляцией (battle-sim.mjs): без этого условия худший случай —
+// проигранный штурм на грани отступления (72% потерь) — гнал гибель армии
+// целиком с ~19% (старая единая ставка) до ~32%; с 0.65/1.35 худший случай
+// возвращается к ~26%, тот же порядок, что пользователь уже принял раньше.
+const WIN_DEATH_MULT = 0.65;
+const LOSE_DEATH_MULT = 1.35;
 // Чистое ядро госпитального разбора — БЕЗ побочных эффектов (не пишет в
 // p.wounded). Раньше эта арифметика жила только внутри splitLosses() и
 // вызывалась ОДИН раз, целиком, уже после конца боя — а raiseSkeletons()
@@ -5294,8 +5311,12 @@ function arriveMarch(m){
           ", ранено "+sp.hurt+".","war");
         // "О варварах" — только обычные лагеря; форты идут под штурмы/осады,
         // которые в этом раунде правок отложены пользователем на потом.
+        // start/myPower/oppPower — для battleOutcomeTier (см. её заголовок):
+        // A.start/D.start — состав СТОРОН на начало ИМЕННО этого боя (до
+        // мутации applyDamage), не текущий m.units.
         if(cell.t==="camp") pushMail({cat:"report",kind:"barbarian",lv:cell.lv,coords:{x:m.tx,y:m.ty},
           xp, dead:sp.dead, hurt:sp.hurt, loot, tomesTxt:bookTxt.replace(/^, /,""),
+          start:countUnits(A.start), myPower:armyPower(A.start,A.B,p.race), oppPower:armyPower(D.start,D.B,null),
           weather:(r.weather&&r.weather.id!=="clear")?{name:r.weather.name,desc:r.weather.desc}:null,
           log:(r.log||[]).filter(e=>e.kind!=="weather"), attacker:true});
       }
@@ -5611,9 +5632,11 @@ function battleCity(att,def,m){
   // Штурмующий теперь тоже идёт через госпиталь — одна система для любого
   // боя (см. заголовок hospitalSplit), а не безвозвратная гибель. Сверх
   // этого — смерти прямо в бою (SIEGE_ATT_DEATH_FRAC/SIEGE_DEF_DEATH_FRAC,
-  // втрое жёстче штурмующему и втрое мягче обороне, см. BATTLE_DEATH_FRAC).
-  const la=splitLosses(att,r.lossA,A.deathFrac,A.broken);
-  const ld=splitLosses(def,r.lossD,D.deathFrac,D.broken);
+  // втрое жёстче штурмующему и втрое мягче обороне, см. BATTLE_DEATH_FRAC),
+  // и ещё поверх — WIN_DEATH_MULT/LOSE_DEATH_MULT: проигравшая сторона
+  // этого конкретного боя гибнет заметно тяжелее победившей.
+  const la=splitLosses(att,r.lossA,A.deathFrac*(r.win==="A"?WIN_DEATH_MULT:LOSE_DEATH_MULT),A.broken);
+  const ld=splitLosses(def,r.lossD,D.deathFrac*(r.win==="D"?WIN_DEATH_MULT:LOSE_DEATH_MULT),D.broken);
   // Легкораненые — назад в units ДО перезаписи def.troops/m.units ниже,
   // иначе перезапись их просто стёрла бы (см. addUnitsInto/splitLosses).
   // Раньше это делалось только для защитника (у атакующего "лёгких" не
@@ -8769,19 +8792,57 @@ function mailAgo(t){
   if(s<86400) return Math.floor(s/3600)+" ч назад";
   return Math.floor(s/86400)+" дн назад";
 }
+// Ярлык исхода боя в духе Total War — не просто "Победа"/"Поражение", а
+// насколько дорого он дался и был ли неожиданным. Чистое отображение поверх
+// уже посчитанного боя (не влияет на сам бой, в отличие от WIN_DEATH_MULT/
+// LOSE_DEATH_MULT выше) — единая функция для одиночной и сетевой игры,
+// вызывается прямо при отрисовке письма из уже посчитанных чисел.
+// lossFrac — доля СВОИХ потерь (тяжелораненые+убитые; легкораненые не
+// считаются — сами тут же возвращаются в строй) от стартового состава.
+// myPower/oppPower — сила сторон ДО боя (опционально: если не переданы,
+// "неожиданные" исходы — heroic/disaster — просто не рассматриваются).
+const BATTLE_TIER = {
+  heroic:   {name:"Героическая победа",   cls:"win"},
+  decisive: {name:"Решительная победа",   cls:"win"},
+  close:    {name:"Победа на пределе сил",cls:"win"},
+  pyrrhic:  {name:"Пиррова победа",       cls:"win"},
+  disaster: {name:"Позорное поражение",   cls:"lose"},
+  crushing: {name:"Разгром",              cls:"lose"},
+  defeat:   {name:"Поражение",            cls:"lose"},
+  orderly:  {name:"Отступление с боем",   cls:"lose"},
+};
+function battleOutcomeTier(startN,dead,hurt,win,myPower,oppPower){
+  const lossFrac = startN>0 ? (dead+hurt)/startN : 0;
+  const underdog = myPower!=null && oppPower && myPower < oppPower*0.7;
+  const overdog  = myPower!=null && oppPower && myPower > oppPower*1.5;
+  let id;
+  if(win){
+    id = underdog && lossFrac<0.35 ? "heroic"
+       : lossFrac>=0.55 ? "pyrrhic"
+       : lossFrac>=0.25 ? "close" : "decisive";
+  } else {
+    id = overdog ? "disaster"
+       : lossFrac>=0.7 ? "crushing"
+       : lossFrac<0.25 ? "orderly" : "defeat";
+  }
+  return {id, name:BATTLE_TIER[id].name, cls:BATTLE_TIER[id].cls};
+}
 function mailAvatarHtml(avatar,race,w){
   return avatar ? "<img class='av' style='width:"+w+"px;height:"+w+"px' src='"+avatar+"' alt=''>"
                 : "<span class='av' style='width:"+w+"px;height:"+w+"px;display:inline-flex;align-items:center;justify-content:center'>"+shieldSvg(race,w*0.55)+"</span>";
 }
 function mailRowHtml(m){
   const isBattle=m.kind==="battle";
-  const icon = isBattle||m.kind==="barbarian" ? "images/ui/mail-seal.png"
+  const isBarb=m.kind==="barbarian";
+  const icon = isBattle||isBarb ? "images/ui/mail-seal.png"
              : m.kind==="scout"||m.kind==="scoutmarch" ? "images/ui/icon-world.png"
              : m.kind==="gather" ? "images/ui/icon-march.png"
              : m.cat==="personal" ? "images/ui/icon-gen.png" : "images/ui/icon-world.png";
-  const cls = isBattle ? (m.win?"win":"lose") : m.kind==="barbarian" ? "win" : "";
-  const title = isBattle ? (m.win?"Победа":"Поражение")
-              : m.kind==="barbarian" ? "Лагерь разбит"
+  const tier = isBattle ? battleOutcomeTier(m.selfStart,m.selfDead,m.selfHurt,m.win,m.selfPower,m.oppPower)
+             : isBarb ? battleOutcomeTier(m.start,m.dead,m.hurt,true,m.myPower,m.oppPower)
+             : null;
+  const cls = tier ? tier.cls : "";
+  const title = tier ? tier.name
               : m.kind==="scout" ? "Разведка"
               : m.kind==="scoutmarch" ? "Разведка отряда"
               : m.kind==="gather" ? "Сбор ресурсов"
@@ -8991,6 +9052,7 @@ function scoutMarchReportHtml(m){
 function mailDetailHtml(m){
   let h="<div class='mail-back' data-act='mailback'>&#8592; Назад к списку</div>";
   if(m.kind==="battle"){
+    const tier=battleOutcomeTier(m.selfStart,m.selfDead,m.selfHurt,m.win,m.selfPower,m.oppPower);
     h+="<div class='mail-vs'>"+
        "<div class='mail-side'>"+mailAvatarHtml(m.selfAvatar,m.selfRace,52)+
          "<div class='nm'>"+m.selfNick+"</div><div class='co'>X:"+m.selfCoords.x+" Y:"+m.selfCoords.y+"</div>"+
@@ -9003,7 +9065,7 @@ function mailDetailHtml(m){
          "<div class='pw'>Мощь "+RU(m.oppPower)+"</div>"+
          battleGenHtml(m.oppGen)+
        "</div></div>"+
-       "<div class='mail-stamp "+(m.win?"win":"lose")+"'>"+(m.win?"Победа":"Поражение")+"</div>"+
+       "<div class='mail-stamp "+tier.cls+"'>"+tier.name+"</div>"+
        // Погода была общей для обеих сторон — в отчёте она стоит НАД таблицей
        // потерь, потому что объясняет её цифры (см. BATTLE_WEATHER). В ясную
        // погоду поля weather нет вовсе, и строка не рисуется.
@@ -9027,7 +9089,8 @@ function mailDetailHtml(m){
        "<div class='mail-note'>Место боя: X:"+m.fightCoords.x+" Y:"+m.fightCoords.y+"</div>"+
        battleLogHtml(m);
   } else if(m.kind==="barbarian"){
-    h+="<div class='mail-stamp win'>Победа</div>"+
+    const tier=battleOutcomeTier(m.start,m.dead,m.hurt,true,m.myPower,m.oppPower);
+    h+="<div class='mail-stamp "+tier.cls+"'>"+tier.name+"</div>"+
        (m.weather?"<div class='mail-weather'><b>"+m.weather.name+"</b><span>"+m.weather.desc+"</span></div>":"")+
        "<div class='mail-note'>Разбит лагерь разбойников "+m.lv+" уровня у X:"+m.coords.x+" Y:"+m.coords.y+".<br>"+
        "Опыт генерала: +"+RU(m.xp)+"<br>"+
@@ -12025,9 +12088,14 @@ function foMultiplayer(embedded, only){
       const oppHs={dead:mine?d.defDead:d.attDead, hurt:mine?d.defHurt:d.attHurt, slight:mine?d.defSlight:d.attSlight};
       const hospPart=(label,x)=>x.dead!=null?(" · "+label+": легкораненые "+RU(x.slight||0)+", тяжелораненые "+RU(x.hurt||0)+", убито "+RU(x.dead||0)):"";
       const hospNote=hospPart("у нас",myHs)+hospPart("у противника",oppHs);
-      h+="<div class='entry"+(won?" hot":" war")+"'><div class='line'><div class='fill'>"+
+      // Ярлык исхода (см. battleOutcomeTier, index.html) — myStart/myPower/
+      // oppPower могут отсутствовать в СТАРЫХ письмах (до этой правки),
+      // тогда функция просто не рассматривает heroic/disaster.
+      const myStart=mine?d.attStart:d.defStart, myPower=mine?d.attPower:d.defPower, oppPower=mine?d.defPower:d.attPower;
+      const tier=battleOutcomeTier(myStart,myHs.dead||0,myHs.hurt||0,won,myPower,oppPower);
+      h+="<div class='entry"+(tier.cls==="win"?" hot":" war")+"'><div class='line'><div class='fill'>"+
          "<div class='title'>"+(mine?"Напали на ":"Напали от ")+(d.opponent_nick||"Безымянный лорд")+
-         " — "+(won?"победа":"поражение")+"</div>"+
+         " — "+tier.name+"</div>"+
          "<div class='note'>Наши потери: "+RU(lostN(myLoss))+" · потери противника: "+RU(lostN(oppLoss))+hospNote+"</div>";
       // Грабёж склада — то же поле d.loot, что и у мока mp-tick, лежит в
       // обоих письмах (атакующему и защитнику), но реально ненулевое
@@ -12089,8 +12157,12 @@ function foMultiplayer(embedded, only){
     mpState.raidMail.forEach(m=>{
       const d=m.data;
       const lostN=u=>TKEYS.reduce((s,t)=>s+[1,2,3,4,5].reduce((s2,i)=>s2+((u&&u[t]&&u[t][i])||0),0),0);
-      h+="<div class='entry"+(d.win?" hot":" war")+"'><div class='line'><div class='fill'>"+
-         "<div class='title'>Лагерь "+d.camp_lv+" ур. — "+(d.win?"разгромлен":"отряд разбит")+"</div>"+
+      // Ярлык исхода — PvE (deathFrac всегда 0, см. finalizeRaidBattle), но
+      // всё ещё бывает "героическим" (лагерь заметно сильнее) или "пирровым"
+      // (дорогой ценой), см. battleOutcomeTier.
+      const tier=battleOutcomeTier(d.attStart,d.dead||0,d.hurt||0,!!d.win,d.attPower,d.campPower);
+      h+="<div class='entry"+(tier.cls==="win"?" hot":" war")+"'><div class='line'><div class='fill'>"+
+         "<div class='title'>Лагерь "+d.camp_lv+" ур. — "+tier.name+"</div>"+
          "<div class='note'>Потери: легкораненые "+RU(d.slight||0)+", тяжелораненые "+RU(d.hurt||0)+
          ", убито "+RU(d.dead||0)+" (из "+RU(lostN(d.attLoss))+" пострадавших)</div>";
       if(d.win){
@@ -12120,8 +12192,14 @@ function foMultiplayer(embedded, only){
       const title = mine
         ? (d.retreated ? "Отступили от точки сбора" : won ? "Точка сбора наша" : "Точку сбора не отбили")
         : (d.retreated ? "Соперник отступил от нашей точки" : won ? "Точку сбора отстояли" : "Точку сбора не удержали");
-      h+="<div class='entry"+(won?" hot":" war")+"'><div class='line'><div class='fill'>"+
-         "<div class='title'>"+title+" — «"+who+"»</div>"+
+      // Ярлык исхода (см. battleOutcomeTier) — дополняет ситуативный заголовок
+      // выше (тот уже говорит "отступили"/"отбили", тир добавляет цену этого
+      // исхода: дёшево или дорогой ценой).
+      const myHs={dead:mine?d.attDead:d.defDead, hurt:mine?d.attHurt:d.defHurt};
+      const myStart=mine?d.attStart:d.defStart, myPower=mine?d.attPower:d.defPower, oppPower=mine?d.defPower:d.attPower;
+      const tier=battleOutcomeTier(myStart,myHs.dead||0,myHs.hurt||0,won,myPower,oppPower);
+      h+="<div class='entry"+(tier.cls==="win"?" hot":" war")+"'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+title+" — «"+who+"» ("+tier.name+")</div>"+
          "<div class='note'>Наши потери (лазарет): "+RU(lostN(myLoss))+" · потери соперника: "+RU(lostN(oppLoss))+"</div>"+
          "</div></div></div>";
     });
