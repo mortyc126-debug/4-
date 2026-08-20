@@ -59,8 +59,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    соотношение кольцо/аватар (132/96), что и в профиле. */
 #crest .crest-avatar-wrap{position:relative;width:78px;height:78px;flex:0 0 auto;
   z-index:2;margin-right:-16px}
-#crest .avatar{width:78px;height:78px;object-fit:contain;display:block;
-  position:relative;z-index:2;filter:drop-shadow(0 2px 6px rgba(0,0,0,.7))}
+/* Обрезающий .crest-avatar-clip — тот же приём и то же 1.6×, что и у
+   .profile-avatar-clip (см. её заголовок): портретные PNG сами уже медальон
+   на холсте с тёмными полями, без обрезки эти поля лезли ПОД наше кольцо и
+   давали пустой зазор между лицом и рамкой. object-fit:contain был вдобавок
+   ещё мягче cover — вписывал холст целиком, поля были видны гарантированно. */
+#crest .crest-avatar-clip{width:78px;height:78px;border-radius:50%;overflow:hidden;
+  position:relative;z-index:2;display:block}
+#crest .avatar{position:absolute;top:50%;left:50%;width:125px;height:125px;
+  transform:translate(-50%,-50%);object-fit:cover;display:block;
+  filter:drop-shadow(0 2px 6px rgba(0,0,0,.7))}
 #crest .crest-ring{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
   width:107px;height:auto;pointer-events:none;z-index:3;
   filter:drop-shadow(0 3px 8px rgba(0,0,0,.6))}
@@ -78,8 +86,23 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    аватар в золотом кольце, ник по центру под ним, снизу простая таблица
    мощи) — раньше был левоприжатый маленький портрет + текст сбоку. */
 .profile-card{display:flex;flex-direction:column;align-items:center;text-align:center;padding:14px 10px}
-.profile-avatar-wrap{position:relative;flex:0 0 auto}
-.profile-avatar{width:96px;height:96px;object-fit:cover;display:block;border-radius:50%}
+.profile-avatar-wrap{position:relative;flex:0 0 auto;width:96px;height:96px}
+/* Портретные PNG (avatar-<раса><1|2>.png) сами уже нарисованы как медальон —
+   собственная тонкая рамка на прямоугольном холсте с тёмными полями вокруг
+   неё (холст выше/шире самого медальона). Простой object-fit:cover в 96×96
+   круг это не учитывал — вокруг лица оставалось голое тёмное поле ХОЛСТА,
+   поверх которого садилось уже НАШЕ золотое кольцо: получалось два кадра с
+   пустым зазором между ними (репорт пользователя со скриншотом). Обрезающая
+   .profile-avatar-clip (96×96, overflow:hidden) + сам <img> в 1.6× (крупнее
+   контейнера, отцентрован transform'ом) — тот же приём, что object-fit:cover
+   пытался сделать, но с явным перекрытием запаса, чтобы съесть поля холста
+   и войти в сам нарисованный медальон, а не только в прямоугольник картинки.
+   Подобрано на глаз по всем 8 портретам (см. all_zoom16.png при подборе) —
+   1.6 достаточно, чтобы стереть поля, но не обрезает венцы/причёски. */
+.profile-avatar-clip{width:96px;height:96px;border-radius:50%;overflow:hidden;
+  position:relative;display:block}
+.profile-avatar{position:absolute;top:50%;left:50%;width:154px;height:154px;
+  transform:translate(-50%,-50%);object-fit:cover;display:block}
 /* Золотое кольцо — раньше был плоский CSS-border, теперь отдельная
    декоративная картинка ПОВЕРХ аватара (тот же приём, что и уголки/печать
    у почты и модалки здания): кольцо крупнее аватара и центрировано над
@@ -348,7 +371,15 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    Теперь панель по умолчанию честно скрыта, а put() ниже выставляет "block"
    явно (не пустую строку) — так и непустая панель гарантированно покажется
    независимо от этого default. */
-#cartouche{left:50%;top:50%;transform:translate(-50%,-50%);max-width:270px;
+/* top:max(50%,160px) — раньше чистые 50% #chart (тот растянут на весь
+   экран под фиксированной шапкой #top, см. её position:fixed) на невысоком
+   видимом вьюпорте (шторка адресной строки браузера ещё раскрыта, реальная
+   видимая высота меньше расчётной) сдвигали центр карточки настолько
+   высоко, что крестик закрытия (top:7px от карточки) утыкался прямо в
+   строку браузера — репорт пользователя со скриншотом. max() не трогает
+   обычный случай (там 50% и так больше 160px), только поднимает нижнюю
+   границу для тесных вьюпортов. */
+#cartouche{left:50%;top:max(50%,160px);transform:translate(-50%,-50%);max-width:270px;
   padding:11px 13px;font-size:13.5px;display:none;
   background:none;background-image:url(images/ui/mail-parchment.jpg);background-size:cover;
   background-position:center;border-color:rgba(90,69,48,.4);
@@ -532,7 +563,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 
 /* ─────────────── Модалка здания (пергамент) ─────────────── */
 #building-modal{position:fixed;inset:0;z-index:27;display:none;background:rgba(8,5,2,.78);
-  align-items:center;justify-content:center;padding:0}
+  align-items:stretch;justify-content:center;padding:0}
 #building-modal.open{display:flex}
 /* Раньше фон #bm-sheet тянулся ОДНОЙ картинкой parchment.jpg с двумя
    РАЗНЫМИ процентами по осям (139.13% ширина / 107.84% высота) — грубый
@@ -545,7 +576,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    искажать нечего, там нет направленных деталей). Уголки и печать — ниже,
    ОТДЕЛЬНЫЕ <img> у #building-modal (см. .bm-corner/.bm-seal), каждый в
    своём естественном соотношении сторон, никогда не деформируется. */
-#bm-sheet{position:relative;width:100%;max-width:700px;max-height:100vh;overflow-y:auto;
+/* align-items:stretch на #building-modal (не center) + #bm-sheet без
+   явной высоты — та же растяжка на весь экран, что и у #onboard .ob-card/
+   .mail-card (см. их заголовки): раньше карточка была высотой ровно под
+   свой контент и центрировалась, а короткие здания (типа "Костяных
+   стоил" — пара строк текста) оставляли голую тёмную подложку сверху и
+   снизу вместо пергамента (репорт пользователя со скриншотом — "не
+   растянут на всю страницу"). overflow-y:auto по-прежнему скроллит, когда
+   контент выше экрана — просто сама карточка теперь всегда минимум в
+   полный вьюпорт, а не только "по контенту". */
+#bm-sheet{position:relative;width:100%;max-width:700px;overflow-y:auto;
   background-image:url(images/ui/mail-parchment.jpg);background-size:cover;background-position:center;
   padding:44px 52px 90px;color:#2c2114;box-shadow:0 20px 60px rgba(0,0,0,.7);
   display:flex;flex-direction:column}
@@ -1015,12 +1055,21 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   pointer-events:none;-webkit-user-drag:none}
 .cbuild{position:absolute;box-sizing:border-box;cursor:pointer;touch-action:none;
   -webkit-tap-highlight-color:transparent;user-select:none}
-.cbuild .shape{position:absolute;inset:0;border:2px solid transparent;
-  background:transparent;box-sizing:border-box;transition:background .15s,border-color .15s}
+/* Свободный участок под застройку — рамка видна ВСЕГДА (не только на
+   :hover): на сенсорном экране hover не срабатывает вовсе, а участков без
+   собственной картинки (ещё не построено) тогда нечем и обозначить на
+   карте — репорт пользователя со скриншотом: "не отображаются
+   строительные ячейки". Тронутое здание (.built) свою рамку в покое всё
+   ещё не показывает — там и так видна картинка постройки, дублировать
+   нечем/незачем. Запертые (locked — ещё не открыт участок, либо декоративная
+   клетка без строительства вовсе, c.bk===null) остаются полностью
+   невидимыми: приглашать тапнуть туда, где строить нельзя, не нужно. */
+.cbuild .shape{position:absolute;inset:0;border:2px dashed rgba(194,153,60,.65);
+  background:rgba(194,153,60,.14);box-sizing:border-box;transition:background .15s,border-color .15s}
 .cbuild:hover .shape{border-color:var(--gilt-hi);background:rgba(194,153,60,.18)}
 .cbuild.built .shape{border-color:transparent;background:transparent}
 .cbuild.built:hover .shape{border-color:var(--gilt-hi);background:rgba(194,153,60,.18)}
-.cbuild.locked .shape{border-color:transparent;cursor:not-allowed}
+.cbuild.locked .shape{border-color:transparent;background:transparent;cursor:not-allowed}
 .cbuild img.bimg{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;
   object-position:center;pointer-events:none;filter:drop-shadow(0 3px 5px rgba(0,0,0,.6))}
 .cbuild .lvl{position:absolute;bottom:2px;right:4px;font-family:var(--data);font-size:10px;
@@ -1275,7 +1324,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
     <div id="crest">
       <span class="mark">&#9884;</span>
       <span class="crest-avatar-wrap">
-        <img id="crest-avatar" class="avatar" alt="" style="display:none">
+        <span class="crest-avatar-clip"><img id="crest-avatar" class="avatar" alt="" style="display:none"></span>
         <img class="crest-ring" src="images/ui/profile-ring.png" alt="" style="display:none">
       </span>
       <div class="crest-card">
@@ -8796,7 +8845,7 @@ function foProfile(pIn){
   h+="<div class='entry hot profile-card'>"+
      "<div class='profile-avatar-wrap'>"+
      (avSrc
-       ? "<img class='profile-avatar' src='"+avSrc+"' alt=''>"
+       ? "<span class='profile-avatar-clip'><img class='profile-avatar' src='"+avSrc+"' alt=''></span>"
        : "<span class='profile-avatar-fallback'>"+shieldSvg(p.race,52)+"</span>")+
      "<img class='profile-ring' src='images/ui/profile-ring.png' alt=''>"+
      (avSrc
@@ -11980,7 +12029,15 @@ function foMultiplayer(embedded, only){
   }
 
   const p=mpState.player, st=p.state, pShim={race:p.race,b:st.b};
-  h+="<div class='entry hot'><div class='line'><div class='fill'>"+
+  // Заголовок "ник · раса, координаты" — раньше рисовался БЕЗ show()-гейта,
+  // то есть на КАЖДОЙ вкладке (Войско, Почта — не только на своём "mp"),
+  // хотя ник/раса уже есть в профиле, а координаты столицы там же не нужны
+  // вовсе (репорт пользователя: "во вкладке Войска сверху зачем-то
+  // координаты"). Единственное реальное место, где он нужен — safe-путь
+  // openMenuModal("mp") при ошибке mpCartScout/mpCartRecall (см. коммент у
+  // mpMenuBodyHtml: "покажет хотя бы заголовок игрока... не рухнет") —
+  // оставлен только там.
+  if(show("mp")) h+="<div class='entry hot'><div class='line'><div class='fill'>"+
      "<div class='title'>"+(p.nick||"Безымянный лорд")+" · "+RACES[p.race].name+"</div>"+
      "<div class='note'>Координаты: "+p.x+", "+p.y+"</div></div></div></div>";
 
