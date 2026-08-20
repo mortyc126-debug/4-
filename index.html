@@ -55,10 +55,22 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    .profile-ring в карточке профиля (foProfile): золотое кольцо отдельной
    картинкой поверх аватара, крупнее его и центрировано, не искажается
    растяжением. Раньше в шапке кольца не было вовсе — только в профиле,
-   хотя это тот же самый аватар игрока. 107px = 78px×1.375, то же
-   соотношение кольцо/аватар (132/96), что и в профиле. */
+   хотя это тот же самый аватар игрока.
+   Кольцо/аватар — сначала было 107/78 (та же пропорция 1.375, что и в
+   профиле), но в шапке #crest сидит вплотную к самому левому краю экрана
+   (#top{left:0}, без отступа) — кольцо крупнее аватара на 14.5px с каждой
+   стороны, слева ЭТИ 14.5px улетали за границу вьюпорта и обрезались
+   (репорт пользователя со скриншотом: "рамка... выходит за экран"), а
+   справа margin-right:-16px (тоже подобранный под старые 14.5px оверфлоу)
+   утапливал кольцо на 10+px в текст ника внутри .crest-card ("закрывает
+   часть ника"). В шапке (в отличие от вертикальной карточки профиля) у
+   кольца справа/слева есть соседи, а не пустое поле — тут нужна МЕНЬШАЯ,
+   не полноразмерная пропорция: 94/78 (1.2×) вместо 1.375×, оверфлоу упал
+   с 14.5px до 8px на сторону — дальше см. margin-left ниже (компенсирует
+   левый край) и margin-right (сведён к лёгкому касанию карточки, не заходу
+   в текст, см. её padding-left:20px). */
 #crest .crest-avatar-wrap{position:relative;width:78px;height:78px;flex:0 0 auto;
-  z-index:2;margin-right:-16px}
+  z-index:2;margin-left:10px;margin-right:-8px}
 /* Обрезающий .crest-avatar-clip — тот же приём и то же 1.6×, что и у
    .profile-avatar-clip (см. её заголовок): портретные PNG сами уже медальон
    на холсте с тёмными полями, без обрезки эти поля лезли ПОД наше кольцо и
@@ -70,7 +82,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   transform:translate(-50%,-50%);object-fit:cover;display:block;
   filter:drop-shadow(0 2px 6px rgba(0,0,0,.7))}
 #crest .crest-ring{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
-  width:107px;height:auto;pointer-events:none;z-index:3;
+  width:94px;height:auto;pointer-events:none;z-index:3;
   filter:drop-shadow(0 3px 8px rgba(0,0,0,.6))}
 #crest .crest-card{display:flex;flex-direction:column;align-items:flex-start;gap:3px;
   min-width:0;background:rgba(0,0,0,.32);border:1px solid var(--rule-soft);
@@ -600,7 +612,11 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .bm-corner.br{bottom:0;right:0;transform:scale(-1,-1)}
 .bm-seal{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);width:64px;height:auto;
   pointer-events:none;opacity:.75;z-index:28;filter:drop-shadow(0 3px 6px rgba(0,0,0,.5))}
-#bm-close{position:absolute;top:12px;right:14px;width:30px;height:30px;
+/* z-index:29 — выше .bm-corner/.bm-seal (28): без него угловой декор
+   (тот же фиксированный слой, что и крестик, оба поверх #bm-sheet) рисуется
+   ПОСЛЕ крестика в исходном порядке разметки и перекрывает его картинкой
+   уголка (репорт пользователя: "ассеты перекрывают его"). */
+#bm-close{position:absolute;top:12px;right:14px;width:30px;height:30px;z-index:29;
   background:transparent url(images/ui/icon-close.png) center/contain no-repeat;
   border:none;color:#5a4530;font-size:22px;line-height:1}
 #bm-close span{display:none}
