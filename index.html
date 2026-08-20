@@ -11004,7 +11004,7 @@ async function claimChronicle(){
    восполняются со временem — серверное производство ещё не перенесено,
    стартовых 100000 хватает на несколько заказов набора для проверки.
    ========================================================================= */
-let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[] };
+let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[], siegeMail:[] };
 let mpPollTimer = null;
 // ===== Фаза 20, кусочек 3 — местный кэш последнего known-состояния общего
 // мира. Автор: "медленно грузит мой замок и ресурсные точки, может их
@@ -11026,7 +11026,7 @@ function mpSaveCache(){
       v:1, dev:DEVICE_ID, at:Date.now(),
       player:mpState.player, neighbors:mpState.neighbors, nodes:mpState.nodes,
       camps:mpState.camps, marches:mpState.marches, incoming:mpState.incoming,
-      mail:mpState.mail, scoutMail:mpState.scoutMail, raidMail:mpState.raidMail,
+      mail:mpState.mail, scoutMail:mpState.scoutMail, raidMail:mpState.raidMail, siegeMail:mpState.siegeMail,
     }));
   }catch(e){ /* приватный режим/переполнение — кэш не обязателен, молча живём без него */ }
 }
@@ -11039,7 +11039,7 @@ function mpLoadCache(){
     mpState.player=c.player; mpState.race=c.player.race; mpState.joined=true;
     mpState.neighbors=c.neighbors||[]; mpState.nodes=c.nodes||[]; mpState.camps=c.camps||[];
     mpState.marches=c.marches||[]; mpState.incoming=c.incoming||[];
-    mpState.mail=c.mail||[]; mpState.scoutMail=c.scoutMail||[]; mpState.raidMail=c.raidMail||[];
+    mpState.mail=c.mail||[]; mpState.scoutMail=c.scoutMail||[]; mpState.raidMail=c.raidMail||[]; mpState.siegeMail=c.siegeMail||[];
     return true;
   }catch(e){ return false }
 }
@@ -11208,7 +11208,7 @@ function mpStopPolling(){
   // каждую секунду вхолостую, пока игрок вообще не в мультиплеере.
   if(mpBattleFastTimer){ clearInterval(mpBattleFastTimer); mpBattleFastTimer=null; }
 }
-async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); mpSaveCache(); }
+async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); mpSaveCache(); }
 // Баг-фикс — автор пожаловался: очередь стройки/тренировки/боя показывается
 // сразу, но САМ результат (новый уровень здания, исход боя) применял только
 // общий тикер (mp-tick), а тот раньше крутился раз в минуту — до минуты
@@ -11279,7 +11279,7 @@ async function mpOpen(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{});
-    mpState.joined=true; mpState.player=j.player; if(!mpWorld3DFocused) mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); mpSaveCache();
+    mpState.joined=true; mpState.player=j.player; if(!mpWorld3DFocused) mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); mpSaveCache();
   }catch(e){
     // Фаза 20, кусочек 3 — если состояние уже показано из кэша, а сеть
     // моргнула, НЕ сбрасываем joined: игрок остаётся при своём городе (пусть
@@ -11333,7 +11333,7 @@ async function mpDoJoin(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{race:mpState.race,nick:mpState.nick||""});
-    mpState.joined=true; mpState.player=j.player; mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail();
+    mpState.joined=true; mpState.player=j.player; mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail();
   }catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -11599,6 +11599,15 @@ async function mpRefreshRaidMail(){
     .eq("kind","raid").order("created_at",{ascending:false}).limit(10);
   if(!error && data){ mpState.raidMail=data; mpRerender(); }
 }
+// Фаза 24 — извещения о завязке/отступлении боя (kind:"siege_event",
+// см. applyMarchArrive/applyRaidArrive/applyPvpBattleRound/
+// applyRaidBattleRound в mp-tick) — тем же путём, что и остальная почта.
+async function mpRefreshSiegeMail(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
+    .eq("kind","siege_event").order("created_at",{ascending:false}).limit(10);
+  if(!error && data){ mpState.siegeMail=data; mpRerender(); }
+}
 // Входящие атаки — раньше защитник вообще не мог узнать, что на него идёт
 // поход, пока бой не разрешится сам (см. историю коммитов). data->>defender_id
 // — фильтр по JSONB-полю через PostgREST (->> достаёт значение как текст),
@@ -11811,6 +11820,36 @@ function foMultiplayer(embedded, only){
            (sieging?(already?"Отступаем…":"Отступить"):"Отозвать")+"</button>";
       }
       h+="</div></div></div>";
+    });
+  }
+
+  // Фаза 24 — извещения "начинается развёртывание"/"начинает отступление"
+  // (kind:"siege_event") — приходят ДО итогового письма о бое (рубрика
+  // "Бой" ниже), пока армия ещё стоит/отходит, а не когда всё уже решено.
+  // Своя рубрика — не смешиваем с исходом, чтобы не путать "бой начался" с
+  // "бой окончен" в одном списке.
+  if(show("mail") && mpState.siegeMail.length){
+    h+=rubric("Гонцы","движение войск");
+    mpState.siegeMail.forEach(m=>{
+      const d=m.data, isRaid=d.mode==="raid", isDef=d.role==="defender", isRetreat=d.phase==="retreat";
+      const who=d.opponent_nick||"Безымянный лорд";
+      const target=isRaid?("лагеря варваров (ур. "+(d.camp_lv||1)+")"):("города «"+who+"»");
+      let cls, title, note;
+      if(!isRetreat){
+        // phase:"start" — армия дошла до цели, бой ещё не начался по-настоящему.
+        if(isRaid){ cls="calm"; title="Отряд у цели"; note="Наш отряд подошёл к "+target+" — начинается развёртывание перед боем."; }
+        else if(isDef){ cls="war"; title="Враг у ворот"; note="Войска «"+who+"» подошли к нашему городу — начинается развёртывание перед боем."; }
+        else { cls="calm"; title="Армия настигла цель"; note="Наши войска подошли к "+target+" — начинается развёртывание перед боем."; }
+      } else {
+        // phase:"retreat" — отступление начато, исход (для PvP — победа
+        // защитника) придёт отдельным письмом в рубрике "Бой" чуть позже.
+        if(isRaid){ cls="war"; title="Отряд отступает"; note="Наш отряд начал отход от "+target+" — на отступление нужно время."; }
+        else if(isDef){ cls="hot"; title="Враг отступает"; note="Войска «"+who+"» начали отход от наших стен — сражение окончится в нашу пользу."; }
+        else { cls="war"; title="Наша армия отступает"; note="Войска у "+target+" начали отход — на отступление нужно время."; }
+      }
+      h+="<div class='entry "+cls+"'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+title+"</div><div class='note'>"+note+"</div>"+
+         "</div></div></div>";
     });
   }
 
