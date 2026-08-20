@@ -10928,24 +10928,52 @@ const BUILD_MP_BLDS = ["wall","store","academy","hospital","hall","barracks","ra
 // foMultiplayer, зеркало plotUnlocked/epochOf.
 const BUILD_MP_MULTI = new Set(["hospital","farm","lumber","quarry","mine"]);
 
+// Жалоба "бесконечная загрузка, не могу зайти в игру": ни один сетевой
+// вызов здесь раньше не имел таймаута — если auth/mp-join зависали (сеть,
+// перегруженный/зациклившийся mp-tick, который теперь дёргается на КАЖДЫЙ
+// опрос mp-join, а не раз в минуту — конкурентные запуски друг друга ждут
+// на блокировках строк), await просто не возвращался никогда, а вместе с
+// ним намертво зависала и накидка #mp-loading (mpHideLoading() стоит
+// только ПОСЛЕ этого await, снять её было некому). mpWithTimeout — общий
+// таймаут-обёртка (Promise.race, не отменяет саму операцию, просто
+// перестаёт её ждать и кидает понятную ошибку — sb.auth.* не даёт
+// AbortSignal). Сам fetch к Edge Function — AbortController, отменяет
+// запрос по-настоящему, не просто "перестаёт ждать".
+function mpWithTimeout(promise, ms, label){
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error((label||"Запрос") + " не отвечает дольше " + Math.round(ms/1000) + "с. Проверьте соединение и попробуйте ещё раз.")), ms);
+    promise.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
+  });
+}
 async function mpEnsureAuth(){
   // Переиспользуем уже сохранённую supabase-клиентом anon-сессию, если она
   // есть — signInAnonymously() без этой проверки заводит НОВОГО анонимного
   // пользователя при каждом вызове (проверено на практике: id игрока рос
   // при каждом визите), а нужен один и тот же игрок между заходами.
-  const { data:{ session } } = await sb.auth.getSession();
+  const { data:{ session } } = await mpWithTimeout(sb.auth.getSession(), 10000, "Проверка входа");
   if(session) return session;
-  const { data, error } = await sb.auth.signInAnonymously();
+  const { data, error } = await mpWithTimeout(sb.auth.signInAnonymously(), 10000, "Вход в игру");
   if(error) throw error;
   return data.session;
 }
 async function mpCall(fn, body){
   const session = await mpEnsureAuth();
-  const r = await fetch(SUPABASE_URL+"/functions/v1/"+fn, {
-    method:"POST",
-    headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+session.access_token, "apikey":SUPABASE_ANON_KEY },
-    body: JSON.stringify(body||{}),
-  });
+  const ctrl = new AbortController();
+  const timer = setTimeout(()=>ctrl.abort(), 15000);
+  let r;
+  try{
+    r = await fetch(SUPABASE_URL+"/functions/v1/"+fn, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+session.access_token, "apikey":SUPABASE_ANON_KEY },
+      body: JSON.stringify(body||{}),
+      signal: ctrl.signal,
+    });
+  }catch(e){
+    if(e.name==="AbortError") throw new Error("Сервер не отвечает дольше 15с. Попробуйте ещё раз.");
+    throw e;
+  }finally{
+    clearTimeout(timer);
+  }
   const j = await r.json().catch(()=>({}));
   if(!r.ok || j.err) throw new Error(j.err || ("HTTP "+r.status));
   return j;

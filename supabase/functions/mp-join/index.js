@@ -47,15 +47,34 @@ function handleOptions(req) {
 // 0002/0003), и ждёт ответа, чтобы следующее чтение players уже видело
 // применённый результат. Ошибка/недоступность тикера не должна ронять сам
 // join/опрос — у игрока и так будет то состояние, что есть в базе.
+// Найдено при разборе жалобы "бесконечная загрузка, не могу зайти в игру":
+// эта функция await'ится КАЖДЫМ вызовом mp-join (см. вызов ниже), а у
+// клиента (mpCall/mpEnsureAuth в index.html) не было НИКАКОГО таймаута на
+// сам запрос mp-join — если mp-tick хоть раз завис/сильно затормозил
+// (например, конкурентные тики друг друга подождали на блокировках строк —
+// теперь тик дёргается на каждый опрос mp-join, раз в 5с на игрока, а не
+// раз в минуту, как раньше, конкурентные запуски стали реальностью, не
+// теорией), это утягивало за собой и сам join, а через него — весь экран
+// загрузки, у которого тоже не было таймаута. AbortController здесь —
+// первый слой защиты (не дать САМОЙ функции зависнуть надолго из-за
+// внутреннего вызова); второй слой — таймаут в index.html на сам fetch к
+// mp-join (см. supabase/README.md).
 async function triggerTick(SUPABASE_URL) {
   const secret = Deno.env.get("MP_TICK_SECRET");
   try {
-    await fetch(SUPABASE_URL + "/functions/v1/mp-tick", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(secret ? { "x-tick-secret": secret } : {}) },
-      body: "{}",
-    });
-  } catch (_) { /* тикер недоступен/упал — не блокируем сам join, см. комментарий выше */ }
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 4000);
+    try {
+      await fetch(SUPABASE_URL + "/functions/v1/mp-tick", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(secret ? { "x-tick-secret": secret } : {}) },
+        body: "{}",
+        signal: ctrl.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (_) { /* тикер недоступен/завис/упал — не блокируем сам join, см. комментарий выше */ }
 }
 
 const RACES = ["human", "dwarf", "elf", "undead"];
