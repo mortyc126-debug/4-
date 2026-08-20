@@ -2434,6 +2434,16 @@ async function applyNodeContestArrive(admin, m, occ) {
   ]);
   if (startMailErr) throw startMailErr;
 
+  // Фаза 26 — занявший точку сам НЕ переходит в state:"siege" (его отсчёт
+  // сбора не прерывается, см. finalizeNodeBattle), поэтому без этой метки
+  // он был бы вообще не в курсе боя за собственную точку, кроме как из
+  // почты. contestedBy — id марша-атакующего, чтобы клиент оккупанта знал,
+  // чей data.battle подтягивать для своей же полоски (см. mpActiveSiegeIds/
+  // mpBattleFastPollTick в index.html) — очищается в finalizeNodeBattle.
+  const { error: occMarkErr } = await admin.from("marches")
+    .update({ data: { ...occ.data, contestedBy: m.id } }).eq("id", occ.id);
+  if (occMarkErr) throw occMarkErr;
+
   // wallLv/garrisonLv=0 — в чистом поле укреплений нет ни у кого, тот же
   // движок, что и у PvP-штурма (initPvpBattle/runPvpBattleRounds), просто
   // без городских бонусов защитника. occMarchId/occPlayerId — чем
@@ -2555,8 +2565,13 @@ async function finalizeNodeBattle(admin, m, attRow, occRow, occMarch, attP, occP
 
   // Марш-оккупант в любом исходе теряет только то, что реально полегло в
   // этом бою (occSurvivors) — его units обновляем в базе всегда, отдельно
-  // от того, кто победил.
-  const { error: updOccM } = await admin.from("marches").update({ units: occSurvivors }).eq("id", occMarch.id);
+  // от того, кто победил. contestedBy (Фаза 26) снимаем здесь же — бой
+  // решён, метка выполнила свою роль (если winner==="att", строка вообще
+  // сейчас уедет домой через sendSurvivorsHome ниже и там же честно
+  // подчистится своя data, но contestedBy лучше снять уже тут, а не
+  // полагаться на побочный эффект другого вызова).
+  const { contestedBy, ...occCleanData } = occMarch.data || {};
+  const { error: updOccM } = await admin.from("marches").update({ units: occSurvivors, data: occCleanData }).eq("id", occMarch.id);
   if (updOccM) throw updOccM;
 
   if (state.winner === "att") {

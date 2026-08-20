@@ -11538,26 +11538,49 @@ function mpBattleInterp(battle, from, to){
 // быстрее подхватывает уже готовый результат и чаще перерисовывает
 // интерполяцию выше, чтобы она выглядела непрерывной, а не "тик раз в 5с".
 let mpBattleFastTimer=null;
+// mpState.contestBattles — Фаза 26: занявший точку игрок сам НЕ уходит в
+// state:"siege" (его отсчёт сбора не прерывается боем за неё, см.
+// finalizeNodeBattle в mp-tick), поэтому в его собственном mpState.marches
+// битвы не видно вовсе — только метка m.data.contestedBy (id чужого,
+// атакующего марша). Сюда кладём data.battle ИМЕННО ЭТОГО чужого марша,
+// по ключу m.id оккупанта (не атакующего) — чтобы рендер занятой точки
+// (см. "Отряды в поле") мог нарисовать те же mpHpBarHtml/mpBattleInterp,
+// что и у настоящего state:"siege".
+let mpContestBattles={};
 function mpActiveSiegeIds(){
   const ids=[];
-  mpState.marches.forEach(m=>{ if(m.state==="siege") ids.push(m.id); });
+  mpState.marches.forEach(m=>{
+    if(m.state==="siege") ids.push(m.id);
+    if(m.data && m.data.contestedBy) ids.push(m.data.contestedBy);
+  });
   mpState.incoming.forEach(m=>{ if(m.state==="siege") ids.push(m.id); });
-  return ids;
+  return [...new Set(ids)];
 }
 function mpMaybeToggleBattleFastPoll(){
   const active=mpActiveSiegeIds().length>0;
   if(active && !mpBattleFastTimer) mpBattleFastTimer=setInterval(mpBattleFastPollTick,1000);
-  if(!active && mpBattleFastTimer){ clearInterval(mpBattleFastTimer); mpBattleFastTimer=null; }
+  if(!active && mpBattleFastTimer){ clearInterval(mpBattleFastTimer); mpBattleFastTimer=null; mpContestBattles={}; }
 }
 async function mpBattleFastPollTick(){
   const ids=mpActiveSiegeIds();
   if(!ids.length){ mpMaybeToggleBattleFastPoll(); return; }
   const { data, error } = await sb.from("marches").select("id,state,data").in("id",ids);
   if(!error && data){
+    const byId={}; data.forEach(row=>{ byId[row.id]=row; });
     data.forEach(row=>{
       const own=mpState.marches.find(x=>x.id===row.id); if(own){ own.state=row.state; own.data=row.data; }
       const inc=mpState.incoming.find(x=>x.id===row.id); if(inc){ inc.state=row.state; inc.data=row.data; }
     });
+    // Перекладываем battle чужого марша под ключ СВОЕГО занявшего точку
+    // марша — свежий снимок каждый тик, старый (уже неактуальный contestedBy,
+    // например после победы оккупанта) сам не остаётся, mpContestBattles
+    // строится заново из nulля на каждый вызов.
+    const next={};
+    mpState.marches.forEach(m=>{
+      const cb=m.data&&m.data.contestedBy;
+      if(cb && byId[cb] && byId[cb].data && byId[cb].data.battle) next[m.id]=byId[cb].data.battle;
+    });
+    mpContestBattles=next;
   }
   mpMaybeToggleBattleFastPoll();
   mpRerender();
@@ -11800,16 +11823,26 @@ function foMultiplayer(embedded, only){
       // у opp выше.
       const nodeOpp = isGather&&sieging&&m.data&&m.data.battle
         ? mpState.neighbors.find(n=>n.id===m.data.battle.occPlayerId) : null;
+      // Фаза 26 — свою точку оспаривают: contestedBy стоит, но САМ марш
+      // остаётся state:"gather" (не siege — сбор не прерывается), бой
+      // лежит в mpContestBattles[m.id] (см. mpBattleFastPollTick), не в
+      // m.data.battle. attacker/defender внутри ЧУЖОГО battle-объекта — с
+      // ТОЧКИ ЗРЕНИЯ ЭТОГО марша (оккупанта) "Наши" это defHpLeft, а
+      // "Противник" — attHpLeft, ровно как у "Входящих атак" для PvP.
+      const contested=isGather&&gathering&&m.data&&m.data.contestedBy&&mpContestBattles[m.id];
+      const cb=contested?mpContestBattles[m.id]:null;
       const title = sieging
         ? (isGather
            ? "Бой за точку "+m.tx+", "+m.ty+(nodeOpp?" — "+(nodeOpp.nick||"соперник"):"")
            : "В бою у "+(opp?opp.nick||"Безымянный лорд":m.tx+", "+m.ty))
+        : contested
+        ? "Точку "+m.tx+", "+m.ty+" оспаривают!"
         : isGather
         ? (going?"Идёт к точке сбора "+m.tx+", "+m.ty:gathering?"Собирает у "+m.tx+", "+m.ty:"Везёт добычу домой")
         : isRaid
         ? (going?"Идёт на лагерь "+m.tx+", "+m.ty:"Возвращается от лагеря "+m.tx+", "+m.ty)
         : (going?"Идёт к ":"Возвращается от ")+(opp?opp.nick||"Безымянный лорд":m.tx+", "+m.ty);
-      h+="<div class='entry'><div class='line'><div class='fill'>"+
+      h+="<div class='entry"+(contested?" war":"")+"'><div class='line'><div class='fill'>"+
          "<div class='title'>"+title+"</div>";
       // Фаза 21 — бой во времени (см. supabase/migrations/
       // 0005_realtime_battles.sql): пока марш в state:"siege", m.t1 —
@@ -11821,6 +11854,10 @@ function foMultiplayer(embedded, only){
         h+="<div class='note'>Бой идёт — раунд "+b.round+(b.weather&&b.weather.id!=="clear"?" · "+b.weather.name:"")+"</div>"+
            mpHpBarHtml("Наши",mpBattleInterp(b,b.revealFromAttHp,b.attHpLeft),b.attStartHp,mpBattleInterp(b,b.revealFromAttGenFrac,b.attGenHpFrac))+
            mpHpBarHtml("Противник",mpBattleInterp(b,b.revealFromDefHp,b.defHpLeft),b.defStartHp,mpBattleInterp(b,b.revealFromDefGenFrac,b.defGenHpFrac));
+      } else if(contested){
+        h+="<div class='note'>Бой идёт — раунд "+cb.round+(cb.weather&&cb.weather.id!=="clear"?" · "+cb.weather.name:"")+"</div>"+
+           mpHpBarHtml("Наши",mpBattleInterp(cb,cb.revealFromDefHp,cb.defHpLeft),cb.defStartHp,mpBattleInterp(cb,cb.revealFromDefGenFrac,cb.defGenHpFrac))+
+           mpHpBarHtml("Противник",mpBattleInterp(cb,cb.revealFromAttHp,cb.attHpLeft),cb.attStartHp,mpBattleInterp(cb,cb.revealFromAttGenFrac,cb.attGenHpFrac));
       } else {
         const left=Math.max(0,m.t1-Date.now()/1000);
         h+="<div class='note'>Осталось: "+fmtDur(left)+"</div>";
