@@ -3167,7 +3167,9 @@ function newPlayer(id,race,x,y,isBot){
     ai:{aggr, greed:.4+RNG()*.5, caution:.3+RNG()*.6, nextThink:0, target:null},
   };
   BKEYS.forEach(k=>p.b[k]=isMulti(k)?new Array(BUILDINGS[k].plots).fill(0):0);
-  p.b.hall=1; p.b.wall=1; p.b.farm[0]=1; p.b.lumber[0]=1; p.b.store=1;
+  // Автор попросил чистый старт: только Ратуша 1 ур. и Стена 1 ур., без
+  // фермы/лесопилки/склада авансом — остальное игрок отстраивает сам.
+  p.b.hall=1; p.b.wall=1;
   TKEYS.forEach(t=>{p.troops[t]={};p.wounded[t]={};for(let i=1;i<=5;i++){p.troops[t][i]=0;p.wounded[t][i]=0}});
   p.troops.inf[1]=200; p.troops.arc[1]=150;
   return p;
@@ -3461,8 +3463,12 @@ function genWorld(seed){
   me.nick="Безымянный лорд";
   me.gen.pts=5; me.gen.gotStartPts=true; // стартовые очки таланта — сразу есть что вложить; флаг гасит повторную выдачу в load()
   me.shieldUntil = 3*86400;      // три дня защиты новичка
-  Object.assign(me.b,{hall:3,store:8,barracks:2,range:2,stable:1,academy:2,wall:2});
-  me.b.farm[0]=3; me.b.lumber[0]=3; me.b.quarry[0]=2; me.b.mine[0]=2; me.b.hospital[0]=3;
+  // Раньше здесь игроку авансом выдавался целый маленький городок (Ратуша
+  // 3 ур., склад 8 ур., казармы/стрельбище/конюшня/академия, ферма/
+  // лесопилка/карьер/рудник/лазарет по 2-3 ур.) — автор явно попросил
+  // чистый старт (см. тот же принцип в newPlayer()/мультиплеерном
+  // newPlayerState в mp-join): только Ратуша и Стена 1 ур., которые уже
+  // выставил newPlayer() выше, остальное игрок отстраивает сам.
   W.players.push(me);
   clearArea(ps.x,ps.y,1); mapSet(ps.x,ps.y,{t:"city",x:ps.x,y:ps.y,pid:me.id});
 

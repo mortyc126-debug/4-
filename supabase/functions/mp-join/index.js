@@ -467,7 +467,10 @@ function newPlayerState(race, nowSec) {
   const MULTI = { farm: 4, lumber: 4, quarry: 4, mine: 4, hospital: 4 };
   const b = {};
   BKEYS.forEach((k) => { b[k] = MULTI[k] ? new Array(MULTI[k]).fill(0) : 0; });
-  b.hall = 1; b.wall = 1; b.farm[0] = 1; b.lumber[0] = 1; b.store = 1;
+  // Автор попросил чистый старт: только Ратуша 1 ур. и Стена 1 ур., без
+  // фермы/лесопилки/склада авансом — та же правка, что и в index.html
+  // (newPlayer()/genWorld()), держим оба мира в синхроне.
+  b.hall = 1; b.wall = 1;
   const troops = {}, wounded = {};
   ["inf", "arc", "cav", "sie"].forEach((t) => {
     troops[t] = {}; wounded[t] = {};
