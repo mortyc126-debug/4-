@@ -1430,7 +1430,26 @@ function initPvpBattle(attUnits, attP, defUnits, defP, defWallLv, defGarrisonLv,
 // истребление стороны/rout/ROUND_CAP, см. concluded ниже). Мутирует state и
 // возвращает его же (тот же объект, что и передан — так удобнее вызывающему
 // коду mp-tick, не нужно разбираться, где копия, а где нет).
+// Фаза 22 — "развёртывание армии": автор попросил честную доводку полоски
+// (не гадать по прошлому тренду, как раньше, а плавно доводить от уже
+// показанного значения до уже ИЗВЕСТНОГО нового — оно всё равно посчитано
+// сразу, 15с тут не задержка расчёта, а темп подачи готового результата).
+// revealFrom* — значения ДО этого куска раундов (то, что клиент уже видит
+// сейчас), state.attHpLeft/defHpLeft ниже как и раньше становятся ПОСЛЕ —
+// клиент линейно интерполирует между ними от revealStart до revealAt
+// (см. mpBattleInterp в index.html). Для самого первого куска (сразу после
+// initPvpBattle) revealFrom = attStartHp/defStartHp (100%, войска ещё
+// стоят "начальным строем") — тот самый эффект "развёртывания": реального
+// урона ещё не видно, пока не домотает до настоящего первого столкновения.
 function runPvpBattleRounds(state, attP, defP, defWallLv, defGarrisonLv, roundsBudget) {
+  state.revealFromAttHp = state.attHpLeft; state.revealFromDefHp = state.defHpLeft;
+  // Фаза 27 — round ДО этого куска: 0 у самого первого куска (реального
+  // урона ещё не было ни разу, войска "в строю") — клиент по этому флагу
+  // подписывает надземную метку боя "Развёртывание" вместо "Бой — раунд N"
+  // на всё время первого reveal-окна (см. mpBattleInterp/updateBattleLabels
+  // в index.html/main.ts).
+  state.revealFromRound = state.round;
+  state.revealFromAttGenFrac = state.attGenHpFrac; state.revealFromDefGenFrac = state.defGenHpFrac;
   const attB = bonuses(attP), defB = bonuses(defP, true);
   const weather = state.weather;
   const wMod = (t) => (weather.mod && weather.mod[t]) || 1;
@@ -1500,6 +1519,13 @@ function runPvpBattleRounds(state, attP, defP, defWallLv, defGarrisonLv, roundsB
   state.defGenMaxHp = defGenMax ? defGenMax.hp : null;
   state.attHpLeft = Math.round(sideStats(attU, attP.race, attB, attBroken, attRisen).totalHp);
   state.defHpLeft = Math.round(sideStats(defU, defP.race, defB, defBroken, defRisen).totalHp);
+  // revealAt — тот же момент, на который progressOrFinalizePvpBattle ставит
+  // следующий events(type:'battle_round') (BATTLE_TICK_SECONDS), не своя
+  // отдельная константа — клиент домотает ровно к моменту, когда появится
+  // СЛЕДУЮЩЕЕ настоящее число, без досрочной остановки и без зависшего
+  // "почти доехал, но опоздал".
+  state.revealStart = Date.now();
+  state.revealAt = state.revealStart + BATTLE_TICK_SECONDS * 1000;
 
   const attAlive = unitsTotal(attU), defAlive = unitsTotal(defU);
   const routed = attAlive > 0 && defAlive > 0 && (attAlive / Math.max(1, state.attStartN) < 0.28);
@@ -1679,29 +1705,31 @@ function banditArmy(lv) {
 // (arriveMarch, ветка camp/fort). Явные нули, не пустой объект — sideStats
 // делает "(1+B.atk)" без страховки ||0, пустой объект дал бы NaN.
 const BANDIT_B = { atk: 0, def: 0, hp: 0, matk: 0, mdef: 0, archer: 0 };
-// Зеркало ветки camp/fort в arriveMarch (index.html:5133-5158) — но не
-// resolveBattle() целиком (раундовый бой с погодой и т.д., см. заголовок
-// resolvePvp выше), а тот же однообменный resolvePvp, что и у PvP —
-// честная общая упрощённая боевая модель общего мира, не два разных стиля
-// боя под одной крышей.
-// Фаза 9, кусочки 1-4 — тот же переход на раундовый цикл + погоду +
-// дисциплину + урон полководца, что и у resolvePvp выше (см. её заголовок
-// насчёт честных пробелов). Контрудара гарнизона нет — BANDIT_B не считает
-// bonuses(...,true), у лагеря попросту не может взяться B.counter. Но
-// собственный первый залп АТАКУЮЩЕГО (elf firstStrike) — не завязан на
-// защитника: эльф стреляет первым по любой цели, лагерь варваров не
-// исключение (сам лагерь ответным первым залпом не бьёт — у BANDIT_B нет
-// поля firstStrike, volleyDamage тихо вернёт null). attP.race=null для
-// лагеря (banditArmy) — disciplineThreshold(t,i,null) просто не находит
-// расового бонуса (RACE_DISCIPLINE_BONUS[null]===undefined), даёт голый
-// порог без надбавки, ровно как и было задумано для "разбойников и т.п."
-// в источнике. У самого лагеря НЕТ полководца (banditArmy — просто
-// гарнизон, не игрок) — бьёт и получает удары только полководец
-// АТАКУЮЩЕГО, если тот его выбрал. Кусочек 6 (см. заголовок resolvePvp) —
-// rout и честная ничья по armyPower — распространены и на лагеря
-// (index.html:5066 тоже отправляет resolveBattle без toDeath, то есть с
-// тем же rout, что и обычный поход на игрока).
-function resolveBanditRaid(attUnits, attP, campLv, marchId = 0, attHasGen = false) {
+// Зеркало ветки camp/fort в arriveMarch (index.html:5133-5158). Контрудара
+// гарнизона нет — BANDIT_B не считает bonuses(...,true), у лагеря попросту
+// не может взяться B.counter. Но собственный первый залп АТАКУЮЩЕГО (elf
+// firstStrike) — не завязан на защитника: эльф стреляет первым по любой
+// цели, лагерь варваров не исключение (сам лагерь ответным первым залпом не
+// бьёт — у BANDIT_B нет поля firstStrike, volleyDamage тихо вернёт null).
+// attP.race=null для лагеря (banditArmy) — disciplineThreshold(t,i,null)
+// просто не находит расового бонуса (RACE_DISCIPLINE_BONUS[null]===
+// undefined), даёт голый порог без надбавки. У самого лагеря НЕТ
+// полководца (banditArmy — просто гарнизон, не игрок) — бьёт и получает
+// удары только полководец АТАКУЮЩЕГО, если тот его выбрал.
+//
+// Фаза 21, продолжение — то же самое (живой бой во времени, полоски HP,
+// отступление), что и у PvP выше (см. заголовок initPvpBattle/
+// runPvpBattleRounds): initRaidBattle/runRaidBattleRounds — resumable-версия
+// той же математики, что раньше была одной синхронной resolveBanditRaid().
+// state named ТЕМИ ЖЕ полями, что и у PvP-версии (attHpLeft/defHpLeft/
+// attStartHp/defStartHp/attGenHpFrac/defGenHpFrac/round/weather/
+// retreatRequested) — здесь "def" это лагерь (BANDIT_B, без бонусов, без
+// полководца — defGenHpFrac всегда null), не игрок, но клиентский
+// mpHpBarHtml() ничего об этом не знает и рисует что дали, тот же код без
+// раздвоения на "рендер для PvP"/"рендер для рейда". Победитель — "att" или
+// "band" (не "def", как у PvP) — та же метка, что была у resolveBanditRaid,
+// downstream-код (finalizeRaidBattle) сравнивает именно с "att".
+function initRaidBattle(attUnits, attP, campLv, marchId, attHasGen) {
   const attB = bonuses(attP);
   const bandStart = banditArmy(campLv);
   let attU = attUnits, bandU = bandStart;
@@ -1709,7 +1737,7 @@ function resolveBanditRaid(attUnits, attP, campLv, marchId = 0, attHasGen = fals
   const attBroken = { inf: {}, arc: {}, cav: {}, sie: {} }, bandBroken = { inf: {}, arc: {}, cav: {}, sie: {} };
   // Фаза 9, кусочек 7 — только у атакующего может быть risen (undead
   // игрок); у BANDIT_B нет полей raise/raiseHurt вообще, лагерь никогда не
-  // поднимает своих. См. заголовок resolvePvp насчёт risen в целом.
+  // поднимает своих.
   const attRisen = { inf: {}, arc: {}, cav: {}, sie: {} }, attRaisedCum = { inf: {}, arc: {}, cav: {}, sie: {} };
   const rnd = battleRngMp(marchId);
   const weather = pickWeather(rnd);
@@ -1723,16 +1751,56 @@ function resolveBanditRaid(attUnits, attP, campLv, marchId = 0, attHasGen = fals
     bandU = unitsSub(bandU, l.units); bandLossTotal = unitsAdd(bandLossTotal, l.units);
     checkDiscipline(bandStart, bandLossTotal, null, bandBroken);
   }
-  let round = 0;
-  // attHasGen — тот же смысл, что и в resolvePvp выше (m.data.has_gen):
-  // генерал физически один, участвует только там, куда его реально
-  // отправили этим маршем, а не в каждом бою автоматически.
-  let attGen = attHasGen ? genStats(attP) : null;
-  const attStartN = unitsTotal(attUnits); // Фаза 9, кусочек 6 — см. заголовок resolvePvp
-  while (round < ROUND_CAP) {
+  const attStartN = unitsTotal(attUnits);
+  const attStartHp = sideStats(attU, attP.race, attB, attBroken, attRisen).totalHp;
+  const bandStartHp = sideStats(bandU, null, BANDIT_B, bandBroken).totalHp;
+  const ticksBudget = battleTicksBudget(unitsTotal(attUnits) + unitsTotal(bandStart));
+  return {
+    marchId, round: 0, ticksBudget, weather, campLv,
+    attU, defU: bandU, attStartUnits: attUnits, defStartUnits: bandStart, attStartN,
+    attLossTotal, defLossTotal: bandLossTotal, attBroken, defBroken: bandBroken,
+    attRisen, attRaisedCum,
+    attHasGen, attGenHpFrac: null, defGenHpFrac: null, attGenMaxHp: null, defGenMaxHp: null,
+    attStartHp: Math.round(attStartHp), defStartHp: Math.round(bandStartHp),
+    attHpLeft: Math.round(attStartHp), defHpLeft: Math.round(bandStartHp),
+    concluded: false, winner: null,
+  };
+}
+
+// Продолжает рейд из state — та же схема, что и runPvpBattleRounds, только
+// без wall/garrison/counter/defRisen (лагерь ими не пользуется вообще).
+// Фаза 22 — "развёртывание армии" (см. заголовок runPvpBattleRounds выше,
+// то же самое здесь).
+function runRaidBattleRounds(state, attP, roundsBudget) {
+  state.revealFromAttHp = state.attHpLeft; state.revealFromDefHp = state.defHpLeft;
+  // Фаза 27 — round ДО этого куска: 0 у самого первого куска (реального
+  // урона ещё не было ни разу, войска "в строю") — клиент по этому флагу
+  // подписывает надземную метку боя "Развёртывание" вместо "Бой — раунд N"
+  // на всё время первого reveal-окна (см. mpBattleInterp/updateBattleLabels
+  // в index.html/main.ts).
+  state.revealFromRound = state.round;
+  state.revealFromAttGenFrac = state.attGenHpFrac; state.revealFromDefGenFrac = state.defGenHpFrac;
+  const attB = bonuses(attP);
+  const weather = state.weather;
+  const wMod = (t) => (weather.mod && weather.mod[t]) || 1;
+  const jit = weather.jitter || 0.05;
+  const rnd = battleRngMp(state.marchId); // см. заголовок battleRngMp — сеет от Date.now(), каждый вызов уже свежий поток
+  const roll = () => 1 + (rnd() * 2 - 1) * jit;
+
+  const attGenMax = state.attHasGen ? genStats(attP) : null;
+  let attGen = attGenMax ? { ...attGenMax } : null;
+  if (attGen && state.attGenHpFrac != null) attGen.hp = Math.max(0, Math.round(attGenMax.hp * state.attGenHpFrac));
+
+  let attU = state.attU, bandU = state.defU;
+  let attLossTotal = state.attLossTotal, bandLossTotal = state.defLossTotal;
+  const attBroken = state.attBroken, bandBroken = state.defBroken;
+  const attRisen = state.attRisen, attRaisedCum = state.attRaisedCum;
+
+  let roundsThisCall = 0;
+  while (state.round < ROUND_CAP && roundsThisCall < roundsBudget) {
     const attS = sideStats(attU, attP.race, attB, attBroken, attRisen), bandS = sideStats(bandU, null, BANDIT_B, bandBroken);
     if (attS.totalN <= 0 || bandS.totalN <= 0) break;
-    round++;
+    state.round++; roundsThisCall++;
     const dmgToBand = dmgTo(attS, bandS, 0, 0, wMod, roll()); // лагерь без стены/башни
     const dmgToAtt = dmgTo(bandS, attS, 0, 0, wMod, roll());
     const bandLoss = applyLosses(bandU, dmgToBand, null, 0, null, rnd);
@@ -1746,20 +1814,32 @@ function resolveBanditRaid(attUnits, attP, campLv, marchId = 0, attHasGen = fals
       bandU = unitsSub(bandU, l.units); bandLossTotal = unitsAdd(bandLossTotal, l.units);
     }
     if (attGen) attGen.hp = Math.max(0, attGen.hp - damageToGeneral(attGen, bandS));
-    checkDiscipline(bandStart, bandLossTotal, null, bandBroken);
-    checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
+    checkDiscipline(state.defStartUnits, bandLossTotal, null, bandBroken);
+    checkDiscipline(state.attStartUnits, attLossTotal, attP.race, attBroken);
     // index.html:5061 A.mode="hospital" — рейд на лагерь не штурм чужого
     // города, у атакующего лазарет работает как обычно (в отличие от PvP,
     // где он "siege-attack"), поэтому и raiseHurt тут для него реален.
     applyRaise(attP, attB, "hospital", attLossTotal, attRisen, attRaisedCum);
-    if (unitsTotal(attU) / Math.max(1, attStartN) < 0.28) break; // rout, index.html:5066 — тоже roundует с бандитами
+    if (unitsTotal(attU) / Math.max(1, state.attStartN) < 0.28) break; // rout, index.html:5066 — тоже roundует с бандитами
   }
-  const attHpLeft = sideStats(attU, attP.race, attB).totalHp;
-  const bandHpLeft = sideStats(bandU, null, BANDIT_B).totalHp;
+
+  state.attU = attU; state.defU = bandU;
+  state.attLossTotal = attLossTotal; state.defLossTotal = bandLossTotal;
+  state.attGenHpFrac = attGen ? attGen.hp / Math.max(1, attGenMax.hp) : null;
+  state.attGenMaxHp = attGenMax ? attGenMax.hp : null;
+  state.attHpLeft = Math.round(sideStats(attU, attP.race, attB, attBroken, attRisen).totalHp);
+  state.defHpLeft = Math.round(sideStats(bandU, null, BANDIT_B, bandBroken).totalHp);
+  state.revealStart = Date.now();
+  state.revealAt = state.revealStart + BATTLE_TICK_SECONDS * 1000;
+
   const attAlive = unitsTotal(attU), bandAlive = unitsTotal(bandU);
-  const powA = armyPower(attU, attB, attP.race), powBand = armyPower(bandU, BANDIT_B, null);
-  const winner = attAlive > 0 && bandAlive <= 0 ? "att" : bandAlive > 0 && attAlive <= 0 ? "band" : (powA > powBand ? "att" : "band");
-  return { attLoss: attLossTotal, winner, rounds: round, weather: weather.id, weatherName: weather.name };
+  const routed = attAlive > 0 && bandAlive > 0 && (attAlive / Math.max(1, state.attStartN) < 0.28);
+  state.concluded = attAlive <= 0 || bandAlive <= 0 || routed || state.round >= ROUND_CAP;
+  if (state.concluded) {
+    const powA = armyPower(attU, attB, attP.race), powBand = armyPower(bandU, BANDIT_B, null);
+    state.winner = attAlive > 0 && bandAlive <= 0 ? "att" : bandAlive > 0 && attAlive <= 0 ? "band" : (powA > powBand ? "att" : "band");
+  }
+  return state;
 }
 // index.html:5148-5150 — та же добыча с разгромленного лагеря, что и в
 // одиночной игре.
@@ -1800,7 +1880,24 @@ async function applyMarchArrive(admin, ev) {
   // боевой логики (которая ниже подряд читает defenderId/defRow) — иначе
   // gather-марш прошёл бы через неё как "бой без защитника" и вернулся бы
   // домой пустым, ничего не собрав.
-  if (m.mode === "gather") { await applyGatherStart(admin, m); return; }
+  //
+  // Фаза 25 — бои за точки ресурсов (RoK-механика по просьбе автора): точка
+  // может быть уже занята чужим маршем (state:"gather" в тех же
+  // координатах) — тогда вместо старта сбора завязывается полевой бой
+  // между ДВУМЯ МАРШИРУЮЩИМИ ОТРЯДАМИ (не с домашним гарнизоном занявшего
+  // точку — тот вообще не при делах), тем же движком, что и PvP/рейд
+  // (initPvpBattle/runPvpBattleRounds, см. их заголовки), но wallLv/
+  // garrisonLv=0 (в поле укреплений нет) и hospital-режим ОБЕИМ сторонам
+  // (см. finalizeNodeBattle) — автор явно попросил "потери как при битве в
+  // поле... без смертей", не siege-attack, как у штурма города.
+  if (m.mode === "gather") {
+    const { data: occ, error: occErr } = await admin.from("marches").select("*")
+      .eq("world_id", m.world_id).eq("mode", "gather").eq("state", "gather")
+      .eq("tx", m.tx).eq("ty", m.ty).neq("player_id", m.player_id).limit(1).maybeSingle();
+    if (occErr) throw occErr;
+    if (occ) { await applyNodeContestArrive(admin, m, occ); return; }
+    await applyGatherStart(admin, m); return;
+  }
   // Фаза 8, кусочек 2 — поход на лагерь варваров: бой с готовым уровнем
   // лагеря (m.data.camp_lv, снят на отправке в mp-raid), не с игроком —
   // отдельная функция ниже, та же причина отдельной ветки, что у gather.
@@ -1831,6 +1928,21 @@ async function applyMarchArrive(admin, ev) {
   const defWallLv = (defP.b && typeof defP.b.wall === "number") ? defP.b.wall : 0;
   const defGarrisonLv = (defP.b && typeof defP.b.garrison === "number") ? defP.b.garrison : 0;
   const attHasGen = !!(m.data && m.data.has_gen);
+  // Фаза 24 — извещение о завязке боя ДО первого куска раундов: обеим
+  // сторонам сразу письмо "армия настигла цель, начинается развёртывание"
+  // (kind:"siege_event", data.phase:"start") — та же честная информация,
+  // что уже даёт "Входящие атаки" (mpRefreshIncoming) точкой на карте,
+  // только теперь ещё и в почте, человеческим текстом. Письмо не про исход
+  // (тот придёт отдельно, kind:"battle", см. finalizePvpBattle) — просто
+  // "бой начался, идёт развёртывание", ровно то, что происходит прямо
+  // сейчас (revealFrom=100% у обеих полосок, см. runPvpBattleRounds).
+  const { error: startMailErr } = await admin.from("mail").insert([
+    { world_id: m.world_id, player_id: attRow.id, kind: "siege_event",
+      data: { phase: "start", role: "attacker", mode: "attack", opponent_id: defRow.id, opponent_nick: defRow.nick } },
+    { world_id: m.world_id, player_id: defRow.id, kind: "siege_event",
+      data: { phase: "start", role: "defender", mode: "attack", opponent_id: attRow.id, opponent_nick: attRow.nick } },
+  ]);
+  if (startMailErr) throw startMailErr;
   // Фаза 21 — завязка боя (защитник + гарнизон СНИМАЮТСЯ снимком здесь, на
   // весь бой, см. заголовок initPvpBattle/runPvpBattleRounds выше) и сразу
   // первый кусок раундов — мелкая стычка часто укладывается в один этот
@@ -1863,14 +1975,10 @@ async function sendSurvivorsHome(admin, m, nowSec, survivors, carry) {
   if (evErr) throw evErr;
 }
 
-// Фаза 21 — после каждого куска раундов (первого, из applyMarchArrive, или
-// продолжения, из applyBattleRound): бой либо уже завершился (concluded),
-// либо нет — тогда march переходит (или остаётся) в state:'siege' с
-// state боя внутри data.battle, и следующий кусок переставляется на
-// events (type:'battle_round', тот же приём, что applyAmbientSeed сам себя
-// переставляет) через BATTLE_TICK_SECONDS.
-async function progressOrFinalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, nowSec) {
-  if (state.concluded) { await finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, nowSec); return; }
+// Общий "остаёмся в siege ещё на один тик" — вынесено, чтобы не дублировать
+// между PvP и рейдом (см. progressOrFinalizePvpBattle/
+// progressOrFinalizeRaidBattle ниже).
+async function persistBattleSiege(admin, m, state, nowSec) {
   const { error: updM } = await admin.from("marches")
     .update({ state: "siege", data: { ...m.data, battle: state } }).eq("id", m.id);
   if (updM) throw updM;
@@ -1879,6 +1987,34 @@ async function progressOrFinalizePvpBattle(admin, m, attRow, defRow, attP, defP,
     type: "battle_round", data: { march_id: m.id },
   });
   if (evErr) throw evErr;
+}
+
+// Фаза 21 — после каждого куска раундов (первого, из applyMarchArrive, или
+// продолжения, из applyBattleRound): бой либо уже завершился (concluded),
+// либо нет — тогда march переходит (или остаётся) в state:'siege' с
+// state боя внутри data.battle, и следующий кусок переставляется на
+// events (type:'battle_round', тот же приём, что applyAmbientSeed сам себя
+// переставляет) через BATTLE_TICK_SECONDS.
+async function progressOrFinalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, nowSec) {
+  if (state.concluded) {
+    // Фаза 22/23 — не финализируем МГНОВЕННО в тот же вызов, где раунд
+    // "добил" исход (wipe/rout/ROUND_CAP — ИЛИ прощальный залп отступления,
+    // см. applyRetreatVolley) — иначе march пропал бы из "Входящих атак"/
+    // "Отрядов в поле" ДО того, как клиент успел бы доматать последнюю
+    // доводку полоски (revealFrom->attHpLeft) до настоящего конца — некрасивый
+    // обрыв на полпути. Один лишний цикл "остаёмся в siege"
+    // (state.pendingFinalize) даёт этому последнему рывку доиграть, ПОТОМ
+    // настоящий финал — автор явно попросил и на отступление тоже дать
+    // те же 15с "на побег", а не рвать бой мгновенно по кнопке.
+    if (!state.pendingFinalize) {
+      state.pendingFinalize = true;
+      await persistBattleSiege(admin, m, state, nowSec);
+      return;
+    }
+    await finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, nowSec);
+    return;
+  }
+  await persistBattleSiege(admin, m, state, nowSec);
 }
 
 // Честный конец PvP-боя (state.concluded===true) — дословно тот хвост, что
@@ -1960,11 +2096,125 @@ async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, no
 }
 
 // Фаза 21 — продолжение боя, растянутого на несколько тиков (см. заголовок
-// initPvpBattle/runPvpBattleRounds и миграцию 0005). Зеркало применяется
-// как и applyMarchArrive: перечитывает игроков заново на каждый вызов
-// (bonuses/полководцы честно "живые", см. заголовок runPvpBattleRounds), но
-// состав войск/потери/дисциплину/раунд берёт из m.data.battle, куда их
-// оставил предыдущий вызов.
+// initPvpBattle/runPvpBattleRounds и миграцию 0005). Один общий тип события
+// (type:'battle_round') на оба режима — PvP и рейд на лагерь — различаются
+// по m.mode, тем же способом, что и applyMarchArrive выше различает
+// gather/raid/attack. Каждая ветка перечитывает игроков заново на каждый
+// вызов (bonuses/полководцы честно "живые"), но состав войск/потери/
+// дисциплину/раунд берёт из m.data.battle, куда их оставил предыдущий вызов.
+//
+// Фаза 23 — "прощальный залп". Автор: "при отступлении игрок получает ещё
+// урон в один раунд, но не отвечает, так как отступает" — армия уже
+// повернула спиной, защитник (или лагерь) бьёт вслед, встречного удара нет.
+// Тот же dmgTo/applyLosses, что и обычный раунд боя, но только ОДНА
+// сторона (defS→attS), вторая половина обмена (attS→defS) просто не
+// считается вовсе — не "урон умножен на 0", а честно не вызвана.
+function applyRetreatVolley(state, attP, defP) {
+  state.revealFromAttHp = state.attHpLeft; state.revealFromDefHp = state.defHpLeft;
+  // Фаза 27 — round ДО этого куска: 0 у самого первого куска (реального
+  // урона ещё не было ни разу, войска "в строю") — клиент по этому флагу
+  // подписывает надземную метку боя "Развёртывание" вместо "Бой — раунд N"
+  // на всё время первого reveal-окна (см. mpBattleInterp/updateBattleLabels
+  // в index.html/main.ts).
+  state.revealFromRound = state.round;
+  state.revealFromAttGenFrac = state.attGenHpFrac; state.revealFromDefGenFrac = state.defGenHpFrac;
+
+  const attB = bonuses(attP), defB = bonuses(defP, true);
+  const weather = state.weather;
+  const wMod = (t) => (weather.mod && weather.mod[t]) || 1;
+  const jit = weather.jitter || 0.05;
+  const rnd = battleRngMp(state.marchId);
+  const roll = () => 1 + (rnd() * 2 - 1) * jit;
+
+  const attGenMax = state.attHasGen ? genStats(attP) : null;
+  const defGenMax = (defP.gen && defP.gen.away == null) ? genStats(defP) : null;
+  let attGen = attGenMax ? { ...attGenMax } : null;
+  let defGen = defGenMax ? { ...defGenMax } : null;
+  if (attGen && state.attGenHpFrac != null) attGen.hp = Math.max(0, Math.round(attGenMax.hp * state.attGenHpFrac));
+  if (defGen && state.defGenHpFrac != null) defGen.hp = Math.max(0, Math.round(defGenMax.hp * state.defGenHpFrac));
+
+  let attU = state.attU, defU = state.defU;
+  let attLossTotal = state.attLossTotal;
+  const attBroken = state.attBroken, defBroken = state.defBroken;
+  const attRisen = state.attRisen, defRisen = state.defRisen;
+
+  const attS = sideStats(attU, attP.race, attB, attBroken, attRisen), defS = sideStats(defU, defP.race, defB, defBroken, defRisen);
+  if (attS.totalN > 0 && defS.totalN > 0) {
+    state.round++;
+    // Стена/башня в dmgTo митигируют урон, получаемый ЦЕЛЬЮ (см. её 3-й/4-й
+    // параметр в runPvpBattleRounds выше) — здесь цель атакующий, у него их
+    // никогда не было, поэтому 0,0, тем же порядком, что и dmgToAtt там.
+    const dmgToAtt = dmgTo(defS, attS, 0, 0, wMod, roll());
+    const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp, attRisen, rnd);
+    attU = unitsSub(attU, attLoss.units); attLossTotal = unitsAdd(attLossTotal, attLoss.units);
+    TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) attRisen[t][i] = Math.max(0, (attRisen[t][i] || 0) - (attLoss.risen[t][i] || 0)); });
+    // Полководец защитника ещё бьёт вслед; полководец атакующего сам не
+    // бьёт (нет generalDamage(attGen,defS)), но всё ещё под общим огнём —
+    // как и рядовые бойцы, получает урон пассивно.
+    const genDmgToAtt = generalDamage(defGen, attS);
+    if (genDmgToAtt) {
+      const l = applyLosses(attU, genDmgToAtt, attP.race, attB.hp, null, rnd);
+      attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
+    }
+    if (attGen) attGen.hp = Math.max(0, attGen.hp - damageToGeneral(attGen, defS));
+    checkDiscipline(state.attStartUnits, attLossTotal, attP.race, attBroken);
+  }
+
+  state.attU = attU; state.attLossTotal = attLossTotal;
+  if (attGen) { state.attGenHpFrac = attGen.hp / Math.max(1, attGenMax.hp); state.attGenMaxHp = attGenMax.hp; }
+  state.attHpLeft = Math.round(sideStats(attU, attP.race, attB, attBroken, attRisen).totalHp);
+  state.defHpLeft = Math.round(sideStats(defU, defP.race, defB, defBroken, defRisen).totalHp);
+  state.revealStart = Date.now();
+  state.revealAt = state.revealStart + BATTLE_TICK_SECONDS * 1000;
+}
+// Зеркало applyRetreatVolley выше, для рейдов — лагерь бьёт вслед
+// отступающему, у него нет полководца (только generalDamage от attGen тут
+// вообще неприменим — бить некому, лагерь получает урон только своими
+// бойцами, которых в retreat-раунде не бьют вовсе).
+function applyRaidRetreatVolley(state, attP) {
+  state.revealFromAttHp = state.attHpLeft; state.revealFromDefHp = state.defHpLeft;
+  // Фаза 27 — round ДО этого куска: 0 у самого первого куска (реального
+  // урона ещё не было ни разу, войска "в строю") — клиент по этому флагу
+  // подписывает надземную метку боя "Развёртывание" вместо "Бой — раунд N"
+  // на всё время первого reveal-окна (см. mpBattleInterp/updateBattleLabels
+  // в index.html/main.ts).
+  state.revealFromRound = state.round;
+  state.revealFromAttGenFrac = state.attGenHpFrac; state.revealFromDefGenFrac = state.defGenHpFrac;
+
+  const attB = bonuses(attP);
+  const weather = state.weather;
+  const wMod = (t) => (weather.mod && weather.mod[t]) || 1;
+  const jit = weather.jitter || 0.05;
+  const rnd = battleRngMp(state.marchId);
+  const roll = () => 1 + (rnd() * 2 - 1) * jit;
+
+  const attGenMax = state.attHasGen ? genStats(attP) : null;
+  let attGen = attGenMax ? { ...attGenMax } : null;
+  if (attGen && state.attGenHpFrac != null) attGen.hp = Math.max(0, Math.round(attGenMax.hp * state.attGenHpFrac));
+
+  let attU = state.attU, bandU = state.defU;
+  let attLossTotal = state.attLossTotal;
+  const attBroken = state.attBroken, bandBroken = state.defBroken;
+  const attRisen = state.attRisen;
+
+  const attS = sideStats(attU, attP.race, attB, attBroken, attRisen), bandS = sideStats(bandU, null, BANDIT_B, bandBroken);
+  if (attS.totalN > 0 && bandS.totalN > 0) {
+    state.round++;
+    const dmgToAtt = dmgTo(bandS, attS, 0, 0, wMod, roll());
+    const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp, attRisen, rnd);
+    attU = unitsSub(attU, attLoss.units); attLossTotal = unitsAdd(attLossTotal, attLoss.units);
+    TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) attRisen[t][i] = Math.max(0, (attRisen[t][i] || 0) - (attLoss.risen[t][i] || 0)); });
+    if (attGen) attGen.hp = Math.max(0, attGen.hp - damageToGeneral(attGen, bandS));
+    checkDiscipline(state.attStartUnits, attLossTotal, attP.race, attBroken);
+  }
+
+  state.attU = attU; state.attLossTotal = attLossTotal;
+  if (attGen) { state.attGenHpFrac = attGen.hp / Math.max(1, attGenMax.hp); state.attGenMaxHp = attGenMax.hp; }
+  state.attHpLeft = Math.round(sideStats(attU, attP.race, attB, attBroken, attRisen).totalHp);
+  state.defHpLeft = Math.round(sideStats(bandU, null, BANDIT_B, bandBroken).totalHp);
+  state.revealStart = Date.now();
+  state.revealAt = state.revealStart + BATTLE_TICK_SECONDS * 1000;
+}
 async function applyBattleRound(admin, ev) {
   const marchId = ev.data && ev.data.march_id;
   if (marchId == null) return;
@@ -1975,7 +2225,15 @@ async function applyBattleRound(admin, ev) {
   // уже разобран каким-то прошлым (задвоенным?) вызовом — тот же принцип
   // самоохраны, что и m.state!=="go" в applyMarchArrive.
   if (!m || m.state !== "siege" || !m.data || !m.data.battle) return;
+  if (m.mode === "raid") { await applyRaidBattleRound(admin, m); return; }
+  // Фаза 25 — бой за точку ресурсов: атакующий марш остаётся mode:"gather"
+  // на всём протяжении (не переименовывается в "attack"), state:"siege"
+  // отличает его от обычного "дошёл до точки — начал собирать".
+  if (m.mode === "gather") { await applyNodeBattleRound(admin, m); return; }
+  await applyPvpBattleRound(admin, m);
+}
 
+async function applyPvpBattleRound(admin, m) {
   const { data: attRow, error: aErr } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
   if (aErr) throw aErr;
   if (!attRow) { await admin.from("marches").delete().eq("id", m.id); return; } // хозяина нет — некому возвращать
@@ -2004,12 +2262,70 @@ async function applyBattleRound(admin, ev) {
   // то, что уцелело к моменту нажатия кнопки; защитник формально победитель
   // (штурм не удался), но без трофеев — как и при обычном поражении
   // атакующего (loot в finalizePvpBattle полагается только winner:"att").
-  if (state.retreatRequested) {
+  if (state.retreatRequested && !state.concluded) {
+    // Фаза 24 — извещение о начале отступления, тем же приёмом, что и
+    // "начинается развёртывание" в applyMarchArrive: обеим сторонам сразу,
+    // ДО прощального залпа — "неудача уже решена, но поле боя ещё не
+    // покинуто" (ровно то, что и происходит следующие 15с, см. заголовок
+    // progressOrFinalizePvpBattle насчёт лишнего цикла).
+    const { error: retreatMailErr } = await admin.from("mail").insert([
+      { world_id: m.world_id, player_id: attRow.id, kind: "siege_event",
+        data: { phase: "retreat", role: "attacker", mode: "attack", opponent_id: defRow.id, opponent_nick: defRow.nick } },
+      { world_id: m.world_id, player_id: defRow.id, kind: "siege_event",
+        data: { phase: "retreat", role: "defender", mode: "attack", opponent_id: attRow.id, opponent_nick: attRow.nick } },
+    ]);
+    if (retreatMailErr) throw retreatMailErr;
+    // Фаза 23 — прощальный залп (см. её заголовок), потом бой завершается,
+    // но НЕ мгновенно: как и естественный конец (Фаза 22), даёт клиенту
+    // один лишний цикл в state:"siege", чтобы честно доиграть полоску и
+    // показать "Отступление" — см. снятый ниже бонус !state.retreated в
+    // progressOrFinalizePvpBattle (раньше отступление финализировалось
+    // мгновенно, автор попросил тоже дать ему 15с "на побег").
+    applyRetreatVolley(state, attP, defP);
     state.concluded = true; state.winner = "def"; state.retreated = true;
-  } else {
+  } else if (!state.concluded) {
+    // !state.concluded — Фаза 22: если бой уже завершился ПРОШЛЫМ вызовом
+    // (state.pendingFinalize=true, см. progressOrFinalizePvpBattle) и этот
+    // вызов — тот самый "лишний" цикл ради доигрывания полоски, новых
+    // раундов считать не нужно (и нельзя — при исходе "rout" обе стороны
+    // всё ещё живы, повторный запуск while-цикла продолжил бы бой дальше
+    // точки отступления, что неверно).
     runPvpBattleRounds(state, attP, defP, defWallLv, defGarrisonLv, battleRoundsPerTick(state.ticksBudget));
   }
   await progressOrFinalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, nowSec);
+}
+
+// Фаза 21 — зеркало applyPvpBattleRound, для рейдов на лагерь варваров:
+// лагерь — не игрок, у него нет строки players/RLS, поэтому здесь нет
+// второго db-fetch и "живых" бонусов защитника — BANDIT_B/banditArmy(campLv)
+// уже зафиксированы в state на завязке (initRaidBattle), как и раньше.
+async function applyRaidBattleRound(admin, m) {
+  const { data: attRow, error: aErr } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
+  if (aErr) throw aErr;
+  if (!attRow) { await admin.from("marches").delete().eq("id", m.id); return; }
+
+  const attP = attRow.state;
+  attP.race = attP.race || attRow.race;
+  const state = m.data.battle;
+  const nowSec = Date.now() / 1000;
+  // Отступление кнопкой — тот же приём, что и у PvP-версии выше (см. её
+  // комментарий и applyRetreatVolley/applyRaidRetreatVolley): один
+  // прощальный залп лагеря вслед, потом "band" формально победитель (рейд
+  // не удался, без трофеев), финал — не мгновенно, тем же лишним циклом.
+  if (state.retreatRequested && !state.concluded) {
+    // Фаза 24 — то же извещение, что и у PvP (см. applyPvpBattleRound).
+    const { error: retreatMailErr } = await admin.from("mail").insert({
+      world_id: m.world_id, player_id: attRow.id, kind: "siege_event",
+      data: { phase: "retreat", role: "attacker", mode: "raid", camp_lv: state.campLv },
+    });
+    if (retreatMailErr) throw retreatMailErr;
+    applyRaidRetreatVolley(state, attP);
+    state.concluded = true; state.winner = "band"; state.retreated = true;
+  } else if (!state.concluded) {
+    // !state.concluded — Фаза 22, см. тот же комментарий в applyPvpBattleRound.
+    runRaidBattleRounds(state, attP, battleRoundsPerTick(state.ticksBudget));
+  }
+  await progressOrFinalizeRaidBattle(admin, m, attRow, attP, state, nowSec);
 }
 
 // Зеркало EV.home (index.html:4947) — выжившие возвращаются в домашний
@@ -2111,6 +2427,196 @@ async function applyGathered(admin, ev) {
   }
 }
 
+// Фаза 25 — завязка боя за точку ресурсов (см. комментарий в
+// applyMarchArrive выше). "occ" — марш, УЖЕ стоящий на точке (state:
+// "gather"), не игрок как таковой — домашний гарнизон занявшего точку
+// вообще не участвует, дерётся только то, что физически там стоит.
+async function applyNodeContestArrive(admin, m, occ) {
+  const { data: attRow, error: aErr } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
+  if (aErr) throw aErr;
+  if (!attRow) { await admin.from("marches").delete().eq("id", m.id); return; }
+  const { data: occRow, error: oErr } = await admin.from("players").select("*").eq("id", occ.player_id).maybeSingle();
+  if (oErr) throw oErr;
+  // Хозяин точки испарился (строки players не удаляются никогда — на
+  // практике сюда дойти нельзя, честная защита от null вместо падения) —
+  // начинаем сбор как обычно, как будто точка свободна.
+  if (!occRow) { await applyGatherStart(admin, m); return; }
+
+  const attP = attRow.state, occP = occRow.state;
+  attP.race = attP.race || attRow.race;
+  occP.race = occP.race || occRow.race;
+  const attHasGen = !!(m.data && m.data.has_gen);
+  const occHasGen = !!(occ.data && occ.data.has_gen);
+
+  // Фаза 24 — то же извещение "начинается развёртывание", что и у PvP/
+  // рейда (см. их комментарии в applyMarchArrive/applyRaidArrive).
+  const { error: startMailErr } = await admin.from("mail").insert([
+    { world_id: m.world_id, player_id: attRow.id, kind: "siege_event",
+      data: { phase: "start", role: "attacker", mode: "node", opponent_id: occRow.id, opponent_nick: occRow.nick } },
+    { world_id: m.world_id, player_id: occRow.id, kind: "siege_event",
+      data: { phase: "start", role: "defender", mode: "node", opponent_id: attRow.id, opponent_nick: attRow.nick } },
+  ]);
+  if (startMailErr) throw startMailErr;
+
+  // Фаза 26 — занявший точку сам НЕ переходит в state:"siege" (его отсчёт
+  // сбора не прерывается, см. finalizeNodeBattle), поэтому без этой метки
+  // он был бы вообще не в курсе боя за собственную точку, кроме как из
+  // почты. contestedBy — id марша-атакующего, чтобы клиент оккупанта знал,
+  // чей data.battle подтягивать для своей же полоски (см. mpActiveSiegeIds/
+  // mpBattleFastPollTick в index.html) — очищается в finalizeNodeBattle.
+  const { error: occMarkErr } = await admin.from("marches")
+    .update({ data: { ...occ.data, contestedBy: m.id } }).eq("id", occ.id);
+  if (occMarkErr) throw occMarkErr;
+
+  // wallLv/garrisonLv=0 — в чистом поле укреплений нет ни у кого, тот же
+  // движок, что и у PvP-штурма (initPvpBattle/runPvpBattleRounds), просто
+  // без городских бонусов защитника. occMarchId/occPlayerId — чем
+  // applyNodeBattleRound/finalizeNodeBattle опознают чужой марш при
+  // продолжении (в отличие от PvP, тут "защитник" — не m.data.defender_id,
+  // а конкретный марш occ, домашняя строка игрока для боя не более важна,
+  // чем у атакующего).
+  const state = initPvpBattle(m.units, attP, occ.units, occP, 0, 0, m.id, attHasGen);
+  state.occMarchId = occ.id; state.occPlayerId = occRow.id; state.defHasGen = occHasGen;
+  runPvpBattleRounds(state, attP, occP, 0, 0, battleRoundsPerTick(state.ticksBudget));
+  await progressOrFinalizeNodeBattle(admin, m, attRow, occRow, attP, occP, state, Date.now() / 1000);
+}
+
+// Продолжение боя за точку — зеркало applyPvpBattleRound, читает occRow по
+// state.occPlayerId (не по m.data.defender_id, которого тут нет вовсе).
+async function applyNodeBattleRound(admin, m) {
+  const { data: attRow, error: aErr } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
+  if (aErr) throw aErr;
+  if (!attRow) { await admin.from("marches").delete().eq("id", m.id); return; }
+  const state = m.data.battle;
+  const { data: occRow, error: oErr } = await admin.from("players").select("*").eq("id", state.occPlayerId).maybeSingle();
+  if (oErr) throw oErr;
+  if (!occRow) {
+    await sendSurvivorsHome(admin, m, Date.now() / 1000, unitsSub(state.attStartUnits, state.attLossTotal), {});
+    return;
+  }
+
+  const attP = attRow.state, occP = occRow.state;
+  attP.race = attP.race || attRow.race;
+  occP.race = occP.race || occRow.race;
+  const nowSec = Date.now() / 1000;
+  if (state.retreatRequested && !state.concluded) {
+    const { error: retreatMailErr } = await admin.from("mail").insert([
+      { world_id: m.world_id, player_id: attRow.id, kind: "siege_event",
+        data: { phase: "retreat", role: "attacker", mode: "node", opponent_id: occRow.id, opponent_nick: occRow.nick } },
+      { world_id: m.world_id, player_id: occRow.id, kind: "siege_event",
+        data: { phase: "retreat", role: "defender", mode: "node", opponent_id: attRow.id, opponent_nick: attRow.nick } },
+    ]);
+    if (retreatMailErr) throw retreatMailErr;
+    applyRetreatVolley(state, attP, occP);
+    state.concluded = true; state.winner = "def"; state.retreated = true;
+  } else if (!state.concluded) {
+    runPvpBattleRounds(state, attP, occP, 0, 0, battleRoundsPerTick(state.ticksBudget));
+  }
+  await progressOrFinalizeNodeBattle(admin, m, attRow, occRow, attP, occP, state, nowSec);
+}
+
+// Зеркало progressOrFinalizePvpBattle — тот же лишний цикл ради доигрывания
+// полоски (Фаза 22/23), см. её подробный комментарий. Марш-оккупант (occ)
+// перечитывается заново только на настоящем финале — на промежуточных
+// раундах его состав живёт только внутри state.defU, сама строка marches
+// оккупанта не трогается вплоть до исхода.
+async function progressOrFinalizeNodeBattle(admin, m, attRow, occRow, attP, occP, state, nowSec) {
+  if (state.concluded) {
+    if (!state.pendingFinalize) {
+      state.pendingFinalize = true;
+      await persistBattleSiege(admin, m, state, nowSec);
+      return;
+    }
+    const { data: occMarch, error: omErr } = await admin.from("marches").select("*").eq("id", state.occMarchId).maybeSingle();
+    if (omErr) throw omErr;
+    if (!occMarch) {
+      // Марш-оккупант пропал между боем и финалом (честная защита —
+      // recall блокирует state:"siege" тем же способом, что и у PvP, но
+      // на практике лучше не падать на null). Атакующий получает то, что
+      // уцелело, точка остаётся ничьей.
+      await sendSurvivorsHome(admin, m, nowSec, unitsSub(state.attStartUnits, state.attLossTotal), {});
+      return;
+    }
+    await finalizeNodeBattle(admin, m, attRow, occRow, occMarch, attP, occP, state, nowSec);
+    return;
+  }
+  await persistBattleSiege(admin, m, state, nowSec);
+}
+
+// Честный конец боя за точку. RoK-механика по просьбе автора: бой решает
+// ТОЛЬКО право сбора — hospital-режим ОБЕИМ сторонам (не siege-attack, как
+// у штурма города — там гибнет насмерть только атакующий), без грабежа
+// склада (тут нечего грабить, точка — не чей-то город). Победитель
+// остаётся собирать (его марш продолжает уже идущий отсчёт, если он и был
+// оккупантом, либо стартует новый — если атакующий отбил точку), проигравший
+// уходит домой с тем, что уцелело.
+async function finalizeNodeBattle(admin, m, attRow, occRow, occMarch, attP, occP, state, nowSec) {
+  if (!attP.wounded) attP.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
+  TKEYS.forEach((t) => { if (!attP.wounded[t]) attP.wounded[t] = {}; });
+  if (!occP.wounded) occP.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
+  TKEYS.forEach((t) => { if (!occP.wounded[t]) occP.wounded[t] = {}; });
+
+  const attHs = hospitalSplit(attP, state.attLossTotal, "hospital");
+  attP.troops = unitsAdd(attP.troops, attHs.slightUnits);
+  attP.wounded = unitsAdd(attP.wounded, attHs.hurtUnits);
+  const occHs = hospitalSplit(occP, state.defLossTotal, "hospital");
+  occP.troops = unitsAdd(occP.troops, occHs.slightUnits);
+  occP.wounded = unitsAdd(occP.wounded, occHs.hurtUnits);
+
+  const attSurvivors = unitsSub(state.attStartUnits, state.attLossTotal);
+  const occSurvivors = unitsSub(state.defStartUnits, state.defLossTotal);
+
+  if (state.attHasGen && unitsTotal(attSurvivors) <= 0 && attP.gen && attP.gen.away === m.id) attP.gen.away = null;
+  if (state.defHasGen && unitsTotal(occSurvivors) <= 0 && occP.gen && occP.gen.away === occMarch.id) occP.gen.away = null;
+
+  const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
+  if (updA) throw updA;
+  const { error: updO } = await admin.from("players").update({ state: occP, updated_at: new Date().toISOString() }).eq("id", occRow.id);
+  if (updO) throw updO;
+
+  const summary = {
+    winner: state.winner, sent: state.attStartUnits, attLoss: state.attLossTotal, defLoss: state.defLossTotal,
+    attHpLeft: state.attHpLeft, defHpLeft: state.defHpLeft,
+    rounds: state.round, weather: state.weather.id, weatherName: state.weather.name,
+    retreated: !!state.retreated, res: (m.data && m.data.res) || null,
+  };
+  const mailRows = [
+    { world_id: m.world_id, player_id: attRow.id, kind: "node_battle", data: { role: "attacker", opponent_id: occRow.id, opponent_nick: occRow.nick, ...summary } },
+    { world_id: m.world_id, player_id: occRow.id, kind: "node_battle", data: { role: "defender", opponent_id: attRow.id, opponent_nick: attRow.nick, ...summary } },
+  ];
+  const { error: mailErr } = await admin.from("mail").insert(mailRows);
+  if (mailErr) throw mailErr;
+
+  // Марш-оккупант в любом исходе теряет только то, что реально полегло в
+  // этом бою (occSurvivors) — его units обновляем в базе всегда, отдельно
+  // от того, кто победил. contestedBy (Фаза 26) снимаем здесь же — бой
+  // решён, метка выполнила свою роль (если winner==="att", строка вообще
+  // сейчас уедет домой через sendSurvivorsHome ниже и там же честно
+  // подчистится своя data, но contestedBy лучше снять уже тут, а не
+  // полагаться на побочный эффект другого вызова).
+  const { contestedBy, ...occCleanData } = occMarch.data || {};
+  const { error: updOccM } = await admin.from("marches").update({ units: occSurvivors, data: occCleanData }).eq("id", occMarch.id);
+  if (updOccM) throw updOccM;
+
+  if (state.winner === "att") {
+    // Атакующий отбил точку — оккупант уходит домой с уцелевшими, атакующий
+    // сам занимает место и стартует сбор (тот же applyGatherStart, что и у
+    // обычного прихода на свободную точку). data.battle — уже отыгранное
+    // состояние боя — вычищаем явно, иначе повисло бы мёртвым грузом в
+    // строке до следующего sendSurvivorsHome (та чистит battle сама, но
+    // applyGatherStart/applyGathered — нет, не их забота).
+    await sendSurvivorsHome(admin, occMarch, nowSec, occSurvivors, {});
+    const { battle, ...cleanData } = m.data || {};
+    const { error: updAttM } = await admin.from("marches").update({ units: attSurvivors, data: cleanData }).eq("id", m.id);
+    if (updAttM) throw updAttM;
+    await applyGatherStart(admin, { ...m, data: cleanData });
+  } else {
+    // Оккупант устоял — продолжает УЖЕ ИДУЩИЙ отсчёт сбора как ни в чём не
+    // бывало (t0/t1/state не трогаем, только что обновлённый units уже
+    // учитывает потери). Атакующий уходит домой с тем, что уцелело от штурма.
+    await sendSurvivorsHome(admin, m, nowSec, attSurvivors, {});
+  }
+}
 
 // Фаза 8, кусочек 2 — отряд дошёл до лагеря варваров: бой разрешается
 // сразу (resolveBanditRaid, однообменный — см. заголовок функции выше),
@@ -2140,61 +2646,99 @@ async function applyRaidArrive(admin, m) {
   if (cErr) throw cErr;
 
   const nowSec = Date.now() / 1000;
-  let survivors = m.units, carry = {};
   const attHasGen = !!(m.data && m.data.has_gen);
   // Лагерь уже разгромлен кем-то другим, пока отряд шёл — бой не
   // случается, отряд просто разворачивается пустым (как gather на
   // истощённую точку, как attack на пропавшего защитника).
-  if (cell && (cell.t === "camp" || cell.t === "fort")) {
-    const campLv = (m.data && m.data.camp_lv) || 1;
-    const result = resolveBanditRaid(m.units, attP, campLv, m.id, attHasGen);
-    const hs = hospitalSplit(attP, result.attLoss, "hospital");
-    attP.troops = unitsAdd(attP.troops, hs.slightUnits);
-    attP.wounded = unitsAdd(attP.wounded, hs.hurtUnits);
-    survivors = unitsSub(m.units, result.attLoss);
-
-    let tomeDrops = {};
-    if (result.winner === "att") {
-      carry = banditLoot(campLv);
-      addXp(attP, BANDIT_XP[Math.max(1, Math.min(25, campLv)) - 1]); // Фаза 10, кусочек 1 (25 = CFG.MAX_LEVEL, см. BANDIT_TROOPS выше)
-      // index.html:5074-5077 — книги опыта СВЕРХ обычного addXp выше.
-      tomeDrops = bookDrop(campLv * 100);
-      if (!attP.tomes) attP.tomes = {};
-      for (const v in tomeDrops) attP.tomes[v] = (attP.tomes[v] || 0) + tomeDrops[v];
-      await admin.from("map_cells").delete().eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY);
-      // Фаза 8, кусочек 3 — зеркало mapDelete+schedule(CFG.RESPAWN_CAMP,
-      // "respawn",...) из index.html (arriveMarch, camp/fort-ветка,
-      // index.html:5151-5152). Раньше (кусочек 2) разгромленный лагерь
-      // просто исчезал навсегда — честный пробел, закрытый здесь.
-      await admin.from("events").insert({
-        world_id: m.world_id, fire_at: new Date((nowSec + CAMP_RESPAWN_SEC) * 1000).toISOString(),
-        type: "camp_respawn", data: { x: cellX, y: cellY },
-      });
-    }
-
-    const { error: mailErr } = await admin.from("mail").insert({
-      world_id: m.world_id, player_id: attRow.id, kind: "raid",
-      data: { camp_lv: campLv, win: result.winner === "att", loot: carry, tomes: tomeDrops, attLoss: result.attLoss, dead: hs.dead, hurt: hs.hurt, slight: hs.slight, rounds: result.rounds },
-    });
-    if (mailErr) throw mailErr;
+  if (!(cell && (cell.t === "camp" || cell.t === "fort"))) {
+    await sendSurvivorsHome(admin, m, nowSec, m.units, {});
+    return;
   }
+
+  const campLv = (m.data && m.data.camp_lv) || 1;
+  // Фаза 24 — то же извещение "начинается развёртывание", что и у PvP (см.
+  // её комментарий в applyMarchArrive) — только одной стороне: у лагеря
+  // варваров нет игрока, некому слать вторую копию.
+  const { error: startMailErr } = await admin.from("mail").insert({
+    world_id: m.world_id, player_id: attRow.id, kind: "siege_event",
+    data: { phase: "start", role: "attacker", mode: "raid", camp_lv: campLv },
+  });
+  if (startMailErr) throw startMailErr;
+  // Фаза 21 — та же завязка "первый кусок раундов сразу, дальше по
+  // необходимости" (см. заголовок initRaidBattle/runRaidBattleRounds выше и
+  // applyMarchArrive насчёт PvP-версии) — мелкий лагерь часто укладывается
+  // в этот один вызов целиком, крупный форт растягивается через
+  // state:'siege' + events (type:'battle_round'), тем же кодом, что и PvP.
+  const state = initRaidBattle(m.units, attP, campLv, m.id, attHasGen);
+  runRaidBattleRounds(state, attP, battleRoundsPerTick(state.ticksBudget));
+  await progressOrFinalizeRaidBattle(admin, m, attRow, attP, state, nowSec);
+}
+
+// Фаза 21 — зеркало progressOrFinalizePvpBattle выше, для рейдов. Фаза 22:
+// та же отложенная финализация на один лишний цикл (state.pendingFinalize),
+// чтобы клиент успел доиграть последнюю доводку полоски — см. подробный
+// комментарий в progressOrFinalizePvpBattle.
+async function progressOrFinalizeRaidBattle(admin, m, attRow, attP, state, nowSec) {
+  if (state.concluded) {
+    // Фаза 23 — отступление тоже ждёт лишний цикл, см. progressOrFinalizePvpBattle.
+    if (!state.pendingFinalize) {
+      state.pendingFinalize = true;
+      await persistBattleSiege(admin, m, state, nowSec);
+      return;
+    }
+    await finalizeRaidBattle(admin, m, attRow, attP, state, nowSec);
+    return;
+  }
+  await persistBattleSiege(admin, m, state, nowSec);
+}
+
+// Честный конец рейда (state.concluded===true) — дословно тот же хвост, что
+// раньше шёл сразу после resolveBanditRaid() внутри applyRaidArrive, просто
+// читает из state вместо result. cellX/cellY/campLv берутся из m.data —
+// они не меняются за время боя (тот же снимок, что и на отправке, см.
+// mp-raid), поэтому их не нужно нести в самом state.
+async function finalizeRaidBattle(admin, m, attRow, attP, state, nowSec) {
+  const hs = hospitalSplit(attP, state.attLossTotal, "hospital");
+  attP.troops = unitsAdd(attP.troops, hs.slightUnits);
+  attP.wounded = unitsAdd(attP.wounded, hs.hurtUnits);
+  const survivors = unitsSub(state.attStartUnits, state.attLossTotal);
+
+  const cellX = m.data && m.data.cell_x, cellY = m.data && m.data.cell_y;
+  const campLv = (m.data && m.data.camp_lv) || 1;
+  let carry = {}, tomeDrops = {};
+  if (state.winner === "att") {
+    carry = banditLoot(campLv);
+    addXp(attP, BANDIT_XP[Math.max(1, Math.min(25, campLv)) - 1]); // Фаза 10, кусочек 1 (25 = CFG.MAX_LEVEL, см. BANDIT_TROOPS выше)
+    // index.html:5074-5077 — книги опыта СВЕРХ обычного addXp выше.
+    tomeDrops = bookDrop(campLv * 100);
+    if (!attP.tomes) attP.tomes = {};
+    for (const v in tomeDrops) attP.tomes[v] = (attP.tomes[v] || 0) + tomeDrops[v];
+    await admin.from("map_cells").delete().eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY);
+    // Фаза 8, кусочек 3 — зеркало mapDelete+schedule(CFG.RESPAWN_CAMP,
+    // "respawn",...) из index.html (arriveMarch, camp/fort-ветка,
+    // index.html:5151-5152).
+    await admin.from("events").insert({
+      world_id: m.world_id, fire_at: new Date((nowSec + CAMP_RESPAWN_SEC) * 1000).toISOString(),
+      type: "camp_respawn", data: { x: cellX, y: cellY },
+    });
+  }
+
+  const { error: mailErr } = await admin.from("mail").insert({
+    world_id: m.world_id, player_id: attRow.id, kind: "raid",
+    data: {
+      camp_lv: campLv, win: state.winner === "att", loot: carry, tomes: tomeDrops,
+      attLoss: state.attLossTotal, dead: hs.dead, hurt: hs.hurt, slight: hs.slight, rounds: state.round,
+      retreated: !!state.retreated, // Фаза 21 — честное отступление кнопкой, не обычное поражение (см. mp-recall)
+    },
+  });
+  if (mailErr) throw mailErr;
 
   // index.html:4950-4957 — та же логика, что и в applyMarchArrive выше
   // (см. её заголовок): если весь отряд полёг, домашнего пути и
   // applyMarchHome не будет, освобождаем away прямо здесь.
-  if (attHasGen && unitsTotal(survivors) <= 0 && attP.gen && attP.gen.away === m.id) attP.gen.away = null;
+  if (state.attHasGen && unitsTotal(survivors) <= 0 && attP.gen && attP.gen.away === m.id) attP.gen.away = null;
   const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
   if (updA) throw updA;
 
-  if (unitsTotal(survivors) <= 0) { await admin.from("marches").delete().eq("id", m.id); return; }
-  const dist = (m.data && m.data.dist) || 0, spd = (m.data && m.data.spd) || 1;
-  const travelBack = Math.max(15, (dist / spd) * 60);
-  const { error: updM } = await admin.from("marches")
-    .update({ state: "back", t0: nowSec, t1: nowSec + travelBack, units: survivors, data: { ...m.data, carry } }).eq("id", m.id);
-  if (updM) throw updM;
-  const { error: evErr } = await admin.from("events").insert({
-    world_id: m.world_id, fire_at: new Date((nowSec + travelBack) * 1000).toISOString(),
-    type: "march_home", data: { march_id: m.id },
-  });
-  if (evErr) throw evErr;
+  await sendSurvivorsHome(admin, m, nowSec, survivors, carry);
 }

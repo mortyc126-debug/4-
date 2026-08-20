@@ -8,6 +8,23 @@
    совпадало с тем, что вычисляет сама партия.
    ========================================================================= */
 
+// Фаза 27 — тот же "живой" бой, что уже рисует index.html (mpBattleInterp/
+// mpHpBarHtml), теперь ещё и в 3D — надземная метка над маршем в
+// state:"siege" (updateBattleLabels в main.ts), видна ЛЮБОМУ игроку, не
+// только сторонам боя (marches_select_all уже открыт всем, см.
+// mpRefreshWorldBattles в index.html). Поля — прямая копия того, что
+// сервер кладёт в marches.data.battle (см. runPvpBattleRounds/
+// runRaidBattleRounds в mp-tick): не пересчитываем ничего заново, просто
+// протаскиваем нужные для интерполяции/подписи числа через LiveMarch.
+export interface LiveBattleInfo {
+  round: number;
+  revealFromRound: number;
+  retreating: boolean;
+  attHpLeft: number; attStartHp: number; revealFromAttHp: number;
+  defHpLeft: number; defStartHp: number; revealFromDefHp: number;
+  revealStart: number; revealAt: number;
+}
+
 export interface LiveMarchPos {
   x: number;
   y: number;
@@ -23,6 +40,7 @@ export interface LiveMarchPos {
   tx: number;
   ty: number;
   t1: number;
+  battle: LiveBattleInfo | null;
 }
 
 interface LiveMarch {
@@ -37,6 +55,7 @@ interface LiveMarch {
   path?: { x: number; y: number }[];
   pathCum?: number[];
   pathLen?: number;
+  data?: { battle?: any } | null;
 }
 
 interface LiveWorldMarches {
@@ -98,6 +117,17 @@ export function loadLiveMarches(): LiveMarchPos[] | null {
         ? { x: m.tx, y: m.ty }
         : pathPointAt(m, Math.max(0, Math.min(1, (W.t - m.t0) / Math.max(1, m.t1 - m.t0))));
     const owner = W.players.find((q) => q.id === m.pid);
+    const b = m.state === "siege" && m.data && m.data.battle ? m.data.battle : null;
+    const battle: LiveBattleInfo | null = b
+      ? {
+          round: b.round ?? 0,
+          revealFromRound: b.revealFromRound ?? 0,
+          retreating: !!(b.retreatRequested || b.retreated),
+          attHpLeft: b.attHpLeft ?? 0, attStartHp: b.attStartHp ?? 1, revealFromAttHp: b.revealFromAttHp ?? b.attHpLeft ?? 0,
+          defHpLeft: b.defHpLeft ?? 0, defStartHp: b.defStartHp ?? 1, revealFromDefHp: b.revealFromDefHp ?? b.defHpLeft ?? 0,
+          revealStart: b.revealStart ?? 0, revealAt: b.revealAt ?? 0,
+        }
+      : null;
     out.push({
       x: p.x,
       y: p.y,
@@ -109,6 +139,7 @@ export function loadLiveMarches(): LiveMarchPos[] | null {
       tx: m.tx,
       ty: m.ty,
       t1: m.t1,
+      battle,
     });
   }
   return out;
