@@ -11004,7 +11004,7 @@ async function claimChronicle(){
    восполняются со временem — серверное производство ещё не перенесено,
    стартовых 100000 хватает на несколько заказов набора для проверки.
    ========================================================================= */
-let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[], siegeMail:[] };
+let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[], siegeMail:[], nodeBattleMail:[] };
 let mpPollTimer = null;
 // ===== Фаза 20, кусочек 3 — местный кэш последнего known-состояния общего
 // мира. Автор: "медленно грузит мой замок и ресурсные точки, может их
@@ -11027,6 +11027,7 @@ function mpSaveCache(){
       player:mpState.player, neighbors:mpState.neighbors, nodes:mpState.nodes,
       camps:mpState.camps, marches:mpState.marches, incoming:mpState.incoming,
       mail:mpState.mail, scoutMail:mpState.scoutMail, raidMail:mpState.raidMail, siegeMail:mpState.siegeMail,
+      nodeBattleMail:mpState.nodeBattleMail,
     }));
   }catch(e){ /* приватный режим/переполнение — кэш не обязателен, молча живём без него */ }
 }
@@ -11040,6 +11041,7 @@ function mpLoadCache(){
     mpState.neighbors=c.neighbors||[]; mpState.nodes=c.nodes||[]; mpState.camps=c.camps||[];
     mpState.marches=c.marches||[]; mpState.incoming=c.incoming||[];
     mpState.mail=c.mail||[]; mpState.scoutMail=c.scoutMail||[]; mpState.raidMail=c.raidMail||[]; mpState.siegeMail=c.siegeMail||[];
+    mpState.nodeBattleMail=c.nodeBattleMail||[];
     return true;
   }catch(e){ return false }
 }
@@ -11208,7 +11210,7 @@ function mpStopPolling(){
   // каждую секунду вхолостую, пока игрок вообще не в мультиплеере.
   if(mpBattleFastTimer){ clearInterval(mpBattleFastTimer); mpBattleFastTimer=null; }
 }
-async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); mpSaveCache(); }
+async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); await mpRefreshNodeBattleMail(); mpSaveCache(); }
 // Баг-фикс — автор пожаловался: очередь стройки/тренировки/боя показывается
 // сразу, но САМ результат (новый уровень здания, исход боя) применял только
 // общий тикер (mp-tick), а тот раньше крутился раз в минуту — до минуты
@@ -11279,7 +11281,7 @@ async function mpOpen(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{});
-    mpState.joined=true; mpState.player=j.player; if(!mpWorld3DFocused) mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); mpSaveCache();
+    mpState.joined=true; mpState.player=j.player; if(!mpWorld3DFocused) mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); await mpRefreshNodeBattleMail(); mpSaveCache();
   }catch(e){
     // Фаза 20, кусочек 3 — если состояние уже показано из кэша, а сеть
     // моргнула, НЕ сбрасываем joined: игрок остаётся при своём городе (пусть
@@ -11333,7 +11335,7 @@ async function mpDoJoin(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{race:mpState.race,nick:mpState.nick||""});
-    mpState.joined=true; mpState.player=j.player; mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail();
+    mpState.joined=true; mpState.player=j.player; mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); await mpRefreshNodeBattleMail();
   }catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -11608,6 +11610,15 @@ async function mpRefreshSiegeMail(){
     .eq("kind","siege_event").order("created_at",{ascending:false}).limit(10);
   if(!error && data){ mpState.siegeMail=data; mpRerender(); }
 }
+// Фаза 25 — исход боя за точку ресурсов (kind:"node_battle",
+// см. finalizeNodeBattle в mp-tick) — своя рубрика, не смешана с "Бой"
+// (там только штурмы городов) и "Лагеря" (там только разбойники).
+async function mpRefreshNodeBattleMail(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
+    .eq("kind","node_battle").order("created_at",{ascending:false}).limit(10);
+  if(!error && data){ mpState.nodeBattleMail=data; mpRerender(); }
+}
 // Входящие атаки — раньше защитник вообще не мог узнать, что на него идёт
 // поход, пока бой не разрешится сам (см. историю коммитов). data->>defender_id
 // — фильтр по JSONB-полю через PostgREST (->> достаёт значение как текст),
@@ -11781,8 +11792,18 @@ function foMultiplayer(embedded, only){
       const going=m.state==="go", gathering=m.state==="gather", sieging=m.state==="siege";
       const isGather=m.mode==="gather", isRaid=m.mode==="raid";
       const opp=mpState.neighbors.find(n=>n.id===(m.data&&m.data.defender_id));
+      // Фаза 25 — бой за точку: марш остаётся mode:"gather", у него нет
+      // data.defender_id (тот только у PvP-штурма) — соперника ищем по
+      // b.occPlayerId, который кладёт applyNodeContestArrive (mp-tick).
+      // Не находится в mpState.neighbors (оккупант может быть не соседом)
+      // — тогда просто координаты, тот же честный запасной вариант, что и
+      // у opp выше.
+      const nodeOpp = isGather&&sieging&&m.data&&m.data.battle
+        ? mpState.neighbors.find(n=>n.id===m.data.battle.occPlayerId) : null;
       const title = sieging
-        ? "В бою у "+(opp?opp.nick||"Безымянный лорд":m.tx+", "+m.ty)
+        ? (isGather
+           ? "Бой за точку "+m.tx+", "+m.ty+(nodeOpp?" — "+(nodeOpp.nick||"соперник"):"")
+           : "В бою у "+(opp?opp.nick||"Безымянный лорд":m.tx+", "+m.ty))
         : isGather
         ? (going?"Идёт к точке сбора "+m.tx+", "+m.ty:gathering?"Собирает у "+m.tx+", "+m.ty:"Везёт добычу домой")
         : isRaid
@@ -11831,19 +11852,27 @@ function foMultiplayer(embedded, only){
   if(show("mail") && mpState.siegeMail.length){
     h+=rubric("Гонцы","движение войск");
     mpState.siegeMail.forEach(m=>{
-      const d=m.data, isRaid=d.mode==="raid", isDef=d.role==="defender", isRetreat=d.phase==="retreat";
+      const d=m.data, isRaid=d.mode==="raid", isNode=d.mode==="node", isDef=d.role==="defender", isRetreat=d.phase==="retreat";
       const who=d.opponent_nick||"Безымянный лорд";
-      const target=isRaid?("лагеря варваров (ур. "+(d.camp_lv||1)+")"):("города «"+who+"»");
+      const target=isRaid?("лагеря варваров (ур. "+(d.camp_lv||1)+")"):isNode?"точки сбора":("города «"+who+"»");
       let cls, title, note;
       if(!isRetreat){
         // phase:"start" — армия дошла до цели, бой ещё не начался по-настоящему.
         if(isRaid){ cls="calm"; title="Отряд у цели"; note="Наш отряд подошёл к "+target+" — начинается развёртывание перед боем."; }
+        else if(isNode){
+          if(isDef){ cls="war"; title="Нашу точку сбора оспаривают"; note="Войска «"+who+"» подошли к нашей точке сбора — начинается развёртывание перед боем за право сбора."; }
+          else { cls="calm"; title="Точка занята — завязывается бой"; note="Точка сбора уже занята войсками «"+who+"» — начинается развёртывание перед боем за право сбора."; }
+        }
         else if(isDef){ cls="war"; title="Враг у ворот"; note="Войска «"+who+"» подошли к нашему городу — начинается развёртывание перед боем."; }
         else { cls="calm"; title="Армия настигла цель"; note="Наши войска подошли к "+target+" — начинается развёртывание перед боем."; }
       } else {
         // phase:"retreat" — отступление начато, исход (для PvP — победа
         // защитника) придёт отдельным письмом в рубрике "Бой" чуть позже.
         if(isRaid){ cls="war"; title="Отряд отступает"; note="Наш отряд начал отход от "+target+" — на отступление нужно время."; }
+        else if(isNode){
+          if(isDef){ cls="hot"; title="Соперник отступает"; note="Войска «"+who+"» начали отход от нашей точки сбора — точка остаётся за нами."; }
+          else { cls="war"; title="Наш отряд отступает"; note="Наш отряд начал отход от "+target+" — на отступление нужно время."; }
+        }
         else if(isDef){ cls="hot"; title="Враг отступает"; note="Войска «"+who+"» начали отход от наших стен — сражение окончится в нашу пользу."; }
         else { cls="war"; title="Наша армия отступает"; note="Войска у "+target+" начали отход — на отступление нужно время."; }
       }
@@ -11947,6 +11976,31 @@ function foMultiplayer(embedded, only){
         if(tomesTxt) h+="<div class='note'>Книги опыта: "+tomesTxt+"</div>";
       }
       h+="</div></div></div>";
+    });
+  }
+
+  // Фаза 25 — исход боя за точку ресурсов (mail, kind:"node_battle", см.
+  // finalizeNodeBattle в mp-tick). Своя рубрика — не "Бой" (там только
+  // города) и не "Лагеря" (там только НПС-разбойники), а именно PvP-стычка
+  // с другим правителем, но за право сбора, а не за его город.
+  if(show("mail") && mpState.nodeBattleMail.length){
+    h+=rubric("Точки","бои за право сбора");
+    mpState.nodeBattleMail.forEach(m=>{
+      const d=m.data, mine=d.role==="attacker";
+      const myLoss=mine?d.attLoss:d.defLoss, oppLoss=mine?d.defLoss:d.attLoss;
+      const lostN=u=>{ u=u||{}; return TKEYS.reduce((s,t)=>s+[1,2,3,4,5].reduce((s2,i)=>s2+((u[t]&&u[t][i])||0),0),0); };
+      const won=(mine&&d.winner==="att")||(!mine&&d.winner==="def");
+      const who=d.opponent_nick||"Безымянный лорд";
+      // retreated — ВСЕГДА про атакующего (только он умеет отступать, см.
+      // applyRetreatVolley/mp-recall): у защитника (!mine) это "соперник
+      // сам ушёл", у атакующего (mine) — "мы сами ушли".
+      const title = mine
+        ? (d.retreated ? "Отступили от точки сбора" : won ? "Точка сбора наша" : "Точку сбора не отбили")
+        : (d.retreated ? "Соперник отступил от нашей точки" : won ? "Точку сбора отстояли" : "Точку сбора не удержали");
+      h+="<div class='entry"+(won?" hot":" war")+"'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+title+" — «"+who+"»</div>"+
+         "<div class='note'>Наши потери (лазарет): "+RU(lostN(myLoss))+" · потери соперника: "+RU(lostN(oppLoss))+"</div>"+
+         "</div></div></div>";
     });
   }
 

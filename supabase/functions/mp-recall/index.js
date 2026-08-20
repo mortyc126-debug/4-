@@ -502,7 +502,12 @@ Deno.serve(async (req) => {
     // МОМЕНТУ (ни одного нового раунда после нажатия кнопки), противник
     // формально победитель (штурм/рейд не удался), но без трофеев — как и
     // при обычном поражении атакующего.
-    if ((m.mode === "attack" || m.mode === "raid") && m.state === "siege") {
+    // Фаза 25 — тем же способом отступает и mode:"gather" в state:"siege" —
+    // марш, отправленный собирать, застал точку занятой и завязал бой за
+    // право сбора (см. applyNodeContestArrive в mp-tick). Обычный
+    // "gather"+state:"gather" (уже спокойно собирает, боя нет) сюда не
+    // попадает — ветка ниже, без изменений.
+    if ((m.mode === "attack" || m.mode === "raid" || m.mode === "gather") && m.state === "siege") {
       if (!(m.data && m.data.battle)) return jsonResponse({ err: "Бой уже завершается — подождите" }, 400);
       if (!m.data.battle.retreatRequested) {
         const battle = { ...m.data.battle, retreatRequested: true };

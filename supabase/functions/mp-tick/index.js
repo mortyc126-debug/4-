@@ -1868,7 +1868,24 @@ async function applyMarchArrive(admin, ev) {
   // боевой логики (которая ниже подряд читает defenderId/defRow) — иначе
   // gather-марш прошёл бы через неё как "бой без защитника" и вернулся бы
   // домой пустым, ничего не собрав.
-  if (m.mode === "gather") { await applyGatherStart(admin, m); return; }
+  //
+  // Фаза 25 — бои за точки ресурсов (RoK-механика по просьбе автора): точка
+  // может быть уже занята чужим маршем (state:"gather" в тех же
+  // координатах) — тогда вместо старта сбора завязывается полевой бой
+  // между ДВУМЯ МАРШИРУЮЩИМИ ОТРЯДАМИ (не с домашним гарнизоном занявшего
+  // точку — тот вообще не при делах), тем же движком, что и PvP/рейд
+  // (initPvpBattle/runPvpBattleRounds, см. их заголовки), но wallLv/
+  // garrisonLv=0 (в поле укреплений нет) и hospital-режим ОБЕИМ сторонам
+  // (см. finalizeNodeBattle) — автор явно попросил "потери как при битве в
+  // поле... без смертей", не siege-attack, как у штурма города.
+  if (m.mode === "gather") {
+    const { data: occ, error: occErr } = await admin.from("marches").select("*")
+      .eq("world_id", m.world_id).eq("mode", "gather").eq("state", "gather")
+      .eq("tx", m.tx).eq("ty", m.ty).neq("player_id", m.player_id).limit(1).maybeSingle();
+    if (occErr) throw occErr;
+    if (occ) { await applyNodeContestArrive(admin, m, occ); return; }
+    await applyGatherStart(admin, m); return;
+  }
   // Фаза 8, кусочек 2 — поход на лагерь варваров: бой с готовым уровнем
   // лагеря (m.data.camp_lv, снят на отправке в mp-raid), не с игроком —
   // отдельная функция ниже, та же причина отдельной ветки, что у gather.
@@ -2185,6 +2202,10 @@ async function applyBattleRound(admin, ev) {
   // самоохраны, что и m.state!=="go" в applyMarchArrive.
   if (!m || m.state !== "siege" || !m.data || !m.data.battle) return;
   if (m.mode === "raid") { await applyRaidBattleRound(admin, m); return; }
+  // Фаза 25 — бой за точку ресурсов: атакующий марш остаётся mode:"gather"
+  // на всём протяжении (не переименовывается в "attack"), state:"siege"
+  // отличает его от обычного "дошёл до точки — начал собирать".
+  if (m.mode === "gather") { await applyNodeBattleRound(admin, m); return; }
   await applyPvpBattleRound(admin, m);
 }
 
@@ -2382,6 +2403,181 @@ async function applyGathered(admin, ev) {
   }
 }
 
+// Фаза 25 — завязка боя за точку ресурсов (см. комментарий в
+// applyMarchArrive выше). "occ" — марш, УЖЕ стоящий на точке (state:
+// "gather"), не игрок как таковой — домашний гарнизон занявшего точку
+// вообще не участвует, дерётся только то, что физически там стоит.
+async function applyNodeContestArrive(admin, m, occ) {
+  const { data: attRow, error: aErr } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
+  if (aErr) throw aErr;
+  if (!attRow) { await admin.from("marches").delete().eq("id", m.id); return; }
+  const { data: occRow, error: oErr } = await admin.from("players").select("*").eq("id", occ.player_id).maybeSingle();
+  if (oErr) throw oErr;
+  // Хозяин точки испарился (строки players не удаляются никогда — на
+  // практике сюда дойти нельзя, честная защита от null вместо падения) —
+  // начинаем сбор как обычно, как будто точка свободна.
+  if (!occRow) { await applyGatherStart(admin, m); return; }
+
+  const attP = attRow.state, occP = occRow.state;
+  attP.race = attP.race || attRow.race;
+  occP.race = occP.race || occRow.race;
+  const attHasGen = !!(m.data && m.data.has_gen);
+  const occHasGen = !!(occ.data && occ.data.has_gen);
+
+  // Фаза 24 — то же извещение "начинается развёртывание", что и у PvP/
+  // рейда (см. их комментарии в applyMarchArrive/applyRaidArrive).
+  const { error: startMailErr } = await admin.from("mail").insert([
+    { world_id: m.world_id, player_id: attRow.id, kind: "siege_event",
+      data: { phase: "start", role: "attacker", mode: "node", opponent_id: occRow.id, opponent_nick: occRow.nick } },
+    { world_id: m.world_id, player_id: occRow.id, kind: "siege_event",
+      data: { phase: "start", role: "defender", mode: "node", opponent_id: attRow.id, opponent_nick: attRow.nick } },
+  ]);
+  if (startMailErr) throw startMailErr;
+
+  // wallLv/garrisonLv=0 — в чистом поле укреплений нет ни у кого, тот же
+  // движок, что и у PvP-штурма (initPvpBattle/runPvpBattleRounds), просто
+  // без городских бонусов защитника. occMarchId/occPlayerId — чем
+  // applyNodeBattleRound/finalizeNodeBattle опознают чужой марш при
+  // продолжении (в отличие от PvP, тут "защитник" — не m.data.defender_id,
+  // а конкретный марш occ, домашняя строка игрока для боя не более важна,
+  // чем у атакующего).
+  const state = initPvpBattle(m.units, attP, occ.units, occP, 0, 0, m.id, attHasGen);
+  state.occMarchId = occ.id; state.occPlayerId = occRow.id; state.defHasGen = occHasGen;
+  runPvpBattleRounds(state, attP, occP, 0, 0, battleRoundsPerTick(state.ticksBudget));
+  await progressOrFinalizeNodeBattle(admin, m, attRow, occRow, attP, occP, state, Date.now() / 1000);
+}
+
+// Продолжение боя за точку — зеркало applyPvpBattleRound, читает occRow по
+// state.occPlayerId (не по m.data.defender_id, которого тут нет вовсе).
+async function applyNodeBattleRound(admin, m) {
+  const { data: attRow, error: aErr } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
+  if (aErr) throw aErr;
+  if (!attRow) { await admin.from("marches").delete().eq("id", m.id); return; }
+  const state = m.data.battle;
+  const { data: occRow, error: oErr } = await admin.from("players").select("*").eq("id", state.occPlayerId).maybeSingle();
+  if (oErr) throw oErr;
+  if (!occRow) {
+    await sendSurvivorsHome(admin, m, Date.now() / 1000, unitsSub(state.attStartUnits, state.attLossTotal), {});
+    return;
+  }
+
+  const attP = attRow.state, occP = occRow.state;
+  attP.race = attP.race || attRow.race;
+  occP.race = occP.race || occRow.race;
+  const nowSec = Date.now() / 1000;
+  if (state.retreatRequested && !state.concluded) {
+    const { error: retreatMailErr } = await admin.from("mail").insert([
+      { world_id: m.world_id, player_id: attRow.id, kind: "siege_event",
+        data: { phase: "retreat", role: "attacker", mode: "node", opponent_id: occRow.id, opponent_nick: occRow.nick } },
+      { world_id: m.world_id, player_id: occRow.id, kind: "siege_event",
+        data: { phase: "retreat", role: "defender", mode: "node", opponent_id: attRow.id, opponent_nick: attRow.nick } },
+    ]);
+    if (retreatMailErr) throw retreatMailErr;
+    applyRetreatVolley(state, attP, occP);
+    state.concluded = true; state.winner = "def"; state.retreated = true;
+  } else if (!state.concluded) {
+    runPvpBattleRounds(state, attP, occP, 0, 0, battleRoundsPerTick(state.ticksBudget));
+  }
+  await progressOrFinalizeNodeBattle(admin, m, attRow, occRow, attP, occP, state, nowSec);
+}
+
+// Зеркало progressOrFinalizePvpBattle — тот же лишний цикл ради доигрывания
+// полоски (Фаза 22/23), см. её подробный комментарий. Марш-оккупант (occ)
+// перечитывается заново только на настоящем финале — на промежуточных
+// раундах его состав живёт только внутри state.defU, сама строка marches
+// оккупанта не трогается вплоть до исхода.
+async function progressOrFinalizeNodeBattle(admin, m, attRow, occRow, attP, occP, state, nowSec) {
+  if (state.concluded) {
+    if (!state.pendingFinalize) {
+      state.pendingFinalize = true;
+      await persistBattleSiege(admin, m, state, nowSec);
+      return;
+    }
+    const { data: occMarch, error: omErr } = await admin.from("marches").select("*").eq("id", state.occMarchId).maybeSingle();
+    if (omErr) throw omErr;
+    if (!occMarch) {
+      // Марш-оккупант пропал между боем и финалом (честная защита —
+      // recall блокирует state:"siege" тем же способом, что и у PvP, но
+      // на практике лучше не падать на null). Атакующий получает то, что
+      // уцелело, точка остаётся ничьей.
+      await sendSurvivorsHome(admin, m, nowSec, unitsSub(state.attStartUnits, state.attLossTotal), {});
+      return;
+    }
+    await finalizeNodeBattle(admin, m, attRow, occRow, occMarch, attP, occP, state, nowSec);
+    return;
+  }
+  await persistBattleSiege(admin, m, state, nowSec);
+}
+
+// Честный конец боя за точку. RoK-механика по просьбе автора: бой решает
+// ТОЛЬКО право сбора — hospital-режим ОБЕИМ сторонам (не siege-attack, как
+// у штурма города — там гибнет насмерть только атакующий), без грабежа
+// склада (тут нечего грабить, точка — не чей-то город). Победитель
+// остаётся собирать (его марш продолжает уже идущий отсчёт, если он и был
+// оккупантом, либо стартует новый — если атакующий отбил точку), проигравший
+// уходит домой с тем, что уцелело.
+async function finalizeNodeBattle(admin, m, attRow, occRow, occMarch, attP, occP, state, nowSec) {
+  if (!attP.wounded) attP.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
+  TKEYS.forEach((t) => { if (!attP.wounded[t]) attP.wounded[t] = {}; });
+  if (!occP.wounded) occP.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
+  TKEYS.forEach((t) => { if (!occP.wounded[t]) occP.wounded[t] = {}; });
+
+  const attHs = hospitalSplit(attP, state.attLossTotal, "hospital");
+  attP.troops = unitsAdd(attP.troops, attHs.slightUnits);
+  attP.wounded = unitsAdd(attP.wounded, attHs.hurtUnits);
+  const occHs = hospitalSplit(occP, state.defLossTotal, "hospital");
+  occP.troops = unitsAdd(occP.troops, occHs.slightUnits);
+  occP.wounded = unitsAdd(occP.wounded, occHs.hurtUnits);
+
+  const attSurvivors = unitsSub(state.attStartUnits, state.attLossTotal);
+  const occSurvivors = unitsSub(state.defStartUnits, state.defLossTotal);
+
+  if (state.attHasGen && unitsTotal(attSurvivors) <= 0 && attP.gen && attP.gen.away === m.id) attP.gen.away = null;
+  if (state.defHasGen && unitsTotal(occSurvivors) <= 0 && occP.gen && occP.gen.away === occMarch.id) occP.gen.away = null;
+
+  const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
+  if (updA) throw updA;
+  const { error: updO } = await admin.from("players").update({ state: occP, updated_at: new Date().toISOString() }).eq("id", occRow.id);
+  if (updO) throw updO;
+
+  const summary = {
+    winner: state.winner, sent: state.attStartUnits, attLoss: state.attLossTotal, defLoss: state.defLossTotal,
+    attHpLeft: state.attHpLeft, defHpLeft: state.defHpLeft,
+    rounds: state.round, weather: state.weather.id, weatherName: state.weather.name,
+    retreated: !!state.retreated, res: (m.data && m.data.res) || null,
+  };
+  const mailRows = [
+    { world_id: m.world_id, player_id: attRow.id, kind: "node_battle", data: { role: "attacker", opponent_id: occRow.id, opponent_nick: occRow.nick, ...summary } },
+    { world_id: m.world_id, player_id: occRow.id, kind: "node_battle", data: { role: "defender", opponent_id: attRow.id, opponent_nick: attRow.nick, ...summary } },
+  ];
+  const { error: mailErr } = await admin.from("mail").insert(mailRows);
+  if (mailErr) throw mailErr;
+
+  // Марш-оккупант в любом исходе теряет только то, что реально полегло в
+  // этом бою (occSurvivors) — его units обновляем в базе всегда, отдельно
+  // от того, кто победил.
+  const { error: updOccM } = await admin.from("marches").update({ units: occSurvivors }).eq("id", occMarch.id);
+  if (updOccM) throw updOccM;
+
+  if (state.winner === "att") {
+    // Атакующий отбил точку — оккупант уходит домой с уцелевшими, атакующий
+    // сам занимает место и стартует сбор (тот же applyGatherStart, что и у
+    // обычного прихода на свободную точку). data.battle — уже отыгранное
+    // состояние боя — вычищаем явно, иначе повисло бы мёртвым грузом в
+    // строке до следующего sendSurvivorsHome (та чистит battle сама, но
+    // applyGatherStart/applyGathered — нет, не их забота).
+    await sendSurvivorsHome(admin, occMarch, nowSec, occSurvivors, {});
+    const { battle, ...cleanData } = m.data || {};
+    const { error: updAttM } = await admin.from("marches").update({ units: attSurvivors, data: cleanData }).eq("id", m.id);
+    if (updAttM) throw updAttM;
+    await applyGatherStart(admin, { ...m, data: cleanData });
+  } else {
+    // Оккупант устоял — продолжает УЖЕ ИДУЩИЙ отсчёт сбора как ни в чём не
+    // бывало (t0/t1/state не трогаем, только что обновлённый units уже
+    // учитывает потери). Атакующий уходит домой с тем, что уцелело от штурма.
+    await sendSurvivorsHome(admin, m, nowSec, attSurvivors, {});
+  }
+}
 
 // Фаза 8, кусочек 2 — отряд дошёл до лагеря варваров: бой разрешается
 // сразу (resolveBanditRaid, однообменный — см. заголовок функции выше),
