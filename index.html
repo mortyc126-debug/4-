@@ -10501,6 +10501,17 @@ function mpWorldSnapshot(){
 // "можно двигать камеру". Поэтому готовность камеры — тот же самый момент,
 // когда стоит снять накидку, никакого отдельного сигнала от движка заводить
 // не пришлось.
+// НАЙДЕН реальный баг ("бесконечная загрузка", воспроизводится только у
+// ВОЗВРАЩАЮЩЕГОСЯ игрока с валидным кэшем — mpLoadCache() ставит
+// mpState.joined=true ДО первого mpOpen(), из-за чего wasJoined в mpOpen()
+// оказывается true уже на боевом первом входе этой вкладки браузера, и
+// mpFocusWorld3D() — единственное место, снимающее накидку на успешном
+// пути — просто не вызывается вовсе). wasJoined ниже остаётся как есть
+// (нужен catch-ветке mpOpen() для другого решения — визард или ошибка),
+// а этот отдельный флаг отвечает именно за "3D уже получало свой единственный
+// шанс сфокусироваться/снять накидку в ЭТОЙ загрузке страницы" — не путать
+// с "игрок уже когда-то входил" (это могло быть в прошлой вкладке/сессии).
+let mpWorld3DFocused=false;
 function mpShowLoading(){
   const el=$("#mp-loading"); if(!el) return;
   el.style.display="flex";
@@ -10517,6 +10528,7 @@ function mpShowLoading(){
 }
 function mpHideLoading(){ const el=$("#mp-loading"); if(el) el.style.display="none"; }
 function mpFocusWorld3D(){
+  mpWorld3DFocused=true;
   const apply=(w)=>{
     const p=mpState.player; if(!p) return false;
     w.cam.tx=p.x; w.cam.tz=p.y;
@@ -11145,7 +11157,7 @@ async function mpOpen(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{});
-    mpState.joined=true; mpState.player=j.player; if(!wasJoined) mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); mpSaveCache();
+    mpState.joined=true; mpState.player=j.player; if(!mpWorld3DFocused) mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); mpSaveCache();
   }catch(e){
     // Фаза 20, кусочек 3 — если состояние уже показано из кэша, а сеть
     // моргнула, НЕ сбрасываем joined: игрок остаётся при своём городе (пусть
