@@ -1380,7 +1380,7 @@ const ROUND_CAP = 60; // index.html:4190 while(round<60) — то же числ�
 // максимумом.
 function pvpTotalTroops(attUnits, defUnits) { return unitsTotal(attUnits) + unitsTotal(defUnits); }
 
-function initPvpBattle(attUnits, attP, defUnits, defP, defWallLv, defGarrisonLv, marchId, attHasGen) {
+function initPvpBattle(attUnits, attP, defUnits, defP, defWallLv, defGarrisonLv, marchId, attHasGen, attDeathFrac, defDeathFrac) {
   const attB = bonuses(attP), defB = bonuses(defP, true);
   let attU = attUnits, defU = defUnits;
   let attLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} }, defLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} };
@@ -1426,6 +1426,12 @@ function initPvpBattle(attUnits, attP, defUnits, defP, defWallLv, defGarrisonLv,
     attU, defU, attStartUnits: attUnits, defStartUnits: defUnits, attStartN,
     attLossTotal, defLossTotal, attBroken, defBroken,
     attRisen, defRisen, attRaisedCum, defRaisedCum,
+    // Смерти прямо в бою (см. BATTLE_DEATH_FRAC) — доля решается на завязке
+    // (осада: атакующий/оборона врозь; бой за точку: одна и та же ставка
+    // обеим сторонам), хранится в state, а не аргументом на каждый вызов —
+    // runPvpBattleRounds/finalizePvpBattle/finalizeNodeBattle читают её
+    // отсюда на любом продолжении многотикового боя.
+    attDeathFrac: attDeathFrac || 0, defDeathFrac: defDeathFrac || 0,
     attHasGen, attGenHpFrac: null, defGenHpFrac: null, attGenMaxHp: null, defGenMaxHp: null,
     attStartHp: Math.round(attStartHp), defStartHp: Math.round(defStartHp),
     attHpLeft: Math.round(attStartHp), defHpLeft: Math.round(defStartHp),
@@ -1514,8 +1520,8 @@ function runPvpBattleRounds(state, attP, defP, defWallLv, defGarrisonLv, roundsB
     if (defGen) defGen.hp = Math.max(0, defGen.hp - damageToGeneral(defGen, attS));
     checkDiscipline(state.attStartUnits, attLossTotal, attP.race, attBroken);
     checkDiscipline(state.defStartUnits, defLossTotal, defP.race, defBroken);
-    applyRaise(defP, defB, defLossTotal, defRisen, defRaisedCum);
-    applyRaise(attP, attB, attLossTotal, attRisen, attRaisedCum);
+    applyRaise(defP, defB, defLossTotal, defRisen, defRaisedCum, state.defDeathFrac, defBroken);
+    applyRaise(attP, attB, attLossTotal, attRisen, attRaisedCum, state.attDeathFrac, attBroken);
     if (unitsTotal(attU) / Math.max(1, state.attStartN) < 0.28) break;
   }
 
@@ -1591,7 +1597,20 @@ function totalHospitalCap(p) {
 // defending=true, дословно как в index.html:4360 — hospitalSplit не только
 // для обороны города).
 const SLIGHT_WOUND_FRAC = 0.12;
-function hospitalSplit(p, loss) {
+// index.html:BATTLE_DEATH_FRAC — смерти НЕПОСРЕДСТВЕННО в бою, независимо
+// от вопроса о месте в лазарете (тот остаётся отдельным путём — deadUnits
+// сверх вместимости, см. ниже, без изменений). Автор: "то, что не влезло в
+// лазарет, умирает — это само собой, но в самих боях тоже должны быть
+// смерти, просто потому что это бой". Штурм города — втрое жёстче для
+// штурмующего, втрое мягче для обороны; рейд на разбойников (PvE) — 0,
+// только раненые; любой другой PvP-бой (осада/бой за точку) — общая
+// базовая ставка. Дисциплина спасает часть — тир, что дрогнул (broken),
+// бежит вместо того, чтобы стоять насмерть (DISCIPLINE_BREAK_DEATH_MULT).
+const BATTLE_DEATH_FRAC = 0.10;
+const SIEGE_ATT_DEATH_FRAC = BATTLE_DEATH_FRAC * 3;
+const SIEGE_DEF_DEATH_FRAC = BATTLE_DEATH_FRAC / 3;
+const DISCIPLINE_BREAK_DEATH_MULT = 0.5;
+function hospitalSplit(p, loss, deathFrac, broken) {
   const B = bonuses(p);
   const cap = Math.round(totalHospitalCap(p) * (1 + B.hosp + B.mercy));
   let inHosp = 0;
@@ -1605,12 +1624,16 @@ function hospitalSplit(p, loss) {
       if (!n) continue;
       const sl = Math.round(n * SLIGHT_WOUND_FRAC);
       if (sl > 0) { slightUnits[t][i] = sl; slight += sl; n -= sl; }
+      const isBroken = broken && broken[t] && broken[t][i];
+      const df = (deathFrac || 0) * (isBroken ? DISCIPLINE_BREAK_DEATH_MULT : 1);
+      const bd = Math.min(n, Math.round(n * df));
+      if (bd > 0) { deadUnits[t][i] += bd; dead += bd; n -= bd; }
       const room = Math.max(0, cap - inHosp);
       const w = Math.min(n, room);
       inHosp += w;
-      hurtUnits[t][i] = w; hurt += w;
+      hurtUnits[t][i] += w; hurt += w;
       const d = n - w;
-      deadUnits[t][i] = d; dead += d;
+      deadUnits[t][i] += d; dead += d;
     }
   });
   return { dead, hurt, slight, slightUnits, deadUnits, hurtUnits };
@@ -1627,10 +1650,10 @@ function hospitalSplit(p, loss) {
 // суммарно (по этому же tотal), чтобы не поднимать дважды один и тот же
 // "бюджет" мертвецов: раз в раунд считаем ДОЛЖНО-БЫТЬ-ПОДНЯТО от текущего
 // lossTotal и добавляем в risen только РАЗНИЦУ с уже поднятым.
-function applyRaise(p, B, lossTotal, risen, raisedCum) {
+function applyRaise(p, B, lossTotal, risen, raisedCum, deathFrac, broken) {
   const rate = B.raise || 0, rateHurt = B.raiseHurt || 0;
   if (rate <= 0 && rateHurt <= 0) return;
-  const hs = hospitalSplit(p, lossTotal);
+  const hs = hospitalSplit(p, lossTotal, deathFrac, broken);
   TKEYS.forEach((t) => {
     for (let i = 1; i <= 5; i++) {
       const shouldDead = Math.floor((hs.deadUnits[t][i] || 0) * rate);
@@ -1949,7 +1972,9 @@ async function applyMarchArrive(admin, ev) {
   // первый кусок раундов — мелкая стычка часто укладывается в один этот
   // вызов целиком (state.concluded=true), крупная — нет, тогда march
   // уходит в state:'siege' и продолжается events'ом type:'battle_round'.
-  const state = initPvpBattle(m.units, attP, defP.troops, defP, defWallLv, defGarrisonLv, m.id, attHasGen);
+  // Штурм города — SIEGE_ATT_DEATH_FRAC/SIEGE_DEF_DEATH_FRAC (втрое жёстче
+  // штурмующему, втрое мягче обороне, см. их заголовок).
+  const state = initPvpBattle(m.units, attP, defP.troops, defP, defWallLv, defGarrisonLv, m.id, attHasGen, SIEGE_ATT_DEATH_FRAC, SIEGE_DEF_DEATH_FRAC);
   runPvpBattleRounds(state, attP, defP, defWallLv, defGarrisonLv, battleRoundsPerTick(state.ticksBudget));
   await progressOrFinalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, nowSec);
 }
@@ -2039,10 +2064,10 @@ async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, no
   TKEYS.forEach((t) => { if (!defP.wounded[t]) defP.wounded[t] = {}; });
   if (!attP.wounded) attP.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
   TKEYS.forEach((t) => { if (!attP.wounded[t]) attP.wounded[t] = {}; });
-  const hs = hospitalSplit(defP, state.defLossTotal);
+  const hs = hospitalSplit(defP, state.defLossTotal, state.defDeathFrac, state.defBroken);
   defP.troops = unitsAdd(defP.troops, hs.slightUnits);
   defP.wounded = unitsAdd(defP.wounded, hs.hurtUnits);
-  const attHs = hospitalSplit(attP, state.attLossTotal);
+  const attHs = hospitalSplit(attP, state.attLossTotal, state.attDeathFrac, state.attBroken);
   attP.wounded = unitsAdd(attP.wounded, attHs.hurtUnits);
   // survivors — то, что реально идёт домой маршем: полные потери минус
   // легкораненые, которые возвращаются в строй немедленно и марш их не
@@ -2494,7 +2519,9 @@ async function applyNodeContestArrive(admin, m, occ) {
   // продолжении (в отличие от PvP, тут "защитник" — не m.data.defender_id,
   // а конкретный марш occ, домашняя строка игрока для боя не более важна,
   // чем у атакующего).
-  const state = initPvpBattle(m.units, attP, occ.units, occP, 0, 0, m.id, attHasGen);
+  // Бой за точку — полевой PvP, общая базовая ставка обеим сторонам без
+  // перекоса (BATTLE_DEATH_FRAC), в отличие от осады города.
+  const state = initPvpBattle(m.units, attP, occ.units, occP, 0, 0, m.id, attHasGen, BATTLE_DEATH_FRAC, BATTLE_DEATH_FRAC);
   state.occMarchId = occ.id; state.occPlayerId = occRow.id; state.defHasGen = occHasGen;
   runPvpBattleRounds(state, attP, occP, 0, 0, battleRoundsPerTick(state.ticksBudget));
   await progressOrFinalizeNodeBattle(admin, m, attRow, occRow, attP, occP, state, Date.now() / 1000);
@@ -2575,10 +2602,10 @@ async function finalizeNodeBattle(admin, m, attRow, occRow, occMarch, attP, occP
   if (!occP.wounded) occP.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
   TKEYS.forEach((t) => { if (!occP.wounded[t]) occP.wounded[t] = {}; });
 
-  const attHs = hospitalSplit(attP, state.attLossTotal);
+  const attHs = hospitalSplit(attP, state.attLossTotal, state.attDeathFrac, state.attBroken);
   attP.troops = unitsAdd(attP.troops, attHs.slightUnits);
   attP.wounded = unitsAdd(attP.wounded, attHs.hurtUnits);
-  const occHs = hospitalSplit(occP, state.defLossTotal);
+  const occHs = hospitalSplit(occP, state.defLossTotal, state.defDeathFrac, state.defBroken);
   occP.troops = unitsAdd(occP.troops, occHs.slightUnits);
   occP.wounded = unitsAdd(occP.wounded, occHs.hurtUnits);
 

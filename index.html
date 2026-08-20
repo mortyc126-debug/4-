@@ -4134,6 +4134,11 @@ function makeForce(units,p,opts){
            start:JSON.parse(JSON.stringify(units)), broken:emptyUnits(),
            gen: (withGen&&p&&p.gen&&p.gen.id!=null) ? genStats(p) : null,
            wallDef:(opts&&opts.wall)||0, bandit:(opts&&opts.bandit)||false,
+           // deathFrac — доля потерь, гибнущих прямо в бою (см. BATTLE_DEATH_FRAC):
+           // сторона решает сама, свой ли это штурм/оборона/полевой бой (см.
+           // вызовы makeForce), рейд на разбойников его не задаёт вовсе (0 —
+           // PvE смертей в бою нет, только раненые).
+           deathFrac:(opts&&opts.deathFrac)||0,
            name:(opts&&opts.name)||(p?p.name:"Разбойники")};
   return f;
 }
@@ -4524,6 +4529,23 @@ function checkDiscipline(f,loss){
 // категорий, не проценты) — 12% подобрано на глаз как заметная, но не
 // доминирующая доля: не обесценивает лазарет как механику, но и не ноль.
 const SLIGHT_WOUND_FRAC = 0.12;
+// Смерти НЕПОСРЕДСТВЕННО в бою — независимо от того, влезли бы потери в
+// лазарет или нет ("то, что не влезло в лазарет, умирает — это само собой,
+// но в самих боях тоже должны быть смерти, просто потому что это бой").
+// Доля потерь (после вычета лёгких, см. SLIGHT_WOUND_FRAC), которая гибнет
+// на месте, ещё ДО вопроса о лазарете — раз в бою, потери не такие жёсткие,
+// но ощутимые. Дисциплина участвует: тир, который дрогнул (f.broken —
+// checkDiscipline), в бою уже не стоит насмерть, а бежит — часть из них это
+// и спасает (DISCIPLINE_BREAK_DEATH_MULT), не сломленные держатся до конца
+// и гибнут по полной ставке.
+// Штурм города — по просьбе автора втрое жёстче для штурмующего (риск
+// атаки должен ощущаться) и втрое мягче для обороняющегося (своя земля,
+// свои стены). Рейд на разбойников (PvE) и любой другой полевой/точечный
+// бой между игроками (PvP) — общая базовая ставка, без перекоса сторон.
+const BATTLE_DEATH_FRAC = 0.10;
+const SIEGE_ATT_DEATH_FRAC = BATTLE_DEATH_FRAC*3;
+const SIEGE_DEF_DEATH_FRAC = BATTLE_DEATH_FRAC/3;
+const DISCIPLINE_BREAK_DEATH_MULT = 0.5;
 // Чистое ядро госпитального разбора — БЕЗ побочных эффектов (не пишет в
 // p.wounded). Раньше эта арифметика жила только внутри splitLosses() и
 // вызывалась ОДИН раз, целиком, уже после конца боя — а raiseSkeletons()
@@ -4534,7 +4556,7 @@ const SLIGHT_WOUND_FRAC = 0.12;
 // найдено в разборе с пользователем боевого отчёта. Теперь и итоговый
 // splitLosses(), и raiseSkeletons() зовут ЭТУ функцию — гарантированно
 // одна и та же арифметика, посчитанная дважды не разойдётся.
-function hospitalSplit(p,loss){
+function hospitalSplit(p,loss,deathFrac,broken){
   const B=bonuses(p);
   const cap=Math.round(totalHospitalCap(p)*(1+B.hosp+B.mercy));
   let inHosp=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) inHosp+=p.wounded[t][i]});
@@ -4544,10 +4566,18 @@ function hospitalSplit(p,loss){
     let n=loss[t][i]; if(!n)continue;
     const sl=Math.round(n*SLIGHT_WOUND_FRAC);
     if(sl>0){ slightUnits[t][i]=sl; slight+=sl; n-=sl; }
+    // Смерти прямо в бою (BATTLE_DEATH_FRAC и т.п., см. её заголовок) — до
+    // и независимо от вопроса о месте в лазарете. Сломленная дисциплина
+    // (broken[t][i]) спасает часть от гибели — они бегут, а не гибнут на
+    // месте, сниженной долей вместо полной.
+    const isBroken=broken&&broken[t]&&broken[t][i];
+    const df=(deathFrac||0)*(isBroken?DISCIPLINE_BREAK_DEATH_MULT:1);
+    const bd=Math.min(n,Math.round(n*df));
+    if(bd>0){ deadUnits[t][i]+=bd; dead+=bd; n-=bd; }
     const room=Math.max(0,cap-inHosp);
     const w=Math.min(n,room); inHosp+=w;
     hurtUnits[t][i]=w; hurt+=w;
-    const d=n-w; deadUnits[t][i]=d; dead+=d;
+    const d=n-w; deadUnits[t][i]+=d; dead+=d;
   }});
   return {dead,hurt,slight,slightUnits,deadUnits,hurtUnits};
 }
@@ -4574,7 +4604,7 @@ function raiseSkeletons(f,loss){
   if(rate<=0 && rateHurt<=0) return;
   if(!f._raisedCum) f._raisedCum=emptyUnits();
   let dead=loss, hurt=null;
-  if(f.p){ const hs=hospitalSplit(f.p,loss); dead=hs.deadUnits; hurt=hs.hurtUnits; }
+  if(f.p){ const hs=hospitalSplit(f.p,loss,f.deathFrac,f.broken); dead=hs.deadUnits; hurt=hs.hurtUnits; }
   TKEYS.forEach(t=>{
     for(let i=1;i<=5;i++){
       const shouldDead=Math.floor((dead[t][i]||0)*rate);
@@ -4584,8 +4614,8 @@ function raiseSkeletons(f,loss){
     }
   });
 }
-function splitLosses(p,loss){
-  const r=hospitalSplit(p,loss);
+function splitLosses(p,loss,deathFrac,broken){
+  const r=hospitalSplit(p,loss,deathFrac,broken);
   // slightUnits/deadUnits НЕ добавлены в p.troops здесь — вызывающий код
   // сам решает, куда именно вернуть легкораненых (в живой поход, что ещё
   // идёт домой, или в гарнизон, который вот-вот перезапишется post-боем),
@@ -5238,7 +5268,11 @@ function arriveMarch(m){
     D.B={atk:0,def:0,hp:0,matk:0,mdef:0,archer:0,raise:0};
     A.B.atk += B.bandit;
     const r=resolveBattle(A,D,{startA:countUnits(m.units)});
-    const sp=splitLosses(p,r.lossA);   // полевая стычка — потери идут в госпиталь, не насмерть
+    // Рейд на разбойников — PvE, A.deathFrac не задан (0 по умолчанию, см.
+    // makeForce): смертей прямо в бою нет вовсе, только легко/тяжелораненые
+    // (сверх вместимости лазарета всё ещё возможна гибель — это отдельный,
+    // не PvE-специфичный путь, см. заголовок hospitalSplit).
+    const sp=splitLosses(p,r.lossA,A.deathFrac,A.broken);
     // Легкораненые возвращаются в САМ ПОХОД (A.units), а не сразу в p.troops —
     // отряд ещё физически в поле и топает домой (см. m.units=A.units ниже).
     addUnitsInto(A.units, sp.slightUnits);
@@ -5568,16 +5602,18 @@ function battleCity(att,def,m){
   const startA=countUnits(m.units), startD=countUnits(def.troops);
   const garrison=emptyUnits();
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++)garrison[t][i]=def.troops[t][i]});
-  const A=makeForce(m.units,att,{name:atkName(att),withGen:!!m.hasGen});
+  const A=makeForce(m.units,att,{name:atkName(att),withGen:!!m.hasGen,deathFrac:SIEGE_ATT_DEATH_FRAC});
   const D=makeForce(garrison,def,{wall:def.b.wall+def.b.garrison*0.5,defending:true,name:def.name,
-    withGen:!!(def.gen&&def.gen.away==null)});
+    withGen:!!(def.gen&&def.gen.away==null),deathFrac:SIEGE_DEF_DEATH_FRAC});
   const r=resolveBattle(A,D,{startA:countUnits(m.units),toDeath:false});
   // в хронику погода идёт короткой пометкой, подробности — в почтовом отчёте
   const wx=(r.weather&&r.weather.id!=="clear")?" ("+r.weather.name.toLowerCase()+")":"";
   // Штурмующий теперь тоже идёт через госпиталь — одна система для любого
-  // боя (см. заголовок hospitalSplit), а не безвозвратная гибель.
-  const la=splitLosses(att,r.lossA);
-  const ld=splitLosses(def,r.lossD);
+  // боя (см. заголовок hospitalSplit), а не безвозвратная гибель. Сверх
+  // этого — смерти прямо в бою (SIEGE_ATT_DEATH_FRAC/SIEGE_DEF_DEATH_FRAC,
+  // втрое жёстче штурмующему и втрое мягче обороне, см. BATTLE_DEATH_FRAC).
+  const la=splitLosses(att,r.lossA,A.deathFrac,A.broken);
+  const ld=splitLosses(def,r.lossD,D.deathFrac,D.broken);
   // Легкораненые — назад в units ДО перезаписи def.troops/m.units ниже,
   // иначе перезапись их просто стёрла бы (см. addUnitsInto/splitLosses).
   // Раньше это делалось только для защитника (у атакующего "лёгких" не
