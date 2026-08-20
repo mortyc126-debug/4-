@@ -1424,6 +1424,82 @@ async function main() {
     }
   }
 
+  // Фаза 27 — метка боя над маршем в state:"siege" ("Развёртывание"/
+  // "Бой — раунд N"/"Отступление" + две мини-полоски HP), видна ЛЮБОМУ
+  // игроку — не только сторонам боя (см. mpRefreshWorldBattles/
+  // mpWorldSnapshot в index.html: marches_select_all уже открыт всем,
+  // раньше этим просто никто не пользовался). Тот же приём проекции и тот
+  // же пул DOM-узлов, что и у updateAmbientLabels выше (переиспользуем
+  // currentVP/found не при чём — тут источник lastMarches, не bitECS
+  // сущности), только своя вёрстка (.blabel, не .wlabel) и отсев не по
+  // bitECS eid, а по march id.
+  interface BattleLabelParts { root: HTMLDivElement; title: HTMLElement; atkFill: HTMLElement; defFill: HTMLElement }
+  const battleLabelEl = new Map<number, BattleLabelParts>();
+  // battleInterp — дословный порт mpBattleInterp(index.html): доводка от
+  // revealFrom* к текущему значению по времени между revealStart/revealAt,
+  // сервер уже прислал оба конца интервала, гадать клиенту нечего.
+  function battleInterp(from: number, to: number, revealStart: number, revealAt: number): number {
+    if (!revealAt || !revealStart || revealAt <= revealStart) return to;
+    const frac = Math.max(0, Math.min(1, (Date.now() - revealStart) / (revealAt - revealStart)));
+    return from + (to - from) * frac;
+  }
+  function updateBattleLabels() {
+    const seen = new Set<number>();
+    const cw = canvas.clientWidth, ch = canvas.clientHeight;
+    for (const m of lastMarches) {
+      const b = m.battle;
+      if (!b) continue;
+      const dx = m.x - cam.target[0], dz = m.y - cam.target[2];
+      if (dx * dx + dz * dz > LABEL_MAX_DIST2) continue;
+      // +2.2 — та же высота маркера похода, что и в marchMarkers() выше;
+      // +1.6 сверху — чтобы подпись плавала НАД самим маркером-точкой, не
+      // перекрывая его.
+      const topY = heightAt(m.x, m.y) * HMAX + 2.2 + 1.6;
+      const clip = transformPoint(currentVP, [m.x, topY, m.y]);
+      if (clip.w <= 0.001) continue;
+      const sx = (clip.x / clip.w * 0.5 + 0.5) * cw;
+      const sy = (1 - (clip.y / clip.w * 0.5 + 0.5)) * ch;
+      if (sx < -60 || sx > cw + 60 || sy < -60 || sy > ch + 60) continue;
+      seen.add(m.id);
+      let parts = battleLabelEl.get(m.id);
+      if (!parts) {
+        const root = document.createElement("div");
+        root.className = "blabel";
+        const title = document.createElement("div");
+        title.className = "btitle";
+        const atkBar = document.createElement("div");
+        atkBar.className = "bbar atk";
+        const atkFill = document.createElement("i");
+        atkBar.appendChild(atkFill);
+        const defBar = document.createElement("div");
+        defBar.className = "bbar def";
+        const defFill = document.createElement("i");
+        defBar.appendChild(defFill);
+        root.appendChild(title);
+        root.appendChild(atkBar);
+        root.appendChild(defBar);
+        labelsRoot.appendChild(root);
+        parts = { root, title, atkFill, defFill };
+        battleLabelEl.set(m.id, parts);
+      }
+      const retreating = b.retreating;
+      const deploying = !retreating && b.revealFromRound === 0;
+      parts.root.className = "blabel" + (retreating ? " retreat" : deploying ? " deploy" : "");
+      parts.title.textContent = retreating ? "Отступление" : deploying ? "Развёртывание" : "Бой — раунд " + b.round;
+      const attPct = Math.max(0, Math.min(100, battleInterp(b.revealFromAttHp, b.attHpLeft, b.revealStart, b.revealAt) / Math.max(1, b.attStartHp) * 100));
+      const defPct = Math.max(0, Math.min(100, battleInterp(b.revealFromDefHp, b.defHpLeft, b.revealStart, b.revealAt) / Math.max(1, b.defStartHp) * 100));
+      parts.atkFill.style.width = attPct.toFixed(1) + "%";
+      parts.defFill.style.width = defPct.toFixed(1) + "%";
+      parts.root.style.transform = `translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) translate(-50%,-100%)`;
+    }
+    for (const [id, parts] of battleLabelEl) {
+      if (!seen.has(id)) {
+        parts.root.remove();
+        battleLabelEl.delete(id);
+      }
+    }
+  }
+
   function draw(tMs: number) {
     // Пока открыт "Город", 3D целиком скрыт — рисовать нечего и некуда.
     // Раньше цикл продолжал крутиться и молотить в схлопнутую канву: лишний
@@ -1499,6 +1575,7 @@ async function main() {
       }
     });
     updateAmbientLabels();
+    updateBattleLabels();
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);

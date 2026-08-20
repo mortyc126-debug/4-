@@ -1443,6 +1443,12 @@ function initPvpBattle(attUnits, attP, defUnits, defP, defWallLv, defGarrisonLv,
 // урона ещё не видно, пока не домотает до настоящего первого столкновения.
 function runPvpBattleRounds(state, attP, defP, defWallLv, defGarrisonLv, roundsBudget) {
   state.revealFromAttHp = state.attHpLeft; state.revealFromDefHp = state.defHpLeft;
+  // Фаза 27 — round ДО этого куска: 0 у самого первого куска (реального
+  // урона ещё не было ни разу, войска "в строю") — клиент по этому флагу
+  // подписывает надземную метку боя "Развёртывание" вместо "Бой — раунд N"
+  // на всё время первого reveal-окна (см. mpBattleInterp/updateBattleLabels
+  // в index.html/main.ts).
+  state.revealFromRound = state.round;
   state.revealFromAttGenFrac = state.attGenHpFrac; state.revealFromDefGenFrac = state.defGenHpFrac;
   const attB = bonuses(attP), defB = bonuses(defP, true);
   const weather = state.weather;
@@ -1767,6 +1773,12 @@ function initRaidBattle(attUnits, attP, campLv, marchId, attHasGen) {
 // то же самое здесь).
 function runRaidBattleRounds(state, attP, roundsBudget) {
   state.revealFromAttHp = state.attHpLeft; state.revealFromDefHp = state.defHpLeft;
+  // Фаза 27 — round ДО этого куска: 0 у самого первого куска (реального
+  // урона ещё не было ни разу, войска "в строю") — клиент по этому флагу
+  // подписывает надземную метку боя "Развёртывание" вместо "Бой — раунд N"
+  // на всё время первого reveal-окна (см. mpBattleInterp/updateBattleLabels
+  // в index.html/main.ts).
+  state.revealFromRound = state.round;
   state.revealFromAttGenFrac = state.attGenHpFrac; state.revealFromDefGenFrac = state.defGenHpFrac;
   const attB = bonuses(attP);
   const weather = state.weather;
@@ -2099,6 +2111,12 @@ async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, no
 // считается вовсе — не "урон умножен на 0", а честно не вызвана.
 function applyRetreatVolley(state, attP, defP) {
   state.revealFromAttHp = state.attHpLeft; state.revealFromDefHp = state.defHpLeft;
+  // Фаза 27 — round ДО этого куска: 0 у самого первого куска (реального
+  // урона ещё не было ни разу, войска "в строю") — клиент по этому флагу
+  // подписывает надземную метку боя "Развёртывание" вместо "Бой — раунд N"
+  // на всё время первого reveal-окна (см. mpBattleInterp/updateBattleLabels
+  // в index.html/main.ts).
+  state.revealFromRound = state.round;
   state.revealFromAttGenFrac = state.attGenHpFrac; state.revealFromDefGenFrac = state.defGenHpFrac;
 
   const attB = bonuses(attP), defB = bonuses(defP, true);
@@ -2155,6 +2173,12 @@ function applyRetreatVolley(state, attP, defP) {
 // бойцами, которых в retreat-раунде не бьют вовсе).
 function applyRaidRetreatVolley(state, attP) {
   state.revealFromAttHp = state.attHpLeft; state.revealFromDefHp = state.defHpLeft;
+  // Фаза 27 — round ДО этого куска: 0 у самого первого куска (реального
+  // урона ещё не было ни разу, войска "в строю") — клиент по этому флагу
+  // подписывает надземную метку боя "Развёртывание" вместо "Бой — раунд N"
+  // на всё время первого reveal-окна (см. mpBattleInterp/updateBattleLabels
+  // в index.html/main.ts).
+  state.revealFromRound = state.round;
   state.revealFromAttGenFrac = state.attGenHpFrac; state.revealFromDefGenFrac = state.defGenHpFrac;
 
   const attB = bonuses(attP);

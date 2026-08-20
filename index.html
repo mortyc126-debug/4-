@@ -10568,10 +10568,21 @@ function mpWorldSnapshot(){
     return Object.assign({}, m, { path:[{x:home.x,y:home.y},{x:m.tx,y:m.ty}], pathCum:[0,dist], pathLen:dist });
   }
   const marches=[];
-  mpState.marches.forEach(m=>{ marches.push(withPath(Object.assign({pid:me.id},m), me)); });
+  const seenIds=new Set();
+  mpState.marches.forEach(m=>{ seenIds.add(m.id); marches.push(withPath(Object.assign({pid:me.id},m), me)); });
   mpState.incoming.forEach(m=>{
     const att=byId[m.player_id]; if(!att) return; // соседа уже нет в mpState.neighbors — не рисуем повисший маркер
+    seenIds.add(m.id);
     marches.push(withPath(Object.assign({pid:m.player_id},m), att));
+  });
+  // Фаза 27 — чужие бои (не свои, не входящие на себя) — mpState.worldBattles
+  // (mpRefreshWorldBattles). home тут не важен (state:"siege" в
+  // marchData.ts всегда рисуется В ЦЕЛИ, путь не интерполируется) — берём
+  // саму цель как вырожденный "путь" нулевой длины, честнее, чем выдумывать
+  // домашние координаты стороны, которых мы можем и не знать.
+  mpState.worldBattles.forEach(m=>{
+    if(seenIds.has(m.id)) return; // уже нарисован как свой/входящий выше
+    marches.push(withPath(Object.assign({pid:m.player_id, state:"siege"},m), {x:m.tx,y:m.ty}));
   });
   return { t: Date.now()/1000, map, players, marches };
 }
@@ -11004,7 +11015,7 @@ async function claimChronicle(){
    восполняются со временem — серверное производство ещё не перенесено,
    стартовых 100000 хватает на несколько заказов набора для проверки.
    ========================================================================= */
-let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[], siegeMail:[], nodeBattleMail:[] };
+let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[], siegeMail:[], nodeBattleMail:[], worldBattles:[] };
 let mpPollTimer = null;
 // ===== Фаза 20, кусочек 3 — местный кэш последнего known-состояния общего
 // мира. Автор: "медленно грузит мой замок и ресурсные точки, может их
@@ -11210,7 +11221,7 @@ function mpStopPolling(){
   // каждую секунду вхолостую, пока игрок вообще не в мультиплеере.
   if(mpBattleFastTimer){ clearInterval(mpBattleFastTimer); mpBattleFastTimer=null; }
 }
-async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); await mpRefreshNodeBattleMail(); mpSaveCache(); }
+async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); await mpRefreshNodeBattleMail(); await mpRefreshWorldBattles(); mpSaveCache(); }
 // Баг-фикс — автор пожаловался: очередь стройки/тренировки/боя показывается
 // сразу, но САМ результат (новый уровень здания, исход боя) применял только
 // общий тикер (mp-tick), а тот раньше крутился раз в минуту — до минуты
@@ -11281,7 +11292,7 @@ async function mpOpen(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{});
-    mpState.joined=true; mpState.player=j.player; if(!mpWorld3DFocused) mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); await mpRefreshNodeBattleMail(); mpSaveCache();
+    mpState.joined=true; mpState.player=j.player; if(!mpWorld3DFocused) mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); await mpRefreshNodeBattleMail(); await mpRefreshWorldBattles(); mpSaveCache();
   }catch(e){
     // Фаза 20, кусочек 3 — если состояние уже показано из кэша, а сеть
     // моргнула, НЕ сбрасываем joined: игрок остаётся при своём городе (пусть
@@ -11335,7 +11346,7 @@ async function mpDoJoin(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{race:mpState.race,nick:mpState.nick||""});
-    mpState.joined=true; mpState.player=j.player; mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); await mpRefreshNodeBattleMail();
+    mpState.joined=true; mpState.player=j.player; mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); await mpRefreshNodeBattleMail(); await mpRefreshWorldBattles();
   }catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -11641,6 +11652,24 @@ async function mpRefreshNodeBattleMail(){
   const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
     .eq("kind","node_battle").order("created_at",{ascending:false}).limit(10);
   if(!error && data){ mpState.nodeBattleMail=data; mpRerender(); }
+}
+// Фаза 27 — глобальная видимость боёв: автор явно попросил "чтобы марши...
+// для одного игрока... происходили и для другого одновременно" ("полная
+// синхронизация"). marches_select_all (миграция 0001) уже разрешает читать
+// ЛЮБЫЕ марши в мире, не только свои/входящие на себя — раньше этим просто
+// никто не пользовался. Читаем ВСЕ активные бои (state:"siege") в своём
+// мире целиком, без фильтра по player_id/defender_id — mpWorldSnapshot()
+// ниже подмешивает их к своим/входящим марш(ам) (с отсевом дублей по id),
+// а движок (updateBattleLabels в engine/src/main.ts) сам отсеивает по
+// расстоянию до камеры, тот же приём, что уже есть у подписей городов/
+// лагерей (updateAmbientLabels) — рисуем далеко не все сразу, только то,
+// что реально видно. limit(200) — щедрый потолок на случай будущего роста
+// числа одновременных игроков, не тонкая настройка под нынешний масштаб.
+async function mpRefreshWorldBattles(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("marches").select("id,player_id,mode,tx,ty,units,data")
+    .eq("world_id",mpState.player.world_id).eq("state","siege").limit(200);
+  if(!error && data){ mpState.worldBattles=data; mpRerender(); }
 }
 // Входящие атаки — раньше защитник вообще не мог узнать, что на него идёт
 // поход, пока бой не разрешится сам (см. историю коммитов). data->>defender_id
