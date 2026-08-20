@@ -71,11 +71,35 @@ Deno.serve(async (req) => {
 
     let processed = 0;
     const errors = [];
+    // Фаза 21 — застолбить событие ПЕРЕД обработкой (миграция
+    // 0005_realtime_battles.sql, events.claimed_at). Раньше между этим SELECT
+    // и записью processed:true в конце цикла было окно гонки: два
+    // параллельных запуска mp-tick (плановый pg_cron + подтолкнутый
+    // mp-join'ом активного игрока, см. supabase/README.md) МОГЛИ выбрать одну
+    // и ту же строку events и применить её дважды. Для одноразовых событий
+    // это была маловероятная царапина; для боя, растянутого на несколько
+    // events'ов type:'battle_round' подряд (см. runPvpBattleRounds выше), то
+    // же самое окно открывается заново на каждый раунд — задвоенный раунд
+    // означает задвоенные потери. Один атомарный UPDATE ... WHERE
+    // processed=false AND (claimed_at IS NULL OR старше 60с) — конкурентный
+    // такой же UPDATE той же строки просто не найдёт её в своём WHERE (первый
+    // уже успел проставить свежий claimed_at), self-healing через 60с, если
+    // клеймившая функция упала посреди обработки.
+    const leaseExpiredIso = new Date(Date.now() - 60000).toISOString();
     for (const ev of due) {
       try {
+        const { data: claimed, error: claimErr } = await admin
+          .from("events").update({ claimed_at: new Date().toISOString() })
+          .eq("id", ev.id).eq("processed", false)
+          .or(`claimed_at.is.null,claimed_at.lt.${leaseExpiredIso}`)
+          .select("id");
+        if (claimErr) throw claimErr;
+        if (!claimed || !claimed.length) continue; // кто-то другой уже забрал это событие — пропускаем
+
         if (ev.type === "train") await applyTrain(admin, ev);
         else if (ev.type === "build") await applyBuild(admin, ev);
         else if (ev.type === "march_arrive") await applyMarchArrive(admin, ev);
+        else if (ev.type === "battle_round") await applyBattleRound(admin, ev);
         else if (ev.type === "march_home") await applyMarchHome(admin, ev);
         else if (ev.type === "heal") await applyHeal(admin, ev);
         else if (ev.type === "scout_arrive") await applyScoutArrive(admin, ev);
@@ -87,7 +111,8 @@ Deno.serve(async (req) => {
         else if (ev.type === "ambient_seed") await applyAmbientSeed(admin, ev);
         // else: неизвестный/ещё не перенесённый тип — оставляем как есть,
         // не помечаем processed, чтобы не потерять событие молча; заберётся
-        // следующим тиком после того, как для него появится case.
+        // следующим тиком после того, как для него появится case (claimed_at
+        // тем временем сам остынет через 60с).
         else { continue; }
         await admin.from("events").update({ processed: true }).eq("id", ev.id);
         processed++;
@@ -1310,15 +1335,48 @@ function damageToGeneral(gen, enemyS) {
 // marchId — Фаза 9, кусочек 2: сеет battleRngMp (см. её заголовок), без
 // него дефолт 0 — детерминированная (но не менее честная) погода на бой.
 const ROUND_CAP = 60; // index.html:4190 while(round<60) — то же число
-function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv = 0, marchId = 0, attHasGen = false) {
+
+// =============================================================================
+// Фаза 21 — бой во времени. Раньше resolvePvp() (ниже была одна функция)
+// честно проигрывала все раунды до исхода ЗА ОДИН вызов, внутри одного
+// applyMarchArrive — мгновенный результат, автор попросил растянуть на
+// реальное время (1-2 минуты в зависимости от размера армий), с живыми
+// полосками HP по ходу и возможностью отступить, не дожидаясь конца
+// (см. mp-recall). Вся боевая математика НИЖЕ дословно та же, что была в
+// старой resolvePvp (просто раньше это был один while(round<ROUND_CAP), а
+// теперь — initPvpBattle() один раз при завязке боя (заводит state — то же,
+// что раньше было локальными let/const) + runPvpBattleRounds(state,...)
+// на каждый вызов mp-tick, которая продолжает с того раунда, на котором
+// остановилась в прошлый раз, и обрабатывает НЕ БОЛЬШЕ roundsBudget раундов
+// за один вызов (см. battleRoundsPerTick ниже) — если бой не завершился,
+// applyBattleRound переставляет marches.data.battle на следующий тик через
+// events (type:'battle_round'), как applyAmbientSeed сам себя переставляет.
+//
+// attB/defB и полководцы (genStats) считаются ЗАНОВО на каждый вызов из
+// ТЕКУЩЕГО attP/defP, а не замораживаются на момент завязки боя — если
+// защитник за эти 1-2 минуты успеет исследовать что-то в Академии или
+// поднять уровень стены, это честно скажется на следующем же раунде уже
+// идущего боя (то самое "всё на всё влияет", о чём просил автор). А вот
+// САМ СОСТАВ гарнизона (кто физически стоит в строю) — заморожен на момент
+// завязки: свежепостроенные/обученные за время осады войска в ЭТОТ бой не
+// вступают, они просто ждут своей очереди в казармах, как и раньше (когда
+// бой был мгновенным, они физически не успевали появиться за миллисекунды
+// одного вызова — теперь просто явно то же самое поведение на более
+// длинном окне).
+//
+// state — целиком JSON-сериализуемый (никаких функций/классов), лежит в
+// marches.data.battle между вызовами. attGenHpFrac/defGenHpFrac — не
+// абсолютное HP полководца, а ДОЛЯ от максимума (0..1): максимум может
+// чуть плыть от вызова к вызову (снаряжение/бонусы живые, см. выше), доля
+// же остаётся честной вне зависимости от того, что при этом произошло с
+// максимумом.
+function pvpTotalTroops(attUnits, defUnits) { return unitsTotal(attUnits) + unitsTotal(defUnits); }
+
+function initPvpBattle(attUnits, attP, defUnits, defP, defWallLv, defGarrisonLv, marchId, attHasGen) {
   const attB = bonuses(attP), defB = bonuses(defP, true);
   let attU = attUnits, defU = defUnits;
   let attLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} }, defLossTotal = { inf: {}, arc: {}, cav: {}, sie: {} };
   const attBroken = { inf: {}, arc: {}, cav: {}, sie: {} }, defBroken = { inf: {}, arc: {}, cav: {}, sie: {} };
-  // index.html:4396-4410 raiseSkeletons — Фаза 9, кусочек 7: attRisen/
-  // defRisen — активные поднятые скелеты (см. заголовок sideStats/
-  // applyLosses/applyRaise). attRaisedCum/defRaisedCum — сколько всего
-  // поднято с начала боя (бюджет, не даёт поднять дважды одних и тех же).
   const attRisen = { inf: {}, arc: {}, cav: {}, sie: {} }, defRisen = { inf: {}, arc: {}, cav: {}, sie: {} };
   const attRaisedCum = { inf: {}, arc: {}, cav: {}, sie: {} }, defRaisedCum = { inf: {}, arc: {}, cav: {}, sie: {} };
   const rnd = battleRngMp(marchId);
@@ -1326,12 +1384,11 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
   const wMod = (t) => (weather.mod && weather.mod[t]) || 1;
   const jit = weather.jitter || 0.05;
   const roll = () => 1 + (rnd() * 2 - 1) * jit;
-  // index.html:4169-4188 первый залп лучников без ответа (elf firstStrike,
-  // эпоха 5) — оба, если у обеих сторон подходящая раса/эпоха: атакующий
-  // бьёт первым по защитнику (через его стену), затем защитник отвечает
-  // своим залпом (без стены — по чистому полю). Погоду ловит через
-  // wMod("arc") (залп — чисто лучный урон) и свой roll(), как в источнике
-  // (index.html:4176/4179 — scale(volleyDamage(...), wMod("arc")*roll())).
+  // index.html:4169-4188 первый залп лучников (elf firstStrike) + залп
+  // Сторожевой башни защитника — ДО общей схватки, один раз на весь бой,
+  // здесь и остаются (не часть раундового цикла — переносить их в
+  // runPvpBattleRounds незачем, они уже применены раз и навсегда к
+  // стартовому состоянию state).
   const openA = volleyDamage(attU, attP.race, attB, sideStats(defU, defP.race, defB), defWallLv, defB.wallBonus);
   if (openA) {
     const scaled = {}; TKEYS.forEach((t) => { scaled[t] = (openA[t] || 0) * wMod("arc") * roll(); });
@@ -1344,60 +1401,68 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
     const l = applyLosses(attU, scaled, attP.race, attB.hp, null, rnd);
     attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
   }
-  // Залп Сторожевой башни защитника — до общей схватки (Фаза 4, шестой
-  // кусочек), теперь перед раундовым циклом, а не влит в единственный
-  // обмен. Погоду НЕ ловит (index.html:4183 тоже вызывает его без wMod) —
-  // только BATTLE_PACE, который у него был и раньше своей формулой.
   const openG = garrisonVolley(defGarrisonLv, sideStats(attU, attP.race, attB));
   if (openG) {
     const l = applyLosses(attU, openG, attP.race, attB.hp, null, rnd);
     attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
   }
-  // index.html:4186-4188 brk0A/brk0D — дисциплина проверяется и один раз
-  // после ВСЕХ стартовых залпов разом (не после каждого по отдельности).
-  checkDiscipline(defUnits, defLossTotal, defP.race, defBroken);
   checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
-  let round = 0;
-  // index.html:3958-3964 f.gen — эфемерный, строится один раз на бой (не
-  // за раунд), полководец без выбора (p.gen.id==null) даёт null и просто
-  // не участвует, как и в источнике. Раньше genStats(attP)/genStats(defP)
-  // вызывались БЕЗУСЛОВНО (единственная проверка внутри genStats — выбран
-  // ли генерал вообще), из-за чего полководец фактически участвовал
-  // ОДНОВРЕМЕННО в любом числе боёв сразу — и в каждом марше атакующего, и
-  // в обороне города, всегда, если был хоть раз выбран. Полководец в
-  // источнике физически один: attHasGen — привезён ли он именно ЭТИМ
-  // маршем (m.data.has_gen, index.html:4655/4666 takeGen); у защитника
-  // отдельного флага не нужно — он либо дома (p.gen.away==null), либо в
-  // пути с каким-то СВОИМ маршем, и тогда defP уже целиком читается как
-  // "дома нет" (index.html:5373 withGen:!!(def.gen&&def.gen.away==null)).
-  let attGen = attHasGen ? genStats(attP) : null;
-  let defGen = (defP.gen && defP.gen.away == null) ? genStats(defP) : null;
-  // index.html:5066/5374 ctx.startA — состав похода на момент ВХОДА в этот
-  // бой (не изначальный набор при отправке — если что-то уже отбилось
-  // раньше по дороге, отступать он будет от уже уменьшенного числа, как и
-  // в источнике). ctx.toDeath нигде в SP не выставлен в true — отступление
-  // всегда активно, отдельный флаг сюда не переносим, он был бы мёртвым
-  // кодом и там, и тут.
+  checkDiscipline(defUnits, defLossTotal, defP.race, defBroken);
   const attStartN = unitsTotal(attUnits);
-  while (round < ROUND_CAP) {
+  const attStartHp = sideStats(attU, attP.race, attB, attBroken, attRisen).totalHp;
+  const defStartHp = sideStats(defU, defP.race, defB, defBroken, defRisen).totalHp;
+  const totalTroops = pvpTotalTroops(attUnits, defUnits);
+  const ticksBudget = battleTicksBudget(totalTroops);
+  return {
+    marchId, round: 0, ticksBudget, weather,
+    attU, defU, attStartUnits: attUnits, defStartUnits: defUnits, attStartN,
+    attLossTotal, defLossTotal, attBroken, defBroken,
+    attRisen, defRisen, attRaisedCum, defRaisedCum,
+    attHasGen, attGenHpFrac: null, defGenHpFrac: null, attGenMaxHp: null, defGenMaxHp: null,
+    attStartHp: Math.round(attStartHp), defStartHp: Math.round(defStartHp),
+    attHpLeft: Math.round(attStartHp), defHpLeft: Math.round(defStartHp),
+    concluded: false, winner: null,
+  };
+}
+
+// Продолжает бой из state на месте, где остановился, максимум roundsBudget
+// новых раундов за этот вызов (может завершиться раньше — полное
+// истребление стороны/rout/ROUND_CAP, см. concluded ниже). Мутирует state и
+// возвращает его же (тот же объект, что и передан — так удобнее вызывающему
+// коду mp-tick, не нужно разбираться, где копия, а где нет).
+function runPvpBattleRounds(state, attP, defP, defWallLv, defGarrisonLv, roundsBudget) {
+  const attB = bonuses(attP), defB = bonuses(defP, true);
+  const weather = state.weather;
+  const wMod = (t) => (weather.mod && weather.mod[t]) || 1;
+  const jit = weather.jitter || 0.05;
+  const rnd = battleRngMp(state.marchId); // см. заголовок battleRngMp — сеет от Date.now(), каждый вызов уже свежий поток
+  const roll = () => 1 + (rnd() * 2 - 1) * jit;
+
+  const attGenMax = state.attHasGen ? genStats(attP) : null;
+  const defGenMax = (defP.gen && defP.gen.away == null) ? genStats(defP) : null;
+  let attGen = attGenMax ? { ...attGenMax } : null;
+  let defGen = defGenMax ? { ...defGenMax } : null;
+  if (attGen && state.attGenHpFrac != null) attGen.hp = Math.max(0, Math.round(attGenMax.hp * state.attGenHpFrac));
+  if (defGen && state.defGenHpFrac != null) defGen.hp = Math.max(0, Math.round(defGenMax.hp * state.defGenHpFrac));
+
+  let attU = state.attU, defU = state.defU;
+  let attLossTotal = state.attLossTotal, defLossTotal = state.defLossTotal;
+  const attBroken = state.attBroken, defBroken = state.defBroken;
+  const attRisen = state.attRisen, defRisen = state.defRisen;
+  const attRaisedCum = state.attRaisedCum, defRaisedCum = state.defRaisedCum;
+
+  let roundsThisCall = 0;
+  while (state.round < ROUND_CAP && roundsThisCall < roundsBudget) {
     const attS = sideStats(attU, attP.race, attB, attBroken, attRisen), defS = sideStats(defU, defP.race, defB, defBroken, defRisen);
     if (attS.totalN <= 0 || defS.totalN <= 0) break;
-    round++;
+    state.round++; roundsThisCall++;
     const dmgToDef = dmgTo(attS, defS, defWallLv, defB.wallBonus, wMod, roll());
     const dmgToAtt = dmgTo(defS, attS, 0, 0, wMod, roll());
-    // risen — Фаза 9, кусочек 7: только основной обмен ударами этого
-    // раунда его расходует (см. заголовок applyLosses); контрудар/урон
-    // полководцев/залпы ниже по-прежнему бьют только по живым.
     const defLoss = applyLosses(defU, dmgToDef, defP.race, defB.hp, defRisen, rnd);
     const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp, attRisen, rnd);
     defU = unitsSub(defU, defLoss.units); defLossTotal = unitsAdd(defLossTotal, defLoss.units);
     attU = unitsSub(attU, attLoss.units); attLossTotal = unitsAdd(attLossTotal, attLoss.units);
     TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) { defRisen[t][i] = Math.max(0, (defRisen[t][i] || 0) - (defLoss.risen[t][i] || 0)); attRisen[t][i] = Math.max(0, (attRisen[t][i] || 0) - (attLoss.risen[t][i] || 0)); } });
-    // index.html:4229-4238 контрудар гарнизона (dwarf, эпоха 5, ТОЛЬКО при
-    // обороне — defB.counter приходит из bonuses(defP, true), которая уже
-    // применяет defMods лишь defending-стороне). Доля от урона, который
-    // атакующий только что нанёс защитнику (dmgToDef ЭТОГО раунда, не
-    // накопленного), возвращается атакующему по HP-долям его родов войск.
     if (defB.counter) {
       const totalDmgToDef = TKEYS.reduce((s, t) => s + (dmgToDef[t] || 0), 0);
       const extra = totalDmgToDef * defB.counter;
@@ -1408,9 +1473,6 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
         attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
       }
     }
-    // index.html:4222-4228 — полководцы бьют/получают на тех же attS/defS,
-    // что и основной обмен этого раунда (снятые ДО применения урона выше —
-    // тот же порядок, что и в источнике).
     const genDmgToDef = generalDamage(attGen, defS);
     if (genDmgToDef) {
       const l = applyLosses(defU, genDmgToDef, defP.race, defB.hp, null, rnd);
@@ -1423,34 +1485,52 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
     }
     if (attGen) attGen.hp = Math.max(0, attGen.hp - damageToGeneral(attGen, defS));
     if (defGen) defGen.hp = Math.max(0, defGen.hp - damageToGeneral(defGen, attS));
-    checkDiscipline(defUnits, defLossTotal, defP.race, defBroken);
-    checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
-    // index.html:4396-4410 raiseSkeletons — Фаза 9, кусочек 7. Атакующий в
-    // PvP всегда mode:"siege-attack" (гибель насмерть без исключений — тот
-    // же режим, что уже применяется к нему в applyMarchArrive), поэтому
-    // hurt у него всегда 0 и B.raiseHurt для атакующего эффекта не даёт —
-    // честно, не баг: штурмующий чужой город лазарета не имеет вообще, и
-    // "Пробуждение кургана" ему буквально нечего поднимать. Защитник —
-    // обычный "hospital", как и в его собственном итоговом hospitalSplit.
+    checkDiscipline(state.attStartUnits, attLossTotal, attP.race, attBroken);
+    checkDiscipline(state.defStartUnits, defLossTotal, defP.race, defBroken);
     applyRaise(defP, defB, "hospital", defLossTotal, defRisen, defRaisedCum);
     applyRaise(attP, attB, "siege-attack", attLossTotal, attRisen, attRaisedCum);
-    // index.html:4260-4265 rout — атакующий отступает, потеряв больше 72%
-    // состава, с которым вошёл в этот бой (attStartN выше), не дожидаясь
-    // ROUND_CAP и не добивая защитника. Проверяется раз в конце раунда,
-    // после всего урона этого раунда (включая контрудар/полководцев).
-    if (unitsTotal(attU) / Math.max(1, attStartN) < 0.28) break;
+    if (unitsTotal(attU) / Math.max(1, state.attStartN) < 0.28) break;
   }
-  const attHpLeft = sideStats(attU, attP.race, attB).totalHp;
-  const defHpLeft = sideStats(defU, defP.race, defB).totalHp;
-  // index.html:4267-4275 — если обе стороны уцелели (упёрлись в ROUND_CAP
-  // или атакующий отступил по rout выше), победа по armyPower ОСТАВШИХСЯ
-  // войск, не по HP. Полное истребление одной из сторон по-прежнему решает
-  // исход напрямую, тут ничего не поменялось.
+
+  state.attU = attU; state.defU = defU;
+  state.attLossTotal = attLossTotal; state.defLossTotal = defLossTotal;
+  state.attGenHpFrac = attGen ? attGen.hp / Math.max(1, attGenMax.hp) : null;
+  state.defGenHpFrac = defGen ? defGen.hp / Math.max(1, defGenMax.hp) : null;
+  state.attGenMaxHp = attGenMax ? attGenMax.hp : null;
+  state.defGenMaxHp = defGenMax ? defGenMax.hp : null;
+  state.attHpLeft = Math.round(sideStats(attU, attP.race, attB, attBroken, attRisen).totalHp);
+  state.defHpLeft = Math.round(sideStats(defU, defP.race, defB, defBroken, defRisen).totalHp);
+
   const attAlive = unitsTotal(attU), defAlive = unitsTotal(defU);
-  const powA = armyPower(attU, attB, attP.race), powD = armyPower(defU, defB, defP.race);
-  const winner = attAlive > 0 && defAlive <= 0 ? "att" : defAlive > 0 && attAlive <= 0 ? "def" : (powA > powD ? "att" : "def");
-  return { attLoss: attLossTotal, defLoss: defLossTotal, attHpLeft, defHpLeft, winner, rounds: round, weather: weather.id, weatherName: weather.name };
+  const routed = attAlive > 0 && defAlive > 0 && (attAlive / Math.max(1, state.attStartN) < 0.28);
+  state.concluded = attAlive <= 0 || defAlive <= 0 || routed || state.round >= ROUND_CAP;
+  if (state.concluded) {
+    const powA = armyPower(attU, attB, attP.race), powD = armyPower(defU, defB, defP.race);
+    state.winner = attAlive > 0 && defAlive <= 0 ? "att" : defAlive > 0 && attAlive <= 0 ? "def" : (powA > powD ? "att" : "def");
+  }
+  return state;
 }
+// Темп "живого" боя — см. миграцию 0005_realtime_battles.sql и заголовок
+// выше. Тиков всего от 2 (мелкая стычка, часто хватает и одного — раунды
+// заканчиваются раньше бюджета) до 8 (~2 мин, огромные армии); раундов за
+// один вызов — весь ROUND_CAP, поделенный на бюджет тиков, но не меньше 4 и
+// не больше 15 (иначе либо гигант тонет в раундах дольше двух минут, либо
+// мелкая стычка разрешается за один вызов без единого "живого" обновления
+// полоски HP — не тот эффект, ради которого всё затевалось).
+const BATTLE_MIN_TICKS = 2, BATTLE_MAX_TICKS = 8;
+const BATTLE_MIN_ROUNDS_PER_TICK = 4, BATTLE_MAX_ROUNDS_PER_TICK = 15;
+function battleTicksBudget(totalTroops) {
+  return clamp(Math.round(2 + Math.log10(Math.max(1, totalTroops))), BATTLE_MIN_TICKS, BATTLE_MAX_TICKS);
+}
+function battleRoundsPerTick(ticksBudget) {
+  return clamp(Math.ceil(ROUND_CAP / Math.max(1, ticksBudget)), BATTLE_MIN_ROUNDS_PER_TICK, BATTLE_MAX_ROUNDS_PER_TICK);
+}
+// Интервал между продолжениями боя — тот же порядок, что и pg_cron
+// (0003_faster_tick.sql, сейчас 15с). Не обязано совпадать один в один —
+// events.fire_at сам подождёт следующего подходящего запуска mp-tick
+// (плановый или толкнутый mp-join), просто не имеет смысла ставить его
+// короче реального интервала тикера.
+const BATTLE_TICK_SECONDS = 15;
 // index.html:2867 HOSPITAL_CAP_TABLE / hospitalCap / totalHospitalCap —
 // сколько раненых вмещает лазарет (сумма по всем 4 построенным участкам,
 // см. Фаза 5, пятый кусочек).
@@ -1737,105 +1817,199 @@ async function applyMarchArrive(admin, ev) {
   if (dErr) throw dErr;
 
   const nowSec = Date.now() / 1000;
-  let survivors = m.units, carry = {};
   // Цель пропала или встала под щит уже после отправки марша — бой не
   // случается, отряд просто разворачивается (как recallMarch без боя).
-  if (defRow && !(defRow.shield_until > nowSec)) {
-    const attP = attRow.state, defP = defRow.state;
-    // Самоисцеление легаси-записей — см. тот же комментарий в mp-attack/mp-train.
-    attP.race = attP.race || attRow.race;
-    defP.race = defP.race || defRow.race;
-    const defWallLv = (defP.b && typeof defP.b.wall === "number") ? defP.b.wall : 0;
-    const defGarrisonLv = (defP.b && typeof defP.b.garrison === "number") ? defP.b.garrison : 0;
-    const attHasGen = !!(m.data && m.data.has_gen);
-    const result = resolvePvp(m.units, attP, defP.troops, defP, defWallLv, defGarrisonLv, m.id, attHasGen);
-    defP.troops = unitsSub(defP.troops, result.defLoss);
-    // Фаза 4, шестой кусочек: лазарет защитника (index.html:4351/4411-4423)
-    // — часть потерь не гибнет насмерть. Слегка раненые (12%) немедленно
-    // возвращаются в строй, тяжелораненые (в пределах вместимости лазарета)
-    // едут в p.wounded, и только сверх вместимости гибнут по-настоящему.
-    // Атакующий (mode:"siege-attack" по смыслу — марш к чужому городу) такой
-    // защиты не имеет, теряет войска насмерть целиком, как и раньше.
-    if (!defP.wounded) defP.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
-    TKEYS.forEach((t) => { if (!defP.wounded[t]) defP.wounded[t] = {}; });
-    const hs = hospitalSplit(defP, result.defLoss, "hospital");
-    defP.troops = unitsAdd(defP.troops, hs.slightUnits);
-    defP.wounded = unitsAdd(defP.wounded, hs.hurtUnits);
-    survivors = unitsSub(m.units, result.attLoss);
-
-    // Фаза 10, кусочек 1 — опыт генерала за победу над игроком (только
-    // атакующему, зеркало addXp(att,...) в battleCity, index.html:5093 —
-    // защитник опыта за отражение штурма не получает, как и в клиенте).
-    // Раньше эта функция вообще не писала обратно строку атакующего (его
-    // войска возвращались только через марш домой) — теперь нужно, чтобы
-    // сохранить level/xp/pts.
-    if (result.winner === "att") {
-      addXp(attP, Math.round(200 + (defP.b && defP.b.hall || 0) * 60));
-      // index.html:5385-5391 battleCity — грабёж склада защитника, ранее
-      // честно отсутствовавший в MP целиком (carry никогда не выставлялся,
-      // defP.res никогда не трогался). syncRes(defP) сначала — иначе
-      // грабился бы устаревший снимок с момента последнего ДЕЙСТВИЯ
-      // защитника, а не реальный на секунду боя.
-      syncRes(defP, nowSec);
-      let carryCap = 0;
-      TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) carryCap += (survivors[t][i] || 0) * TROOP_TYPES[t].load * TIER_MULT[i - 1] * troopMod(attP.race, t, "load"); });
-      const prot = capacity(defP);
-      RES.forEach((r) => {
-        const take = Math.min(Math.max(0, (defP.res[r] || 0) - prot[r]), carryCap / 4);
-        carry[r] = Math.round(take);
-        defP.res[r] = (defP.res[r] || 0) - take;
-      });
-      // index.html:5393-5403 — полный разгром бьёт по прочности стены и
-      // при обнулении переносит столицу защитника (relocate). Сознательно
-      // НЕ переносится — щит мира и перенос столицы исключены из общего
-      // мира ещё раньше в этой миграции (не были закончены даже в
-      // одиночной игре), тот же принцип, что и у wallHp вообще.
-    }
-    // index.html:4950-4957 EV.home — генерал возвращается домой вместе с
-    // отрядом НЕЗАВИСИМО от исхода похода; там это происходит при обычном
-    // возвращении. Если же весь посланный отряд полёг (survivors пуст),
-    // applyMarchArrive удаляет марш немедленно, минуя домашний путь и
-    // applyMarchHome (см. ниже) — той развязки, что освобождает away,
-    // тогда не будет вовсе, поэтому освобождаем прямо здесь, пока ещё
-    // знаем survivors. Проверка на attP.gen.away===m.id — та же
-    // защитная, что и в источнике (не отобрать генерала у НОВОГО похода
-    // из-за завершения старого).
-    if (attHasGen && unitsTotal(survivors) <= 0 && attP.gen && attP.gen.away === m.id) attP.gen.away = null;
-    const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
-    if (updA) throw updA;
-    const { error: updD } = await admin.from("players").update({ state: defP, updated_at: new Date().toISOString() }).eq("id", defRow.id);
-    if (updD) throw updD;
-
-    const summary = {
-      winner: result.winner, sent: m.units, attLoss: result.attLoss, defLoss: result.defLoss,
-      attHpLeft: Math.round(result.attHpLeft), defHpLeft: Math.round(result.defHpLeft),
-      defDead: hs.dead, defHurt: hs.hurt, defSlight: hs.slight,
-      rounds: result.rounds, // Фаза 9, кусочек 1 — теперь бой честно может занять не один обмен
-      loot: carry, // {} при поражении/ничьей — RES.forEach выше не заполнил ни рубля
-    };
-    const mailRows = [
-      { world_id: m.world_id, player_id: attRow.id, kind: "battle", data: { role: "attacker", opponent_id: defRow.id, opponent_nick: defRow.nick, ...summary } },
-      { world_id: m.world_id, player_id: defRow.id, kind: "battle", data: { role: "defender", opponent_id: attRow.id, opponent_nick: attRow.nick, ...summary } },
-    ];
-    const { error: mailErr } = await admin.from("mail").insert(mailRows);
-    if (mailErr) throw mailErr;
+  if (!defRow || defRow.shield_until > nowSec) {
+    await sendSurvivorsHome(admin, m, nowSec, m.units, {});
+    return;
   }
 
-  // Обратная дорога — зеркало recallMarch: те же расстояние/скорость, что
-  // и туда (dist/spd сохранены в m.data при отправке — тот же путь назад),
-  // минимум 15с вместо 20с (index.html:4775 — recallMarch считает мягче
-  // sendMarch, тот же порог тут).
+  const attP = attRow.state, defP = defRow.state;
+  // Самоисцеление легаси-записей — см. тот же комментарий в mp-attack/mp-train.
+  attP.race = attP.race || attRow.race;
+  defP.race = defP.race || defRow.race;
+  const defWallLv = (defP.b && typeof defP.b.wall === "number") ? defP.b.wall : 0;
+  const defGarrisonLv = (defP.b && typeof defP.b.garrison === "number") ? defP.b.garrison : 0;
+  const attHasGen = !!(m.data && m.data.has_gen);
+  // Фаза 21 — завязка боя (защитник + гарнизон СНИМАЮТСЯ снимком здесь, на
+  // весь бой, см. заголовок initPvpBattle/runPvpBattleRounds выше) и сразу
+  // первый кусок раундов — мелкая стычка часто укладывается в один этот
+  // вызов целиком (state.concluded=true), крупная — нет, тогда march
+  // уходит в state:'siege' и продолжается events'ом type:'battle_round'.
+  const state = initPvpBattle(m.units, attP, defP.troops, defP, defWallLv, defGarrisonLv, m.id, attHasGen);
+  runPvpBattleRounds(state, attP, defP, defWallLv, defGarrisonLv, battleRoundsPerTick(state.ticksBudget));
+  await progressOrFinalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, nowSec);
+}
+
+// Обратная дорога — зеркало recallMarch: те же расстояние/скорость, что
+// и туда (dist/spd сохранены в m.data при отправке — тот же путь назад),
+// минимум 15с вместо 20с (index.html:4775 — recallMarch считает мягче
+// sendMarch, тот же порог тут). Общий хвост для "боя не было" (защитник
+// пропал/под щитом), для честного конца PvP-боя (finalizePvpBattle ниже) и
+// для рейда на лагерь (applyRaidArrive) — раньше это было три копии одного
+// и того же 6-строчного куска, теперь один.
+async function sendSurvivorsHome(admin, m, nowSec, survivors, carry) {
   if (unitsTotal(survivors) <= 0) { await admin.from("marches").delete().eq("id", m.id); return; }
+  const { battle, ...restData } = m.data || {};
   const dist = (m.data && m.data.dist) || 0, spd = (m.data && m.data.spd) || 1;
   const travelBack = Math.max(15, (dist / spd) * 60);
   const { error: updM } = await admin.from("marches")
-    .update({ state: "back", t0: nowSec, t1: nowSec + travelBack, units: survivors, data: { ...m.data, carry } }).eq("id", m.id);
+    .update({ state: "back", t0: nowSec, t1: nowSec + travelBack, units: survivors, data: { ...restData, carry } }).eq("id", m.id);
   if (updM) throw updM;
   const { error: evErr } = await admin.from("events").insert({
     world_id: m.world_id, fire_at: new Date((nowSec + travelBack) * 1000).toISOString(),
     type: "march_home", data: { march_id: m.id },
   });
   if (evErr) throw evErr;
+}
+
+// Фаза 21 — после каждого куска раундов (первого, из applyMarchArrive, или
+// продолжения, из applyBattleRound): бой либо уже завершился (concluded),
+// либо нет — тогда march переходит (или остаётся) в state:'siege' с
+// state боя внутри data.battle, и следующий кусок переставляется на
+// events (type:'battle_round', тот же приём, что applyAmbientSeed сам себя
+// переставляет) через BATTLE_TICK_SECONDS.
+async function progressOrFinalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, nowSec) {
+  if (state.concluded) { await finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, nowSec); return; }
+  const { error: updM } = await admin.from("marches")
+    .update({ state: "siege", data: { ...m.data, battle: state } }).eq("id", m.id);
+  if (updM) throw updM;
+  const { error: evErr } = await admin.from("events").insert({
+    world_id: m.world_id, fire_at: new Date((nowSec + BATTLE_TICK_SECONDS) * 1000).toISOString(),
+    type: "battle_round", data: { march_id: m.id },
+  });
+  if (evErr) throw evErr;
+}
+
+// Честный конец PvP-боя (state.concluded===true) — дословно тот хвост, что
+// раньше шёл сразу после resolvePvp() внутри applyMarchArrive, просто
+// читает из state вместо result и переиспользует sendSurvivorsHome для
+// дороги домой. Общий для обоих путей завершения: бой решился с первого же
+// куска раундов (applyMarchArrive) или спустя несколько events'ов
+// battle_round (applyBattleRound) — на исход это не влияет никак, только
+// на то, сколько реального времени бой занял.
+async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, nowSec) {
+  defP.troops = unitsSub(defP.troops, state.defLossTotal);
+  // Фаза 4, шестой кусочек: лазарет защитника (index.html:4351/4411-4423)
+  // — часть потерь не гибнет насмерть. Слегка раненые (12%) немедленно
+  // возвращаются в строй, тяжелораненые (в пределах вместимости лазарета)
+  // едут в p.wounded, и только сверх вместимости гибнут по-настоящему.
+  // Атакующий (mode:"siege-attack" по смыслу — марш к чужому городу) такой
+  // защиты не имеет, теряет войска насмерть целиком, как и раньше.
+  if (!defP.wounded) defP.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
+  TKEYS.forEach((t) => { if (!defP.wounded[t]) defP.wounded[t] = {}; });
+  const hs = hospitalSplit(defP, state.defLossTotal, "hospital");
+  defP.troops = unitsAdd(defP.troops, hs.slightUnits);
+  defP.wounded = unitsAdd(defP.wounded, hs.hurtUnits);
+  const survivors = unitsSub(state.attStartUnits, state.attLossTotal);
+  let carry = {};
+
+  // Фаза 10, кусочек 1 — опыт генерала за победу над игроком (только
+  // атакующему, зеркало addXp(att,...) в battleCity, index.html:5093 —
+  // защитник опыта за отражение штурма не получает, как и в клиенте).
+  if (state.winner === "att") {
+    addXp(attP, Math.round(200 + (defP.b && defP.b.hall || 0) * 60));
+    // index.html:5385-5391 battleCity — грабёж склада защитника. syncRes(defP)
+    // сначала — иначе грабился бы устаревший снимок с момента последнего
+    // ДЕЙСТВИЯ защитника, а не реальный на секунду ЗАВЕРШЕНИЯ боя (не
+    // завязки — за 1-2 минуты боя защитник мог и подкопить ресурсов).
+    syncRes(defP, nowSec);
+    let carryCap = 0;
+    TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) carryCap += (survivors[t][i] || 0) * TROOP_TYPES[t].load * TIER_MULT[i - 1] * troopMod(attP.race, t, "load"); });
+    const prot = capacity(defP);
+    RES.forEach((r) => {
+      const take = Math.min(Math.max(0, (defP.res[r] || 0) - prot[r]), carryCap / 4);
+      carry[r] = Math.round(take);
+      defP.res[r] = (defP.res[r] || 0) - take;
+    });
+    // index.html:5393-5403 — полный разгром бьёт по прочности стены и при
+    // обнулении переносит столицу защитника (relocate). Сознательно НЕ
+    // переносится — щит мира и перенос столицы исключены из общего мира
+    // ещё раньше (не были закончены даже в одиночной игре), тот же
+    // принцип, что и у wallHp вообще.
+  }
+  // index.html:4950-4957 EV.home — генерал возвращается домой вместе с
+  // отрядом НЕЗАВИСИМО от исхода похода. Если весь посланный отряд полёг
+  // (survivors пуст), sendSurvivorsHome удаляет марш немедленно, минуя
+  // домашний путь и applyMarchHome (см. её заголовок) — той развязки, что
+  // освобождает away, тогда не будет вовсе, поэтому освобождаем прямо
+  // здесь, пока ещё знаем survivors. Проверка на attP.gen.away===m.id — не
+  // отобрать генерала у НОВОГО похода из-за завершения старого.
+  if (state.attHasGen && unitsTotal(survivors) <= 0 && attP.gen && attP.gen.away === m.id) attP.gen.away = null;
+  const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
+  if (updA) throw updA;
+  const { error: updD } = await admin.from("players").update({ state: defP, updated_at: new Date().toISOString() }).eq("id", defRow.id);
+  if (updD) throw updD;
+
+  const summary = {
+    winner: state.winner, sent: state.attStartUnits, attLoss: state.attLossTotal, defLoss: state.defLossTotal,
+    attHpLeft: state.attHpLeft, defHpLeft: state.defHpLeft,
+    defDead: hs.dead, defHurt: hs.hurt, defSlight: hs.slight,
+    rounds: state.round, weather: state.weather.id, weatherName: state.weather.name,
+    loot: carry, // {} при поражении/ничьей — RES.forEach выше не заполнил ни рубля
+    retreated: !!state.retreated, // Фаза 21 — честное отступление кнопкой, не обычное поражение (см. mp-recall)
+  };
+  const mailRows = [
+    { world_id: m.world_id, player_id: attRow.id, kind: "battle", data: { role: "attacker", opponent_id: defRow.id, opponent_nick: defRow.nick, ...summary } },
+    { world_id: m.world_id, player_id: defRow.id, kind: "battle", data: { role: "defender", opponent_id: attRow.id, opponent_nick: attRow.nick, ...summary } },
+  ];
+  const { error: mailErr } = await admin.from("mail").insert(mailRows);
+  if (mailErr) throw mailErr;
+
+  await sendSurvivorsHome(admin, m, nowSec, survivors, carry);
+}
+
+// Фаза 21 — продолжение боя, растянутого на несколько тиков (см. заголовок
+// initPvpBattle/runPvpBattleRounds и миграцию 0005). Зеркало применяется
+// как и applyMarchArrive: перечитывает игроков заново на каждый вызов
+// (bonuses/полководцы честно "живые", см. заголовок runPvpBattleRounds), но
+// состав войск/потери/дисциплину/раунд берёт из m.data.battle, куда их
+// оставил предыдущий вызов.
+async function applyBattleRound(admin, ev) {
+  const marchId = ev.data && ev.data.march_id;
+  if (marchId == null) return;
+  const { data: m, error: mErr } = await admin.from("marches").select("*").eq("id", marchId).maybeSingle();
+  if (mErr) throw mErr;
+  // Марш мог быть отозван мид-боя (mp-recall переводит его в 'back' и сам
+  // честно завершает бой досрочно, см. её заголовок) или state.concluded
+  // уже разобран каким-то прошлым (задвоенным?) вызовом — тот же принцип
+  // самоохраны, что и m.state!=="go" в applyMarchArrive.
+  if (!m || m.state !== "siege" || !m.data || !m.data.battle) return;
+
+  const { data: attRow, error: aErr } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
+  if (aErr) throw aErr;
+  if (!attRow) { await admin.from("marches").delete().eq("id", m.id); return; } // хозяина нет — некому возвращать
+  const { data: defRow, error: dErr } = await admin.from("players").select("*").eq("id", m.data.defender_id).maybeSingle();
+  if (dErr) throw dErr;
+  if (!defRow) {
+    // В этой игре строки players не удаляются никогда — на практике сюда
+    // дойти нельзя, но лучше честно оборвать бой и вернуть уцелевших на
+    // текущий момент, чем упасть на null.b/null.race где-то внутри bonuses().
+    const state = m.data.battle;
+    await sendSurvivorsHome(admin, m, Date.now() / 1000, unitsSub(state.attStartUnits, state.attLossTotal), {});
+    return;
+  }
+
+  const attP = attRow.state, defP = defRow.state;
+  attP.race = attP.race || attRow.race;
+  defP.race = defP.race || defRow.race;
+  const defWallLv = (defP.b && typeof defP.b.wall === "number") ? defP.b.wall : 0;
+  const defGarrisonLv = (defP.b && typeof defP.b.garrison === "number") ? defP.b.garrison : 0;
+  const state = m.data.battle;
+  const nowSec = Date.now() / 1000;
+  // Фаза 21 — отступление кнопкой (mp-recall помечает m.data.battle.
+  // retreatRequested, см. её заголовок). Бой обрывается ПРЯМО СЕЙЧАС, без
+  // единого нового раунда — "отступить, пока не поздно" в буквальном
+  // смысле, а не "доиграть этот раунд и уйти". Отступивший забирает ровно
+  // то, что уцелело к моменту нажатия кнопки; защитник формально победитель
+  // (штурм не удался), но без трофеев — как и при обычном поражении
+  // атакующего (loot в finalizePvpBattle полагается только winner:"att").
+  if (state.retreatRequested) {
+    state.concluded = true; state.winner = "def"; state.retreated = true;
+  } else {
+    runPvpBattleRounds(state, attP, defP, defWallLv, defGarrisonLv, battleRoundsPerTick(state.ticksBudget));
+  }
+  await progressOrFinalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, nowSec);
 }
 
 // Зеркало EV.home (index.html:4947) — выжившие возвращаются в домашний

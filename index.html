@@ -1095,6 +1095,24 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   background:linear-gradient(90deg,var(--gilt-dim),var(--gilt-hi));
   box-shadow:0 0 7px rgba(226,194,115,.4)}
 
+/* Фаза 21 — живые полоски HP боя, растянутого во времени (см.
+   supabase/migrations/0005_realtime_battles.sql). Простая, не орнаментальная
+   полоска (в отличие от .progress выше — та про "сколько ждать", эта про
+   "сколько осталось сил") — намеренно нейтральная заготовка: автор
+   собирается заменить это модельками войск/генералов со своими полосками,
+   .hpbar только держит место и остаётся честным резервным видом там, где
+   3D ещё не подключено (например, компактная запись в списке маршей). */
+.hpline{display:flex;justify-content:space-between;font-size:11.5px;
+  color:var(--vellum-dim);margin-top:6px}
+.hpline b{color:var(--vellum);font-family:var(--data)}
+.hpbar{height:8px;border-radius:4px;background:rgba(0,0,0,.4);
+  border:1px solid var(--rule-soft);overflow:hidden;margin-top:2px}
+.hpbar i{display:block;height:100%;border-radius:3px;
+  background:linear-gradient(90deg,var(--garnet),var(--verdigris));
+  transition:width .4s ease}
+.hpbar-gen{height:4px;opacity:.7}
+.hpbar-gen i{background:linear-gradient(90deg,var(--garnet),var(--gilt-hi))}
+
 /* Табличка-реестр */
 .roll{width:100%;border-collapse:collapse;font-size:13px}
 .roll td{padding:4px 0;border-bottom:1px dotted var(--rule-soft);color:var(--vellum-dim)}
@@ -11536,8 +11554,14 @@ async function mpRefreshIncoming(){
   // tx/ty/units добавились для Фазы 12 (объёмная карта, mpWorldSnapshot
   // ниже) — маркеру похода в 3D нужны координаты и состав отряда (для
   // подписи по тапу), раньше хватало только времени подхода для текста.
-  const { data, error } = await sb.from("marches").select("id,player_id,t0,t1,tx,ty,units")
-    .eq("data->>defender_id", String(mpState.player.id)).eq("state","go").order("t1");
+  // state теперь ещё и "siege" (Фаза 21 — бой во времени, см.
+  // supabase/migrations/0005_realtime_battles.sql): отряд уже стоит под
+  // городом и бой идёт несколько тиков подряд, а не разрешается мгновенно —
+  // защитник должен видеть его ровно так же, как и на подходе, поэтому
+  // фильтр по state расширен, а data (там лежит data.battle — живые HP,
+  // см. mpBattleBarsHtml) теперь тоже читается.
+  const { data, error } = await sb.from("marches").select("id,player_id,t0,t1,tx,ty,units,state,data")
+    .eq("data->>defender_id", String(mpState.player.id)).in("state",["go","siege"]).order("t1");
   if(!error && data){ mpState.incoming=data; mpRerender(); }
 }
 // Превью добычи/час для панели — Фаза 6: теперь зовёт НАСТОЯЩИЙ клиентский
@@ -11587,6 +11611,24 @@ function mpRaceCardsHtml(){
 //   only не задан → вся страница (вкладка "Общий мир", как была);
 //   "army" → смотр войск, лазарет, отряды в поле, входящие атаки;
 //   "mail" → бой, разведка, походы на лагеря.
+// Фаза 21 — живая полоска HP боя, растянутого во времени (см.
+// supabase/migrations/0005_realtime_battles.sql и mp-tick: initPvpBattle/
+// runPvpBattleRounds — hpLeft/startHp/genHpFrac лежат прямо в
+// marches.data.battle, опрашиваются тем же mpRefreshMarches/mpRefreshIncoming,
+// что и всё остальное). Нейтральна к тому, чья это полоска (атакующего или
+// защитника) — вызывающий код сам решает, что подписать "Наши"/"Противник".
+// genFrac — доля HP полководца (0..1), null если полководца в этом бою нет
+// вовсе (не полёг — именно не участвует, см. attHasGen/defP.gen.away).
+// Только текст + простая заливка (.hpbar, см. CSS) — сознательно нейтральная
+// заготовка: автор планирует собственные модельки войск/генералов со своими
+// полосками, это честный резервный вид там, где 3D ещё не подключено.
+function mpHpBarHtml(label, hpLeft, startHp, genFrac){
+  const pct = startHp>0 ? Math.max(0,Math.min(100, hpLeft/startHp*100)) : 0;
+  let h = "<div class='hpline'><span>"+label+"</span><b>"+pct.toFixed(0)+"%</b></div>"+
+    "<div class='hpbar'><i style='width:"+pct.toFixed(1)+"%'></i></div>";
+  if(genFrac!=null) h += "<div class='hpbar hpbar-gen'><i style='width:"+(Math.max(0,Math.min(1,genFrac))*100).toFixed(1)+"%'></i></div>";
+  return h;
+}
 function foMultiplayer(embedded, only){
   const show = k => !only || only===k;
   let h=embedded?"":rubric("Общий мир","бета");
@@ -11644,12 +11686,22 @@ function foMultiplayer(embedded, only){
   if(show("army") && mpState.incoming.length){
     h+=rubric("Входящие атаки","тревога");
     mpState.incoming.forEach(m=>{
-      const left=Math.max(0,m.t1-Date.now()/1000);
       const att=mpState.neighbors.find(n=>n.id===m.player_id);
+      const sieging=m.state==="siege", b=sieging&&m.data&&m.data.battle;
       h+="<div class='entry war'><div class='line'><div class='fill'>"+
-         "<div class='title'>"+(att?att.nick||"Безымянный лорд":"Неизвестный")+" идёт на вас</div>"+
-         "<div class='note'>Подход через "+fmtDur(left)+" — состав отряда неизвестен без разведки.</div>"+
-         "</div></div></div>";
+         "<div class='title'>"+(att?att.nick||"Безымянный лорд":"Неизвестный")+(sieging?" штурмует вас":" идёт на вас")+"</div>";
+      if(sieging && b){
+        // Фаза 21 — оборона видит СВОЮ полоску как "defHpLeft" в state
+        // боя, атакующего — как "attHpLeft" (mpHpBarHtml ниже нейтрален к
+        // роли, просто рисует то, что дали).
+        h+="<div class='note'>Бой идёт — раунд "+b.round+(b.weather&&b.weather.id!=="clear"?" · "+b.weather.name:"")+"</div>"+
+           mpHpBarHtml("Наша оборона",b.defHpLeft,b.defStartHp,b.defGenHpFrac)+
+           mpHpBarHtml("Противник",b.attHpLeft,b.attStartHp,b.attGenHpFrac);
+      } else {
+        const left=Math.max(0,m.t1-Date.now()/1000);
+        h+="<div class='note'>Подход через "+fmtDur(left)+" — состав отряда неизвестен без разведки.</div>";
+      }
+      h+="</div></div></div>";
     });
   }
 
@@ -11660,25 +11712,47 @@ function foMultiplayer(embedded, only){
   if(show("army") && mpState.marches.length){
     h+=rubric("Отряды в поле",mpState.marches.length+" из "+mpMarchSlots(st.b.hall||0));
     mpState.marches.forEach(m=>{
-      const left=Math.max(0,m.t1-Date.now()/1000);
-      const going=m.state==="go", gathering=m.state==="gather", isGather=m.mode==="gather", isRaid=m.mode==="raid";
+      const going=m.state==="go", gathering=m.state==="gather", sieging=m.state==="siege";
+      const isGather=m.mode==="gather", isRaid=m.mode==="raid";
       const opp=mpState.neighbors.find(n=>n.id===(m.data&&m.data.defender_id));
-      const title = isGather
+      const title = sieging
+        ? "В бою у "+(opp?opp.nick||"Безымянный лорд":m.tx+", "+m.ty)
+        : isGather
         ? (going?"Идёт к точке сбора "+m.tx+", "+m.ty:gathering?"Собирает у "+m.tx+", "+m.ty:"Везёт добычу домой")
         : isRaid
         ? (going?"Идёт на лагерь "+m.tx+", "+m.ty:"Возвращается от лагеря "+m.tx+", "+m.ty)
         : (going?"Идёт к ":"Возвращается от ")+(opp?opp.nick||"Безымянный лорд":m.tx+", "+m.ty);
       h+="<div class='entry'><div class='line'><div class='fill'>"+
-         "<div class='title'>"+title+"</div>"+
-         "<div class='note'>Осталось: "+fmtDur(left)+"</div>";
+         "<div class='title'>"+title+"</div>";
+      // Фаза 21 — бой во времени (см. supabase/migrations/
+      // 0005_realtime_battles.sql): пока марш в state:"siege", m.t1 —
+      // застрявшее время ПРИХОДА, не время конца боя (тот заранее не
+      // известен — раунды считаются частями, см. runPvpBattleRounds в
+      // mp-tick), поэтому вместо "Осталось: ..." — живые полоски HP.
+      const b=sieging&&m.data&&m.data.battle;
+      if(b){
+        h+="<div class='note'>Бой идёт — раунд "+b.round+(b.weather&&b.weather.id!=="clear"?" · "+b.weather.name:"")+"</div>"+
+           mpHpBarHtml("Наши",b.attHpLeft,b.attStartHp,b.attGenHpFrac)+
+           mpHpBarHtml("Противник",b.defHpLeft,b.defStartHp,b.defGenHpFrac);
+      } else {
+        const left=Math.max(0,m.t1-Date.now()/1000);
+        h+="<div class='note'>Осталось: "+fmtDur(left)+"</div>";
+      }
       // Фаза 4, девятый кусочек — отзыв похода на полпути (mp-recall):
       // разворачивает отряд ОТ ТЕКУЩЕЙ ТОЧКИ, а не мгновенно из дома — чем
       // дальше он уже прошёл, тем дольше идти назад. Фаза 9 (мелкий
       // пробел): mp-recall теперь понимает и gather/raid, не только
       // attack — кнопка доступна, пока отряд ещё идёт (state:"go", любой
       // режим) ИЛИ уже стоит на точке сбора (state:"gather" — тогда сбор
-      // засчитывается целиком, см. заголовок mp-recall/index.js).
-      if(going || (gathering && isGather)) h+="<button class='seal' data-mp='recall' data-id='"+m.id+"'"+(mpState.loading?" disabled":"")+">Отозвать</button>";
+      // засчитывается целиком, см. заголовок mp-recall/index.js). Фаза 21:
+      // и посреди боя (state:"siege") — mp-recall теперь честно понимает и
+      // это как "отступить", см. её заголовок; кнопка та же самая, просто
+      // подпись меняется, чтобы не звучать так, будто отряд ещё не дошёл.
+      if(going || (gathering && isGather) || sieging){
+        const already=b&&b.retreatRequested;
+        h+="<button class='seal' data-mp='recall' data-id='"+m.id+"'"+((mpState.loading||already)?" disabled":"")+">"+
+           (sieging?(already?"Отступаем…":"Отступить"):"Отозвать")+"</button>";
+      }
       h+="</div></div></div>";
     });
   }
