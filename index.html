@@ -4305,14 +4305,14 @@ function resolveBattle(A,D,ctx){
   // потому что урон в единицах здоровья, а рассказывать надо в людях.
   const fell=(f,fn)=>{ const b=countUnits(f.units); fn(); return b-countUnits(f.units) };
   const openA=scale(volleyDamage(A,sideStats(D),wallMul), wMod("arc")*roll());
-  if(openA){ const n=fell(D,()=>{ applyDamage(D,openA,lossD); raiseSkeletons(D,lossD) });
+  if(openA){ const n=fell(D,()=>{ applyDamage(D,openA,lossD,rnd); raiseSkeletons(D,lossD) });
     note("volley", A.name+": лучники дали залп ещё до сшибки — пало "+RUn(n)+".", "A", 0); }
   const openD=scale(volleyDamage(D,sideStats(A),1), wMod("arc")*roll());
-  if(openD){ const n=fell(A,()=>{ applyDamage(A,openD,lossA); raiseSkeletons(A,lossA) });
+  if(openD){ const n=fell(A,()=>{ applyDamage(A,openD,lossA,rnd); raiseSkeletons(A,lossA) });
     note("volley", D.name+": встречный залп лучников — пало "+RUn(n)+".", "D", 0); }
   // Залп гарнизона защитника — тоже до общей схватки
   const openG=garrisonVolley(D,sideStats(A));
-  if(openG){ const n=fell(A,()=>{ applyDamage(A,openG,lossA); raiseSkeletons(A,lossA) });
+  if(openG){ const n=fell(A,()=>{ applyDamage(A,openG,lossA,rnd); raiseSkeletons(A,lossA) });
     if(n>0) note("tower", "Сторожевая башня встретила подходящих — пало "+RUn(n)+".", "D", 0); }
   const brk0A=checkDiscipline(A,lossA), brk0D=checkDiscipline(D,lossD);
   if(brk0A&&brk0A.length) note("panic", A.name+": "+brk0A.join(", ")+" дрогнули ещё на подходе.", "D", 0);
@@ -4348,11 +4348,11 @@ function resolveBattle(A,D,ctx){
 
     const dA = dmgTo(A,sa,sd,wallMul,roll());   // урон, наносимый атакующим
     const dD = dmgTo(D,sd,sa,1,roll());
-    applyDamage(D,dA,lossD);
-    applyDamage(A,dD,lossA);
+    applyDamage(D,dA,lossD,rnd);
+    applyDamage(A,dD,lossA,rnd);
     // Полководцы — отдельные бойцы вне треугольника: бьют всех, получают ото всех, но смягчённо
-    const genDmgA=generalDamage(A,sd); if(genDmgA) applyDamage(D,genDmgA,lossD);
-    const genDmgD=generalDamage(D,sa); if(genDmgD) applyDamage(A,genDmgD,lossA);
+    const genDmgA=generalDamage(A,sd); if(genDmgA) applyDamage(D,genDmgA,lossD,rnd);
+    const genDmgD=generalDamage(D,sa); if(genDmgD) applyDamage(A,genDmgD,lossA,rnd);
     if(A.gen) A.gen.hp=Math.max(0,A.gen.hp-damageToGeneral(A,sd));
     if(D.gen) D.gen.hp=Math.max(0,D.gen.hp-damageToGeneral(D,sa));
     if(genAliveA && A.gen.hp<=0) note("general", A.name+": полководец пал и больше не ведёт войско.", "D");
@@ -4363,7 +4363,7 @@ function resolveBattle(A,D,ctx){
       if(extra>0){
         const reflect={inf:0,arc:0,cav:0,sie:0};
         TKEYS.forEach(t=>{ if(sa[t].n>0) reflect[t]=extra*(sa[t].hp/Math.max(1,sa.totalHp)); });
-        const n=fell(A,()=>applyDamage(A,reflect,lossA));
+        const n=fell(A,()=>applyDamage(A,reflect,lossA,rnd));
         if(n>0) note("counter", D.name+": гарнизон отвечает контрударом — пало "+RUn(n)+".", "D");
       }
     }
@@ -4421,28 +4421,42 @@ function resolveBattle(A,D,ctx){
     win);
   return {win, rounds:round, lossA, lossD, log, aliveA, aliveD, weather};
 }
-function applyDamage(f,dmg,loss){
+// Раньше урон бил строго по возрастанию тира: пока жив хоть один боец
+// младшего тира этого рода войск, старшие (и поднятые скелеты нежити) вообще
+// не рисковали — гарантированный "живой щит". Автор пожаловался: в настоящем
+// бою так не бывает, задевает вперемешку. Теперь урон разлетается по ВСЕМ
+// тирам сразу (живые 1-5 + поднятые скелеты 1-5 этого рода войск — один общий
+// пул целей, это заодно убирает и отдельную жёсткую очередь "сначала живые,
+// потом скелеты"), пропорционально их доле в общем HP пула, но с случайным
+// вокруг единицы разбросом на каждую группу — крупный отряд в среднем
+// теряет больше, но не железно, кому-то в конкретном бою может не повезти
+// сильнее своей доли, а кому-то — повезти меньше потерять.
+// rnd — тот же самый посевной battleRng(A,D)/battleRngMp(marchId), что уже
+// красит погоду и разброс урона по раунду (см. выше): один и тот же бой
+// всегда даёт один и тот же исход (честно, воспроизводимо, не читерится
+// повтором), но КОМУ именно не повезло внутри армии — уже не жёсткое
+// правило "слабые вперёд", а случайный (детерминированно случайный) бросок.
+function applyDamage(f,dmg,loss,rnd){
   const race=f.p&&f.p.race;
   TKEYS.forEach(t=>{
     let d=dmg[t]; if(d<=0)return;
-    // сначала гибнут живые бойцы, младшие тиры первыми
-    for(let i=1;i<=5&&d>0;i++){
-      const c=f.units[t][i]||0; if(!c)continue;
-      const ehp=troopStat(t,i,"hp")*troopMod(race,t,"hp")*(1+f.B.hp);
-      let kill=Math.min(c, Math.floor(d/ehp));
-      if(kill<=0 && d>ehp*0.5 && c>0) kill=1;
-      if(kill<=0) break;
-      f.units[t][i]-=kill; loss[t][i]+=kill; d-=kill*ehp;
-    }
-    // затем — поднятые мертвецы этого рода войск (хрупче: половина хп своего тира)
-    for(let i=1;i<=5&&d>0;i++){
-      const rc=f.risen&&f.risen[t][i]||0; if(!rc)continue;
-      const ehp=troopStat(t,i,"hp")*troopMod(race,t,"hp")*0.5*(1+f.B.hp);
-      let kill=Math.min(rc, Math.floor(d/ehp));
-      if(kill<=0 && d>ehp*0.5 && rc>0) kill=1;
-      if(kill<=0) break;
-      f.risen[t][i]-=kill; d-=kill*ehp;
-    }
+    const pool=[];
+    for(let i=1;i<=5;i++){ const c=f.units[t][i]||0; if(c>0)
+      pool.push({live:true,i,ehp:troopStat(t,i,"hp")*troopMod(race,t,"hp")*(1+f.B.hp),n:c}); }
+    for(let i=1;i<=5;i++){ const rc=f.risen&&f.risen[t][i]||0; if(rc>0)
+      pool.push({live:false,i,ehp:troopStat(t,i,"hp")*troopMod(race,t,"hp")*0.5*(1+f.B.hp),n:rc}); }
+    if(!pool.length) return;
+    const hpTotal=pool.reduce((s,p)=>s+p.n*p.ehp,0); if(hpTotal<=0) return;
+    const dmgUsed=Math.min(d,hpTotal);
+    let wsum=0;
+    pool.forEach(p=>{ p.w=(p.n*p.ehp)*(0.5+rnd()); wsum+=p.w; });   // 0.5..1.5 вокруг "честной" доли
+    if(wsum<=0) return;
+    pool.forEach(p=>{
+      const share=dmgUsed*(p.w/wsum);
+      const kill=Math.min(p.n, Math.round(share/p.ehp));
+      if(kill<=0) return;
+      if(p.live){ f.units[t][p.i]-=kill; loss[t][p.i]+=kill; } else { f.risen[t][p.i]-=kill; }
+    });
   });
 }
 function checkDiscipline(f,loss){

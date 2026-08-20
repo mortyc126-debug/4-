@@ -646,17 +646,15 @@ const ACADEMY_TREE = {
 //   5. Бонусы дерева исследований (ACADEMY_TREE[*].field/effects, по
 //      p.tech) — уже перенесено в Фазе 5, здесь наконец подключается.
 //
-// Что НЕ считается, и почему это математически, а не по недосмотру, ноль:
-//   - Талантовые бонусы генерала (w1-w5/d1-d5/g1-g3/g4-g5, index.html:
-//     3760-3767) и GENERAL_TREE (город/армия, index.html:3780-3787) — оба
-//     читают ТОЛЬКО p.gen.tal. В общем мире система вложения очков таланта
-//     не заведена вообще: p.gen.tal у каждого игрока всегда {} (mp-join),
-//     очков взять неоткуда. T[id]||0 для любого id из пустого объекта — это
-//     буквально 0, то есть эти два блока клиента при p.gen.tal={} дают
-//     нулевой вклад АБСОЛЮТНО ТОЧНО, не приближённо — переносить их сюда
-//     значило бы скопировать код, который на сервере гарантированно не
-//     умеет посчитать ничего, кроме нуля. Поэтому они просто опущены, а не
-//     скопированы ради видимости полноты.
+// Устарело (оставлено видимым нарочно — см. ниже, а не удалено молча):
+// раньше здесь было написано, что талантовые бонусы генерала (w1-w5/d1-d5/
+// g1-g3/g4-g5, index.html:3760-3767) и GENERAL_TREE (город/армия, index.html:
+// 3780-3787) НЕ считаются, потому что вложить очки в общем мире было
+// неоткуда (p.gen.tal всегда {}). Это больше не так: mp-talent (Фаза 10,
+// кусочек 2) даёт реально тратить очки в p.gen.tal, и блок ниже
+// (`const T=(p.gen&&p.gen.tal)||{}` и всё, что после него) их честно читает
+// и применяет — не ноль. Смотрите сам код bonuses() ниже, а не этот
+// комментарий, если нужно проверить, что именно считается.
 // index.html:2283-2344 GENERALS — оба генерала на расу (name — только для
 // mp-pickgen'а ответа/сверки, косметика apply не нужна серверу).
 const GENERALS = {
@@ -1140,38 +1138,54 @@ function dmgTo(attS, defS, defWallLv = 0, wallBonus = 0, wMod = null, shake = 1)
 // hpBonus — сырой B.hp, тот же множитель, что sideStats уже применила к
 // totalHp (см. _shared/rules.js) — держит hpTotal (знаменатель доли потерь)
 // согласованным с тем пулом HP, из которого dmgTo() реально считал урон.
-// risen — Фаза 9, кусочек 7: необязательный пятый параметр (по умолчанию
-// null — все существующие вызовы, кроме основного обмена уроном в
-// resolvePvp/resolveBanditRaid, ведут себя ровно как раньше). ЧЕСТНОЕ
-// ДОПОЛНИТЕЛЬНОЕ УПРОЩЕНИЕ поверх уже принятого в Фазе 6 (доля-от-HP вместо
-// поштучного точного урона, как в applyDamage источника): источник сперва
-// добивает живых, и только когда живых не остаётся — поднятых (index.html:
-// 4293-4316 applyDamage, два последовательных цикла). Здесь оба пула
-// (живые и поднятые, у поднятых — половина HP тира) складываются в ОДИН
-// общий HP-пул и тают одной и той же долей `frac` — раздельной очерёдности
-// "сначала живые" нет, оба пула убывают вместе пропорционально.
-function applyLosses(units, dmgByType, race, hpBonus = 0, risen = null) {
+// risen — необязательный пятый параметр (по умолчанию null). rnd —
+// обязательный шестой: тот же самый посевной battleRngMp(marchId), что уже
+// красит погоду/roll() в resolvePvp/resolveBanditRaid — см. их заголовки.
+// index.html:4424-4460 applyDamage — источник раньше (и эта функция вслед за
+// ним) убивал строго по возрастанию тира — младшие бойцы гибли первыми и
+// полностью, старшие вообще не рисковали, пока младшие не выбиты подчистую
+// (и поднятые скелеты не рисковали вовсе, пока жив хоть один ЖИВОЙ боец —
+// см. историю этого файла). Автор пожаловался: в настоящем бою так не
+// бывает, задевает вперемешку, а не по расписанию "сначала дешёвые". Теперь
+// оба источника (index.html и этот файл) считают одинаково: живые (1-5) и
+// поднятые скелеты (1-5, половина HP) этого рода войск — один общий пул
+// целей, урон делится между ними пропорционально доле в общем HP пула, но
+// с собственным случайным разбросом на каждую группу (0.5..1.5 вокруг её
+// "честной" доли) — крупная группа в среднем теряет больше, но не железно.
+// Раздельной очерёдности "сначала живые" больше нет ни там, ни тут — то,
+// из-за чего эти два места раньше расходились (см. историю этого
+// комментария), теперь просто не может разойтись: правило одно и то же.
+function applyLosses(units, dmgByType, race, hpBonus = 0, risen = null, rnd) {
   const lost = { inf: {}, arc: {}, cav: {}, sie: {} };
   const lostRisen = { inf: {}, arc: {}, cav: {}, sie: {} };
   let hpLost = 0;
   TKEYS.forEach((t) => {
-    let hpTotal = 0, hpRisenTotal = 0;
-    for (let i = 1; i <= 5; i++) hpTotal += ((units[t] && units[t][i]) || 0) * TROOP_TYPES[t].hp * TIER_MULT[i - 1] * troopMod(race, t, "hp") * (1 + hpBonus);
-    if (risen) for (let i = 1; i <= 5; i++) hpRisenTotal += ((risen[t] && risen[t][i]) || 0) * TROOP_TYPES[t].hp * TIER_MULT[i - 1] * troopMod(race, t, "hp") * 0.5 * (1 + hpBonus);
-    const combinedTotal = hpTotal + hpRisenTotal;
-    if (combinedTotal <= 0 || !dmgByType[t]) {
-      for (let i = 1; i <= 5; i++) { lost[t][i] = 0; lostRisen[t][i] = 0; }
-      return;
-    }
-    const dmg = Math.min(dmgByType[t], combinedTotal);
-    hpLost += dmg;
-    const frac = dmg / combinedTotal;
+    for (let i = 1; i <= 5; i++) { lost[t][i] = 0; lostRisen[t][i] = 0; }
+    const d = dmgByType[t];
+    if (!d || d <= 0) return;
+    const pool = [];
     for (let i = 1; i <= 5; i++) {
       const c = (units[t] && units[t][i]) || 0;
-      lost[t][i] = Math.min(c, Math.round(c * frac));
-      const rc = (risen && risen[t] && risen[t][i]) || 0;
-      lostRisen[t][i] = Math.min(rc, Math.round(rc * frac));
+      if (c > 0) pool.push({ live: true, i, ehp: TROOP_TYPES[t].hp * TIER_MULT[i - 1] * troopMod(race, t, "hp") * (1 + hpBonus), n: c });
     }
+    if (risen) for (let i = 1; i <= 5; i++) {
+      const rc = (risen[t] && risen[t][i]) || 0;
+      if (rc > 0) pool.push({ live: false, i, ehp: TROOP_TYPES[t].hp * TIER_MULT[i - 1] * troopMod(race, t, "hp") * 0.5 * (1 + hpBonus), n: rc });
+    }
+    if (!pool.length) return;
+    const hpTotal = pool.reduce((s, p) => s + p.n * p.ehp, 0);
+    if (hpTotal <= 0) return;
+    const dmgUsed = Math.min(d, hpTotal);
+    hpLost += dmgUsed;
+    let wsum = 0;
+    pool.forEach((p) => { p.w = (p.n * p.ehp) * (0.5 + rnd()); wsum += p.w; });
+    if (wsum <= 0) return;
+    pool.forEach((p) => {
+      const share = dmgUsed * (p.w / wsum);
+      const kill = Math.min(p.n, Math.round(share / p.ehp));
+      if (kill <= 0) return;
+      if (p.live) lost[t][p.i] = kill; else lostRisen[t][p.i] = kill;
+    });
   });
   return { units: lost, risen: lostRisen, hpLost };
 }
@@ -1321,13 +1335,13 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
   const openA = volleyDamage(attU, attP.race, attB, sideStats(defU, defP.race, defB), defWallLv, defB.wallBonus);
   if (openA) {
     const scaled = {}; TKEYS.forEach((t) => { scaled[t] = (openA[t] || 0) * wMod("arc") * roll(); });
-    const l = applyLosses(defU, scaled, defP.race, defB.hp);
+    const l = applyLosses(defU, scaled, defP.race, defB.hp, null, rnd);
     defU = unitsSub(defU, l.units); defLossTotal = unitsAdd(defLossTotal, l.units);
   }
   const openD = volleyDamage(defU, defP.race, defB, sideStats(attU, attP.race, attB));
   if (openD) {
     const scaled = {}; TKEYS.forEach((t) => { scaled[t] = (openD[t] || 0) * wMod("arc") * roll(); });
-    const l = applyLosses(attU, scaled, attP.race, attB.hp);
+    const l = applyLosses(attU, scaled, attP.race, attB.hp, null, rnd);
     attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
   }
   // Залп Сторожевой башни защитника — до общей схватки (Фаза 4, шестой
@@ -1336,7 +1350,7 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
   // только BATTLE_PACE, который у него был и раньше своей формулой.
   const openG = garrisonVolley(defGarrisonLv, sideStats(attU, attP.race, attB));
   if (openG) {
-    const l = applyLosses(attU, openG, attP.race, attB.hp);
+    const l = applyLosses(attU, openG, attP.race, attB.hp, null, rnd);
     attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
   }
   // index.html:4186-4188 brk0A/brk0D — дисциплина проверяется и один раз
@@ -1374,8 +1388,8 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
     // risen — Фаза 9, кусочек 7: только основной обмен ударами этого
     // раунда его расходует (см. заголовок applyLosses); контрудар/урон
     // полководцев/залпы ниже по-прежнему бьют только по живым.
-    const defLoss = applyLosses(defU, dmgToDef, defP.race, defB.hp, defRisen);
-    const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp, attRisen);
+    const defLoss = applyLosses(defU, dmgToDef, defP.race, defB.hp, defRisen, rnd);
+    const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp, attRisen, rnd);
     defU = unitsSub(defU, defLoss.units); defLossTotal = unitsAdd(defLossTotal, defLoss.units);
     attU = unitsSub(attU, attLoss.units); attLossTotal = unitsAdd(attLossTotal, attLoss.units);
     TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) { defRisen[t][i] = Math.max(0, (defRisen[t][i] || 0) - (defLoss.risen[t][i] || 0)); attRisen[t][i] = Math.max(0, (attRisen[t][i] || 0) - (attLoss.risen[t][i] || 0)); } });
@@ -1390,7 +1404,7 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
       if (extra > 0) {
         const reflect = {};
         TKEYS.forEach((t) => { if (attS[t].n > 0) reflect[t] = extra * (attS[t].hp / Math.max(1, attS.totalHp)); });
-        const l = applyLosses(attU, reflect, attP.race, attB.hp);
+        const l = applyLosses(attU, reflect, attP.race, attB.hp, null, rnd);
         attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
       }
     }
@@ -1399,12 +1413,12 @@ function resolvePvp(attUnits, attP, defUnits, defP, defWallLv = 0, defGarrisonLv
     // тот же порядок, что и в источнике).
     const genDmgToDef = generalDamage(attGen, defS);
     if (genDmgToDef) {
-      const l = applyLosses(defU, genDmgToDef, defP.race, defB.hp);
+      const l = applyLosses(defU, genDmgToDef, defP.race, defB.hp, null, rnd);
       defU = unitsSub(defU, l.units); defLossTotal = unitsAdd(defLossTotal, l.units);
     }
     const genDmgToAtt = generalDamage(defGen, attS);
     if (genDmgToAtt) {
-      const l = applyLosses(attU, genDmgToAtt, attP.race, attB.hp);
+      const l = applyLosses(attU, genDmgToAtt, attP.race, attB.hp, null, rnd);
       attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
     }
     if (attGen) attGen.hp = Math.max(0, attGen.hp - damageToGeneral(attGen, defS));
@@ -1537,21 +1551,28 @@ function unitsTotal(units) {
 }
 
 // Фаза 8, кусочек 2 — лагеря варваров. BANDIT_TROOPS/banditTier/banditArmy
-// дословно из index.html:3187-3195 — тот же гарнизон, что и в одиночной
+// дословно из index.html:5271-5276 — тот же гарнизон, что и в одиночной
 // игре, для того же уровня лагеря. ~~BANDIT_XP не перенесён~~ — закрыто в
 // Фазе 10, кусочек 1 (см. addXp/BANDIT_XP ниже, applyRaidArrive начисляет
 // его победителю).
-const BANDIT_TROOPS = [20000,23000,26000,29000,32000,35000,38000,42000,46000,50000,55000,60000,66000,73000,80000,88000,96000,105000,115000,125000,135000,145000,157000,170000,185000,200000,215000,230000,245000,260000];
+// Раньше здесь стояли 30 записей (уровни 26-30 придуманы, у источника их
+// нет) — источник (index.html:5271-5272) обрывается на 25, том же
+// CFG.MAX_LEVEL, что клэмпит уровень лагеря везде в одиночной игре
+// (index.html:1845/3109). Лишние записи были мертвы (лагеря сеются только
+// 1..5, см. seedCampsAround в mp-join), но если диапазон генерации лагерей
+// когда-нибудь расширят только здесь — у клиента для уровня >25 данных бы
+// не нашлось. Обрезано до тех же 25, что и в источнике.
+const BANDIT_TROOPS = [20000,23000,26000,29000,32000,35000,38000,42000,46000,50000,55000,60000,66000,73000,80000,88000,96000,105000,115000,125000,135000,145000,157000,170000,185000];
 const banditTier = (lv) => (lv <= 5 ? 1 : lv <= 12 ? 2 : lv <= 20 ? 3 : 4);
 // Фаза 10, кусочек 1 — опыт и уровень генерала. Дословно из index.html:
-// 2848-2849 (GEN_XP_NEED/genXpNeed) и 5136-5147 (addXp) — тот же
+// 2979-2985 (GEN_XP_NEED/genXpNeed) и addXp — тот же
 // суммарный ~50.12 млн опыта к 60 уровню, интерполированный по контрольным
-// точкам легендарного командира. BANDIT_XP — index.html:3188, опыт за
-// победу над лагерем разбойников, тот же индекс (уровень лагеря 1..30), что
+// точкам легендарного командира. BANDIT_XP — index.html:5272, опыт за
+// победу над лагерем разбойников, тот же индекс (уровень лагеря 1..25), что
 // у BANDIT_TROOPS выше.
 const GEN_XP_NEED=[210,210,276,483,846,1482,2594,4541,7950,7950,7950,7950,8449,10471,12978,16084,19935,24707,30621,30621,33942,40093,47360,55943,66083,78060,92207,108919,128659,128659,142186,163193,187303,214974,246734,283186,323079,370524,424937,424937,478776,540017,609091,687001,774876,873992,985786,1111879,1254102,1660595,1909956,2196763,2526638,2906048,3921926,4612964,5425762,6381774,7506234];
 const genXpNeed = (lv) => GEN_XP_NEED[lv - 1] || GEN_XP_NEED[GEN_XP_NEED.length - 1];
-const BANDIT_XP=[100,120,140,160,180,200,220,240,260,300,330,360,390,420,450,480,510,540,570,600,640,680,720,760,800,840,880,920,960,1000];
+const BANDIT_XP=[100,120,140,160,180,200,220,240,260,300,330,360,390,420,450,480,510,540,570,600,640,680,720,760,800];
 // ~~Только уровень/опыт/очки~~ — трата очков (mp-talent, Фаза 10 кусочек 2)
 // и эффект вложенных талантов в bonuses() (Фаза 10, кусочек 3, см. bonuses()
 // в этом же файле) закрыты; addXp тут по-прежнему только копит очки в
@@ -1568,7 +1589,7 @@ function addXp(p, xp) {
 function banditArmy(lv) {
   const u = { inf: {}, arc: {}, cav: {}, sie: {} };
   TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) u[t][i] = 0; });
-  const i = Math.max(1, Math.min(30, Math.round(lv)));
+  const i = Math.max(1, Math.min(25, Math.round(lv)));
   const tier = banditTier(i), n = BANDIT_TROOPS[i - 1];
   u.inf[tier] = Math.round(n * 0.45); u.arc[tier] = Math.round(n * 0.30); u.cav[tier] = Math.round(n * 0.25);
   return u;
@@ -1618,7 +1639,7 @@ function resolveBanditRaid(attUnits, attP, campLv, marchId = 0, attHasGen = fals
   const openA = volleyDamage(attU, attP.race, attB, sideStats(bandU, null, BANDIT_B));
   if (openA) {
     const scaled = {}; TKEYS.forEach((t) => { scaled[t] = (openA[t] || 0) * wMod("arc") * roll(); });
-    const l = applyLosses(bandU, scaled, null, 0);
+    const l = applyLosses(bandU, scaled, null, 0, null, rnd);
     bandU = unitsSub(bandU, l.units); bandLossTotal = unitsAdd(bandLossTotal, l.units);
     checkDiscipline(bandStart, bandLossTotal, null, bandBroken);
   }
@@ -1634,14 +1655,14 @@ function resolveBanditRaid(attUnits, attP, campLv, marchId = 0, attHasGen = fals
     round++;
     const dmgToBand = dmgTo(attS, bandS, 0, 0, wMod, roll()); // лагерь без стены/башни
     const dmgToAtt = dmgTo(bandS, attS, 0, 0, wMod, roll());
-    const bandLoss = applyLosses(bandU, dmgToBand, null, 0);
-    const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp, attRisen);
+    const bandLoss = applyLosses(bandU, dmgToBand, null, 0, null, rnd);
+    const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp, attRisen, rnd);
     bandU = unitsSub(bandU, bandLoss.units); bandLossTotal = unitsAdd(bandLossTotal, bandLoss.units);
     attU = unitsSub(attU, attLoss.units); attLossTotal = unitsAdd(attLossTotal, attLoss.units);
     TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) attRisen[t][i] = Math.max(0, (attRisen[t][i] || 0) - (attLoss.risen[t][i] || 0)); });
     const genDmgToBand = generalDamage(attGen, bandS);
     if (genDmgToBand) {
-      const l = applyLosses(bandU, genDmgToBand, null, 0);
+      const l = applyLosses(bandU, genDmgToBand, null, 0, null, rnd);
       bandU = unitsSub(bandU, l.units); bandLossTotal = unitsAdd(bandLossTotal, l.units);
     }
     if (attGen) attGen.hp = Math.max(0, attGen.hp - damageToGeneral(attGen, bandS));
@@ -1961,7 +1982,7 @@ async function applyRaidArrive(admin, m) {
     let tomeDrops = {};
     if (result.winner === "att") {
       carry = banditLoot(campLv);
-      addXp(attP, BANDIT_XP[Math.max(1, Math.min(30, campLv)) - 1]); // Фаза 10, кусочек 1
+      addXp(attP, BANDIT_XP[Math.max(1, Math.min(25, campLv)) - 1]); // Фаза 10, кусочек 1 (25 = CFG.MAX_LEVEL, см. BANDIT_TROOPS выше)
       // index.html:5074-5077 — книги опыта СВЕРХ обычного addXp выше.
       tomeDrops = bookDrop(campLv * 100);
       if (!attP.tomes) attP.tomes = {};
