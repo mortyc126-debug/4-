@@ -10088,13 +10088,10 @@ function openMenuModal(t){
   $("#side-menu").classList.remove("open");
   renderBadges();
   if(t==="mp" || gatedTab) mpOpen();
-  // Прокрутка к разделу нужна только тем вкладкам, что остались на общей
-  // странице (Войско/Почта): у Генерала и Инвентаря теперь СВОЙ экран целиком,
-  // прокручивать в нём не к чему — он и так начинается с нужного места.
-  if(gatedTab && t!=="gen" && t!=="inv"){
-    const anchor=$("#mp-anchor-"+t);
-    if(anchor) anchor.scrollIntoView({block:"start"});
-  }
+  // Прокрутка к разделу больше не нужна вовсе: у КАЖДОЙ иконки гамбургера
+  // теперь свой экран целиком (Генерал/Инвентарь/Профиль/Войско/Почта), он и
+  // так начинается с нужного места. Якоря (mp-anchor-*) остались только на
+  // длинной странице «Общий мир», где по ним по-прежнему удобно ориентироваться.
 }
 // Метки перерисовываются в общем такте с шапкой (renderTop раз в секунду) —
 // отдельного таймера им не нужно.
@@ -10925,6 +10922,11 @@ function mpMenuBodyHtml(t){
   // Профиль (тап по гербу в шапке) — тот же одиночный экран, но с игроком
   // общего мира: nick с сервера, раса и мощь из его собственного состояния.
   if(t==="profile") return foProfile(Object.assign(mpFullShim(p,st),{nick:p.nick}));
+  // Войско и Почта — те же самые блоки общей страницы, собранные фильтром
+  // (см. `only` у foMultiplayer): отдельных копий разметки не заводим, иначе
+  // страница и экраны разъехались бы при первой же правке.
+  if(t==="army") return foMultiplayer(true,"army");
+  if(t==="mail") return foMultiplayer(true,"mail");
   return foMultiplayer(!SP_UNLOCKED);
 }
 function mpRerender(){
@@ -11377,7 +11379,16 @@ function mpRaceCardsHtml(){
 // ниже) не меняется ни на бит — только вступление и пара фраз с "общий
 // мир"/"в общем мире", которые в embedded-режиме звучали бы странно
 // (мир один, уточнять нечего).
-function foMultiplayer(embedded){
+// Фаза 20 — необязательный `only`: какой РАЗДЕЛ страницы собрать. Иконки
+// гамбургера открывают теперь свои экраны, а не одну длинную страницу с
+// прокруткой (автор: "выскакивает какое-то линейное меню"). Разделять
+// фильтром, а не копиями блоков, — чтобы длинная страница и отдельные экраны
+// не разъехались: разметка у них буквально одна и та же.
+//   only не задан → вся страница (вкладка "Общий мир", как была);
+//   "army" → смотр войск, лазарет, отряды в поле, входящие атаки;
+//   "mail" → бой, разведка, походы на лагеря.
+function foMultiplayer(embedded, only){
+  const show = k => !only || only===k;
   let h=embedded?"":rubric("Общий мир","бета");
   if(!embedded) h+="<div class='entry'><div class='line'><div class='fill'>"+
      "<div class='note'>Один настоящий мир на всех, кто сюда заходит — не отдельная копия для "+
@@ -11414,7 +11425,32 @@ function foMultiplayer(embedded){
      "<div class='title'>"+(p.nick||"Безымянный лорд")+" · "+RACES[p.race].name+"</div>"+
      "<div class='note'>Координаты: "+p.x+", "+p.y+"</div></div></div></div>";
 
-  if(mpState.incoming.length){
+  // Фаза 20 — смотр войск. Раньше страница общего мира вообще не показывала,
+  // КАКОЕ у игрока войско: только "есть N" тира 1 внутри формы набора. А это
+  // ровно содержимое одиночного экрана «Войско» (foArmy), поэтому блок собран
+  // теми же самыми troopRowHtml()/armyPower() — обе чистые, копий не нужно.
+  if(show("army")){
+    const armyShim=mpFullShim(p,st), armyB=bonuses(armyShim);
+    let hurt=0; TKEYS.forEach(t=>{ for(let i=1;i<=5;i++) hurt+=(st.wounded[t]&&st.wounded[t][i])||0; });
+    h+=rubric("Смотр войск",fmt(armyPower(st.troops,armyB,p.race))+" силы","mp-anchor-army");
+    const troopRows=[];
+    TKEYS.forEach(t=>{ for(let i=1;i<=5;i++){ const n=(st.troops[t]&&st.troops[t][i])||0; if(n) troopRows.push(troopRowHtml(armyShim,t,i,n)); } });
+    h+= troopRows.length ? "<div class='entry troop-list'>"+troopRows.join("")+"</div>"
+      : hollow("&#9876;","В столице пусто. Наберите войско в казармах, на стрельбище, в конюшне или мастерской на карте города.");
+    // Статус лазарета — только на ЭКРАНЕ «Войско» (как в одиночной foArmy).
+    // На длинной странице ниже уже есть свой раздел «Лазарет» с формой
+    // лечения, и второй заголовок там был бы просто дублем.
+    if(only==="army" && (hurt>0||st.heal)){
+      h+=rubric("Лазарет");
+      h+="<div class='entry "+(st.heal?"hot":"war")+"'><div class='line'><div class='fill'>"+
+         "<div class='title'>Раненых: "+RU(hurt)+"</div>"+
+         "<div class='note'>"+(st.heal
+            ? "Лечится "+RU(st.heal.n)+" — готово через "+fmtDur(Math.max(0,st.heal.t1-Date.now()/1000))
+            : "Лечение — в госпитале на карте города")+"</div></div></div></div>";
+    }
+  }
+
+  if(show("army") && mpState.incoming.length){
     h+=rubric("Входящие атаки","тревога");
     mpState.incoming.forEach(m=>{
       const left=Math.max(0,m.t1-Date.now()/1000);
@@ -11426,6 +11462,10 @@ function foMultiplayer(embedded){
     });
   }
 
+  // Фаза 20 — разделы общего мира (соседи/точки/лагеря на карте) нужны
+  // только на самой странице «Общий мир»: на экранах Войска и Почты им не
+  // место, там своё содержимое (см. `only` у foMultiplayer выше).
+  if(show("mp")){
   // Фаза 3, первый кусочек — общая видимость: список соседей вместо самой
   // 3D-карты (та рассчитана на локальных ботов одного браузера — встроить
   // туда настоящих других игроков отдельная большая задача, следующий шаг
@@ -11539,8 +11579,10 @@ function foMultiplayer(embedded){
     });
   }
 
-  if(mpState.marches.length){
-    h+=rubric("Отряды в поле",mpState.marches.length+" из "+mpMarchSlots(st.b.hall||0),"mp-anchor-army");
+  } // конец разделов «только общая страница» (участок А)
+
+  if(show("army") && mpState.marches.length){
+    h+=rubric("Отряды в поле",mpState.marches.length+" из "+mpMarchSlots(st.b.hall||0));
     mpState.marches.forEach(m=>{
       const left=Math.max(0,m.t1-Date.now()/1000);
       const going=m.state==="go", gathering=m.state==="gather", isGather=m.mode==="gather", isRaid=m.mode==="raid";
@@ -11565,12 +11607,16 @@ function foMultiplayer(embedded){
     });
   }
 
-  if(mpState.mail.length){
+  if(show("mail") && mpState.mail.length){
     h+=rubric("Бой","последние стычки","mp-anchor-mail");
     mpState.mail.forEach(m=>{
       const d=m.data, mine=d.role==="attacker";
       const myLoss=mine?d.attLoss:d.defLoss, oppLoss=mine?d.defLoss:d.attLoss;
-      const lostN=u=>TKEYS.reduce((s,t)=>s+[1,2,3,4,5].reduce((s2,i)=>s2+((u[t]&&u[t][i])||0),0),0);
+      // u=u||{} — Фаза 20: внутри уже защищено (u[t]&&u[t][i]), но сам объект
+      // мог не приехать вовсе (старая строка почты, донесение другого вида),
+      // и тогда падала ВСЯ страница общего мира — одна кривая запись гасила
+      // игроку весь экран. Письмо без разбора потерь честнее показать нулём.
+      const lostN=u=>{ u=u||{}; return TKEYS.reduce((s,t)=>s+[1,2,3,4,5].reduce((s2,i)=>s2+((u[t]&&u[t][i])||0),0),0); };
       const won=(mine&&d.winner==="att")||(!mine&&d.winner==="def");
       // Фаза 4, шестой кусочек: лазарет защитника — d.defDead/defHurt/
       // defSlight описывают ВСЕГДА защитника (одна и та же сводка лежит в
@@ -11606,7 +11652,7 @@ function foMultiplayer(embedded){
   // сервер честно шлёт null/0/[]. Ступени и пороги — те же самые se>=1..5,
   // что и в scoutSnapshot/scoutReportHtml одиночной игры (index.html:
   // 5237-5282/7080-7151), просто короче (без блочной вёрстки — тут почта).
-  if(mpState.scoutMail.length){
+  if(show("mail") && mpState.scoutMail.length){
     h+=rubric("Разведка","донесения лазутчиков");
     mpState.scoutMail.forEach(m=>{
       const d=m.data;
@@ -11640,7 +11686,7 @@ function foMultiplayer(embedded){
   }
 
   // Фаза 8, кусочек 2 — донесения о походах на лагеря (mail, kind:"raid").
-  if(mpState.raidMail.length){
+  if(show("mail") && mpState.raidMail.length){
     h+=rubric("Лагеря","походы на варваров");
     mpState.raidMail.forEach(m=>{
       const d=m.data;
@@ -11672,6 +11718,7 @@ function foMultiplayer(embedded){
   // однопользовательской игры, что и здесь; см. _shared/rules.js на сервере
   // для точного зеркала). Старые записи могли завести здание скаляром (баг
   // mp-join, уже починен) — mpBuildLv/mpBuildLvAt читают защитно.
+  if(show("mp")){
   const mpBuildLv=(bld)=>{ const raw=st.b[bld]; return BUILD_MP_MULTI.has(bld)?((Array.isArray(raw)?raw[0]:raw)||0):(raw||0) };
   const mpBuildLvAt=(bld,plot)=>{ const raw=st.b[bld]; return BUILD_MP_MULTI.has(bld)?((Array.isArray(raw)?raw[plot]:(plot===0?raw:0))||0):(raw||0) };
   const hallLv=mpBuildLv("hall");
@@ -11886,6 +11933,8 @@ function foMultiplayer(embedded){
     const pShim2={race:p.race,b:Object.assign({portal:0},st.b),gen:st.gen||{id:null},tech:st.tech||{}};
     h+=mpAcademyHtml(pShim2,st);
   }
+
+  } // конец разделов «только общая страница» (участок Б)
 
   if(mpState.err) h+="<div class='entry'><div class='line'><div class='fill'><div class='note' style='color:#e08'>"+mpState.err+"</div></div></div></div>";
   return h;
