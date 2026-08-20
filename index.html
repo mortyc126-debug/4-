@@ -51,8 +51,19 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #crest:hover .mark{color:var(--gilt-hi)}
 #crest .mark{font-size:17px;color:var(--gilt);line-height:1;transition:color .15s;
   width:50px;text-align:center;flex:0 0 auto}
-#crest .avatar{width:78px;height:78px;object-fit:contain;display:block;flex:0 0 auto;
-  position:relative;z-index:2;margin-right:-16px;filter:drop-shadow(0 2px 6px rgba(0,0,0,.7))}
+/* Обёртка аватара шапки — тот же приём, что у .profile-avatar-wrap/
+   .profile-ring в карточке профиля (foProfile): золотое кольцо отдельной
+   картинкой поверх аватара, крупнее его и центрировано, не искажается
+   растяжением. Раньше в шапке кольца не было вовсе — только в профиле,
+   хотя это тот же самый аватар игрока. 107px = 78px×1.375, то же
+   соотношение кольцо/аватар (132/96), что и в профиле. */
+#crest .crest-avatar-wrap{position:relative;width:78px;height:78px;flex:0 0 auto;
+  z-index:2;margin-right:-16px}
+#crest .avatar{width:78px;height:78px;object-fit:contain;display:block;
+  position:relative;z-index:2;filter:drop-shadow(0 2px 6px rgba(0,0,0,.7))}
+#crest .crest-ring{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:107px;height:auto;pointer-events:none;z-index:3;
+  filter:drop-shadow(0 3px 8px rgba(0,0,0,.6))}
 #crest .crest-card{display:flex;flex-direction:column;align-items:flex-start;gap:3px;
   min-width:0;background:rgba(0,0,0,.32);border:1px solid var(--rule-soft);
   border-radius:6px;padding:4px 8px 4px 20px}
@@ -153,6 +164,21 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    длине результата, а не только сокращаем разряды. */
 .profile-power-chip{position:absolute;top:37%;left:50%;transform:translate(-50%,-50%);
   font-family:var(--data);color:var(--gilt-hi);font-weight:bold;white-space:nowrap}
+/* Очки убийств (RoK-стиль, см. addKillPoints) — плашка под гербом мощи,
+   иконка временно текстовая ("&#9876;") — автор сам подберёт свою картинку
+   позже, тут важно только само отображение числа. */
+.profile-kp-wrap{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:10px;
+  padding:6px 14px;border-radius:10px;background:rgba(0,0,0,.18);border:1px solid var(--rule)}
+.profile-kp-ico{font-size:15px;line-height:1;color:var(--gilt)}
+.profile-kp-label{font-size:12px;color:var(--vellum-dim)}
+.profile-kp-val{font-family:var(--data);font-weight:bold;color:var(--gilt-hi)}
+.kp-info-btn{width:18px;height:18px;border-radius:50%;border:1px solid var(--gilt-dim);
+  background:transparent;color:var(--vellum-dim);font-size:11px;font-style:italic;
+  font-family:Georgia,serif;line-height:1;cursor:pointer;padding:0}
+.profile-kp-detail{margin-top:6px;width:100%;max-width:240px;display:flex;flex-direction:column;gap:2px}
+.kp-tier-row{display:flex;justify-content:space-between;gap:14px;padding:3px 12px;font-size:12.5px;
+  color:var(--vellum-dim)}
+.kp-tier-row b{color:var(--vellum);font-family:var(--data)}
 
 .gen-portrait-wrap{position:relative}
 .gen-portrait{width:44px;height:44px;object-fit:contain;display:block}
@@ -492,15 +518,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    свой фильтр (only="mp": Соседи/Точки сбора/Лагеря варваров + Постройки/
    Горн/Набор войск/Академия — то, чему больше нет входа нигде кроме
    этой вкладки). */
-/* #amber-badge — янтарь как ресурс у общего мира ещё не заведён (см.
-   комментарий у mpRenderTop()), показывать там нечего — остаётся спрятан.
-   #top — Фаза 14, кусочек 1 прятала его тем же общим правилом, что и
-   #amber-badge (renderTop() одиночки никогда не зовётся при .mp-gated,
-   без этого правила там навсегда висело бы "Безымянный лорд"/0/0 — не
-   пустой экран, а НЕВЕРНЫЙ). Кусочек 3 завёл mpRenderTop() — те же самые
-   DOM-узлы (#purse/#crest-*), просто из mpState.player, — так что #top
-   снова можно показывать. */
-.mp-gated #amber-badge{display:none}
+/* #amber-badge раньше прятался в общем мире — Янтарь там не был заведён как
+   ресурс. Теперь newPlayerState (mp-join) хранит p.amber, узлы сеются на
+   общей карте, а mpRenderTop() пишет значение в #amber-amt так же, как
+   одиночный renderTop() — .mp-gated его больше не трогает, показывается
+   везде одинаково.
+   #top — Фаза 14, кусочек 1 прятала его тем же общим правилом (renderTop()
+   одиночки никогда не зовётся при .mp-gated, без этого правила там навсегда
+   висело бы "Безымянный лорд"/0/0 — не пустой экран, а НЕВЕРНЫЙ). Кусочек 3
+   завёл mpRenderTop() — те же самые DOM-узлы (#purse/#crest-*), просто из
+   mpState.player, — так что #top снова можно показывать. */
 #menu-modal-close:hover{border-color:var(--gilt-hi)}
 
 /* ─────────────── Модалка здания (пергамент) ─────────────── */
@@ -1246,7 +1273,11 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 <div id="app" class="view-city">
   <header id="top">
     <div id="crest">
-      <span class="mark">&#9884;</span><img id="crest-avatar" class="avatar" alt="" style="display:none">
+      <span class="mark">&#9884;</span>
+      <span class="crest-avatar-wrap">
+        <img id="crest-avatar" class="avatar" alt="" style="display:none">
+        <img class="crest-ring" src="images/ui/profile-ring.png" alt="" style="display:none">
+      </span>
       <div class="crest-card">
         <b id="crest-name">Безымянный лорд</b>
         <span id="crest-power"><img class="ico" src="images/ui/icon-power.png" alt="">—</span>
@@ -3148,11 +3179,14 @@ function newPlayer(id,race,x,y,isBot){
     inventory:Object.fromEntries(GEAR_SLOTS.map(s=>[s.id,{bastion:[0,0,0,0,0],storm:[0,0,0,0,0]}])),
     materials:{ore:[0,0,0,0,0],leather:[0,0,0,0,0],bone:[0,0,0,0,0],ebony:[0,0,0,0,0]}, craft:null,
     tomes:{},
+    kp:0, kpByTier:{1:0,2:0,3:0,4:0,5:0},   // очки убийств (RoK), см. addKillPoints
     shieldUntil:0, lostTo:null, power:0,
     ai:{aggr, greed:.4+RNG()*.5, caution:.3+RNG()*.6, nextThink:0, target:null},
   };
   BKEYS.forEach(k=>p.b[k]=isMulti(k)?new Array(BUILDINGS[k].plots).fill(0):0);
-  p.b.hall=1; p.b.wall=1; p.b.farm[0]=1; p.b.lumber[0]=1; p.b.store=1;
+  // Автор попросил чистый старт: только Ратуша 1 ур. и Стена 1 ур., без
+  // фермы/лесопилки/склада авансом — остальное игрок отстраивает сам.
+  p.b.hall=1; p.b.wall=1;
   TKEYS.forEach(t=>{p.troops[t]={};p.wounded[t]={};for(let i=1;i<=5;i++){p.troops[t][i]=0;p.wounded[t][i]=0}});
   p.troops.inf[1]=200; p.troops.arc[1]=150;
   return p;
@@ -3446,8 +3480,12 @@ function genWorld(seed){
   me.nick="Безымянный лорд";
   me.gen.pts=5; me.gen.gotStartPts=true; // стартовые очки таланта — сразу есть что вложить; флаг гасит повторную выдачу в load()
   me.shieldUntil = 3*86400;      // три дня защиты новичка
-  Object.assign(me.b,{hall:3,store:8,barracks:2,range:2,stable:1,academy:2,wall:2});
-  me.b.farm[0]=3; me.b.lumber[0]=3; me.b.quarry[0]=2; me.b.mine[0]=2; me.b.hospital[0]=3;
+  // Раньше здесь игроку авансом выдавался целый маленький городок (Ратуша
+  // 3 ур., склад 8 ур., казармы/стрельбище/конюшня/академия, ферма/
+  // лесопилка/карьер/рудник/лазарет по 2-3 ур.) — автор явно попросил
+  // чистый старт (см. тот же принцип в newPlayer()/мультиплеерном
+  // newPlayerState в mp-join): только Ратуша и Стена 1 ур., которые уже
+  // выставил newPlayer() выше, остальное игрок отстраивает сам.
   W.players.push(me);
   clearArea(ps.x,ps.y,1); mapSet(ps.x,ps.y,{t:"city",x:ps.x,y:ps.y,pid:me.id});
 
@@ -4112,11 +4150,11 @@ function makeForce(units,p,opts){
            start:JSON.parse(JSON.stringify(units)), broken:emptyUnits(),
            gen: (withGen&&p&&p.gen&&p.gen.id!=null) ? genStats(p) : null,
            wallDef:(opts&&opts.wall)||0, bandit:(opts&&opts.bandit)||false,
-           // mode — тот же режим, что потом пойдёт в splitLosses() для ЭТОЙ
-           // стороны после боя ("siege-attack"/"hospital"): raiseSkeletons()
-           // должен считать "настоящих" мертвецов той же меркой, что и
-           // итоговый разбор потерь, иначе они разойдутся (см. raiseSkeletons).
-           mode:(opts&&opts.mode)||"hospital",
+           // deathFrac — доля потерь, гибнущих прямо в бою (см. BATTLE_DEATH_FRAC):
+           // сторона решает сама, свой ли это штурм/оборона/полевой бой (см.
+           // вызовы makeForce), рейд на разбойников его не задаёт вовсе (0 —
+           // PvE смертей в бою нет, только раненые).
+           deathFrac:(opts&&opts.deathFrac)||0,
            name:(opts&&opts.name)||(p?p.name:"Разбойники")};
   return f;
 }
@@ -4489,10 +4527,16 @@ function checkDiscipline(f,loss){
   });
   return broke;
 }
-// Раненые вместо убитых — механика RoK: гибель насмерть только у атакующего при штурме
-// чужого города (mode="siege-attack"), без формул и госпиталя. Во всех прочих случаях
-// (оборона города, полевые стычки с разбойниками) потери сперва целиком идут в госпиталь
-// и гибнут только сверх его вместимости.
+// Раненые вместо убитых — ОДНА система на любой бой без исключений: штурм
+// города, оборона, рейд на лагерь, стычка на поле/за точку сбора. Раньше
+// штурмующий при взятии чужого города (mode="siege-attack") терял войска
+// насмерть без остатка, без лазарета — RoK-условность, отдельная от всех
+// прочих исходов боя. Автор явно попросил её убрать: "не хочу систему RoK
+// в этом плане... одну [систему], где рассчитывается автоматически кто
+// будет легкранен, тяжелоранен, а кто умрёт... даже при стычках на поле".
+// Теперь потери ЛЮБОЙ стороны в ЛЮБОМ бою сперва целиком идут в госпиталь и
+// гибнут только сверх его вместимости — ровно тот путь, что раньше был
+// только у обороны/рейдов/боёв за точку.
 // Доля потерь, что отделывается лёгким испугом и сама возвращается в
 // строй тут же, лазарет им не нужен вовсе — третья корзина отчёта о бое
 // (RoK: Remaining/Slightly Wounded/Severely Wounded/Dead, у нас раньше
@@ -4501,6 +4545,40 @@ function checkDiscipline(f,loss){
 // категорий, не проценты) — 12% подобрано на глаз как заметная, но не
 // доминирующая доля: не обесценивает лазарет как механику, но и не ноль.
 const SLIGHT_WOUND_FRAC = 0.12;
+// Смерти НЕПОСРЕДСТВЕННО в бою — независимо от того, влезли бы потери в
+// лазарет или нет ("то, что не влезло в лазарет, умирает — это само собой,
+// но в самих боях тоже должны быть смерти, просто потому что это бой").
+// Доля потерь (после вычета лёгких, см. SLIGHT_WOUND_FRAC), которая гибнет
+// на месте, ещё ДО вопроса о лазарете — раз в бою, потери не такие жёсткие,
+// но ощутимые. Дисциплина участвует: тир, который дрогнул (f.broken —
+// checkDiscipline), в бою уже не стоит насмерть, а бежит — часть из них это
+// и спасает (DISCIPLINE_BREAK_DEATH_MULT), не сломленные держатся до конца
+// и гибнут по полной ставке.
+// Штурм города — по просьбе автора втрое жёстче для штурмующего (риск
+// атаки должен ощущаться) и втрое мягче для обороняющегося (своя земля,
+// свои стены). Рейд на разбойников (PvE) и любой другой полевой/точечный
+// бой между игроками (PvP) — общая базовая ставка, без перекоса сторон.
+const BATTLE_DEATH_FRAC = 0.10;
+const SIEGE_ATT_DEATH_FRAC = BATTLE_DEATH_FRAC*3;
+const SIEGE_DEF_DEATH_FRAC = BATTLE_DEATH_FRAC/3;
+const DISCIPLINE_BREAK_DEATH_MULT = 0.5;
+// Победитель и проигравший в ОДНОМ и том же бою не должны гибнуть одинаково:
+// тот, кто в итоге проиграл (полёг, отступил или уступил по силе на исходе
+// resolveBattle/r.win), обычно как раз тот, кто "стоял до последнего" и
+// продолжал битву уже без шансов, а победитель по определению додавил
+// малой кровью. Применяется ТОЛЬКО к итоговому разбору потерь (после конца
+// боя — победитель уже известен), не к промежуточному подъёму скелетов
+// нежитью в процессе (там исход ещё не решён, см. raiseSkeletons).
+// Среднее (WIN+LOSE)/2 = 1.0 НЕ случайно: при примерно равном числе побед и
+// поражений в популяции боёв средняя жёсткость остаётся ровно там же, где
+// её уже утвердили (BATTLE_DEATH_FRAC/SIEGE_*_DEATH_FRAC) — этот множитель
+// только ПЕРЕРАСПРЕДЕЛЯЕТ её в сторону проигравшего, не поднимает потолок.
+// Проверено симуляцией (battle-sim.mjs): без этого условия худший случай —
+// проигранный штурм на грани отступления (72% потерь) — гнал гибель армии
+// целиком с ~19% (старая единая ставка) до ~32%; с 0.65/1.35 худший случай
+// возвращается к ~26%, тот же порядок, что пользователь уже принял раньше.
+const WIN_DEATH_MULT = 0.65;
+const LOSE_DEATH_MULT = 1.35;
 // Чистое ядро госпитального разбора — БЕЗ побочных эффектов (не пишет в
 // p.wounded). Раньше эта арифметика жила только внутри splitLosses() и
 // вызывалась ОДИН раз, целиком, уже после конца боя — а raiseSkeletons()
@@ -4511,15 +4589,7 @@ const SLIGHT_WOUND_FRAC = 0.12;
 // найдено в разборе с пользователем боевого отчёта. Теперь и итоговый
 // splitLosses(), и raiseSkeletons() зовут ЭТУ функцию — гарантированно
 // одна и та же арифметика, посчитанная дважды не разойдётся.
-function hospitalSplit(p,loss,mode){
-  if(mode==="siege-attack"){
-    // Штурм чужого города/лагеря/крепости — потери насмерть без исключений,
-    // ни лазарета, ни "легкого испуга": в RoK это тоже единственный случай
-    // безвозвратной гибели войск (см. комментарий выше у mode).
-    const deadUnits=emptyUnits(); let dead=0;
-    TKEYS.forEach(t=>{for(let i=1;i<=5;i++){ const n=loss[t][i]||0; deadUnits[t][i]=n; dead+=n; }});
-    return {dead,hurt:0,slight:0,slightUnits:emptyUnits(),deadUnits,hurtUnits:emptyUnits()};
-  }
+function hospitalSplit(p,loss,deathFrac,broken){
   const B=bonuses(p);
   const cap=Math.round(totalHospitalCap(p)*(1+B.hosp+B.mercy));
   let inHosp=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) inHosp+=p.wounded[t][i]});
@@ -4529,10 +4599,18 @@ function hospitalSplit(p,loss,mode){
     let n=loss[t][i]; if(!n)continue;
     const sl=Math.round(n*SLIGHT_WOUND_FRAC);
     if(sl>0){ slightUnits[t][i]=sl; slight+=sl; n-=sl; }
+    // Смерти прямо в бою (BATTLE_DEATH_FRAC и т.п., см. её заголовок) — до
+    // и независимо от вопроса о месте в лазарете. Сломленная дисциплина
+    // (broken[t][i]) спасает часть от гибели — они бегут, а не гибнут на
+    // месте, сниженной долей вместо полной.
+    const isBroken=broken&&broken[t]&&broken[t][i];
+    const df=(deathFrac||0)*(isBroken?DISCIPLINE_BREAK_DEATH_MULT:1);
+    const bd=Math.min(n,Math.round(n*df));
+    if(bd>0){ deadUnits[t][i]+=bd; dead+=bd; n-=bd; }
     const room=Math.max(0,cap-inHosp);
     const w=Math.min(n,room); inHosp+=w;
     hurtUnits[t][i]=w; hurt+=w;
-    const d=n-w; deadUnits[t][i]=d; dead+=d;
+    const d=n-w; deadUnits[t][i]+=d; dead+=d;
   }});
   return {dead,hurt,slight,slightUnits,deadUnits,hurtUnits};
 }
@@ -4544,8 +4622,6 @@ function hospitalSplit(p,loss,mode){
 // его заново от реальной (фиксированной на начало боя) занятости лазарета —
 // значит по ходу боя, по мере роста накопленных потерь, доля "настоящих"
 // мертвецов в них растёт сама, без отдельного счётчика заполнения госпиталя.
-// При штурме (mode="siege-attack") deadUnits==loss целиком — там для
-// атакующего ничего не меняется, поднимает как и раньше, от каждого павшего.
 // f.p может быть пуст (разбойничий гарнизон) — тогда госпиталю просто
 // неоткуда взяться, считаем всех выбывших мёртвыми (как и раньше; на деле
 // не важно — у разбойников raise всегда 0).
@@ -4561,7 +4637,7 @@ function raiseSkeletons(f,loss){
   if(rate<=0 && rateHurt<=0) return;
   if(!f._raisedCum) f._raisedCum=emptyUnits();
   let dead=loss, hurt=null;
-  if(f.p){ const hs=hospitalSplit(f.p,loss,f.mode); dead=hs.deadUnits; hurt=hs.hurtUnits; }
+  if(f.p){ const hs=hospitalSplit(f.p,loss,f.deathFrac,f.broken); dead=hs.deadUnits; hurt=hs.hurtUnits; }
   TKEYS.forEach(t=>{
     for(let i=1;i<=5;i++){
       const shouldDead=Math.floor((dead[t][i]||0)*rate);
@@ -4571,18 +4647,41 @@ function raiseSkeletons(f,loss){
     }
   });
 }
-function splitLosses(p,loss,mode){
-  const r=hospitalSplit(p,loss,mode);
-  if(mode!=="siege-attack"){
-    // slightUnits/deadUnits НЕ добавлены в p.troops здесь — вызывающий код
-    // сам решает, куда именно вернуть легкораненых (в живой поход, что ещё
-    // идёт домой, или в гарнизон, который вот-вот перезапишется post-боем),
-    // см. battleCity/arriveMarch и addUnitsInto выше. А вот в госпиталь
-    // тяжелораненые едут отсюда же — конкурирующей перезаписи p.wounded
-    // нигде нет, в отличие от p.troops.
-    TKEYS.forEach(t=>{for(let i=1;i<=5;i++){ const w=r.hurtUnits[t][i]||0; if(w) p.wounded[t][i]+=w; }});
+function splitLosses(p,loss,deathFrac,broken){
+  const r=hospitalSplit(p,loss,deathFrac,broken);
+  // slightUnits/deadUnits НЕ добавлены в p.troops здесь — вызывающий код
+  // сам решает, куда именно вернуть легкораненых (в живой поход, что ещё
+  // идёт домой, или в гарнизон, который вот-вот перезапишется post-боем),
+  // см. battleCity/arriveMarch и addUnitsInto выше. А вот в госпиталь
+  // тяжелораненые едут отсюда же — конкурирующей перезаписи p.wounded
+  // нигде нет, в отличие от p.troops.
+  TKEYS.forEach(t=>{for(let i=1;i<=5;i++){ const w=r.hurtUnits[t][i]||0; if(w) p.wounded[t][i]+=w; }});
+  // deadUnits/hurtUnits — сверх прежнего возврата, только для addKillPoints
+  // (см. её заголовок): нужна разбивка ПРОТИВНИКА по тирам, а не только сумма.
+  return {dead:r.dead,hurt:r.hurt,slight:r.slight,slightUnits:r.slightUnits,deadUnits:r.deadUnits,hurtUnits:r.hurtUnits};
+}
+// Очки убийств (Kill Points), как в RoK — расчёт и пороговые числа дал сам
+// пользователь, с проверочным примером ("10000 тяжелораненых T4 + 5000 T5
+// = 10000*10 + 5000*20 = 200000"), совпадает с общеизвестной таблицей
+// множителей по тирам. Считаются только "Dead"+"Severely Wounded" (в нашей
+// модели — deadUnits+hurtUnits из hospitalSplit, БЕЗ slightUnits — те сами
+// тут же возвращаются в строй, RoK их тоже не засчитывает), и ТОЛЬКО за
+// PvP: убийства/раны нейтралов (разбойники/лагеря) в счёт не идут — поэтому
+// addKillPoints зовётся из battleCity (штурм города), но НЕ из ветки
+// camp/fort в arriveMarch (рейд на варваров).
+// hs — разбор потерь ПРОТИВНИКА (результат splitLosses/hospitalSplit ЕГО
+// стороны), а не своей: KP начисляются за урон, нанесённый ЧУЖОЙ армии.
+const KP_TIER_MULT=[1,2,4,10,20];
+function addKillPoints(p,hs){
+  if(!p) return;
+  if(!p.kp) p.kp=0;
+  if(!p.kpByTier) p.kpByTier={1:0,2:0,3:0,4:0,5:0};
+  let add=0;
+  for(let i=1;i<=5;i++){
+    let n=0; TKEYS.forEach(t=>{ n+=(hs.deadUnits[t][i]||0)+(hs.hurtUnits[t][i]||0); });
+    if(n>0){ p.kpByTier[i]=(p.kpByTier[i]||0)+n; add+=n*KP_TIER_MULT[i-1]; }
   }
-  return {dead:r.dead,hurt:r.hurt,slight:r.slight,slightUnits:r.slightUnits};
+  p.kp+=add;
 }
 
 /* =========================================================================
@@ -5221,13 +5320,17 @@ function arriveMarch(m){
 
   if(cell.t==="camp"||cell.t==="fort"){
     const B=bonuses(p);
-    const A=makeForce(m.units,p,{name:atkName(p),mode:"hospital",withGen:!!m.hasGen});
+    const A=makeForce(m.units,p,{name:atkName(p),withGen:!!m.hasGen});
     const bandUnits=banditArmy(cell.lv);
     const D=makeForce(bandUnits,null,{bandit:true,name:"Разбойники ур. "+cell.lv});
     D.B={atk:0,def:0,hp:0,matk:0,mdef:0,archer:0,raise:0};
     A.B.atk += B.bandit;
     const r=resolveBattle(A,D,{startA:countUnits(m.units)});
-    const sp=splitLosses(p,r.lossA,"hospital");   // полевая стычка — потери идут в госпиталь, не насмерть
+    // Рейд на разбойников — PvE, A.deathFrac не задан (0 по умолчанию, см.
+    // makeForce): смертей прямо в бою нет вовсе, только легко/тяжелораненые
+    // (сверх вместимости лазарета всё ещё возможна гибель — это отдельный,
+    // не PvE-специфичный путь, см. заголовок hospitalSplit).
+    const sp=splitLosses(p,r.lossA,A.deathFrac,A.broken);
     // Легкораненые возвращаются в САМ ПОХОД (A.units), а не сразу в p.troops —
     // отряд ещё физически в поле и топает домой (см. m.units=A.units ниже).
     addUnitsInto(A.units, sp.slightUnits);
@@ -5249,8 +5352,12 @@ function arriveMarch(m){
           ", ранено "+sp.hurt+".","war");
         // "О варварах" — только обычные лагеря; форты идут под штурмы/осады,
         // которые в этом раунде правок отложены пользователем на потом.
+        // start/myPower/oppPower — для battleOutcomeTier (см. её заголовок):
+        // A.start/D.start — состав СТОРОН на начало ИМЕННО этого боя (до
+        // мутации applyDamage), не текущий m.units.
         if(cell.t==="camp") pushMail({cat:"report",kind:"barbarian",lv:cell.lv,coords:{x:m.tx,y:m.ty},
           xp, dead:sp.dead, hurt:sp.hurt, loot, tomesTxt:bookTxt.replace(/^, /,""),
+          start:countUnits(A.start), myPower:armyPower(A.start,A.B,p.race), oppPower:armyPower(D.start,D.B,null),
           weather:(r.weather&&r.weather.id!=="clear")?{name:r.weather.name,desc:r.weather.desc}:null,
           log:(r.log||[]).filter(e=>e.kind!=="weather"), attacker:true});
       }
@@ -5557,16 +5664,31 @@ function battleCity(att,def,m){
   const startA=countUnits(m.units), startD=countUnits(def.troops);
   const garrison=emptyUnits();
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++)garrison[t][i]=def.troops[t][i]});
-  const A=makeForce(m.units,att,{name:atkName(att),mode:"siege-attack",withGen:!!m.hasGen});
-  const D=makeForce(garrison,def,{wall:def.b.wall+def.b.garrison*0.5,defending:true,name:def.name,mode:"hospital",
-    withGen:!!(def.gen&&def.gen.away==null)});
+  const A=makeForce(m.units,att,{name:atkName(att),withGen:!!m.hasGen,deathFrac:SIEGE_ATT_DEATH_FRAC});
+  const D=makeForce(garrison,def,{wall:def.b.wall+def.b.garrison*0.5,defending:true,name:def.name,
+    withGen:!!(def.gen&&def.gen.away==null),deathFrac:SIEGE_DEF_DEATH_FRAC});
   const r=resolveBattle(A,D,{startA:countUnits(m.units),toDeath:false});
   // в хронику погода идёт короткой пометкой, подробности — в почтовом отчёте
   const wx=(r.weather&&r.weather.id!=="clear")?" ("+r.weather.name.toLowerCase()+")":"";
-  const la=splitLosses(att,r.lossA,"siege-attack");   // штурмующий теряет войска насмерть, без госпиталя
-  const ld=splitLosses(def,r.lossD,"hospital");
-  // Легкораненые защитники — назад в D.units ДО перезаписи def.troops ниже,
+  // Штурмующий теперь тоже идёт через госпиталь — одна система для любого
+  // боя (см. заголовок hospitalSplit), а не безвозвратная гибель. Сверх
+  // этого — смерти прямо в бою (SIEGE_ATT_DEATH_FRAC/SIEGE_DEF_DEATH_FRAC,
+  // втрое жёстче штурмующему и втрое мягче обороне, см. BATTLE_DEATH_FRAC),
+  // и ещё поверх — WIN_DEATH_MULT/LOSE_DEATH_MULT: проигравшая сторона
+  // этого конкретного боя гибнет заметно тяжелее победившей.
+  const la=splitLosses(att,r.lossA,A.deathFrac*(r.win==="A"?WIN_DEATH_MULT:LOSE_DEATH_MULT),A.broken);
+  const ld=splitLosses(def,r.lossD,D.deathFrac*(r.win==="D"?WIN_DEATH_MULT:LOSE_DEATH_MULT),D.broken);
+  // Очки убийств (см. addKillPoints) — штурм города PvP, засчитывается
+  // обеим сторонам: атакующий за потери обороны (ld), оборона за потери
+  // атакующего (la). Рейд на разбойников (arriveMarch, camp/fort) этого
+  // вызова не делает вовсе — PvE в зачёт не идёт.
+  addKillPoints(att,ld);
+  addKillPoints(def,la);
+  // Легкораненые — назад в units ДО перезаписи def.troops/m.units ниже,
   // иначе перезапись их просто стёрла бы (см. addUnitsInto/splitLosses).
+  // Раньше это делалось только для защитника (у атакующего "лёгких" не
+  // бывало вовсе); симметрично добавлено и для штурмующего.
+  addUnitsInto(A.units, la.slightUnits);
   addUnitsInto(D.units, ld.slightUnits);
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++)def.troops[t][i]=D.units[t][i]});
   m.units=A.units;
@@ -6517,13 +6639,13 @@ function renderTop(){
   const avSrc=playerAvatarSrc(p);
   if(avSrc!==lastCrestAvatar){
     lastCrestAvatar=avSrc;
-    const av=$("#crest-avatar"), mark=$("#crest .mark");
+    const av=$("#crest-avatar"), mark=$("#crest .mark"), ring=$("#crest .crest-ring");
     if(avSrc){
-      av.onload=()=>{ av.style.display="block"; mark.style.display="none" };
-      av.onerror=()=>{ av.style.display="none"; mark.style.display="" };
+      av.onload=()=>{ av.style.display="block"; ring.style.display="block"; mark.style.display="none" };
+      av.onerror=()=>{ av.style.display="none"; ring.style.display="none"; mark.style.display="" };
       av.src=avSrc;
     } else {
-      av.style.display="none"; mark.style.display="";
+      av.style.display="none"; ring.style.display="none"; mark.style.display="";
     }
   }
   const d=Math.floor(W.t/86400), hh=Math.floor(W.t%86400/3600), mm=Math.floor(W.t%3600/60);
@@ -8132,8 +8254,8 @@ function mpMarchSheetHtml(){
     if(!n) return gone("Точка пропала");
     const dist=Math.round(Math.hypot(n.x-p.x,n.y-p.y));
     const amount=(n.data&&n.data.amount)||0, res=(n.data&&n.data.res)||"food", lv=(n.data&&n.data.lv)||1;
-    if(amount<=0) return gone(RES_NAME[res]+", жила "+lv+" ур. — истощена");
-    let h="<div class='title'>"+RES_NAME[res]+", жила "+lv+" ур.</div>"+
+    if(amount<=0) return gone(resName(res)+", жила "+lv+" ур. — истощена");
+    let h="<div class='title'>"+resName(res)+", жила "+lv+" ур.</div>"+
       "<div class='note'>"+n.x+", "+n.y+" · "+dist+" клет. · осталось "+fmt(amount)+"</div>"+errHtml;
     TKEYS.forEach(t=>{
       const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
@@ -8217,12 +8339,11 @@ function mpPower(p){
   return Math.round(v);
 }
 // Пишет в ТЕ ЖЕ DOM-узлы, что и одиночный renderTop() (#purse/#crest-name/
-// #crest-power/#crest-avatar) — тот же CSS, никаких новых правил. #amber-
-// badge и #chron (день/темп ускорения) намеренно НЕ трогаются: янтарь как
-// ресурс у общего мира ещё не заведён (см. p.amber в одиночке против
-// newPlayerState в mp-join — там такого поля просто нет), а собственных
-// суток/ускорения у общего мира не бывает — оба остаются спрятаны/скрыты,
-// как и раньше.
+// #crest-power/#crest-avatar/#amber-amt) — тот же CSS, никаких новых правил.
+// #amber-badge теперь показывается и в общем мире (newPlayerState в mp-join
+// заводит p.amber, точки Янтаря сеются на общей карте — см. AMBER_NODE_SHARE
+// в mp-join/mp-tick), #chron (день/темп ускорения) по-прежнему остаётся
+// скрыт: собственных суток/ускорения у общего мира не бывает.
 let lastMpCrestAvatar=null;
 function mpRenderTop(){
   if(!mpState.player) return;
@@ -8238,16 +8359,17 @@ function mpRenderTop(){
   }).join("");
   $("#crest-name").textContent=mp.nick||"Безымянный лорд";
   $("#crest-power").innerHTML="<img class='ico' src='images/ui/icon-power.png' alt=''>"+fmt(mpPower(pShim));
+  $("#amber-amt").textContent=fmt(st.amber||0);
   const avSrc=playerAvatarSrc(pShim);
   if(avSrc!==lastMpCrestAvatar){
     lastMpCrestAvatar=avSrc;
-    const av=$("#crest-avatar"), mark=$("#crest .mark");
+    const av=$("#crest-avatar"), mark=$("#crest .mark"), ring=$("#crest .crest-ring");
     if(avSrc){
-      av.onload=()=>{ av.style.display="block"; if(mark) mark.style.display="none" };
-      av.onerror=()=>{ av.style.display="none"; if(mark) mark.style.display="" };
+      av.onload=()=>{ av.style.display="block"; if(ring) ring.style.display="block"; if(mark) mark.style.display="none" };
+      av.onerror=()=>{ av.style.display="none"; if(ring) ring.style.display="none"; if(mark) mark.style.display="" };
       av.src=avSrc;
     } else if(av){
-      av.style.display="none"; if(mark) mark.style.display="";
+      av.style.display="none"; if(ring) ring.style.display="none"; if(mark) mark.style.display="";
     }
   }
 }
@@ -8643,6 +8765,23 @@ function profilePowerFontSize(str){
 // его мощи. Сама функция только ПОКАЗЫВАЕТ (правило файла про неприкосновенные
 // интерактивные функции одиночки не нарушено), поэтому хватило параметра
 // вместо отдельной копии.
+// Разбивка очков убийств по тирам (см. addKillPoints) — свёрнута по
+// умолчанию, разворачивается кнопкой "i" рядом со счётчиком, как в RoK
+// ("нажмите на иконку i рядом со счётчиком, откроется разбивка Т1-Т5").
+let kpInfoOpen=false;
+function profileKpHtml(p){
+  const kp=p.kp||0, byT=p.kpByTier||{};
+  let h="<div class='profile-kp-wrap'><span class='profile-kp-ico'>&#9876;</span>"+
+    "<span class='profile-kp-label'>Очки убийств</span>"+
+    "<span class='profile-kp-val'>"+fmt(kp)+"</span>"+
+    "<button class='kp-info-btn' data-act='kpinfo' title='Разбивка по тирам'>i</button></div>";
+  if(kpInfoOpen){
+    h+="<div class='profile-kp-detail'>"+[1,2,3,4,5].map(i=>
+      "<div class='kp-tier-row'><span>Т"+i+" (&times;"+KP_TIER_MULT[i-1]+")</span><b>"+fmt(byT[i]||0)+"</b></div>"
+    ).join("")+"</div>";
+  }
+  return h;
+}
 function foProfile(pIn){
   const p=pIn||me();
   const avSrc=playerAvatarSrc(p);
@@ -8680,18 +8819,20 @@ function foProfile(pIn){
      "<div class='note'>"+RACES[p.race].name+"</div>"+
      "<div class='profile-power-wrap'><img class='wreath' src='images/ui/profile-wreath.png' alt=''>"+
      "<span class='profile-power-chip' style='font-size:"+profilePowerFontSize(fmt(power(p)))+"px'>"+fmt(power(p))+"</span></div>"+
+     profileKpHtml(p)+
      "</div>";
-  // Предпросмотр экрана летописи. Тот же самый экран, что видит новый игрок,
-  // но выбор никуда не записывается — runOnboarding сама по себе ничего не
-  // меняет, применяет его уже claimChronicle. Нужен затем, что настоящий экран
-  // показывается ровно один раз за партию, и посмотреть на него, не сломав
-  // текущую игру, иначе было бы негде.
-  h+=rubric("Оформление","предпросмотр");
-  h+="<div class='entry'><div class='line'><div class='fill'>"+
-     "<div class='title'>Экран летописи</div>"+
-     "<div class='note'>Тот же экран, что встречает нового правителя: выбор народа, "+
-     "полководца и имени. Можно пройти целиком — ничего не изменится.</div></div>"+
-     "<button class='seal' data-act='obdemo'>Открыть</button></div></div>";
+  // Предпросмотр экрана летописи — только в одиночке (SP_UNLOCKED): экран
+  // относится к её собственной регистрации (runOnboarding/claimChronicle),
+  // в общем мире вход идёт через mp-join, этот предпросмотр там ничему не
+  // соответствует и просто путает игрока лишней кнопкой в профиле.
+  if(SP_UNLOCKED){
+    h+=rubric("Оформление","предпросмотр");
+    h+="<div class='entry'><div class='line'><div class='fill'>"+
+       "<div class='title'>Экран летописи</div>"+
+       "<div class='note'>Тот же экран, что встречает нового правителя: выбор народа, "+
+       "полководца и имени. Можно пройти целиком — ничего не изменится.</div></div>"+
+       "<button class='seal' data-act='obdemo'>Открыть</button></div></div>";
+  }
   return h;
 }
 
@@ -8716,19 +8857,57 @@ function mailAgo(t){
   if(s<86400) return Math.floor(s/3600)+" ч назад";
   return Math.floor(s/86400)+" дн назад";
 }
+// Ярлык исхода боя в духе Total War — не просто "Победа"/"Поражение", а
+// насколько дорого он дался и был ли неожиданным. Чистое отображение поверх
+// уже посчитанного боя (не влияет на сам бой, в отличие от WIN_DEATH_MULT/
+// LOSE_DEATH_MULT выше) — единая функция для одиночной и сетевой игры,
+// вызывается прямо при отрисовке письма из уже посчитанных чисел.
+// lossFrac — доля СВОИХ потерь (тяжелораненые+убитые; легкораненые не
+// считаются — сами тут же возвращаются в строй) от стартового состава.
+// myPower/oppPower — сила сторон ДО боя (опционально: если не переданы,
+// "неожиданные" исходы — heroic/disaster — просто не рассматриваются).
+const BATTLE_TIER = {
+  heroic:   {name:"Героическая победа",   cls:"win"},
+  decisive: {name:"Решительная победа",   cls:"win"},
+  close:    {name:"Победа на пределе сил",cls:"win"},
+  pyrrhic:  {name:"Пиррова победа",       cls:"win"},
+  disaster: {name:"Позорное поражение",   cls:"lose"},
+  crushing: {name:"Разгром",              cls:"lose"},
+  defeat:   {name:"Поражение",            cls:"lose"},
+  orderly:  {name:"Отступление с боем",   cls:"lose"},
+};
+function battleOutcomeTier(startN,dead,hurt,win,myPower,oppPower){
+  const lossFrac = startN>0 ? (dead+hurt)/startN : 0;
+  const underdog = myPower!=null && oppPower && myPower < oppPower*0.7;
+  const overdog  = myPower!=null && oppPower && myPower > oppPower*1.5;
+  let id;
+  if(win){
+    id = underdog && lossFrac<0.35 ? "heroic"
+       : lossFrac>=0.55 ? "pyrrhic"
+       : lossFrac>=0.25 ? "close" : "decisive";
+  } else {
+    id = overdog ? "disaster"
+       : lossFrac>=0.7 ? "crushing"
+       : lossFrac<0.25 ? "orderly" : "defeat";
+  }
+  return {id, name:BATTLE_TIER[id].name, cls:BATTLE_TIER[id].cls};
+}
 function mailAvatarHtml(avatar,race,w){
   return avatar ? "<img class='av' style='width:"+w+"px;height:"+w+"px' src='"+avatar+"' alt=''>"
                 : "<span class='av' style='width:"+w+"px;height:"+w+"px;display:inline-flex;align-items:center;justify-content:center'>"+shieldSvg(race,w*0.55)+"</span>";
 }
 function mailRowHtml(m){
   const isBattle=m.kind==="battle";
-  const icon = isBattle||m.kind==="barbarian" ? "images/ui/mail-seal.png"
+  const isBarb=m.kind==="barbarian";
+  const icon = isBattle||isBarb ? "images/ui/mail-seal.png"
              : m.kind==="scout"||m.kind==="scoutmarch" ? "images/ui/icon-world.png"
              : m.kind==="gather" ? "images/ui/icon-march.png"
              : m.cat==="personal" ? "images/ui/icon-gen.png" : "images/ui/icon-world.png";
-  const cls = isBattle ? (m.win?"win":"lose") : m.kind==="barbarian" ? "win" : "";
-  const title = isBattle ? (m.win?"Победа":"Поражение")
-              : m.kind==="barbarian" ? "Лагерь разбит"
+  const tier = isBattle ? battleOutcomeTier(m.selfStart,m.selfDead,m.selfHurt,m.win,m.selfPower,m.oppPower)
+             : isBarb ? battleOutcomeTier(m.start,m.dead,m.hurt,true,m.myPower,m.oppPower)
+             : null;
+  const cls = tier ? tier.cls : "";
+  const title = tier ? tier.name
               : m.kind==="scout" ? "Разведка"
               : m.kind==="scoutmarch" ? "Разведка отряда"
               : m.kind==="gather" ? "Сбор ресурсов"
@@ -8938,6 +9117,7 @@ function scoutMarchReportHtml(m){
 function mailDetailHtml(m){
   let h="<div class='mail-back' data-act='mailback'>&#8592; Назад к списку</div>";
   if(m.kind==="battle"){
+    const tier=battleOutcomeTier(m.selfStart,m.selfDead,m.selfHurt,m.win,m.selfPower,m.oppPower);
     h+="<div class='mail-vs'>"+
        "<div class='mail-side'>"+mailAvatarHtml(m.selfAvatar,m.selfRace,52)+
          "<div class='nm'>"+m.selfNick+"</div><div class='co'>X:"+m.selfCoords.x+" Y:"+m.selfCoords.y+"</div>"+
@@ -8950,7 +9130,7 @@ function mailDetailHtml(m){
          "<div class='pw'>Мощь "+RU(m.oppPower)+"</div>"+
          battleGenHtml(m.oppGen)+
        "</div></div>"+
-       "<div class='mail-stamp "+(m.win?"win":"lose")+"'>"+(m.win?"Победа":"Поражение")+"</div>"+
+       "<div class='mail-stamp "+tier.cls+"'>"+tier.name+"</div>"+
        // Погода была общей для обеих сторон — в отчёте она стоит НАД таблицей
        // потерь, потому что объясняет её цифры (см. BATTLE_WEATHER). В ясную
        // погоду поля weather нет вовсе, и строка не рисуется.
@@ -8974,7 +9154,8 @@ function mailDetailHtml(m){
        "<div class='mail-note'>Место боя: X:"+m.fightCoords.x+" Y:"+m.fightCoords.y+"</div>"+
        battleLogHtml(m);
   } else if(m.kind==="barbarian"){
-    h+="<div class='mail-stamp win'>Победа</div>"+
+    const tier=battleOutcomeTier(m.start,m.dead,m.hurt,true,m.myPower,m.oppPower);
+    h+="<div class='mail-stamp "+tier.cls+"'>"+tier.name+"</div>"+
        (m.weather?"<div class='mail-weather'><b>"+m.weather.name+"</b><span>"+m.weather.desc+"</span></div>":"")+
        "<div class='mail-note'>Разбит лагерь разбойников "+m.lv+" уровня у X:"+m.coords.x+" Y:"+m.coords.y+".<br>"+
        "Опыт генерала: +"+RU(m.xp)+"<br>"+
@@ -9550,6 +9731,17 @@ function refreshGenIfOpen(){
   const menu=$("#menu-modal");
   if(menu.classList.contains("open")&&menu.dataset.tab==="gen"){ lastMenuBody=foGen(); $("#menu-modal-body").innerHTML=lastMenuBody; }
 }
+// Профиль — единственная вкладка меню, что при .mp-gated (по умолчанию,
+// без ?sp=1) тоже рендерится через mpMenuBodyHtml, а не foProfile()
+// напрямую (см. gatedTab в openMenuModal) — та же развилка нужна и здесь,
+// иначе разворот "i" на сетевом профиле молча ничего не обновил бы.
+function refreshProfileIfOpen(){
+  const menu=$("#menu-modal");
+  if(menu.classList.contains("open")&&menu.dataset.tab==="profile"){
+    lastMenuBody = SP_UNLOCKED ? foProfile() : mpMenuBodyHtml("profile");
+    $("#menu-modal-body").innerHTML=lastMenuBody;
+  }
+}
 function handleAct(e){
   const closeBtn=e.target.closest("[data-act='closemenu']");
   if(closeBtn){ closeMenuModal(); return; }
@@ -9745,6 +9937,11 @@ function handleAct(e){
   else if(a==="gentab"){
     genTab=b.dataset.t;
     refreshGenIfOpen();
+  }
+  else if(a==="kpinfo"){
+    kpInfoOpen=!kpInfoOpen;
+    refreshProfileIfOpen();
+    return;
   }
   else if(a==="academytab"){
     academyTab=b.dataset.t;
@@ -11959,18 +12156,27 @@ function foMultiplayer(embedded, only){
       // игроку весь экран. Письмо без разбора потерь честнее показать нулём.
       const lostN=u=>{ u=u||{}; return TKEYS.reduce((s,t)=>s+[1,2,3,4,5].reduce((s2,i)=>s2+((u[t]&&u[t][i])||0),0),0); };
       const won=(mine&&d.winner==="att")||(!mine&&d.winner==="def");
-      // Фаза 4, шестой кусочек: лазарет защитника — d.defDead/defHurt/
-      // defSlight описывают ВСЕГДА защитника (одна и та же сводка лежит в
-      // обоих письмах, и атакующему, и защитнику), поэтому это "наш" разбор
-      // при mine===false и "их" при mine===true. У атакующего своей защиты
-      // лазаретом нет (штурм чужого города — потери насмерть без остатка),
-      // разбирать нечего. Та же терминология и порядок, что в настоящем
-      // почтовом отчёте однопользовательской игры (index.html:7219-7221).
-      const hospNote=d.defHurt!=null?(" · "+(mine?"у противника":"у нас")+": легкораненые "+
-         RU(d.defSlight||0)+", тяжелораненые "+RU(d.defHurt||0)+", убито "+RU(d.defDead||0)):"";
-      h+="<div class='entry"+(won?" hot":" war")+"'><div class='line'><div class='fill'>"+
+      // Фаза 4/28: d.defDead/defHurt/defSlight и d.attDead/attHurt/attSlight
+      // — разбор потерь ОБЕИХ сторон лазаретом (одна и та же сводка лежит в
+      // обоих письмах, и атакующему, и защитнику), поэтому "наш"/"их" зависит
+      // от роли читающего. Раньше у атакующего своего разбора не было вовсе
+      // (штурм чужого города — потери насмерть без остатка, mode:"siege-attack")
+      // — автор попросил убрать это исключение (одна система на любой бой),
+      // attDead/attHurt/attSlight могут отсутствовать только в СТАРЫХ письмах
+      // до этой правки, тогда просто не показываем свою часть. Та же
+      // терминология и порядок, что в отчёте одиночной игры (index.html:7219-7221).
+      const myHs={dead:mine?d.attDead:d.defDead, hurt:mine?d.attHurt:d.defHurt, slight:mine?d.attSlight:d.defSlight};
+      const oppHs={dead:mine?d.defDead:d.attDead, hurt:mine?d.defHurt:d.attHurt, slight:mine?d.defSlight:d.attSlight};
+      const hospPart=(label,x)=>x.dead!=null?(" · "+label+": легкораненые "+RU(x.slight||0)+", тяжелораненые "+RU(x.hurt||0)+", убито "+RU(x.dead||0)):"";
+      const hospNote=hospPart("у нас",myHs)+hospPart("у противника",oppHs);
+      // Ярлык исхода (см. battleOutcomeTier, index.html) — myStart/myPower/
+      // oppPower могут отсутствовать в СТАРЫХ письмах (до этой правки),
+      // тогда функция просто не рассматривает heroic/disaster.
+      const myStart=mine?d.attStart:d.defStart, myPower=mine?d.attPower:d.defPower, oppPower=mine?d.defPower:d.attPower;
+      const tier=battleOutcomeTier(myStart,myHs.dead||0,myHs.hurt||0,won,myPower,oppPower);
+      h+="<div class='entry"+(tier.cls==="win"?" hot":" war")+"'><div class='line'><div class='fill'>"+
          "<div class='title'>"+(mine?"Напали на ":"Напали от ")+(d.opponent_nick||"Безымянный лорд")+
-         " — "+(won?"победа":"поражение")+"</div>"+
+         " — "+tier.name+"</div>"+
          "<div class='note'>Наши потери: "+RU(lostN(myLoss))+" · потери противника: "+RU(lostN(oppLoss))+hospNote+"</div>";
       // Грабёж склада — то же поле d.loot, что и у мока mp-tick, лежит в
       // обоих письмах (атакующему и защитнику), но реально ненулевое
@@ -12032,8 +12238,12 @@ function foMultiplayer(embedded, only){
     mpState.raidMail.forEach(m=>{
       const d=m.data;
       const lostN=u=>TKEYS.reduce((s,t)=>s+[1,2,3,4,5].reduce((s2,i)=>s2+((u&&u[t]&&u[t][i])||0),0),0);
-      h+="<div class='entry"+(d.win?" hot":" war")+"'><div class='line'><div class='fill'>"+
-         "<div class='title'>Лагерь "+d.camp_lv+" ур. — "+(d.win?"разгромлен":"отряд разбит")+"</div>"+
+      // Ярлык исхода — PvE (deathFrac всегда 0, см. finalizeRaidBattle), но
+      // всё ещё бывает "героическим" (лагерь заметно сильнее) или "пирровым"
+      // (дорогой ценой), см. battleOutcomeTier.
+      const tier=battleOutcomeTier(d.attStart,d.dead||0,d.hurt||0,!!d.win,d.attPower,d.campPower);
+      h+="<div class='entry"+(tier.cls==="win"?" hot":" war")+"'><div class='line'><div class='fill'>"+
+         "<div class='title'>Лагерь "+d.camp_lv+" ур. — "+tier.name+"</div>"+
          "<div class='note'>Потери: легкораненые "+RU(d.slight||0)+", тяжелораненые "+RU(d.hurt||0)+
          ", убито "+RU(d.dead||0)+" (из "+RU(lostN(d.attLoss))+" пострадавших)</div>";
       if(d.win){
@@ -12063,19 +12273,26 @@ function foMultiplayer(embedded, only){
       const title = mine
         ? (d.retreated ? "Отступили от точки сбора" : won ? "Точка сбора наша" : "Точку сбора не отбили")
         : (d.retreated ? "Соперник отступил от нашей точки" : won ? "Точку сбора отстояли" : "Точку сбора не удержали");
-      h+="<div class='entry"+(won?" hot":" war")+"'><div class='line'><div class='fill'>"+
-         "<div class='title'>"+title+" — «"+who+"»</div>"+
+      // Ярлык исхода (см. battleOutcomeTier) — дополняет ситуативный заголовок
+      // выше (тот уже говорит "отступили"/"отбили", тир добавляет цену этого
+      // исхода: дёшево или дорогой ценой).
+      const myHs={dead:mine?d.attDead:d.defDead, hurt:mine?d.attHurt:d.defHurt};
+      const myStart=mine?d.attStart:d.defStart, myPower=mine?d.attPower:d.defPower, oppPower=mine?d.defPower:d.attPower;
+      const tier=battleOutcomeTier(myStart,myHs.dead||0,myHs.hurt||0,won,myPower,oppPower);
+      h+="<div class='entry"+(tier.cls==="win"?" hot":" war")+"'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+title+" — «"+who+"» ("+tier.name+")</div>"+
          "<div class='note'>Наши потери (лазарет): "+RU(lostN(myLoss))+" · потери соперника: "+RU(lostN(oppLoss))+"</div>"+
          "</div></div></div>";
     });
   }
 
-  const perHour=mpProdPerHour(p);
-  h+="<div class='entry'><div class='line'><div class='fill'><div class='title'>Ресурсы</div>"+
-     "<div class='note'>"+RES.map(r=>RES_NAME[r]+": "+RU(st.res[r])).join(" · ")+"</div>"+
-     "<div class='note'>Добыча/час: "+RES.map(r=>RES_NAME[r]+" "+RU(perHour[r])).join(" · ")+
-     " — досчитывается при каждом действии и при опросе (раз в 5с, пока открыта вкладка).</div>"+
-     "</div></div></div>";
+  // Раньше здесь безусловно (без show()-гейта) рендерился блок "Ресурсы" —
+  // те же самые числа, что и так уже висят в шапке (#purse), просто
+  // задваивались на КАЖДОЙ вкладке (Войско/Почта/Генерал/Инвентарь), а не
+  // только там, где им было бы место. Автор пожаловался: на вкладке
+  // "Войско" (only="army") лишний список ресурсов и техническая заметка
+  // про частоту пересчёта, которым там не место. Убрано целиком — шапка
+  // и так всегда видна поверх любой вкладки.
 
   // Автор пожаловался: "Общий мир" сваливал постройку/Горн/набор войск/
   // переобучение/лазарет/Инвентарь/Генерала/Академию в один текстовый

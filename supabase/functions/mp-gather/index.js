@@ -63,10 +63,9 @@ const troopLoadMod = (race, t) => (RACE_LOAD_MOD[race] && RACE_LOAD_MOD[race][t]
 const MARCH_SPEED_SCALE = 32;
 const marchSlots = (hall) => (hall >= 22 ? 5 : hall >= 17 ? 4 : hall >= 11 ? 3 : hall >= 5 ? 2 : 1);
 const RES = ["food", "wood", "stone", "gold"];
-// amber:45 — index.html:2807 держит и её (точки янтаря на общей карте сейчас
-// не сеются, mp-join's seedNodesAround отдаёт только food/wood/stone/gold,
-// так что сегодня недостижимо, но при отсутствующем ключе gatherSecs ушёл бы
-// в NaN, если такая точка когда-нибудь появится — держим таблицу полной.
+// amber:45 — index.html:2807. Точки Янтаря теперь реально сеются на общей
+// карте (mp-join seedNodesAround / mp-tick applyNodeRespawn/applyAmbientSeed,
+// AMBER_NODE_SHARE=0.12), так что этот ключ достижим — держим таблицу полной.
 const GATHER_BASE_RATE = { food: 3000, wood: 3000, stone: 2250, gold: 1000, amber: 45 }; // index.html:2807
 
 const epochOf = (hall) => (hall >= 25 ? 5 : hall >= 19 ? 4 : hall >= 13 ? 3 : hall >= 7 ? 2 : 1);
@@ -84,6 +83,10 @@ const ACADEMY_GATHER_NODES = [
   { id: "eco_gstone2", field: "gatherSG", total: 0.35, max: 10 },
   { id: "eco_ggold2", field: "gatherSG", total: 0.35, max: 10 },
   { id: "eco_gall2", field: "gather", total: 0.25, max: 10 },
+  // index.html:2218/2245 eco_amber0/eco_amber1 — своя ветка академии для
+  // Янтаря, отдельная от gatherFW/gatherSG (см. isAmber-ветку ниже).
+  { id: "eco_amber0", field: "gatherAmber", total: 0.05, max: 1 },
+  { id: "eco_amber1", field: "gatherAmber", total: 0.35, max: 10 },
   { id: "eco_load1", field: "load", total: 0.15, max: 5 },
   { id: "eco_load2", field: "load", total: 0.25, max: 10 },
   { id: "mil_march1", field: "march", kind: "mult", total: 0.15, max: 5 },
@@ -113,7 +116,7 @@ const RACE_EPOCHS_MARCH = {
 const portalMarchBonus = (lv) => (lv <= 0 ? 0 : lv <= 10 ? lv * 0.005 : 10 * 0.005 + (lv - 10) * 0.01);
 
 function bonuses(p) {
-  const b = { march: 1, gather: 0, gatherFW: 0, gatherSG: 0, load: 0 };
+  const b = { march: 1, gather: 0, gatherFW: 0, gatherSG: 0, gatherAmber: 0, load: 0 };
   const mn = RACES_MINUS[p.race];
   if (mn.field === "march") { if (mn.kind === "mult") b.march *= mn.value; else b.march += mn.value; }
   const epoch = epochOf(p.b && p.b.hall), track = RACE_EPOCHS_MARCH[p.race];
@@ -226,8 +229,12 @@ Deno.serve(async (req) => {
     if (take <= 0) return jsonResponse({ err: "Отряд не может ничего унести" }, 400);
 
     const res = (cell.data && cell.data.res) || "food";
+    const isAmber = res === "amber";
     let rate = GATHER_BASE_RATE[res] * (60 + hallLv * 22) / 82 * (1 + B.gather);
-    rate *= (res === "food" || res === "wood") ? (1 + B.gatherFW) : (1 + B.gatherSG);
+    // index.html:5210-5211 — Янтарь на своей ветке академии (gatherAmber),
+    // не на gatherFW/gatherSG обычных ресурсов.
+    rate *= isAmber ? (1 + (B.gatherAmber || 0))
+      : (res === "food" || res === "wood") ? (1 + B.gatherFW) : (1 + B.gatherSG);
     const gatherSecs = (take / rate) * 3600;
 
     const dist = Math.hypot(tx - attRow.x, ty - attRow.y);

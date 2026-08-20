@@ -96,6 +96,18 @@ const plotCap = (lv) => (lv <= 0 ? 0 : tblRow(PROD_TABLE, lv) * 10);
 const PROD_BLD = { food: "farm", wood: "lumber", stone: "quarry", gold: "mine" };
 const PROD_MULT = { food: 1, wood: 1, stone: 0.75, gold: 0.5 };
 const RES = ["food", "wood", "stone", "gold"];
+// Янтарь (index.html:3327 AMBER_NODE_SHARE) — доля точек, оказывающихся
+// Янтарной жилой вместо обычного ресурса, и её отдельная (заметно меньшая)
+// формула объёма — премиальный ресурс, одна жила примерно на восемь обычных
+// точек. Тот же принцип и число, что в одиночной игре, дословно перенесены
+// во все три точки посева узлов в мультиплеере (см. AMBER_NODE_SHARE ниже).
+const AMBER_NODE_SHARE = 0.12;
+function pickNodeResAndAmount(lv) {
+  const isAmber = Math.random() < AMBER_NODE_SHARE;
+  const res = isAmber ? "amber" : RES[Math.floor(Math.random() * RES.length)];
+  const amount = Math.round(isAmber ? 240 * Math.pow(1.9, lv - 1) : 6000 * Math.pow(2.6, lv - 1));
+  return { res, amount };
+}
 // index.html:2854 epochOf — эпоха ратуши (1..5), нужна для bonuses() ниже
 // (расовые эпохальные способности).
 const epochOf = (hall) => (hall >= 25 ? 5 : hall >= 19 ? 4 : hall >= 13 ? 3 : hall >= 7 ? 2 : 1);
@@ -467,7 +479,10 @@ function newPlayerState(race, nowSec) {
   const MULTI = { farm: 4, lumber: 4, quarry: 4, mine: 4, hospital: 4 };
   const b = {};
   BKEYS.forEach((k) => { b[k] = MULTI[k] ? new Array(MULTI[k]).fill(0) : 0; });
-  b.hall = 1; b.wall = 1; b.farm[0] = 1; b.lumber[0] = 1; b.store = 1;
+  // Автор попросил чистый старт: только Ратуша 1 ур. и Стена 1 ур., без
+  // фермы/лесопилки/склада авансом — та же правка, что и в index.html
+  // (newPlayer()/genWorld()), держим оба мира в синхроне.
+  b.hall = 1; b.wall = 1;
   const troops = {}, wounded = {};
   ["inf", "arc", "cav", "sie"].forEach((t) => {
     troops[t] = {}; wounded[t] = {};
@@ -493,6 +508,13 @@ function newPlayerState(race, nowSec) {
     gear: {}, tech: {}, rsch: null,
     inventory: {}, materials: { ore: [0, 0, 0, 0, 0], leather: [0, 0, 0, 0, 0], bone: [0, 0, 0, 0, 0], ebony: [0, 0, 0, 0, 0] },
     craft: null, tomes: {}, lostTo: null,
+    // Янтарь — отдельное поле, не часть res (index.html:2823 p.amber — та же
+    // причина: премиальная валюта не из общей четвёрки, в склад не идёт).
+    amber: 0,
+    // Очки убийств (RoK), index.html addKillPoints — начисляются mp-tick'ом
+    // в finalizePvpBattle/finalizeNodeBattle, НЕ в finalizeRaidBattle (PvE
+    // не в зачёт). kpByTier — разбивка по тирам Т1-Т5 для профиля.
+    kp: 0, kpByTier: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
   };
 }
 
@@ -606,8 +628,7 @@ async function seedNodesAround(admin, worldId, cx, cy) {
   for (let i = 0; i < NODE_SEED_COUNT; i++) {
     const { x, y } = seedPointAvoidingWater(cx, cy, NODE_SEED_MIN_R, NODE_SEED_MAX_R);
     const lv = 1 + Math.floor(Math.random() * 3); // 1..3 — новичкам не нужны жилы 5 уровня под боком
-    const amount = Math.round(6000 * Math.pow(2.6, lv - 1)); // index.html:3111 (EV.nodeback) — та же формула
-    const res = RES[Math.floor(Math.random() * RES.length)];
+    const { res, amount } = pickNodeResAndAmount(lv); // index.html:3111/3344 (EV.nodeback/ensureChunkContent) — те же формулы
     rows.push({ world_id: worldId, x, y, t: "node", data: { res, lv, amount, max: amount } });
   }
   // ignoreDuplicates: true = ON CONFLICT DO NOTHING на (world_id,x,y) —
