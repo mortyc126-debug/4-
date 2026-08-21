@@ -12398,16 +12398,6 @@ function mpHpBarHtml(label, hpLeft, startHp, genFrac){
   if(genFrac!=null) h += "<div class='hpbar hpbar-gen'><i style='width:"+(Math.max(0,Math.min(1,genFrac))*100).toFixed(1)+"%'></i></div>";
   return h;
 }
-// mailAgo() выше (одиночка) принимает эпоху в мс (W.mail хранит m.t
-// числом); почта общего мира лежит в Postgres и приходит created_at
-// ISO-строкой — свой парсер, тот же вид "N мин назад".
-function mpMailAgo(iso){
-  const s=Math.max(0,(Date.now()-new Date(iso).getTime())/1000);
-  if(s<60) return "только что";
-  if(s<3600) return Math.floor(s/60)+" мин назад";
-  if(s<86400) return Math.floor(s/3600)+" ч назад";
-  return Math.floor(s/86400)+" дн назад";
-}
 // ---- Почта общего мира: вкладки + открытая карточка письма, тот же приём,
 // что и одиночная foMail()/mailCat/mailOpenId (см. их заголовок) ----
 // mpMailCat/mpMailOpenId — свои переменные, не переиспользуют mailCat/
@@ -12449,6 +12439,51 @@ function mpMailAgo(iso){
   if(s<86400) return Math.floor(s/3600)+" ч назад";
   return Math.floor(s/86400)+" дн назад";
 }
+// ---- Полный разбор письма о бое — тот же вид, что и у одиночной
+// mailDetailHtml (аватар/раса/координаты/полководец/статистика бонусов
+// войск/хроника по раундам): mp-tick теперь присылает те же данные
+// (attRace/defRace, attCoords/defCoords, attGen/defGen, attBuffs/defBuffs,
+// log), переиспользуем уже существующие одиночные помощники
+// (mailAvatarHtml/battleGenHtml/battleStatsRows/BATTLE_WEATHER/pctTxt) —
+// только свои genInfo/talentBranchSpent/battleLogHtml на токенах "att"/
+// "def", а не одиночных "A"/"D".
+// index.html playerAvatarSrc(p) — дословно, только по расе+снимку
+// генерала {id,lv,tal} напрямую, не по живому объекту игрока p (тут его
+// нет — только то, что mp-tick положил в письмо).
+function mpPlayerAvatarSrc(race, genSnap){
+  return (genSnap && genSnap.id!=null) ? "images/ui/avatar-"+race+(genSnap.id+1)+".png" : null;
+}
+function mpTalentBranchSpent(tal){
+  tal = tal || {};
+  const out={};
+  TALENT_BRANCHES.forEach(([key,br])=>{
+    let s=0; br.nodes.forEach(n=>s+=(tal[n.id]||0));
+    out[key]=s;
+  });
+  return out;
+}
+function mpGenInfo(race, genSnap){
+  if(!genSnap || genSnap.id==null || !GENERALS[race] || !GENERALS[race][genSnap.id]) return null;
+  return {name:GENERALS[race][genSnap.id].name, lv:genSnap.lv,
+    stars:Math.min(6,1+Math.floor(genSnap.lv/10)),
+    talents:mpTalentBranchSpent(genSnap.tal)};
+}
+// battleLogHtml (одиночка) переводит "A"/"D" в "моё/чужое" по m.attacker —
+// сервер общего мира пишет "att"/"def" (см. заголовок pushLog в mp-tick),
+// тот же приём, свои токены.
+function mpBattleLogHtml(log, mineIsAtt){
+  log = log||[];
+  if(!log.length) return "";
+  const mine = mineIsAtt ? "att" : "def";
+  let h="<div class='mail-chron'><div class='mail-chron-hd'>Как шёл бой</div>";
+  log.forEach(e=>{
+    const tone = !e.side ? "" : (e.side===mine ? " good" : " bad");
+    h+="<div class='chron-row "+e.kind+tone+"'>"+
+       "<i class='chron-ico'>"+(BATTLE_LOG_ICON[e.kind]||"&#8226;")+"</i>"+
+       "<span class='chron-tx'>"+e.text+"</span></div>";
+  });
+  return h+"</div>";
+}
 // Каждая из шести mpMailXxxEntry ниже — дословно та же логика (тир исхода/
 // разбор потерь/текст), что уже была в соответствующей рубрике foMultiplayer()
 // (см. Гонцы/Бой/Разведка/Лагеря/Точки/Сбор чуть ниже) — только вместо
@@ -12488,16 +12523,60 @@ function mpMailBattleEntry(m){
   const won=(mine&&d.winner==="att")||(!mine&&d.winner==="def");
   const myHs={dead:mine?d.attDead:d.defDead, hurt:mine?d.attHurt:d.defHurt, slight:mine?d.attSlight:d.defSlight};
   const oppHs={dead:mine?d.defDead:d.attDead, hurt:mine?d.defHurt:d.attHurt, slight:mine?d.defSlight:d.attSlight};
-  const hospPart=(label,x)=>x.dead!=null?(" · "+label+": легкораненые "+RU(x.slight||0)+", тяжелораненые "+RU(x.hurt||0)+", убито "+RU(x.dead||0)):"";
-  const hospNote=hospPart("у нас",myHs)+hospPart("у противника",oppHs);
-  const myStart=mine?d.attStart:d.defStart, myPower=mine?d.attPower:d.defPower, oppPower=mine?d.defPower:d.attPower;
+  const myStart=mine?d.attStart:d.defStart, oppStart=mine?d.defStart:d.attStart;
+  const myPower=mine?d.attPower:d.defPower, oppPower=mine?d.defPower:d.attPower;
   const tier=battleOutcomeTier(myStart,myHs.dead||0,myHs.hurt||0,won,myPower,oppPower);
   const title=(mine?"Напали на ":"Напали от ")+(d.opponent_nick||"Безымянный лорд")+" — "+tier.name;
   const sub="Наши потери: "+RU(lostN(myLoss))+" · потери противника: "+RU(lostN(oppLoss));
-  let detailHtml="<div class='note'>"+sub+hospNote+"</div>";
-  const lootTxt=d.loot&&RES.filter(r=>d.loot[r]).map(r=>RES_NAME[r]+" "+RU(d.loot[r])).join(" · ");
-  if(mine&&won&&lootTxt) detailHtml+="<div class='note'>Захвачено: "+lootTxt+"</div>";
-  else if(!mine&&!won&&lootTxt) detailHtml+="<div class='note'>Разграблено: "+lootTxt+"</div>";
+
+  // attRace/defCoords/... — Фаза 29: раньше сервер их не слал вовсе, старые
+  // письма (до этого деплоя) их не несут — тогда честно откатываемся на
+  // прежний, короткий разбор вместо аватарок с "undefined".
+  let detailHtml;
+  if(d.attRace && d.defRace){
+    const selfNick=mpState.player.nick||"Вы", oppNick=d.opponent_nick||"Безымянный лорд";
+    const selfRace=mine?d.attRace:d.defRace, oppRace=mine?d.defRace:d.attRace;
+    const selfCoords=mine?d.attCoords:d.defCoords, oppCoords=mine?d.defCoords:d.attCoords;
+    const selfGenSnap=mine?d.attGen:d.defGen, oppGenSnap=mine?d.defGen:d.attGen;
+    const selfBuffs=mine?d.attBuffs:d.defBuffs, oppBuffs=mine?d.defBuffs:d.attBuffs;
+    const oppRemain=Math.max(0,oppStart-(oppHs.dead||0)-(oppHs.hurt||0)-(oppHs.slight||0));
+    const myRemain=Math.max(0,myStart-(myHs.dead||0)-(myHs.hurt||0)-(myHs.slight||0));
+    const weatherDef = d.weather && d.weather!=="clear" ? BATTLE_WEATHER.find(w=>w.id===d.weather) : null;
+    detailHtml="<div class='mail-vs'>"+
+      "<div class='mail-side'>"+mailAvatarHtml(mpPlayerAvatarSrc(selfRace,selfGenSnap),selfRace,52)+
+        "<div class='nm'>"+selfNick+"</div><div class='co'>X:"+selfCoords.x+" Y:"+selfCoords.y+"</div>"+
+        "<div class='pw'>Мощь "+RU(myPower)+"</div>"+battleGenHtml(mpGenInfo(selfRace,selfGenSnap))+
+      "</div>"+
+      "<div class='mail-vmid'>&#9876;</div>"+
+      "<div class='mail-side'>"+mailAvatarHtml(mpPlayerAvatarSrc(oppRace,oppGenSnap),oppRace,52)+
+        "<div class='nm'>"+oppNick+"</div><div class='co'>X:"+oppCoords.x+" Y:"+oppCoords.y+"</div>"+
+        "<div class='pw'>Мощь "+RU(oppPower)+"</div>"+battleGenHtml(mpGenInfo(oppRace,oppGenSnap))+
+      "</div></div>"+
+      "<div class='mail-stamp "+tier.cls+"'>"+tier.name+"</div>"+
+      (weatherDef?"<div class='mail-weather'><b>"+(d.weatherName||weatherDef.name)+"</b><span>"+weatherDef.desc+"</span></div>":"")+
+      "<table class='mail-stats'><tr><th></th><th>"+selfNick+"</th><th>"+oppNick+"</th></tr>"+
+      "<tr><td>Войск</td><td>"+RU(myStart)+"</td><td>"+RU(oppStart)+"</td></tr>"+
+      "<tr><td>Осталось</td><td>"+RU(myRemain)+"</td><td>"+RU(oppRemain)+"</td></tr>"+
+      "<tr><td>Легкораненые</td><td>"+RU(myHs.slight||0)+"</td><td>"+RU(oppHs.slight||0)+"</td></tr>"+
+      "<tr><td>Тяжелораненые</td><td>"+RU(myHs.hurt||0)+"</td><td>"+RU(oppHs.hurt||0)+"</td></tr>"+
+      "<tr><td>Убито</td><td>"+RU(myHs.dead||0)+"</td><td>"+RU(oppHs.dead||0)+"</td></tr>"+
+      "</table>"+
+      (selfBuffs&&oppBuffs?"<div class='mail-chron'><div class='mail-chron-hd'>Статистика войск</div>"+
+        "<table class='mail-stats'><tr><th></th><th>"+selfNick+"</th><th>"+oppNick+"</th></tr>"+
+        battleStatsRows(selfBuffs,oppBuffs)+"</table></div>":"")+
+      (d.defCoords?"<div class='mail-note'>Место боя: X:"+d.defCoords.x+" Y:"+d.defCoords.y+"</div>":"");
+    const lootTxt=d.loot&&RES.filter(r=>d.loot[r]).map(r=>RES_NAME[r]+" "+RU(d.loot[r])).join(" · ");
+    if(mine&&won&&lootTxt) detailHtml+="<div class='mail-note'>Захвачено: "+lootTxt+"</div>";
+    else if(!mine&&!won&&lootTxt) detailHtml+="<div class='mail-note'>Разграблено: "+lootTxt+"</div>";
+    detailHtml+=mpBattleLogHtml(d.log,mine);
+  } else {
+    const hospPart=(label,x)=>x.dead!=null?(" · "+label+": легкораненые "+RU(x.slight||0)+", тяжелораненые "+RU(x.hurt||0)+", убито "+RU(x.dead||0)):"";
+    const hospNote=hospPart("у нас",myHs)+hospPart("у противника",oppHs);
+    detailHtml="<div class='note'>"+sub+hospNote+"</div>";
+    const lootTxt=d.loot&&RES.filter(r=>d.loot[r]).map(r=>RES_NAME[r]+" "+RU(d.loot[r])).join(" · ");
+    if(mine&&won&&lootTxt) detailHtml+="<div class='note'>Захвачено: "+lootTxt+"</div>";
+    else if(!mine&&!won&&lootTxt) detailHtml+="<div class='note'>Разграблено: "+lootTxt+"</div>";
+  }
   return {id:m.id, created_at:m.created_at, icon:"images/ui/mail-seal.png", cls:tier.cls==="win"?"win":"lose", title, sub, detailHtml};
 }
 function mpMailScoutEntry(m){
@@ -12537,12 +12616,20 @@ function mpMailRaidEntry(m){
   const tier=battleOutcomeTier(d.attStart,d.dead||0,d.hurt||0,!!d.win,d.attPower,d.campPower);
   const title="Лагерь "+d.camp_lv+" ур. — "+tier.name;
   const sub="Потери: легкораненые "+RU(d.slight||0)+", тяжелораненые "+RU(d.hurt||0)+", убито "+RU(d.dead||0);
-  let detailHtml="<div class='note'>"+sub+" (из "+RU(lostN(d.attLoss))+" пострадавших)</div>";
+  // Тот же вид, что и у одиночной mailDetailHtml, kind:"barbarian" — печать
+  // исхода, погода (если известна — старые письма до этого деплоя её не
+  // несут), сводка похода, хроника по раундам.
+  const weatherDef = d.weather && d.weather!=="clear" ? BATTLE_WEATHER.find(w=>w.id===d.weather) : null;
+  let detailHtml="<div class='mail-stamp "+tier.cls+"'>"+tier.name+"</div>"+
+    (weatherDef?"<div class='mail-weather'><b>"+(d.weatherName||weatherDef.name)+"</b><span>"+weatherDef.desc+"</span></div>":"")+
+    "<div class='mail-note'>"+(d.campX!=null?"Лагерь разбойников "+d.camp_lv+" ур. у X:"+d.campX+" Y:"+d.campY+".<br>":"")+
+    "Потери отряда: убито "+RU(d.dead||0)+", ранено "+RU(d.hurt||0)+" (из "+RU(lostN(d.attLoss))+" пострадавших)</div>";
   if(d.win){
-    detailHtml+="<div class='note'>Добыча: "+RES.filter(r=>d.loot&&d.loot[r]).map(r=>RES_NAME[r]+" "+RU(d.loot[r])).join(" · ")+"</div>";
+    detailHtml+="<div class='mail-note'>Добыча: "+RES.filter(r=>d.loot&&d.loot[r]).map(r=>RES_NAME[r]+" "+RU(d.loot[r])).join(" · ")+"</div>";
     const tomesTxt=Object.keys(d.tomes||{}).map(v=>TOME_NAME[v]+" ×"+d.tomes[v]).join(", ");
-    if(tomesTxt) detailHtml+="<div class='note'>Книги опыта: "+tomesTxt+"</div>";
+    if(tomesTxt) detailHtml+="<div class='mail-note'>Книги опыта: "+tomesTxt+"</div>";
   }
+  detailHtml+=mpBattleLogHtml(d.log,true);
   return {id:m.id, created_at:m.created_at, icon:"images/ui/mail-seal.png", cls:tier.cls==="win"?"win":"lose", title, sub, detailHtml};
 }
 function mpMailNodeEntry(m){
@@ -12554,12 +12641,51 @@ function mpMailNodeEntry(m){
   const shortTitle = mine
     ? (d.retreated ? "Отступили от точки сбора" : won ? "Точка сбора наша" : "Точку сбора не отбили")
     : (d.retreated ? "Соперник отступил от нашей точки" : won ? "Точку сбора отстояли" : "Точку сбора не удержали");
-  const myHs={dead:mine?d.attDead:d.defDead, hurt:mine?d.attHurt:d.defHurt};
-  const myStart=mine?d.attStart:d.defStart, myPower=mine?d.attPower:d.defPower, oppPower=mine?d.defPower:d.attPower;
+  const myHs={dead:mine?d.attDead:d.defDead, hurt:mine?d.attHurt:d.defHurt, slight:mine?d.attSlight:d.defSlight};
+  const oppHs={dead:mine?d.defDead:d.attDead, hurt:mine?d.defHurt:d.attHurt, slight:mine?d.defSlight:d.attSlight};
+  const myStart=mine?d.attStart:d.defStart, oppStart=mine?d.defStart:d.attStart;
+  const myPower=mine?d.attPower:d.defPower, oppPower=mine?d.defPower:d.attPower;
   const tier=battleOutcomeTier(myStart,myHs.dead||0,myHs.hurt||0,won,myPower,oppPower);
   const title=shortTitle+" — «"+who+"» ("+tier.name+")";
   const sub="Наши потери (лазарет): "+RU(lostN(myLoss))+" · потери соперника: "+RU(lostN(oppLoss));
-  return {id:m.id, created_at:m.created_at, icon:"images/ui/mail-seal.png", cls:tier.cls==="win"?"win":"lose", title, sub, detailHtml:"<div class='note'>"+sub+"</div>"};
+
+  let detailHtml;
+  if(d.attRace && d.defRace){
+    const selfNick=mpState.player.nick||"Вы", oppNick=who;
+    const selfRace=mine?d.attRace:d.defRace, oppRace=mine?d.defRace:d.attRace;
+    const selfGenSnap=mine?d.attGen:d.defGen, oppGenSnap=mine?d.defGen:d.attGen;
+    const selfBuffs=mine?d.attBuffs:d.defBuffs, oppBuffs=mine?d.defBuffs:d.attBuffs;
+    const myRemain=Math.max(0,myStart-(myHs.dead||0)-(myHs.hurt||0)-(myHs.slight||0));
+    const oppRemain=Math.max(0,oppStart-(oppHs.dead||0)-(oppHs.hurt||0)-(oppHs.slight||0));
+    const weatherDef = d.weather && d.weather!=="clear" ? BATTLE_WEATHER.find(w=>w.id===d.weather) : null;
+    detailHtml="<div class='mail-vs'>"+
+      "<div class='mail-side'>"+mailAvatarHtml(mpPlayerAvatarSrc(selfRace,selfGenSnap),selfRace,52)+
+        "<div class='nm'>"+selfNick+"</div>"+
+        "<div class='pw'>Мощь "+RU(myPower)+"</div>"+battleGenHtml(mpGenInfo(selfRace,selfGenSnap))+
+      "</div>"+
+      "<div class='mail-vmid'>&#9876;</div>"+
+      "<div class='mail-side'>"+mailAvatarHtml(mpPlayerAvatarSrc(oppRace,oppGenSnap),oppRace,52)+
+        "<div class='nm'>"+oppNick+"</div>"+
+        "<div class='pw'>Мощь "+RU(oppPower)+"</div>"+battleGenHtml(mpGenInfo(oppRace,oppGenSnap))+
+      "</div></div>"+
+      "<div class='mail-stamp "+tier.cls+"'>"+tier.name+"</div>"+
+      (weatherDef?"<div class='mail-weather'><b>"+(d.weatherName||weatherDef.name)+"</b><span>"+weatherDef.desc+"</span></div>":"")+
+      "<table class='mail-stats'><tr><th></th><th>"+selfNick+"</th><th>"+oppNick+"</th></tr>"+
+      "<tr><td>Войск</td><td>"+RU(myStart)+"</td><td>"+RU(oppStart)+"</td></tr>"+
+      "<tr><td>Осталось</td><td>"+RU(myRemain)+"</td><td>"+RU(oppRemain)+"</td></tr>"+
+      "<tr><td>Легкораненые</td><td>"+RU(myHs.slight||0)+"</td><td>"+RU(oppHs.slight||0)+"</td></tr>"+
+      "<tr><td>Тяжелораненые</td><td>"+RU(myHs.hurt||0)+"</td><td>"+RU(oppHs.hurt||0)+"</td></tr>"+
+      "<tr><td>Убито</td><td>"+RU(myHs.dead||0)+"</td><td>"+RU(oppHs.dead||0)+"</td></tr>"+
+      "</table>"+
+      (selfBuffs&&oppBuffs?"<div class='mail-chron'><div class='mail-chron-hd'>Статистика войск</div>"+
+        "<table class='mail-stats'><tr><th></th><th>"+selfNick+"</th><th>"+oppNick+"</th></tr>"+
+        battleStatsRows(selfBuffs,oppBuffs)+"</table></div>":"")+
+      (d.nodeX!=null?"<div class='mail-note'>Место боя: точка сбора X:"+d.nodeX+" Y:"+d.nodeY+"</div>":"")+
+      mpBattleLogHtml(d.log,mine);
+  } else {
+    detailHtml="<div class='note'>"+sub+"</div>";
+  }
+  return {id:m.id, created_at:m.created_at, icon:"images/ui/mail-seal.png", cls:tier.cls==="win"?"win":"lose", title, sub, detailHtml};
 }
 function mpMailGatherEntry(m){
   const d=m.data;

@@ -2921,6 +2921,7 @@ async function finalizeNodeBattle(admin, m, attRow, occRow, occMarch, attP, occP
     attPower: state.attStartPower, defPower: state.defStartPower,
     rounds: state.round, weather: state.weather.id, weatherName: state.weather.name,
     retreated: !!state.retreated, res: (m.data && m.data.res) || null,
+    nodeX: m.tx, nodeY: m.ty, // "место боя" в письме — координаты самой точки сбора
     // Тот же полный разбор, что и у finalizePvpBattle (см. её заголовок) —
     // бой за точку идёт через тот же initPvpBattle/runPvpBattleRounds
     // (только defWallLv/defGarrisonLv=0, в поле укреплений нет), поэтому
@@ -3090,6 +3091,7 @@ async function finalizeRaidBattle(admin, m, attRow, attP, state, nowSec) {
       // "героическим" (лагерь заметно сильнее) или "пирровым" (дорогой ценой).
       attStart: state.attStartN, attPower: state.attStartPower, campPower: state.defStartPower,
       retreated: !!state.retreated, // Фаза 21 — честное отступление кнопкой, не обычное поражение (см. mp-recall)
+      campX: cellX, campY: cellY, // "разбит лагерь... у X.. Y.." в письме, index.html mailDetailHtml
       // Погода/хроника (index.html mailDetailHtml, kind:"barbarian") — см.
       // заголовок pushLog у initRaidBattle/runRaidBattleRounds выше, раньше
       // письмо о рейде несло только итоговые числа, без единой строки о
