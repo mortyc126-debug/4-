@@ -53,8 +53,17 @@ const BLD_TRAIN = { barracks: "inf", range: "arc", stable: "cav", siege: "sie" }
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const tblRow = (tbl, lv) => tbl[clamp(Math.round(lv), 1, tbl.length) - 1];
 
+// Казармы/Стрельбище/Конюшня/Склад/Госпиталь/Гарнизон свободно ставятся
+// через freeform-пикер (mp-build startBuild) — в отличие от Ратуши/Стены,
+// которые всегда уже есть. В RoK у этих шести 1 уровень бесплатный (уже
+// встроен в город с нуля, источник даёт "—"), но здесь строить "бесплатно
+// и мгновенно" нельзя ни для одного здания — 1 уровень каждого домножен
+// наполовину от их же настоящего 2 уровня (тот же ×2, что и между 1-2
+// уровнем у зданий, где источник цену на 1 уровне и так даёт — Ферма,
+// Академия, Рынок и т.д.), см. те же числа и подробный комментарий в
+// index.html:WATCH_TABLE. Мощь(5) не трогал — настоящее число 1 уровня.
 const BARRACKS_TABLE = [
-  { t: 0, power: 5 }, { food: 500, wood: 800, t: 20, power: 10 }, { food: 1000, wood: 1500, t: 60, power: 20 },
+  { food: 250, wood: 400, t: 10, power: 5 }, { food: 500, wood: 800, t: 20, power: 10 }, { food: 1000, wood: 1500, t: 60, power: 20 },
   { food: 2000, wood: 2800, t: 200, power: 37 }, { food: 3800, wood: 5000, t: 1000, power: 94 },
   { food: 6500, wood: 8500, stone: 3400, t: 2750, power: 244 }, { food: 9800, wood: 12800, stone: 5400, t: 5520, power: 525 },
   { food: 14800, wood: 19300, stone: 8700, t: 10980, power: 1059 }, { food: 22300, wood: 29000, stone: 13900, t: 22020, power: 2083 },
@@ -124,7 +133,7 @@ const ACADEMY_BUILD_TABLE = [
   { food: 17800000, wood: 24000000, stone: 6800000, t: 1036800, power: 481806 }, { food: 26800000, wood: 36000000, stone: 10200000, t: 1209600, power: 783449 },
 ];
 const STORE_BUILD_TABLE = [
-  { t: 0, power: 5 }, { food: 500, wood: 500, t: 18, power: 10 }, { food: 1000, wood: 1000, t: 80, power: 17 },
+  { food: 250, wood: 250, t: 9, power: 5 }, { food: 500, wood: 500, t: 18, power: 10 }, { food: 1000, wood: 1000, t: 80, power: 17 },
   { food: 2000, wood: 2000, t: 400, power: 41 }, { food: 3800, wood: 3800, t: 900, power: 92 },
   { food: 6500, wood: 6500, stone: 3800, t: 1800, power: 201 }, { food: 9800, wood: 9800, stone: 6000, t: 3600, power: 402 },
   { food: 14800, wood: 14800, stone: 9600, t: 7200, power: 778 }, { food: 22300, wood: 22300, stone: 15400, t: 14400, power: 1489 },
@@ -138,7 +147,7 @@ const STORE_BUILD_TABLE = [
   { food: 10800000, wood: 10800000, stone: 8000000, t: 583200, power: 295585 }, { food: 16200000, wood: 16200000, stone: 12000000, t: 0, power: 478367 },
 ];
 const HOSPITAL_BUILD_TABLE = [
-  { t: 0, power: 5 }, { food: 2000, wood: 2000, t: 24, power: 13 }, { food: 3800, wood: 3800, t: 100, power: 32 },
+  { food: 1000, wood: 1000, t: 12, power: 5 }, { food: 2000, wood: 2000, t: 24, power: 13 }, { food: 3800, wood: 3800, t: 100, power: 32 },
   { food: 3800, wood: 3800, t: 150, power: 65 }, { food: 12300, wood: 12300, t: 1200, power: 162 },
   { food: 21000, wood: 21000, stone: 8200, t: 2400, power: 366 }, { food: 31500, wood: 31500, stone: 13000, t: 4800, power: 723 },
   { food: 47300, wood: 47300, stone: 20800, t: 7200, power: 1262 }, { food: 71000, wood: 71000, stone: 33300, t: 10800, power: 2077 },
@@ -208,7 +217,7 @@ const MINE_TABLE = [
   { food: 17800000, wood: 17800000, stone: 24000000, t: 385200, power: 495206 }, { food: 26800000, wood: 26800000, stone: 36000000, t: 612000, power: 735046 },
 ];
 const WATCH_TABLE = [
-  { t: 0, power: 5 }, { food: 800, wood: 800, t: 30, power: 11 }, { food: 1500, wood: 1500, t: 100, power: 21 },
+  { food: 400, wood: 400, t: 15, power: 5 }, { food: 800, wood: 800, t: 30, power: 11 }, { food: 1500, wood: 1500, t: 100, power: 21 },
   { food: 2800, wood: 2800, t: 300, power: 44 }, { food: 5000, wood: 5000, t: 900, power: 100 },
   { food: 8500, wood: 8500, stone: 1300, t: 2100, power: 221 }, { food: 12800, wood: 12800, stone: 2000, t: 4200, power: 446 },
   { food: 19300, wood: 19300, stone: 3200, t: 8400, power: 868 }, { food: 29000, wood: 29000, stone: 5200, t: 16800, power: 1671 },
