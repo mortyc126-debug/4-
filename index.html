@@ -2197,13 +2197,72 @@ const HOSPITAL_BUILD_TABLE=[
 const FORGE_TABLE=[
   {food:1000,wood:1000,stone:1000,t:11,power:5}
 ];
+// Рынок = Trading Post (RoK), Центр Альянса = Alliance Center (RoK) — таблицы
+// переписаны из RoK 1:1 (см. mp-build/index.js для полной справки по
+// источнику и обоснованию). Своей игровой механики (торговля игроками,
+// альянсы/гильдии) в игре нет — оба здания реальны, строятся/апгрейдятся
+// и дают мощь строго по таблице, без придуманного бонуса.
+const TRADING_TABLE=[
+  {food:400,wood:700,t:15,power:5},
+  {food:800,wood:1300,t:90,power:10},
+  {food:1500,wood:2300,t:240,power:27},
+  {food:2800,wood:4300,t:1080,power:84},
+  {food:5000,wood:7800,t:2100,power:193},
+  {food:8500,wood:13300,stone:5000,t:3200,power:379},
+  {food:12800,wood:19900,stone:7500,t:4200,power:634},
+  {food:19300,wood:30000,stone:11300,t:8400,power:1102},
+  {food:29000,wood:45000,stone:17000,t:16800,power:1973},
+  {food:43500,wood:67500,stone:25500,t:33600,power:3615},
+  {food:67500,wood:102500,stone:40000,t:40320,power:5687},
+  {food:102500,wood:155000,stone:60000,t:48360,power:8317},
+  {food:155000,wood:232500,stone:90000,t:58080,power:11684},
+  {food:232500,wood:350000,stone:135000,t:69660,power:16040},
+  {food:350000,wood:525000,stone:202500,t:83580,power:21741},
+  {food:525000,wood:787500,stone:305000,t:100800,power:29294},
+  {food:787500,wood:1200000,stone:457500,t:118800,power:39422},
+  {food:1200000,wood:1800000,stone:700000,t:144000,power:53250},
+  {food:1800000,wood:2700000,stone:1100000,t:172800,power:72284},
+  {food:2700000,wood:4000000,stone:1600000,t:208800,power:98780},
+  {food:4100000,wood:6100000,stone:2400000,t:248400,power:136090},
+  {food:6100000,wood:9100000,stone:3600000,t:324000,power:190096},
+  {food:9100000,wood:13600000,stone:5400000,t:453600,power:269894},
+  {food:13800000,wood:20500000,stone:8300000,t:680400,power:390404},
+  {food:20800000,wood:30800000,stone:12500000,t:2384640,power:626317},
+];
+const ALLIANCE_TABLE=[
+  {food:500,wood:500,t:7,power:5},
+  {food:1000,wood:1000,t:35,power:10},
+  {food:2000,wood:2000,t:90,power:21},
+  {food:3800,wood:3800,t:420,power:53},
+  {food:6800,wood:6800,t:900,power:116},
+  {food:11500,wood:11500,stone:4400,t:2250,power:265},
+  {food:17300,wood:17300,stone:7000,t:4500,power:535},
+  {food:26000,wood:26000,stone:11200,t:9000,power:1032},
+  {food:39000,wood:39000,stone:18000,t:18000,power:1962},
+  {food:58500,wood:58500,stone:28700,t:36000,power:3722},
+  {food:90000,wood:90000,stone:45000,t:43200,power:5945},
+  {food:135000,wood:135000,stone:67500,t:51840,power:8761},
+  {food:202500,wood:202500,stone:102500,t:62160,power:12366},
+  {food:305000,wood:305000,stone:155000,t:74640,power:17036},
+  {food:457500,wood:457500,stone:232500,t:90000,power:23146},
+  {food:687500,wood:687500,stone:350000,t:108000,power:31245},
+  {food:1000000,wood:1000000,stone:525000,t:129600,power:42109},
+  {food:1600000,wood:1600000,stone:800000,t:151200,power:56900},
+  {food:2300000,wood:2300000,stone:1200000,t:183600,power:77229},
+  {food:3500000,wood:3500000,stone:1800000,t:223200,power:105544},
+  {food:5300000,wood:5300000,stone:2700000,t:266400,power:145342},
+  {food:7900000,wood:7900000,stone:4100000,t:345600,power:202900},
+  {food:11800000,wood:11800000,stone:6100000,t:486000,power:287897},
+  {food:17800000,wood:17800000,stone:9300000,t:730800,power:415855},
+  {food:26800000,wood:26800000,stone:14000000,t:0,power:667083},
+];
 const BUILDING_TABLE={
   hall:HALL_TABLE, farm:FARM_TABLE, lumber:LUMBER_TABLE, quarry:QUARRY_TABLE, mine:MINE_TABLE,
   academy:ACADEMY_BUILD_TABLE, store:STORE_BUILD_TABLE,
   barracks:BARRACKS_TABLE, range:BARRACKS_TABLE, stable:BARRACKS_TABLE, siege:SIEGE_TABLE,
   hospital:HOSPITAL_BUILD_TABLE,
   wall:WALL_TABLE, garrison:WATCH_TABLE, scout:SCOUT_TABLE,
-  forge:FORGE_TABLE,
+  forge:FORGE_TABLE, market:TRADING_TABLE, alliance:ALLIANCE_TABLE,
 };
 const CFG = {
   MAP: 100,                 // размер стороны карты
@@ -2527,9 +2586,15 @@ const ACADEMY_TREE = {
   eco: [
     // Было max:3 — в RoK и Quarrying, и Metallurgy однoуровневые (чистый анлок
     // без цифры), а в RESEARCH_TABLE на них теперь ровно одна точная строка.
-    // Оставлен свой небольшой бонус (0.05, не из таблички — как раньше).
-    {id:"eco_stone0",name:"Горное дело",max:1,wave:1,branch:"eco",field:"prodStone",total:0.05},
-    {id:"eco_gold0",  name:"Промысел",   max:1,wave:1,branch:"eco",field:"prodGold", total:0.05},
+    // Раньше тут был свой бонус +5% (не из таблички) — по прямому запросу
+    // автора убран: в RoK у обеих технологий нет никакого процентного
+    // эффекта вообще, только разблокировка сбора камня/золота отрядами на
+    // карте (механики нет в этой игре — нечего изображать числом). Цена/
+    // время/мощь по-прежнему точно из RS_QUARRYING/RS_METALLURGY, узел не
+    // бесполезен — просто честно ничего не бустит, как и в оригинале
+    // (см. nodeEffectRows/bonuses — без field узел не даёт эффекта).
+    {id:"eco_stone0",name:"Горное дело",max:1,wave:1,branch:"eco"},
+    {id:"eco_gold0",  name:"Промысел",   max:1,wave:1,branch:"eco"},
     {id:"eco_food1",  name:"Ирригация",  max:5,wave:1,branch:"eco",field:"prodFood", total:0.15},
     {id:"eco_wood1",  name:"Лесное дело",max:5,wave:1,branch:"eco",field:"prodWood", total:0.15},
     {id:"eco_build1", name:"Кладка",     max:5,wave:1,branch:"eco",field:"build",kind:"mult",total:0.15},
@@ -2540,7 +2605,11 @@ const ACADEMY_TREE = {
     {id:"eco_gwood1", name:"Топор",      max:5,wave:1,branch:"eco",field:"gatherFW",total:0.15},
     {id:"eco_gstone1",name:"Тачка",      max:5,wave:1,branch:"eco",field:"gatherSG",total:0.15},
     {id:"eco_ggold1", name:"Промывка",   max:5,wave:1,branch:"eco",field:"gatherSG",total:0.15},
-    {id:"eco_load1",  name:"Колесо",     max:5,wave:1,branch:"eco",field:"load",total:0.15},
+    // total был 0.15 — не биëтся с RoK: у Wheel потолок +5% (5 уровней по
+    // +1%/+2%/+3%/+4%/+5%, см. RS_WHEEL), не +15% (это был спутан с
+    // соседними по тиру узлами вроде Multilayer Structure). Повозка
+    // (eco_load2, продолжение Wheel) корректно даёт +25% сверху — не трогал.
+    {id:"eco_load1",  name:"Колесо",     max:5,wave:1,branch:"eco",field:"load",total:0.05},
     {id:"eco_cap1",   name:"Многослойная кладка",max:5,wave:1,branch:"eco",field:"cap",total:0.15},
     // Донатная ветка (Янтарь). В RoK её аналог (Jewelry) — чистый анлок без
     // своего бонуса, тир 7, требует Multilayer Structure 4; здесь — как и
@@ -2949,6 +3018,16 @@ const BUILDINGS = {
   // апгрейдов не бывает (см. buildingMax/FORGE_TABLE). max:1, не 25.
   forge:   {name:"Горн",          max:1, desc:"Добыча материалов и ковка снаряжения для полководца", footprint:{w:2,h:2}},
   portal:  {name:"Портал",        max:25, desc:"Пассивно ускоряет марш; с 3 эпохи открывает проход, сокращающий путь отрядов", footprint:{w:3,h:3}},
+  // Рынок/Центр Альянса — цена/время/мощь по 25 уровням сверены с
+  // Trading Post/Alliance Center из таблицы RoK, которую прислал автор
+  // (см. supabase/functions/mp-build/index.js: TRADING_TABLE/ALLIANCE_TABLE
+  // — точно те же числа, приведённые к формату остальных построек). Своего
+  // игрового эффекта им пока не завели (в RoK Trading Post — обмен
+  // ресурсами МЕЖДУ игроками, Alliance Center — помощь от гильдии; ни того,
+  // ни другого механически в игре нет) — здания честно строятся/растут и
+  // дают мощь городу, как и было прямо попрошено, а не выдуманный бонус.
+  market:  {name:"Рынок",         max:25, desc:"Торговая площадь города — поднимает его мощь", footprint:{w:3,h:3}},
+  alliance:{name:"Центр Альянса", max:25, desc:"Резиденция посольств и союзов — поднимает мощь города", footprint:{w:3,h:3}},
 };
 const BKEYS = Object.keys(BUILDINGS);
 // Здания, которые размещаются игроком свободно на сетке (все, кроме
@@ -4374,7 +4453,7 @@ function bonuses(p, defending){
   const tech=p.tech||{};
   const multAcc={};
   [ACADEMY_TREE.eco,ACADEMY_TREE.mil].forEach(arr=>arr.forEach(n=>{
-    const lv=tech[n.id]||0; if(!lv||n.unlock) return;
+    const lv=tech[n.id]||0; if(!lv||n.unlock||(!n.effects&&!n.field)) return;
     const list=n.effects||[{field:n.field,total:n.total,kind:n.kind}];
     list.forEach(e=>{
       const inc=e.total*(lv/n.max);
@@ -9582,6 +9661,11 @@ function nodeEffectRows(n,lv,nx){
   // mil_scout1, но реального числового бонуса ни один из них не даёт.
   if(n.id==="mil_scout2") return [{label:"Подробность донесений",icon:RESEARCH_FIELD_ICON.scoutBonus,
     now:"ступень "+lv+"/"+n.max, next:lv>=n.max?null:"ступень "+nx+"/"+n.max}];
+  // Горное дело/Промысел (eco_stone0/eco_gold0) — как и в RoK, чистая
+  // разблокировка без числового бонуса (см. комментарий у ACADEMY_TREE.eco).
+  // Без этой ветки список свалился бы на {field:undefined} ниже и вывел
+  // бы "+NaN%".
+  if(!n.effects&&!n.field) return [];
   const list=n.effects||[{field:n.field,total:n.total}];
   const fname=f=>RESEARCH_FIELD_NAME[f]||f;
   const maxed=lv>=n.max;

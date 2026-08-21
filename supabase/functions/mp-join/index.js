@@ -120,6 +120,7 @@ const BUILD_FOOTPRINT = {
   store: { w: 3, h: 2 }, barracks: { w: 3, h: 3 }, range: { w: 3, h: 3 }, stable: { w: 3, h: 3 },
   siege: { w: 3, h: 3 }, hospital: { w: 2, h: 2 }, academy: { w: 3, h: 3 },
   garrison: { w: 3, h: 2 }, scout: { w: 2, h: 2 }, forge: { w: 2, h: 2 }, portal: { w: 3, h: 3 },
+  market: { w: 3, h: 3 }, alliance: { w: 3, h: 3 },
 };
 const PLACEABLE_BKEYS = Object.keys(BUILD_FOOTPRINT);
 function collisionOk(layout, footprint, gx, gy, excludeIdx) {
@@ -799,7 +800,9 @@ Deno.serve(async (req) => {
       // лучше не оставлять исходную причину только на клиентской защите —
       // самоисцеляем и здесь, разом на будущее для любого другого кода,
       // который тоже может забыть про ||0.
-      if (st.b) { st.b.forge = st.b.forge || 0; st.b.portal = st.b.portal || 0; }
+      // Та же самоисцеляющая причина, что и у forge/portal чуть выше —
+      // Рынок/Центр Альянса тоже не входят в newPlayerState's BKEYS.
+      if (st.b) { st.b.forge = st.b.forge || 0; st.b.portal = st.b.portal || 0; st.b.market = st.b.market || 0; st.b.alliance = st.b.alliance || 0; }
       if (st.b) ensureLayout(st);
       syncRes(st, nowSec);
       const upd = await admin.from("players").update({ state: st, updated_at: new Date().toISOString() })
