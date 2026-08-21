@@ -6669,13 +6669,19 @@ function fmt0(n){ n=Math.round(n);              // без дробной час�
 // ни при какой горизонтальной раскладке — раздвинуть по горизонтали
 // нечем, поэтому разводим по вертикали (см. предыдущий коммит).
 //
-// maxTop — жёсткий потолок для этой пары: #brigades/#fieldarmy своим
-// top:108px (см. их CSS) начинаются сразу под шапкой в режиме города,
-// и если бы .crest-card сидела достаточно низко, стопка "плашка + янтарь
-// + два зазора" уже не влезла бы над ними. Число 108 — тот же самый
-// CSS-констант, не подобрано отдельно; если бы .crest-card была выше
-// (например, на широком экране), в потолке нет нужды — Math.min его и
-// не применит.
+// Автор уточнил ещё раз, со скриншотом с красной отметкой: важна высота
+// именно ИКОН (самых верхних — еда/камень), а не текста рядом с ними.
+// В .coin они и так на одной линии (align-items:center), так что верх
+// самой иконки (20px, самый высокий элемент строки) практически совпадает
+// с top всей .purse — считать/подгонять отдельно не нужно.
+//
+// maxTop — предохранитель, не более: #brigades/#fieldarmy своим top:108px
+// (см. их CSS) начинаются сразу под шапкой в режиме города, и если бы
+// .crest-card сидела достаточно низко, стопка "плашка + зазор + янтарь"
+// не влезла бы над ними. Зазор между плашкой и янтарём тут уже не 6px, а
+// 2px — впритык, но не внахлёст: на замерах именно этого не хватало,
+// чтобы влезть точно вровень с .crest-card (не хватало меньше 1px, было
+// видно только как более заметный сдвиг вверх, о чём и написал автор).
 function positionPurse(){
   const purse=$("#purse"), crest=$("#crest"), card=$("#crest .crest-card"), amber=$("#amber-badge");
   if(!purse || !crest) return;
@@ -6686,11 +6692,11 @@ function positionPurse(){
   let top=(card||crest).getBoundingClientRect().top;
   if(amber){
     const ah=amber.getBoundingClientRect().height;
-    const maxTop=108-6-ah-6-pr.height;
+    const maxTop=108-ah-2-pr.height;
     top=Math.min(top,maxTop);
   }
   purse.style.top=Math.round(top)+"px";
-  if(amber) amber.style.top=Math.round(top+pr.height+6)+"px";
+  if(amber) amber.style.top=Math.round(top+pr.height+2)+"px";
 }
 function fmtDur(s){ s=Math.max(0,Math.round(s));
   const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),x=s%60;
