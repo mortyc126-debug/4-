@@ -693,21 +693,25 @@ body.mp-placing #place-toolbar{display:flex}
 #bm-art{display:block;max-width:64%;margin:0 auto 16px;filter:drop-shadow(0 6px 10px rgba(0,0,0,.35))}
 #bm-desc{font-size:13px;line-height:1.5;color:#3a2c1c;text-align:center;margin-bottom:18px;
   font-style:italic}
-#bm-stats{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px}
-#bm-stats td{padding:5px 0;border-bottom:1px solid rgba(90,69,48,.25);color:#3a2c1c}
-#bm-stats td:last-child{text-align:right;font-family:var(--data)}
+#bm-stats,.bm-stats{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px}
+#bm-stats td,.bm-stats td{padding:5px 0;border-bottom:1px solid rgba(90,69,48,.25);color:#3a2c1c}
+#bm-stats td:last-child,.bm-stats td:last-child{text-align:right;font-family:var(--data)}
 #bm-opens{font-size:12.5px;text-align:center;color:#8a6d2c;margin-bottom:14px;font-weight:bold}
 #ac-tabs{display:flex;gap:6px;margin-bottom:10px}
 #ac-tabs button{flex:1;padding:7px 4px;font-size:12px;text-align:center;
   background:rgba(90,69,48,.12);border:1px solid rgba(90,69,48,.3);border-radius:4px;
   color:#5a4530}
 #ac-tabs button.on{background:rgba(138,109,44,.28);border-color:#8a6d2c;color:#2c2114;font-weight:bold}
-#bm-reqs{margin-bottom:18px}
-#bm-reqs .req-row{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:14px}
-#bm-reqs .req-row img{width:20px;height:20px;object-fit:contain;flex:0 0 auto}
-#bm-reqs .req-row .req-name{flex:1;color:#3a2c1c;min-width:0}
-#bm-reqs .req-row .req-amt{font-family:var(--data);font-size:13px;white-space:nowrap;flex:0 0 auto}
-#bm-reqs .req-row .req-amt.short{color:#8a2f22}
+/* .bm-reqs (класс) — та же вёрстка, что и #bm-reqs (id), просто для
+   карусели построек (Фаза 7, mpBuildPickerHtml): там несколько карточек
+   одновременно в разметке (.uc-card в #uc-track), а id обязан быть один
+   на страницу — дублировать не стал, тот же список селекторов через запятую. */
+#bm-reqs,.bm-reqs{margin-bottom:18px}
+#bm-reqs .req-row,.bm-reqs .req-row{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:14px}
+#bm-reqs .req-row img,.bm-reqs .req-row img{width:20px;height:20px;object-fit:contain;flex:0 0 auto}
+#bm-reqs .req-row .req-name,.bm-reqs .req-row .req-name{flex:1;color:#3a2c1c;min-width:0}
+#bm-reqs .req-row .req-amt,.bm-reqs .req-row .req-amt{font-family:var(--data);font-size:13px;white-space:nowrap;flex:0 0 auto}
+#bm-reqs .req-row .req-amt.short,.bm-reqs .req-row .req-amt.short{color:#8a2f22}
 #bm-qty{margin-bottom:16px}
 #bm-qty .cap{display:flex;justify-content:space-between;font-size:12px;color:#5a4530;margin-bottom:6px}
 #bm-qty .cap b{font-family:var(--data);color:#3a2c1c;font-weight:400}
@@ -716,7 +720,7 @@ body.mp-placing #place-toolbar{display:flex}
 #bm-qty input[type=number]{width:78px;flex:0 0 auto;background:rgba(44,33,20,.08);
   border:1px solid #8a6d2c;border-radius:3px;padding:7px 6px;font-family:var(--data);
   font-size:14px;text-align:right;color:#2c2114}
-#bm-time{text-align:center;font-size:12.5px;color:#5a4530;margin-bottom:16px}
+#bm-time,.bm-time{text-align:center;font-size:12.5px;color:#5a4530;margin-bottom:16px}
 #uc-track{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:0;
   scrollbar-width:none}
 #uc-track::-webkit-scrollbar{display:none}
@@ -1323,19 +1327,9 @@ body.mp-placing #place-toolbar{display:flex}
    (transform:translateY), но круглым кнопкам естественнее лёгкое сжатие. */
 .place-btn:active:not(:disabled){transform:scale(.9)}
 #mp-build-fab:active{transform:translateX(-50%) scale(.9)}
-.picker-item:not(.locked):active{transform:scale(.96)}
-
-/* Список построек (mpBuildPickerHtml, #mp-build-fab) — сетка из тех же
-   картинок/имён, что и в самой карточке здания (#bm-art/buildingName),
-   просто помельче и без цены/времени (та появится в карточке после
-   размещения — тут только выбор, что взять "в руки"). */
-.picker-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
-.picker-item{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 4px;
-  background:rgba(90,69,48,.08);border:1px solid rgba(90,69,48,.3);border-radius:6px;
-  color:#3a2c1c;font-size:11px;line-height:1.25;text-align:center}
-.picker-item img{width:44px;height:44px;object-fit:contain}
-.picker-item.locked{opacity:.4;cursor:not-allowed}
-.picker-item:not(.locked):hover{border-color:#8a6d2c;background:rgba(90,69,48,.16)}
+/* Список построек (mpBuildPickerHtml) — Фаза 7: карусель по одному
+   зданию на разворот (#uc-track/.uc-card/#uc-nav, та же вёрстка, что и у
+   обучения войск), .picker-grid/.picker-item больше не используются. */
 
 /* Фаза 14, кусочек 4 — выделенная ячейка города общего мира (mpCitySel) и
    всплывающая снизу карты панель действия (mpCellPanelHtml). Тот же
@@ -1571,11 +1565,11 @@ body.mp-placing #place-toolbar{display:flex}
   #chron .stat s{display:none}
   #chron .stat b{font-size:12px}
   #cartouche{max-width:186px;padding:8px 10px;font-size:12.5px}
-  #bm-reqs .req-row{display:grid;grid-template-columns:20px 1fr;
+  #bm-reqs .req-row,.bm-reqs .req-row{display:grid;grid-template-columns:20px 1fr;
     grid-template-areas:"icon name" "icon amt";column-gap:8px;row-gap:1px;font-size:13px}
-  #bm-reqs .req-row img{grid-area:icon}
-  #bm-reqs .req-row .req-name{grid-area:name}
-  #bm-reqs .req-row .req-amt{grid-area:amt;text-align:right;font-size:12px;
+  #bm-reqs .req-row img,.bm-reqs .req-row img{grid-area:icon}
+  #bm-reqs .req-row .req-name,.bm-reqs .req-row .req-name{grid-area:name}
+  #bm-reqs .req-row .req-amt,.bm-reqs .req-row .req-amt{grid-area:amt;text-align:right;font-size:12px;
     white-space:normal;overflow-wrap:break-word}
 }
 </style>
@@ -2914,9 +2908,22 @@ function talentBranchSpent(p){
 }
 
 /* ---- Здания ---- */
-// footprint — размер в клетках CITY_GRID для свободной застройки МП
-// (см. CITY_GRID ниже); ratio взят из старых процентных размеров
-// CITY_CELLS, сама сетка ещё не финальная — будет уточняться по месту.
+// footprint — размер в клетках CITY_GRID для свободной застройки МП (см.
+// CITY_GRID ниже). Все картинки построек (images/buildings/*.png) нарисованы
+// в одном плотном изометрическом стиле безо всякой встроенной иерархии
+// размеров — "Разведка"/"Гарнизон" на своих картинках выглядят такими же
+// огромными замками, как и Ратуша, ни один силуэт сам по себе не "мельче"
+// другого. Единственный реальный рычаг — размер рамки на сетке, поэтому
+// три явных уровня по игровой значимости, а не по картинке:
+//   3×3 — казарменные (Казармы/Стрельбище/Конюшня/Мастерская — все четыре
+//         разом, а не только Казармы, как было раньше) + Академия/Портал;
+//   3×2 — Склад/Гарнизон;
+//   2×2 — Разведка/Горн и все "участковые" (Ферма/Лесопилка/Каменоломня/
+//         Золотая шахта/Госпиталь — по 4 экземпляра каждое, мельче нарочно).
+// Ратуша (4×4, CITY_FIXED_GRID_POS) всё равно крупнее любого из них.
+// Смена размеров у уже стоящих на карте зданий может свести их вплотную
+// друг к другу визуально — их можно перетащить (долгий тап/кнопка
+// "Переместить", см. mpEnterRelocateMode) на свободное место.
 const BUILDINGS = {
   hall:    {name:"Ратуша",        max:25, req:null,  desc:"Задаёт потолок всех зданий и размер города"},
   farm:    {name:"Ферма",         max:25, prod:"food", plots:4, desc:"Добывает еду в город", footprint:{w:2,h:2}},
@@ -2925,13 +2932,13 @@ const BUILDINGS = {
   mine:    {name:"Золотая шахта", max:25, prod:"gold", plots:4, desc:"Добывает золото в город", footprint:{w:2,h:2}},
   store:   {name:"Склад",         max:25, desc:"Защищает ресурсы от разграбления при штурме города", footprint:{w:3,h:2}},
   barracks:{name:"Казармы",       max:25, train:"inf", desc:"Обучает пехоту", footprint:{w:3,h:3}},
-  range:   {name:"Стрельбище",    max:25, train:"arc", desc:"Обучает лучников", footprint:{w:3,h:2}},
-  stable:  {name:"Конюшня",       max:25, train:"cav", desc:"Обучает конницу", footprint:{w:3,h:2}},
-  siege:   {name:"Мастерская",    max:25, train:"sie", desc:"Обучает осадные орудия", footprint:{w:2,h:2}},
+  range:   {name:"Стрельбище",    max:25, train:"arc", desc:"Обучает лучников", footprint:{w:3,h:3}},
+  stable:  {name:"Конюшня",       max:25, train:"cav", desc:"Обучает конницу", footprint:{w:3,h:3}},
+  siege:   {name:"Мастерская",    max:25, train:"sie", desc:"Обучает осадные орудия", footprint:{w:3,h:3}},
   hospital:{name:"Госпиталь",     max:25, desc:"Раненые вместо убитых", plots:4, footprint:{w:2,h:2}},
-  academy: {name:"Академия",      max:25, desc:"Исследования и открытие тиров", footprint:{w:3,h:2}},
+  academy: {name:"Академия",      max:25, desc:"Исследования и открытие тиров", footprint:{w:3,h:3}},
   wall:    {name:"Стена",         max:25, desc:"Защита города при обороне"},
-  garrison:{name:"Гарнизон",      max:25, desc:"Доп. защита при осаде и предупреждение о марше врага", footprint:{w:2,h:2}},
+  garrison:{name:"Гарнизон",      max:25, desc:"Доп. защита при осаде и предупреждение о марше врага", footprint:{w:3,h:2}},
   scout:   {name:"Разведка",      max:25, desc:"Раскрывает сведения о войсках противника: чем выше эпоха здания, тем точнее разведданные", footprint:{w:2,h:2}},
   // Горн = Кузница в RoK, а она вообще без уровней — разовая постройка,
   // апгрейдов не бывает (см. buildingMax/FORGE_TABLE). max:1, не 25.
@@ -8961,21 +8968,53 @@ function mpNextPlaceableInfo(bk){
   }
   return null; // все 4 участка уже стоят
 }
+// Фаза 7 (по просьбе автора после обкатки Фазы 4-6 на живом сайте) —
+// список построек теперь карусель по одному зданию на разворот, тем же
+// #uc-track/.uc-card/#uc-nav, что и обучение войск (mpUnitCarouselHtml) —
+// автор явно попросил именно этот вид ("как вкладку с тренировкой
+// бойцов"). Раньше был плоский грид иконок (.picker-item) без цены/
+// времени и БЕЗ причины блокировки: заблокированные пункты были <button
+// disabled> — у disabled-кнопок в браузере click вообще не стреляет, title
+// на тач-экране не всплывает никогда, поэтому тап по серому пункту молча
+// ничего не показывал (баг, не просто "неинформативно"). Тут причина —
+// обычный текст ПРЯМО на развороте (.uc-lock, тот же класс, что и у
+// "нужно исследование в академии" в carousel войск), значит видна без
+// какого-либо тапа вообще, а не только по клику.
 function mpBuildPickerHtml(){
-  const pShim=mpCityShim();
-  let h="<div id='bm-title'>Строительство</div>"+
-    "<div id='bm-desc'>Выберите здание — оно появится на карте, разместите его где захотите и подтвердите галочкой.</div>"+
-    "<div class='picker-grid'>";
+  const pShim=mpCityShim(), st=mpState.player.state;
+  let h="<div id='bm-title'>Строительство</div>";
+  h+="<div id='uc-track'>";
+  let any=false;
   PLACEABLE_BKEYS.forEach(bk=>{
     const info=mpNextPlaceableInfo(bk); if(!info) return;
-    h+="<button class='picker-item"+(info.locked?" locked":"")+"' "+
-       (info.locked?"disabled":("data-mp='pickbuild' data-bk='"+bk+"'"+(info.plot!=null?" data-plot='"+info.plot+"'":"")))+
-       " title='"+(info.locked?info.lockTxt:"")+"'>"+
-       "<img src='"+cityCellImg({bk,pl:info.plot})+"'>"+
-       "<span>"+buildingName(bk,pShim)+(info.plot!=null?" · уч. "+(info.plot+1):"")+"</span>"+
-       "</button>";
+    any=true;
+    const desc=(BUILDINGS[bk]&&BUILDINGS[bk].desc)||"";
+    h+="<div class='uc-card"+(info.locked?" locked":"")+"'>"+
+      "<img class='uc-img' src='"+cityCellImg({bk,pl:info.plot})+"' alt=''>"+
+      "<div class='uc-name'>"+buildingName(bk,pShim)+(info.plot!=null?" <span class='tag'>уч. "+(info.plot+1)+"</span>":"")+"</div>";
+    if(desc) h+="<div id='bm-desc'>"+desc+"</div>";
+    if(info.locked){
+      h+="<div class='uc-lock'>&#128274; "+info.lockTxt+"</div>";
+    } else {
+      const cst=buildCost(bk,1), t=buildTime(bk,1);
+      h+="<table class='bm-stats'><tr><td>Мощь здания</td><td>"+fmt(buildingPower(bk,1))+"</td></tr></table>";
+      h+="<div class='bm-reqs'>"+RES.map(r=>{
+        const need=cst[r]||0; if(!need) return "";
+        const short=st.res[r]<need;
+        return "<div class='req-row'><img src='images/ui/res-"+r+".png'>"+
+          "<span class='req-name'>"+RES_NAME[r]+"</span>"+
+          "<span class='req-amt"+(short?" short":"")+"'>"+fmt(need)+" / "+fmt(st.res[r])+"</span></div>";
+      }).join("")+"</div>";
+      h+="<div class='bm-time'>Время строительства: "+fmtDur(t)+"</div>";
+      h+="<button class='rnode-go uc-go' data-mp='pickbuild' data-bk='"+bk+"' "+
+         (info.plot!=null?"data-plot='"+info.plot+"' ":"")+(mpState.loading?"disabled":"")+">Взять</button>";
+    }
+    h+="</div>";
   });
   h+="</div>";
+  if(!any) h+="<div id='bm-desc'>Все доступные здания уже стоят на карте.</div>";
+  else h+="<div id='uc-nav'><button data-act='ucnav' data-dir='-1'>&lsaquo; Назад</button>"+
+    "<button data-act='ucnav' data-dir='1'>Вперёд &rsaquo;</button></div>";
   return h;
 }
 let mpPickerOpen=false;

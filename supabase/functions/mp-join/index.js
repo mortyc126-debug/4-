@@ -117,9 +117,9 @@ const CITY_GRID = {
 };
 const BUILD_FOOTPRINT = {
   farm: { w: 2, h: 2 }, lumber: { w: 2, h: 2 }, quarry: { w: 2, h: 2 }, mine: { w: 2, h: 2 },
-  store: { w: 3, h: 2 }, barracks: { w: 3, h: 3 }, range: { w: 3, h: 2 }, stable: { w: 3, h: 2 },
-  siege: { w: 2, h: 2 }, hospital: { w: 2, h: 2 }, academy: { w: 3, h: 2 },
-  garrison: { w: 2, h: 2 }, scout: { w: 2, h: 2 }, forge: { w: 2, h: 2 }, portal: { w: 3, h: 3 },
+  store: { w: 3, h: 2 }, barracks: { w: 3, h: 3 }, range: { w: 3, h: 3 }, stable: { w: 3, h: 3 },
+  siege: { w: 3, h: 3 }, hospital: { w: 2, h: 2 }, academy: { w: 3, h: 3 },
+  garrison: { w: 3, h: 2 }, scout: { w: 2, h: 2 }, forge: { w: 2, h: 2 }, portal: { w: 3, h: 3 },
 };
 const PLACEABLE_BKEYS = Object.keys(BUILD_FOOTPRINT);
 function collisionOk(layout, footprint, gx, gy, excludeIdx) {
