@@ -833,12 +833,15 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   background:radial-gradient(circle at 34% 28%,rgba(255,255,255,.4),transparent 62%),var(--tone-bg,rgba(90,69,48,.16));
   border:2px solid var(--tone-bd,rgba(90,69,48,.4));
   box-shadow:0 1px 2px rgba(0,0,0,.2),0 0 0 1px rgba(255,255,255,.25) inset}
-/* 23px внутри 42px круга (55%) читалось как "монетка потерялась в рамке" —
-   сами PNG почти без полей (проверено: content bbox 87-99% кадра у всех
-   пяти res-*.png), так что дело было чисто в CSS-размере, не в исходниках.
-   32px (76%) — тот же отступ от ободка медальона, что и у аватарок в
-   .mail-side img.av (52px портрет в ~68px личном месте). */
-.mail-row .icowrap img{width:32px;height:32px;object-fit:contain;filter:drop-shadow(0 1px 1px rgba(0,0,0,.35))}
+/* 32px внутри 42px круга автору всё ещё казалось "с зазором от ободка" —
+   *{box-sizing:border-box} (см. сброс в начале файла) значит, что у
+   .icowrap (border-box, border:2px) фактическая область ПОД содержимое —
+   42-2*2=38px, ровно край в край с ободком. Автор явно попросил "устрани
+   зазор, но обводку зелёную оставь" — вот эти 38px и есть максимум без
+   наезда на саму рамку. Сами PNG почти без полей (content bbox 88-97% кадра
+   у icon-march/mail-seal/icon-world/icon-gen/icon-mail — проверено), так
+   что дальше увеличивать уже некуда, упрёмся в саму рамку медальона. */
+.mail-row .icowrap img{width:38px;height:38px;object-fit:contain;filter:drop-shadow(0 1px 1px rgba(0,0,0,.35))}
 .mail-row .icowrap.tone-green{--tone-bg:rgba(74,124,63,.24);--tone-bd:#4a7c3f}
 .mail-row .icowrap.tone-red{--tone-bg:rgba(163,60,44,.22);--tone-bd:#a33c2c}
 .mail-row .icowrap.tone-blue{--tone-bg:rgba(58,85,133,.22);--tone-bd:#3a5585}
@@ -863,14 +866,27 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    см. заголовок resIconSpan(). Раньше 16px картинка висела отдельным
    мелким пятном перед текстом с заметным зазором (vertical-align:-3px без
    рамки вокруг) — теперь оформлена как та же "плашка", что и медальон
-   письма (.icowrap): свой кружок-подложка под иконку, покрупнее и вплотную
-   к числу, чтобы ряд читался одним целым, а не "иконка ... пробел ... текст". */
-.res-chip{display:inline-flex;align-items:center;gap:6px;margin-right:12px;white-space:nowrap;
+   письма (.icowrap): свой кружок-подложка под иконку, вплотную к числу
+   (gap намеренно маленький — раньше между иконкой и числом был как раз тот
+   самый "зазор", на который жаловался автор), чтобы ряд читался одним
+   целым, а не "иконка ... пробел ... текст". */
+.res-chip{display:inline-flex;align-items:center;gap:5px;margin-right:12px;white-space:nowrap;
   font-size:13px;color:#2c2114}
 .res-chip .ico{width:26px;height:26px;border-radius:50%;flex:0 0 auto;display:inline-flex;
   align-items:center;justify-content:center;background:rgba(194,153,60,.18);
   border:1px solid rgba(138,109,44,.4)}
-.res-chip img{width:20px;height:20px;object-fit:contain;vertical-align:middle}
+.res-chip img{width:22px;height:22px;object-fit:contain;vertical-align:middle}
+/* В самом отчёте (.mail-res-row — добыча обоза/бой за точку, ровно то, что
+   автор показал на скриншоте: монетка и число с большим зазором между
+   ними) — та же иконка, но втрое крупнее (автор: "увеличь иконку в самом
+   отчёте в три раза"), с числом покрупнее и жирным, чтобы не потеряться
+   рядом с медальоном. Инлайн-списки добычи в прозе ("Захвачено: …"/
+   "Разграблено: …", .mail-note вне .mail-res-row) остаются на базовом
+   размере выше — там несколько чипов подряд внутри предложения, раздувать
+   их так же не просили и не стоит. */
+.mail-res-row .res-chip{gap:12px;font-size:26px;font-weight:bold;margin-right:0}
+.mail-res-row .res-chip .ico{width:78px;height:78px;border-width:2px}
+.mail-res-row .res-chip img{width:60px;height:60px}
 /* Координаты места (добыча/бой за точку/лагерь) — раньше просто хвостом
    текста ("· точка -22·12"), автор попросил вынести их первыми, по центру
    строки и кликабельными (переносит камеру 3D к этому месту, см. mpGoToLoc
@@ -12727,6 +12743,33 @@ function mpBattleLogHtml(log, mineIsAtt){
 // title, sub, detailHtml}: sub — короткая одна строка для компактного ряда
 // списка (см. mpMailRowHtml), detailHtml — полный разбор (что раньше и было
 // единственным видом) для открытой карточки (см. mpMailScreenHtml).
+//
+// mpMailCached(m,builder) — автор сообщил "почта жёстко виснет, будто
+// сжирает все ресурсы". Причина: mpMailReportEntries()/mpMailPersonalEntries()
+// и т.д. гоняли ВСЕ mpMailXxxEntry по ВСЕМ письмам категории (до полусотни
+// штук) НА КАЖДЫЙ mpRerender() — а он зовётся на каждый опрос (раз в 5с,
+// раз в 1с во время боя, см. mpStartPolling/mpBattleFastPollTick), плюс ещё
+// раз при открытии карточки письма (mpMailEntryById заново пересобирал ВСЕ
+// категории целиком, только чтобы найти одну по id). detailHtml — самая
+// дорогая часть: аватарки, таблицы бонусов, ветки талантов (mpTalentBranchSpent
+// перебирает все узлы всех веток) и вся хроника боя по раундам
+// (mpBattleLogHtml — а хроника в этой же фазе стала заметно длиннее:
+// раунд-сводки, разрывы дисциплины, гибель полководца, отметки 50%/25% и
+// т.д. на каждый раунд долгой осады).
+// Письма в таблице mail пишутся РОВНО ОДИН РАЗ при разрешении события
+// (finalizePvpBattle/finalizeRaidBattle/finalizeNodeBattle и т.п.) и больше
+// никогда не меняются — id уникален и не переиспользуется (bigint serial),
+// поэтому разбор одного и того же id всегда даёт один и тот же результат.
+// Кэшируем по id НАВСЕГДА (без инвалидации: инвалидировать нечем — строка
+// физически не мутирует после вставки), а не по ссылке на объект m — сам
+// объект m у Supabase на каждый .select() новый (JSON распарсен заново),
+// хотя содержимое то же самое, так что кэш по ссылке ничего бы не поймал.
+const mpMailEntryCache=new Map();
+function mpMailCached(m, builder){
+  let e=mpMailEntryCache.get(m.id);
+  if(!e){ e=builder(m); mpMailEntryCache.set(m.id, e); }
+  return e;
+}
 function mpMailSiegeEntry(m){
   const d=m.data, isRaid=d.mode==="raid", isNode=d.mode==="node", isDef=d.role==="defender", isRetreat=d.phase==="retreat";
   const who=d.opponent_nick||"Безымянный лорд";
@@ -12973,29 +13016,29 @@ function mpMailPmEntry(m){
 // mpMailSystemEntries.
 function mpMailReportEntries(){
   return [].concat(
-    mpState.mail.map(mpMailBattleEntry),
-    mpState.scoutMail.map(mpMailScoutEntry),
-    mpState.raidMail.map(mpMailRaidEntry),
-    mpState.nodeBattleMail.map(mpMailNodeEntry),
-    mpState.gatherMail.map(mpMailGatherEntry)
+    mpState.mail.map(m=>mpMailCached(m,mpMailBattleEntry)),
+    mpState.scoutMail.map(m=>mpMailCached(m,mpMailScoutEntry)),
+    mpState.raidMail.map(m=>mpMailCached(m,mpMailRaidEntry)),
+    mpState.nodeBattleMail.map(m=>mpMailCached(m,mpMailNodeEntry)),
+    mpState.gatherMail.map(m=>mpMailCached(m,mpMailGatherEntry))
   ).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
 }
 // "Личное" — повышения генерала + входящие письма от игроков.
 function mpMailPersonalEntries(){
   return [].concat(
-    mpState.noteMail.map(mpMailNoteEntry),
-    mpState.pmMail.filter(m=>m.data.role==="recipient").map(mpMailPmEntry)
+    mpState.noteMail.map(m=>mpMailCached(m,mpMailNoteEntry)),
+    mpState.pmMail.filter(m=>m.data.role==="recipient").map(m=>mpMailCached(m,mpMailPmEntry))
   ).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
 }
 // "Система" — извещения о движении войск, вынесенные из "Отчёты" (автор:
 // "во вкладку систему перенеси системные уведомления... там многое ты
 // напихал в отчёты").
 function mpMailSystemEntries(){
-  return mpState.siegeMail.map(mpMailSiegeEntry).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+  return mpState.siegeMail.map(m=>mpMailCached(m,mpMailSiegeEntry)).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
 }
 // "Отправленные" — свои же письма, копия role:"sender" у mp-sendmail.
 function mpMailSentEntries(){
-  return mpState.pmMail.filter(m=>m.data.role==="sender").map(mpMailPmEntry).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+  return mpState.pmMail.filter(m=>m.data.role==="sender").map(m=>mpMailCached(m,mpMailPmEntry)).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
 }
 // "Альянс" — фундамент на будущее: в игре пока нет ни одной механики
 // альянсов (ни списка участников, ни общего чата, ни совместных действий),
