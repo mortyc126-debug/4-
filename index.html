@@ -3163,6 +3163,16 @@ function collisionOk(layout, footprint, gx, gy, excludeIdx){
       if(row[x]!=="1") return false;
     }
   }
+  // Ратуша (CITY_FIXED_GRID_POS.hall, объявлен ниже по файлу — обращение
+  // безопасно, тело функции читается только при вызове, не при парсинге)
+  // не входит в layout вообще — она не PLACEABLE, поэтому цикл по layout
+  // ниже её никогда не видел: без этой проверки любое свободно ставящееся
+  // здание могло улечься прямо на Ратушу (баг, нашёл автор — Горн встал
+  // внутрь Ратуши). Стену (CITY_FIXED_GRID_POS.wall, gy:24) отдельно не
+  // проверяю — она физически вне сетки (CITY_GRID.h=24, валидные строки
+  // 0-23), пересечься с ней геометрически невозможно.
+  const hr = CITY_FIXED_GRID_POS.hall;
+  if(gx<hr.gx+hr.w && gx+w>hr.gx && gy<hr.gy+hr.h && gy+h>hr.gy) return false;
   for(let i=0;i<layout.length;i++){
     if(i===excludeIdx) continue;
     const e = layout[i];

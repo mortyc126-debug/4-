@@ -123,6 +123,12 @@ const BUILD_FOOTPRINT = {
   market: { w: 3, h: 3 }, alliance: { w: 3, h: 3 },
 };
 const PLACEABLE_BKEYS = Object.keys(BUILD_FOOTPRINT);
+// Ратуша — фиксированное несдвигаемое здание (index.html:CITY_FIXED_GRID_POS.hall),
+// не входит в layout вообще, поэтому цикл по layout ниже её не видит — без
+// этой проверки ensureLayout мог бы поставить любое здание прямо на Ратушу
+// (баг, нашёл автор — Горн встал внутрь Ратуши). Стену (gy:24) отдельно не
+// проверяю — она физически вне сетки, пересечься с ней невозможно.
+const HALL_RECT = { gx: 6, gy: 9, w: 4, h: 4 };
 function collisionOk(layout, footprint, gx, gy, excludeIdx) {
   const { w, h } = footprint;
   if (!Number.isInteger(gx) || !Number.isInteger(gy)) return false;
@@ -131,6 +137,7 @@ function collisionOk(layout, footprint, gx, gy, excludeIdx) {
     const row = CITY_GRID.mask[y];
     for (let x = gx; x < gx + w; x++) if (row[x] !== "1") return false;
   }
+  if (gx < HALL_RECT.gx + HALL_RECT.w && gx + w > HALL_RECT.gx && gy < HALL_RECT.gy + HALL_RECT.h && gy + h > HALL_RECT.gy) return false;
   for (let i = 0; i < layout.length; i++) {
     if (i === excludeIdx) continue;
     const e = layout[i];
