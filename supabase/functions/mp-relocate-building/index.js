@@ -53,6 +53,7 @@ const BUILD_FOOTPRINT = {
   store: { w: 3, h: 2 }, barracks: { w: 3, h: 3 }, range: { w: 3, h: 3 }, stable: { w: 3, h: 3 },
   siege: { w: 3, h: 3 }, hospital: { w: 2, h: 2 }, academy: { w: 3, h: 3 },
   garrison: { w: 3, h: 2 }, scout: { w: 2, h: 2 }, forge: { w: 2, h: 2 }, portal: { w: 3, h: 3 },
+  market: { w: 3, h: 3 }, alliance: { w: 3, h: 3 },
 };
 const PLACEABLE_BKEYS = Object.keys(BUILD_FOOTPRINT);
 function collisionOk(layout, footprint, gx, gy, excludeIdx) {
