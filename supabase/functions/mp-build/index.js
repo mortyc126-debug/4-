@@ -297,6 +297,77 @@ const buildingMax = (bk) => BUILD_MAX_LV_OVERRIDE[bk] || BUILD_MAX_LV;
 const BUILD_MULTI = new Set(["hospital", "farm", "lumber", "quarry", "mine"]);
 const HALL_REQ = ["wall", "store", "academy", "barracks", "hospital"];
 const BUILD_BLD_RU_NAME = { wall: "Стена", store: "Склад", academy: "Академия", barracks: "Казармы", hospital: "Госпиталь" };
+
+// =============================================================================
+// Свободная застройка (index.html: CITY_GRID/BUILDINGS.*.footprint/
+// collisionOk/PLACEABLE_BKEYS) — дословная копия, синхронно править в обе
+// стороны при изменении сетки/footprint (импортов между Edge Functions нет,
+// см. заголовок файла). Ратуша и стена сюда не входят — фиксированы по
+// смыслу, в p.layout никогда не попадают.
+const CITY_GRID = {
+  w: 16, h: 24,
+  mask: [
+    "0000000000000000", "0000001111000000", "0000111111110000", "0001111111111000",
+    "0011111111111100", "0111111111111100", "0111111111111110", "0111111111111110",
+    "0111111111111110", "1111111111111110", "1111111111111110", "1111111111111111",
+    "1111111111111111", "1111111111111111", "1111111111111111", "1111111111111111",
+    "1111111111111111", "0111111111111110", "0111111111111110", "0111111111111110",
+    "0011111111111100", "0001111111111000", "0001111111111000", "0000000000000000",
+  ],
+};
+const BUILD_FOOTPRINT = {
+  farm: { w: 2, h: 2 }, lumber: { w: 2, h: 2 }, quarry: { w: 2, h: 2 }, mine: { w: 2, h: 2 },
+  store: { w: 3, h: 2 }, barracks: { w: 3, h: 3 }, range: { w: 3, h: 2 }, stable: { w: 3, h: 2 },
+  siege: { w: 2, h: 2 }, hospital: { w: 2, h: 2 }, academy: { w: 3, h: 2 },
+  garrison: { w: 2, h: 2 }, scout: { w: 2, h: 2 }, forge: { w: 2, h: 2 }, portal: { w: 3, h: 3 },
+};
+const PLACEABLE_BKEYS = Object.keys(BUILD_BLD_TABLE).filter((k) => k !== "hall" && k !== "wall");
+function collisionOk(layout, footprint, gx, gy, excludeIdx) {
+  const { w, h } = footprint;
+  if (!Number.isInteger(gx) || !Number.isInteger(gy)) return false;
+  if (gx < 0 || gy < 0 || gx + w > CITY_GRID.w || gy + h > CITY_GRID.h) return false;
+  for (let y = gy; y < gy + h; y++) {
+    const row = CITY_GRID.mask[y];
+    for (let x = gx; x < gx + w; x++) if (row[x] !== "1") return false;
+  }
+  for (let i = 0; i < layout.length; i++) {
+    if (i === excludeIdx) continue;
+    const e = layout[i];
+    const fp = BUILD_FOOTPRINT[e.b];
+    if (!fp) continue;
+    const ex2 = e.gx + fp.w, ey2 = e.gy + fp.h;
+    if (gx < ex2 && gx + w > e.gx && gy < ey2 && gy + h > e.gy) return false;
+  }
+  return true;
+}
+function findFreeSpot(layout, fp) {
+  for (let gy = 0; gy <= CITY_GRID.h - fp.h; gy++) {
+    for (let gx = 0; gx <= CITY_GRID.w - fp.w; gx++) {
+      if (collisionOk(layout, fp, gx, gy, -1)) return { gx, gy };
+    }
+  }
+  return null;
+}
+// Достраивает p.layout для уже стоящих (level>0) размещаемых зданий, у
+// которых ещё нет записи в layout — легаси-игроки/сама миграция на эту
+// систему. Только ДОБАВЛЯЕТ недостающее, никогда не двигает/не убирает уже
+// расставленное — безопасно звать безусловно на каждый вызов (mp-join и
+// здесь — та же степень паранойи, что и у самоисцеления BUILD_MULTI выше).
+function ensureLayout(p) {
+  if (!Array.isArray(p.layout)) p.layout = [];
+  for (const bk of PLACEABLE_BKEYS) {
+    const fp = BUILD_FOOTPRINT[bk];
+    const raw = p.b[bk];
+    const levels = BUILD_MULTI.has(bk) ? (Array.isArray(raw) ? raw : [raw || 0, 0, 0, 0]) : [raw || 0];
+    levels.forEach((lv, idx) => {
+      if (lv <= 0) return;
+      const plotKey = BUILD_MULTI.has(bk) ? idx : null;
+      if (p.layout.some((e) => e.b === bk && e.plot === plotKey)) return;
+      const pos = findFreeSpot(p.layout, fp);
+      if (pos) p.layout.push({ b: bk, plot: plotKey, gx: pos.gx, gy: pos.gy });
+    });
+  }
+}
 function buildDuration(bk, lv, buildBonus = 1) { return tblRow(BUILD_BLD_TABLE[bk], lv).t / buildBonus; }
 function buildCost(bk, lv, buildCostCut = 0) {
   const r = tblRow(BUILD_BLD_TABLE[bk], lv), cut = 1 - buildCostCut;
@@ -726,6 +797,7 @@ Deno.serve(async (req) => {
     // index.html) — на новых join уже исправлено везде, здесь достраиваем
     // задним числом тех, кто успел зайти раньше любого из этих исправлений.
     for (const k of BUILD_MULTI) if (!Array.isArray(p.b[k])) p.b[k] = [p.b[k] || 0, 0, 0, 0];
+    ensureLayout(p);
 
     const now = Date.now() / 1000;
     syncRes(p, now);
@@ -736,6 +808,18 @@ Deno.serve(async (req) => {
     // единственный участок, что был единственным вариантом до этого шага).
     const plotReq = isMulti ? (Number.isInteger(body.plot) ? clamp(body.plot, 0, 3) : 0) : null;
     const plotKey = plotReq;
+    // Новый экземпляр (первая постройка на пустом месте) — только у
+    // размещаемых зданий (не ратуша/стена) и только пока в p.layout ещё нет
+    // записи на этот bk/plot. Обычный апгрейд уже стоящего здания (кнопка
+    // "Улучшить") gx/gy в теле не шлёт вообще — сюда просто не попадает.
+    const isNewInstance = PLACEABLE_BKEYS.includes(bk) && !p.layout.some((e) => e.b === bk && e.plot === plotKey);
+    let placeGx = null, placeGy = null;
+    if (isNewInstance) {
+      const fp = BUILD_FOOTPRINT[bk];
+      placeGx = body.gx; placeGy = body.gy;
+      if (!collisionOk(p.layout, fp, placeGx, placeGy, -1))
+        return jsonResponse({ err: "Нельзя строить здесь — клетка занята или вне города" }, 400);
+    }
 
     // Дословно startBuild(p,bk,plot) из index.html:5712-5726.
     if (isMulti && !plotUnlocked(bk, plotReq, buildLv(p, "hall")))
@@ -765,6 +849,11 @@ Deno.serve(async (req) => {
 
     const t = buildDuration(bk, lv, B.build);
     p.queues[slot] = { b: bk, lv, plot: plotKey, t0: now, t1: now + t };
+    // Место на карте фиксируется сразу при СТАРТЕ стройки (не по завершении)
+    // — footprint сразу блокирует его для других зданий, а на карте видно
+    // "в процессе" по data-layout ещё до того, как applyBuild() в mp-tick
+    // пропишет p.b[bk] (см. index.html: план "Свободная застройка").
+    if (isNewInstance) p.layout.push({ b: bk, plot: plotKey, gx: placeGx, gy: placeGy });
 
     const { error: updErr } = await admin
       .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);

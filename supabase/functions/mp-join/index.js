@@ -96,6 +96,73 @@ const plotCap = (lv) => (lv <= 0 ? 0 : tblRow(PROD_TABLE, lv) * 10);
 const PROD_BLD = { food: "farm", wood: "lumber", stone: "quarry", gold: "mine" };
 const PROD_MULT = { food: 1, wood: 1, stone: 0.75, gold: 0.5 };
 const RES = ["food", "wood", "stone", "gold"];
+const BUILD_MULTI = new Set(["hospital", "farm", "lumber", "quarry", "mine"]);
+
+// =============================================================================
+// Свободная застройка (index.html: CITY_GRID/BUILDINGS.*.footprint/
+// collisionOk/PLACEABLE_BKEYS, дословная копия — см. тот же блок в
+// mp-build/index.js, синхронно править в обе стороны). mp-join достраивает
+// p.layout легаси-игрокам на каждый join/опрос — см. ensureLayout ниже,
+// звана в self-heal веточке существующего игрока.
+const CITY_GRID = {
+  w: 16, h: 24,
+  mask: [
+    "0000000000000000", "0000001111000000", "0000111111110000", "0001111111111000",
+    "0011111111111100", "0111111111111100", "0111111111111110", "0111111111111110",
+    "0111111111111110", "1111111111111110", "1111111111111110", "1111111111111111",
+    "1111111111111111", "1111111111111111", "1111111111111111", "1111111111111111",
+    "1111111111111111", "0111111111111110", "0111111111111110", "0111111111111110",
+    "0011111111111100", "0001111111111000", "0001111111111000", "0000000000000000",
+  ],
+};
+const BUILD_FOOTPRINT = {
+  farm: { w: 2, h: 2 }, lumber: { w: 2, h: 2 }, quarry: { w: 2, h: 2 }, mine: { w: 2, h: 2 },
+  store: { w: 3, h: 2 }, barracks: { w: 3, h: 3 }, range: { w: 3, h: 2 }, stable: { w: 3, h: 2 },
+  siege: { w: 2, h: 2 }, hospital: { w: 2, h: 2 }, academy: { w: 3, h: 2 },
+  garrison: { w: 2, h: 2 }, scout: { w: 2, h: 2 }, forge: { w: 2, h: 2 }, portal: { w: 3, h: 3 },
+};
+const PLACEABLE_BKEYS = Object.keys(BUILD_FOOTPRINT);
+function collisionOk(layout, footprint, gx, gy, excludeIdx) {
+  const { w, h } = footprint;
+  if (!Number.isInteger(gx) || !Number.isInteger(gy)) return false;
+  if (gx < 0 || gy < 0 || gx + w > CITY_GRID.w || gy + h > CITY_GRID.h) return false;
+  for (let y = gy; y < gy + h; y++) {
+    const row = CITY_GRID.mask[y];
+    for (let x = gx; x < gx + w; x++) if (row[x] !== "1") return false;
+  }
+  for (let i = 0; i < layout.length; i++) {
+    if (i === excludeIdx) continue;
+    const e = layout[i];
+    const fp = BUILD_FOOTPRINT[e.b];
+    if (!fp) continue;
+    const ex2 = e.gx + fp.w, ey2 = e.gy + fp.h;
+    if (gx < ex2 && gx + w > e.gx && gy < ey2 && gy + h > e.gy) return false;
+  }
+  return true;
+}
+function findFreeSpot(layout, fp) {
+  for (let gy = 0; gy <= CITY_GRID.h - fp.h; gy++) {
+    for (let gx = 0; gx <= CITY_GRID.w - fp.w; gx++) {
+      if (collisionOk(layout, fp, gx, gy, -1)) return { gx, gy };
+    }
+  }
+  return null;
+}
+function ensureLayout(p) {
+  if (!Array.isArray(p.layout)) p.layout = [];
+  for (const bk of PLACEABLE_BKEYS) {
+    const fp = BUILD_FOOTPRINT[bk];
+    const raw = p.b[bk];
+    const levels = BUILD_MULTI.has(bk) ? (Array.isArray(raw) ? raw : [raw || 0, 0, 0, 0]) : [raw || 0];
+    levels.forEach((lv, idx) => {
+      if (lv <= 0) return;
+      const plotKey = BUILD_MULTI.has(bk) ? idx : null;
+      if (p.layout.some((e) => e.b === bk && e.plot === plotKey)) return;
+      const pos = findFreeSpot(p.layout, fp);
+      if (pos) p.layout.push({ b: bk, plot: plotKey, gx: pos.gx, gy: pos.gy });
+    });
+  }
+}
 // Янтарь (index.html:3327 AMBER_NODE_SHARE) — доля точек, оказывающихся
 // Янтарной жилой вместо обычного ресурса, и её отдельная (заметно меньшая)
 // формула объёма — премиальный ресурс, одна жила примерно на восемь обычных
@@ -502,7 +569,7 @@ function newPlayerState(race, nowSec) {
     // mp-tick и т.д. уже читают её напрямую с row), это не замена, а
     // дублирование ради единообразного p.race внутри bonuses().
     race,
-    b, queues: [null, null], train: { inf: null, arc: null, cav: null, sie: null },
+    b, layout: [], queues: [null, null], train: { inf: null, arc: null, cav: null, sie: null },
     troops, wounded, heal: null,
     gen: { lv: 1, xp: 0, pts: 5, tal: {}, id: null, away: null },
     gear: {}, tech: {}, rsch: null,
@@ -733,6 +800,7 @@ Deno.serve(async (req) => {
       // самоисцеляем и здесь, разом на будущее для любого другого кода,
       // который тоже может забыть про ||0.
       if (st.b) { st.b.forge = st.b.forge || 0; st.b.portal = st.b.portal || 0; }
+      if (st.b) ensureLayout(st);
       syncRes(st, nowSec);
       const upd = await admin.from("players").update({ state: st, updated_at: new Date().toISOString() })
         .eq("id", existing.data.id).select().single();

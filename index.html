@@ -515,6 +515,34 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #view-toggle img{width:100%;height:100%;object-fit:contain;pointer-events:none}
 #view-toggle span{display:none} /* текстовый фолбэк, если картинки нет */
 
+/* Свободная застройка (Фаза 4) — значок строительства между #view-toggle
+   (left:14) и #menu-btn (right:14), единственный свободный "остров" в
+   нижнем ряду на узком экране. Скрыт по умолчанию — виден только в общем
+   мире (.mp-gated) и только в самом городе (.view-city), не поверх 3D-мира. */
+#mp-build-fab{display:none;position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:20;
+  width:56px;height:56px;padding:0;border-radius:50%;border:2px solid var(--gilt-dim);
+  background:radial-gradient(circle,rgba(40,30,15,.94),rgba(18,13,6,.94)) center/cover,
+    url(images/ui/icon-build.png) center/62% no-repeat;color:var(--gilt-hi)}
+/* #mp-build-fab — СОСЕД #app в разметке (как и #view-toggle/#menu-btn), не
+   потомок — обычный потомковый селектор тут не сработал бы вообще (нашли
+   Playwright-проверкой: правило просто не совпадало ни разу), нужен общий
+   селектор соседства (~). */
+body.mp-gated #app.view-city ~ #mp-build-fab{display:block}
+/* Не body.mp-placing #mp-build-fab{display:none} — та специфичность (1 id)
+   ниже правила показа выше (2 id: #app+#mp-build-fab), проверкой в браузере
+   поймано, что оно НЕ побеждало и значок оставался виден поверх тулбара
+   размещения. Прячем/показываем fab прямой правкой style.display в
+   mpEnterPlaceMode/mpCancelPlace/mpDoPlaceConfirm — надёжнее, чем гонка
+   специфичности между двумя классовыми правилами на разных предках. */
+#mp-build-fab span{display:none}
+#place-toolbar{display:none;position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:20;gap:16px}
+body.mp-placing #place-toolbar{display:flex}
+.place-btn{width:56px;height:56px;border-radius:50%;font-size:26px;line-height:1;padding:0;
+  border:2px solid var(--gilt-dim);color:var(--gilt-hi);background:rgba(18,13,6,.94)}
+.place-btn.confirm{border-color:#3f8f3f;color:#8be08b}
+.place-btn.confirm:disabled{border-color:var(--rule-soft);color:var(--vellum-faint)}
+.place-btn.cancel{border-color:#5c2027;color:#dd7079}
+
 /* ─────────────── Выдвижное меню справа ─────────────── */
 /* Раньше — тёмная кожаная плашка вокруг кнопок; пользователь попросил
    убрать фон целиком (только сами кнопки) и увеличить их втрое. Без
@@ -1263,6 +1291,52 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .cbuild .lvl{position:absolute;bottom:2px;right:4px;font-family:var(--data);font-size:10px;
   color:var(--gilt-hi);background:rgba(0,0,0,.55);padding:0 3px;line-height:1.4;z-index:2}
 
+/* Свободная застройка (Фаза 4) — призрак здания "в руках" (.pghost) и
+   подсветка клетки под ним (#place-highlight), см. mpUpdatePlaceDom/
+   mpPlaceDragMove. Подсветка — только прямоугольник footprint, не вся
+   сетка целиком (решение по производительности на мобильных, см. план) —
+   сам прямоугольник уже честно показывает, влезет здание или нет. */
+/* Фаза 6 — плавный "магнитный" довод до соседней клетки: mpUpdatePlaceDom
+   двигает left/top прямой правкой style на ТОМ ЖЕ узле (см. её заголовок),
+   поэтому transition тут реально анимирует, а не пропадает впустую, как
+   пропал бы у пересоздаваемых на каждый рендер .cbuild ниже. Коротко
+   (.09s) — это подсказка "клетка защёлкнулась", а не задержка отклика. */
+#place-highlight{position:absolute;z-index:5;box-sizing:border-box;border-radius:3px;
+  pointer-events:none;transition:left .09s ease-out,top .09s ease-out,
+  width .09s ease-out,height .09s ease-out}
+#place-highlight.ok{background:rgba(70,190,70,.32);border:2px solid rgba(100,230,100,.9)}
+#place-highlight.bad{background:rgba(200,60,50,.32);border:2px solid rgba(230,80,70,.9)}
+.pghost{position:absolute;z-index:6;cursor:grab;opacity:.88;touch-action:none;
+  -webkit-tap-highlight-color:transparent;transition:left .09s ease-out,top .09s ease-out}
+.pghost:active{cursor:grabbing}
+.pghost img{width:100%;height:100%;object-fit:contain;pointer-events:none;
+  filter:drop-shadow(0 4px 8px rgba(0,0,0,.75))}
+/* "Приземление" — здание только что построено/перенесено (mpJustPlaced,
+   см. её заголовок в JS): свежий .cbuild-узел пересоздаётся innerHTML'ом
+   каждый рендер, поэтому transition тут бесполезен (не с чего анимировать
+   "от") — вместо него keyframe-анимация появления, лёгкий перехлёст на
+   финале (cubic-bezier с "прыжком" за 1) — тот же приём, что и в мобильных
+   играх для "здание встало на место". */
+@keyframes cbuildLand{from{opacity:0;transform:scale(.65)}to{opacity:1;transform:scale(1)}}
+.cbuild.landing{animation:cbuildLand .38s cubic-bezier(.34,1.56,.64,1)}
+/* Тактильный отклик на кнопках постройки — тот же приём, что .seal:active
+   (transform:translateY), но круглым кнопкам естественнее лёгкое сжатие. */
+.place-btn:active:not(:disabled){transform:scale(.9)}
+#mp-build-fab:active{transform:translateX(-50%) scale(.9)}
+.picker-item:not(.locked):active{transform:scale(.96)}
+
+/* Список построек (mpBuildPickerHtml, #mp-build-fab) — сетка из тех же
+   картинок/имён, что и в самой карточке здания (#bm-art/buildingName),
+   просто помельче и без цены/времени (та появится в карточке после
+   размещения — тут только выбор, что взять "в руки"). */
+.picker-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+.picker-item{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 4px;
+  background:rgba(90,69,48,.08);border:1px solid rgba(90,69,48,.3);border-radius:6px;
+  color:#3a2c1c;font-size:11px;line-height:1.25;text-align:center}
+.picker-item img{width:44px;height:44px;object-fit:contain}
+.picker-item.locked{opacity:.4;cursor:not-allowed}
+.picker-item:not(.locked):hover{border-color:#8a6d2c;background:rgba(90,69,48,.16)}
+
 /* Фаза 14, кусочек 4 — выделенная ячейка города общего мира (mpCitySel) и
    всплывающая снизу карты панель действия (mpCellPanelHtml). Тот же
    .entry, что и в списках foMultiplayer/#folio (см. выше) — просто
@@ -1560,6 +1634,22 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 
 <button id="view-toggle" data-act="toggleview"><img src="images/ui/icon-world.png" alt="Мир"></button>
 <button id="menu-btn" data-act="togglemenu" aria-label="Меню"><span>&#9776;</span><i class="nbadge" id="nb-menu"></i></button>
+<!-- Свободная застройка (Фаза 4) — значок строительства, виден только в
+     общем мире (.mp-gated) и только в городе (.view-city), см. CSS. Между
+     #view-toggle/#menu-btn — единственное свободное место в нижнем ряду на
+     узком экране. Иконка — тот же images/ui/icon-build.png, что и у
+     занятого слота бригады (заглушка на первую версию, финальная — с
+     остальным артом в Фазе 6). -->
+<button id="mp-build-fab" aria-label="Строительство"><span>Строить</span></button>
+<!-- Призрак здания "в руках" подтверждается/отменяется тут — статичные
+     кнопки в шаблоне, а не часть mpRenderFreeformCity(): position:fixed
+     внутри динамически пересобираемого #folio рисковал бы поехать, если у
+     какого-то предка когда-нибудь появится transform (см. заголовок
+     mpEnterPlaceMode). Видимость — классом body.mp-placing, см. CSS. -->
+<div id="place-toolbar">
+  <button id="place-cancel" class="place-btn cancel" aria-label="Отменить">&times;</button>
+  <button id="place-confirm" class="place-btn confirm" aria-label="Построить">&#10003;</button>
+</div>
 
 <nav id="side-menu">
   <button data-menu="mail" aria-label="Почта"><img src="images/ui/icon-mail.png" alt=""><span>Почта</span><i class="nbadge" id="nb-mail"></i></button>
@@ -2824,28 +2914,34 @@ function talentBranchSpent(p){
 }
 
 /* ---- Здания ---- */
+// footprint — размер в клетках CITY_GRID для свободной застройки МП
+// (см. CITY_GRID ниже); ratio взят из старых процентных размеров
+// CITY_CELLS, сама сетка ещё не финальная — будет уточняться по месту.
 const BUILDINGS = {
   hall:    {name:"Ратуша",        max:25, req:null,  desc:"Задаёт потолок всех зданий и размер города"},
-  farm:    {name:"Ферма",         max:25, prod:"food", plots:4, desc:"Добывает еду в город"},
-  lumber:  {name:"Лесопилка",     max:25, prod:"wood", plots:4, desc:"Добывает дерево в город"},
-  quarry:  {name:"Каменоломня",   max:25, prod:"stone", plots:4, desc:"Добывает камень в город"},
-  mine:    {name:"Золотая шахта", max:25, prod:"gold", plots:4, desc:"Добывает золото в город"},
-  store:   {name:"Склад",         max:25, desc:"Защищает ресурсы от разграбления при штурме города"},
-  barracks:{name:"Казармы",       max:25, train:"inf", desc:"Обучает пехоту"},
-  range:   {name:"Стрельбище",    max:25, train:"arc", desc:"Обучает лучников"},
-  stable:  {name:"Конюшня",       max:25, train:"cav", desc:"Обучает конницу"},
-  siege:   {name:"Мастерская",    max:25, train:"sie", desc:"Обучает осадные орудия"},
-  hospital:{name:"Госпиталь",     max:25, desc:"Раненые вместо убитых", plots:4},
-  academy: {name:"Академия",      max:25, desc:"Исследования и открытие тиров"},
+  farm:    {name:"Ферма",         max:25, prod:"food", plots:4, desc:"Добывает еду в город", footprint:{w:2,h:2}},
+  lumber:  {name:"Лесопилка",     max:25, prod:"wood", plots:4, desc:"Добывает дерево в город", footprint:{w:2,h:2}},
+  quarry:  {name:"Каменоломня",   max:25, prod:"stone", plots:4, desc:"Добывает камень в город", footprint:{w:2,h:2}},
+  mine:    {name:"Золотая шахта", max:25, prod:"gold", plots:4, desc:"Добывает золото в город", footprint:{w:2,h:2}},
+  store:   {name:"Склад",         max:25, desc:"Защищает ресурсы от разграбления при штурме города", footprint:{w:3,h:2}},
+  barracks:{name:"Казармы",       max:25, train:"inf", desc:"Обучает пехоту", footprint:{w:3,h:3}},
+  range:   {name:"Стрельбище",    max:25, train:"arc", desc:"Обучает лучников", footprint:{w:3,h:2}},
+  stable:  {name:"Конюшня",       max:25, train:"cav", desc:"Обучает конницу", footprint:{w:3,h:2}},
+  siege:   {name:"Мастерская",    max:25, train:"sie", desc:"Обучает осадные орудия", footprint:{w:2,h:2}},
+  hospital:{name:"Госпиталь",     max:25, desc:"Раненые вместо убитых", plots:4, footprint:{w:2,h:2}},
+  academy: {name:"Академия",      max:25, desc:"Исследования и открытие тиров", footprint:{w:3,h:2}},
   wall:    {name:"Стена",         max:25, desc:"Защита города при обороне"},
-  garrison:{name:"Гарнизон",      max:25, desc:"Доп. защита при осаде и предупреждение о марше врага"},
-  scout:   {name:"Разведка",      max:25, desc:"Раскрывает сведения о войсках противника: чем выше эпоха здания, тем точнее разведданные"},
+  garrison:{name:"Гарнизон",      max:25, desc:"Доп. защита при осаде и предупреждение о марше врага", footprint:{w:2,h:2}},
+  scout:   {name:"Разведка",      max:25, desc:"Раскрывает сведения о войсках противника: чем выше эпоха здания, тем точнее разведданные", footprint:{w:2,h:2}},
   // Горн = Кузница в RoK, а она вообще без уровней — разовая постройка,
   // апгрейдов не бывает (см. buildingMax/FORGE_TABLE). max:1, не 25.
-  forge:   {name:"Горн",          max:1, desc:"Добыча материалов и ковка снаряжения для полководца"},
-  portal:  {name:"Портал",        max:25, desc:"Пассивно ускоряет марш; с 3 эпохи открывает проход, сокращающий путь отрядов"},
+  forge:   {name:"Горн",          max:1, desc:"Добыча материалов и ковка снаряжения для полководца", footprint:{w:2,h:2}},
+  portal:  {name:"Портал",        max:25, desc:"Пассивно ускоряет марш; с 3 эпохи открывает проход, сокращающий путь отрядов", footprint:{w:3,h:3}},
 };
 const BKEYS = Object.keys(BUILDINGS);
+// Здания, которые размещаются игроком свободно на сетке (все, кроме
+// ратуши и стены — те фиксированы по смыслу и не участвуют в p.layout).
+const PLACEABLE_BKEYS = BKEYS.filter(k => k!=="hall" && k!=="wall");
 // Разметка карты города: координаты в % от изображения, bk — ключ здания (null = задел на будущее)
 const CITY_CELLS=[
 {n:"Ратуша",bk:"hall",x:42.8,y:10.49,w:14.16,h:16.83,ch:14},{n:"Лесопилка1",bk:"lumber",pl:0,x:59.32,y:13.8,w:7.24,h:6.86,ch:20},{n:"Лесопилка2",bk:"lumber",pl:1,x:67.22,y:14.66,w:7.3,h:5.82,ch:20},
@@ -2862,6 +2958,84 @@ const CITY_CELLS=[
 ];
 const cityShapeCss = c => c.pill ? "border-radius:50%;" :
   (v=>`clip-path:polygon(${v}% 0%,${100-v}% 0%,100% ${v}%,100% ${100-v}%,${100-v}% 100%,${v}% 100%,0% ${100-v}%,0% ${v}%);`)(c.ch||18);
+
+// Свободная застройка МП (см. CITY_GRID/PLACEABLE_BKEYS): невидимая сетка
+// поверх city-map.png, вписанная в овал стен вручную по картинке (лучевая
+// трассировка границы стены из центра + ручной запас 7%, чтобы здания не
+// залезали на саму стену). w×h — размер в клетках, mask — по строкам,
+// сверху вниз, '1' = можно строить, '0' — нельзя (стена/лес/ворота).
+// left/top/w/h — прямоугольник сетки в % от city-map.png (position:absolute
+// поверх той же картинки, тем же способом, что и старые CITY_CELLS).
+const CITY_GRID = {
+  w: 16, h: 24,
+  left: 11.966, top: 12.081, width: 74.900, height: 64.456,
+  mask: [
+    "0000000000000000",
+    "0000001111000000",
+    "0000111111110000",
+    "0001111111111000",
+    "0011111111111100",
+    "0111111111111100",
+    "0111111111111110",
+    "0111111111111110",
+    "0111111111111110",
+    "1111111111111110",
+    "1111111111111110",
+    "1111111111111111",
+    "1111111111111111",
+    "1111111111111111",
+    "1111111111111111",
+    "1111111111111111",
+    "1111111111111111",
+    "0111111111111110",
+    "0111111111111110",
+    "0111111111111110",
+    "0011111111111100",
+    "0001111111111000",
+    "0001111111111000",
+    "0000000000000000",
+  ],
+};
+// true, если footprint w×h, поставленный левым верхним углом в (gx,gy),
+// целиком попадает в маску CITY_GRID и не пересекается ни с одним другим
+// зданием в layout (список {b,plot,gx,gy}); excludeIdx — свой же индекс при
+// проверке переноса уже стоящего здания. Общая для клиента (живая подсветка
+// при перетаскивании) и сервера (mp-build/mp-relocate-building) — при
+// правке синхронно копировать в обе стороны, ES-импортов между функциями
+// Supabase нет (см. остальные mp-* — та же договорённость).
+function collisionOk(layout, footprint, gx, gy, excludeIdx){
+  const {w,h} = footprint;
+  if(!Number.isInteger(gx) || !Number.isInteger(gy)) return false;
+  if(gx<0 || gy<0 || gx+w>CITY_GRID.w || gy+h>CITY_GRID.h) return false;
+  for(let y=gy; y<gy+h; y++){
+    const row = CITY_GRID.mask[y];
+    for(let x=gx; x<gx+w; x++){
+      if(row[x]!=="1") return false;
+    }
+  }
+  for(let i=0;i<layout.length;i++){
+    if(i===excludeIdx) continue;
+    const e = layout[i];
+    const fp = BUILDINGS[e.b] && BUILDINGS[e.b].footprint;
+    if(!fp) continue;
+    const ex2=e.gx+fp.w, ey2=e.gy+fp.h;
+    if(gx<ex2 && gx+w>e.gx && gy<ey2 && gy+h>e.gy) return false;
+  }
+  return true;
+}
+// Первое свободное место для footprint — та же построчная развёртка, что и
+// в mp-join/mp-build (ensureLayout/findFreeSpot, серверная копия), нужна
+// клиенту только как стартовая позиция призрака при входе в режим
+// размещения (Фаза 4) — сам призрак дальше свободно таскается курсором.
+function findFreeSpot(layout, footprint){
+  for(let gy=0; gy<=CITY_GRID.h-footprint.h; gy++){
+    for(let gx=0; gx<=CITY_GRID.w-footprint.w; gx++){
+      if(collisionOk(layout, footprint, gx, gy, -1)) return {gx,gy};
+    }
+  }
+  return null;
+}
+
 const isMulti = bk => !!BUILDINGS[bk].plots;
 const plotUnlocked = (bk,idx,hall) => !isMulti(bk) || idx===0 || epochOf(hall)>=idx+1;   // участок N — с эпохи N
 // Была придумана как 25% защиты Склада — реальный RoK-столбец "Ёмкость"
@@ -7330,6 +7504,77 @@ function mpRenderCityMap(){
   h+=mpRenderFieldArmy();
   return h;
 }
+// Свободная застройка (план "город как в RoK") — читает p.layout вместо
+// CITY_CELLS, рисует поверх city-map.png (новая картинка, см. CITY_GRID) по
+// той же координатной системе, что и collisionOk на сервере (gx/gy в
+// клетках, переводится в % через CITY_GRID.left/top/width/height). С Фазы
+// 4 это и есть живая карта города общего мира — mpRenderFolio() зовёт
+// именно её (см. её заголовок); mpRenderCityMap()/CITY_CELLS/mpCitySel
+// выше НЕ удалены — на них всё ещё держится клик по слоту бригады
+// (mpBrigadeSlotCellHtml → data-mpcell → mpOpenBuildingModal), просто
+// сама карта их картинок/координат больше не рисует. Ратуша/Стена — не в
+// layout (фиксированы по смыслу, см. PLACEABLE_BKEYS), их место на новой
+// картинке — временные координаты-плейсхолдер (в клетках той же сетки, для
+// единообразия), финальные — вместе с реальным артом в Фазе 6.
+const CITY_FIXED_GRID_POS = {
+  hall: {gx:6, gy:9, w:4, h:4},
+  wall: {gx:7, gy:20, w:2, h:2},
+};
+function cityGridCellToPct(gx,gy,w,h){
+  const gcw=CITY_GRID.width/CITY_GRID.w, gch=CITY_GRID.height/CITY_GRID.h;
+  return {left:CITY_GRID.left+gx*gcw, top:CITY_GRID.top+gy*gch, w:w*gcw, h:h*gch};
+}
+function mpRenderFreeformCity(){
+  const p=mpCityShim(), st=mpState.player.state;
+  const layout=Array.isArray(st.layout)?st.layout:[];
+  let h="<div id='citymap-wrap'><img class='base' src='city-map.png'>";
+  ["hall","wall"].forEach(bk=>{
+    const lv=p.b[bk]||0, pos=CITY_FIXED_GRID_POS[bk], r=cityGridCellToPct(pos.gx,pos.gy,pos.w,pos.h);
+    h+="<div class='cbuild"+(lv>0?" built":"")+(mpFixedSel===bk?" sel":"")+"' data-layoutfixed='"+bk+"' "+
+       "style='left:"+r.left+"%;top:"+r.top+"%;width:"+r.w+"%;height:"+r.h+"%'>"+
+       "<div class='shape'></div>"+
+       (lv>0?(bk!=="wall"?"<img class='bimg' src='"+cityCellImg({bk,pl:null})+"'>":"")+"<span class='lvl'>"+lv+"</span>":"")+
+       "</div>";
+  });
+  layout.forEach((e,li)=>{
+    // Переносимое здание (mode='relocate') показано только как призрак
+    // ниже — не рисуем ещё и "настоящий" маркер на старом месте поверх.
+    if(mpPlaceCtx && mpPlaceCtx.mode==="relocate" && mpPlaceCtx.li===li) return;
+    const fp=BUILDINGS[e.b]&&BUILDINGS[e.b].footprint; if(!fp) return;
+    const lv=(e.plot!=null?p.b[e.b][e.plot]:p.b[e.b])||0;
+    const r=cityGridCellToPct(e.gx,e.gy,fp.w,fp.h);
+    // "Приземление" (Фаза 6) — эта же запись только что была подтверждена
+    // (см. mpJustPlaced в mpDoPlaceConfirm): проигрываем анимацию появления
+    // ровно один раз, не на каждый рендер подряд.
+    const landing=mpJustPlaced && mpJustPlaced.b===e.b && mpJustPlaced.plot===e.plot &&
+      mpJustPlaced.gx===e.gx && mpJustPlaced.gy===e.gy && (Date.now()-mpJustPlaced.at)<LAND_MS;
+    h+="<div class='cbuild built"+(mpLayoutSel===li?" sel":"")+(landing?" landing":"")+"' data-layout='"+li+"' "+
+       "style='left:"+r.left+"%;top:"+r.top+"%;width:"+r.w+"%;height:"+r.h+"%'>"+
+       "<div class='shape'></div>"+
+       "<img class='bimg' src='"+cityCellImg({bk:e.b,pl:e.plot})+"'><span class='lvl'>"+lv+"</span>"+
+       "</div>";
+  });
+  // Призрак размещаемого здания + подсветка клетки под ним (Фаза 4) —
+  // зелёная/красная рамка ровно по footprint, не по всей сетке (мобильная
+  // производительность важнее наглядности каждой отдельной клетки — сам
+  // прямоугольник уже честно показывает, влезет здание или нет). Перетаскивание
+  // мутирует left/top/класс этих двух узлов НАПРЯМУЮ (см. mpUpdatePlaceDom),
+  // минуя mpRenderFolio() — иначе каждый пиксель движения пересоздавал бы
+  // DOM и рвал setPointerCapture посреди жеста.
+  if(mpPlaceCtx){
+    const fp=BUILDINGS[mpPlaceCtx.b].footprint;
+    const r=cityGridCellToPct(mpPlaceCtx.gx,mpPlaceCtx.gy,fp.w,fp.h);
+    h+="<div id='place-highlight' class='"+(mpPlaceCtx.valid?"ok":"bad")+"' "+
+       "style='left:"+r.left+"%;top:"+r.top+"%;width:"+r.w+"%;height:"+r.h+"%'></div>";
+    h+="<div id='place-ghost' class='pghost' "+
+       "style='left:"+r.left+"%;top:"+r.top+"%;width:"+r.w+"%;height:"+r.h+"%'>"+
+       "<img class='bimg' src='"+cityCellImg({bk:mpPlaceCtx.b,pl:mpPlaceCtx.plot})+"'></div>";
+  }
+  h+="</div>";
+  h+=mpRenderBrigades();
+  h+=mpRenderFieldArmy();
+  return h;
+}
 // Бригады общего мира — дословно тот же #brigades/.slotcell, что и в
 // одиночке (renderBrigades, index.html:foCity): два круглых слота
 // строительной очереди слева от карты города — автор пояснил, что именно
@@ -8510,11 +8755,16 @@ function mpResearchCarouselHtml(){
 // Все data-mp-кнопки внутри слушает handleMpAct(), навешанная и на
 // #building-modal (см. Фазу 19 у её объявления — раньше висел только
 // handleAct(), про data-mp не знавший, кнопки были мёртвыми).
-function mpBuildingModalHtml(idx){
-  const c=CITY_CELLS[idx]; if(!c||!c.bk) return "";
+// Свободная застройка (Фаза 3 из 6) — то же самое меню здания, но без
+// привязки к индексу CITY_CELLS: и старая карта с фиксированными слотами
+// (mpBuildingModalHtml(idx) ниже — тонкая обёртка), и новая mpRenderFreeformCity()
+// зовут этот код по bk/plot напрямую, ни одна строчка логики модалки не
+// продублирована. img/desc берутся напрямую по bld, не через cityCellImg(c)
+// (та принимает {bk,pl}, а не отдельные bld/plot — тот же вид данных).
+function mpBuildingModalHtmlFor(bld,plot){
   const st=mpState.player.state, pShim=mpCityShim();
-  const bld=c.bk, isMultiBld=BUILD_MP_MULTI.has(bld), plot=isMultiBld?c.pl:null;
-  const lv=cityCellLevel(pShim,c)||0, nextLv=lv+1, hallLv=st.b.hall||0;
+  const isMultiBld=BUILD_MP_MULTI.has(bld);
+  const lv=(plot!=null?pShim.b[bld][plot]:pShim.b[bld])||0, nextLv=lv+1, hallLv=st.b.hall||0;
   const maxed=nextLv>buildingMax(bld);
   const queued=st.queues.find(q=>q&&q.b===bld&&q.plot===plot);
   let gated=false, gateTxt="";
@@ -8530,7 +8780,7 @@ function mpBuildingModalHtml(idx){
   }
   const canGo=!maxed&&!gated&&!queued;
   const cst=buildCost(bld,nextLv), t=buildTime(bld,nextLv);
-  const img=cityCellImg(c);
+  const img=cityCellImg({bk:bld,pl:plot});
   const desc=(BUILDINGS[bld]&&BUILDINGS[bld].desc)||"";
   let h="<img id='bm-art' src='"+img+"'>";
   h+="<div id='bm-title'>"+buildingName(bld,pShim)+(plot!=null?" · участок&nbsp;"+(plot+1):"")+"</div>";
@@ -8558,6 +8808,15 @@ function mpBuildingModalHtml(idx){
   const actionLabel=lv<=0?"Построить":"Улучшить";
   h+="<button id='bm-btn' data-mp='build' data-bk='"+bld+"' "+(plot!=null?"data-plot='"+plot+"' ":"")+
      (canGo&&!mpState.loading?"":"disabled")+">"+(maxed?"Предел уровня":queued?"Уже строится":canGo?actionLabel:"Недоступно")+"</button>";
+  // Свободная застройка (Фаза 5) — "Переместить" видна только у уже
+  // стоящих (lv>0) размещаемых зданий (не Ратуша/Стена — не в PLACEABLE_BKEYS,
+  // у них своих координат в p.layout вообще нет). Мидстройка (queued) —
+  // сервер (mp-relocate-building) её всё равно отклонит, прячем кнопку сразу,
+  // чтобы не гонять заведомо неудачный запрос.
+  if(PLACEABLE_BKEYS.includes(bld) && lv>0 && !queued){
+    h+="<button class='seal' style='margin-top:8px;width:100%' data-mp='relocatestart' data-bk='"+bld+"' "+
+       (plot!=null?"data-plot='"+plot+"' ":"")+(mpState.loading?"disabled":"")+">Переместить</button>";
+  }
   // Фаза 19, кусочек 4 — Ратуша/Склад: раньше клик по ним в модалке
   // показывал ТОЛЬКО базовую карточку (арт/уровень/мощь/цена) — hallInfoHtml
   // (эпоха, отряды в поле, вместимость марша, черты расы, список эпох
@@ -8586,6 +8845,12 @@ function mpBuildingModalHtml(idx){
     h+=mpAcademyHtml(pShim2,st);
   }
   return h;
+}
+// Старая карта с фиксированными слотами (CITY_CELLS) — тонкая обёртка над
+// mpBuildingModalHtmlFor выше, ничего не изменилось для неё по поведению.
+function mpBuildingModalHtml(idx){
+  const c=CITY_CELLS[idx]; if(!c||!c.bk) return "";
+  return mpBuildingModalHtmlFor(c.bk, BUILD_MP_MULTI.has(c.bk)?c.pl:null);
 }
 // Фаза 17, кусочек 1 — открыть/закрыть иллюстрированное меню здания общего
 // мира: тот же #building-modal/#bm-body, что и у одиночного
@@ -8627,6 +8892,226 @@ function mpCloseBuildingModal(){
   // причине.
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpRenderFolio();
+}
+// Свободная застройка — та же пара открыть/закрыть, что и
+// mpOpenBuildingModal/mpCloseBuildingModal выше, но индекс — в
+// mpState.player.state.layout (см. mpRenderFreeformCity), не в CITY_CELLS.
+// Не переиспользует mpCitySel — та осталась только за mpBrigadeSlotCellHtml
+// (клик по слоту бригады всё ещё резолвится через CITY_CELLS-индекс, см.
+// заголовок mpRenderFreeformCity), своя переменная для карты, чтобы не
+// путать два независимых источника индекса.
+let mpLayoutSel=-1;
+function mpOpenLayoutModal(li){
+  const entry=(mpState.player.state.layout||[])[li]; if(!entry) return;
+  mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
+  mpForgeTab=null; mpForgeRarity=null;
+  mpLayoutSel=li;
+  $("#bm-body").innerHTML = mpBuildingModalHtmlFor(entry.b, entry.plot);
+  $("#building-modal").classList.add("open");
+  mpRenderFolio();
+}
+function mpCloseLayoutModal(){
+  $("#building-modal").classList.remove("open");
+  mpLayoutSel=-1;
+  mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
+  mpRenderFolio();
+}
+// Ратуша/Стена — та же пара для фиксированных построек (не в p.layout,
+// см. CITY_FIXED_GRID_POS): своя переменная, а не переиспользование
+// mpLayoutSel/mpCitySel — индекс там либо в layout, либо в CITY_CELLS, тут
+// же просто ключ здания.
+let mpFixedSel=null;
+function mpOpenFixedModal(bk){
+  mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
+  mpForgeTab=null; mpForgeRarity=null;
+  mpFixedSel=bk;
+  $("#bm-body").innerHTML = mpBuildingModalHtmlFor(bk, null);
+  $("#building-modal").classList.add("open");
+  mpRenderFolio();
+}
+function mpCloseFixedModal(){
+  $("#building-modal").classList.remove("open");
+  mpFixedSel=null;
+  mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
+  mpRenderFolio();
+}
+// =============================================================================
+// Значок строительства (Фаза 4 из 6) — тап по #mp-build-fab открывает
+// список зданий, ОТКРЫТЫХ по уровню ратуши и ещё НЕ поставленных (для
+// multi-зданий — там, где есть свободный/незанятый участок), тем же
+// #building-modal/#bm-body, что и у карточки постройки. Тап по пункту
+// списка забирает здание "в руки" (mpPlaceCtx) — дальше им можно свободно
+// таскать по карте (см. #place-ghost/pointerdown-move-up ниже), пока не
+// подтвердят галочкой (#place-confirm) или не отменят крестиком
+// (#place-cancel), оба — статичные кнопки в HTML-шаблоне (не внутри
+// #folio — see их заголовок, position:fixed внутри динамически
+// пересобираемого узла рисковал бы съехать, если у какого-то предка
+// когда-нибудь появится transform).
+function mpNextPlaceableInfo(bk){
+  const st=mpState.player.state, hallLv=st.b.hall||0;
+  if(!BUILD_MP_MULTI.has(bk)){
+    if((st.b[bk]||0)>0) return null; // уже стоит — это не "новая постройка", а апгрейд через карту
+    return {plot:null, locked:false, lockTxt:""};
+  }
+  const arr=Array.isArray(st.b[bk])?st.b[bk]:[st.b[bk]||0,0,0,0];
+  for(let pl=0; pl<4; pl++){
+    if((arr[pl]||0)>0) continue;
+    const locked=!plotUnlocked(bk,pl,hallLv);
+    return {plot:pl, locked, lockTxt:locked?("Участок откроется с ратуши "+([0,7,13,19][pl])+" ур."):""};
+  }
+  return null; // все 4 участка уже стоят
+}
+function mpBuildPickerHtml(){
+  const pShim=mpCityShim();
+  let h="<div id='bm-title'>Строительство</div>"+
+    "<div id='bm-desc'>Выберите здание — оно появится на карте, разместите его где захотите и подтвердите галочкой.</div>"+
+    "<div class='picker-grid'>";
+  PLACEABLE_BKEYS.forEach(bk=>{
+    const info=mpNextPlaceableInfo(bk); if(!info) return;
+    h+="<button class='picker-item"+(info.locked?" locked":"")+"' "+
+       (info.locked?"disabled":("data-mp='pickbuild' data-bk='"+bk+"'"+(info.plot!=null?" data-plot='"+info.plot+"'":"")))+
+       " title='"+(info.locked?info.lockTxt:"")+"'>"+
+       "<img src='"+cityCellImg({bk,pl:info.plot})+"'>"+
+       "<span>"+buildingName(bk,pShim)+(info.plot!=null?" · уч. "+(info.plot+1):"")+"</span>"+
+       "</button>";
+  });
+  h+="</div>";
+  return h;
+}
+let mpPickerOpen=false;
+function mpOpenBuildPicker(){
+  if(!mpState.player) return;
+  mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
+  mpForgeTab=null; mpForgeRarity=null; mpCitySel=-1; mpLayoutSel=-1; mpFixedSel=null;
+  mpPickerOpen=true;
+  $("#bm-body").innerHTML=mpBuildPickerHtml();
+  $("#building-modal").classList.add("open");
+  mpRenderFolio();
+}
+function mpCloseBuildPicker(){
+  $("#building-modal").classList.remove("open");
+  mpPickerOpen=false;
+}
+// mpPlaceCtx: {mode:'new'|'relocate', b, plot, gx, gy, valid, li} | null —
+// здание "в руках" игрока. mode='new' — из пикера (mpEnterPlaceMode), ещё
+// не существует в p.layout, li=-1 (нечего исключать из коллизии).
+// mode='relocate' — уже стоящее здание (mpEnterRelocateMode), li — его
+// индекс в p.layout, передаётся как excludeIdx в collisionOk (иначе
+// здание "сталкивалось" бы само с собой на исходной клетке). gx/gy — левый
+// верхний угол footprint в клетках CITY_GRID, valid — живой результат
+// collisionOk на текущей позиции (двигает подсветку/галочку, см.
+// mpUpdatePlaceDom).
+let mpPlaceCtx=null;
+// true строго между pointerdown на призраке и pointerup/pointercancel —
+// см. её же смысл в mpRenderFolio() выше (глушит полную перерисовку #folio
+// посреди жеста).
+let mpDragging=false;
+function mpEnterPlaceMode(bk,plot){
+  mpCloseBuildPicker();
+  const fp=BUILDINGS[bk].footprint;
+  const st=mpState.player.state, layout=Array.isArray(st.layout)?st.layout:[];
+  let gx=Math.floor((CITY_GRID.w-fp.w)/2), gy=Math.floor((CITY_GRID.h-fp.h)/2);
+  if(!collisionOk(layout,fp,gx,gy,-1)){
+    const spot=findFreeSpot(layout,fp);
+    if(spot){ gx=spot.gx; gy=spot.gy; }
+  }
+  mpPlaceCtx={mode:'new', b:bk, plot, gx, gy, valid:collisionOk(layout,fp,gx,gy,-1), li:-1};
+  document.body.classList.add("mp-placing");
+  $("#mp-build-fab").style.display="none";
+  mpRenderFolio();
+}
+// Свободная застройка (Фаза 5) — перенос уже стоящего здания: "в руки"
+// берётся его ТЕКУЩАЯ позиция (валидна сама по себе — против самой себя же
+// li исключён из collisionOk), а не центр экрана, чтобы не дёргать
+// картинку сразу при входе в режим. Закрывает любую открытую модалку
+// (кнопка "Переместить" внутри неё же и вызывает эту функцию), сбрасывает
+// все три индекса выбора — тот же довод, что и в mpOpenBuildPicker.
+function mpEnterRelocateMode(bk,plot){
+  $("#building-modal").classList.remove("open");
+  mpCitySel=-1; mpLayoutSel=-1; mpFixedSel=null; mpPickerOpen=false;
+  const st=mpState.player.state, layout=Array.isArray(st.layout)?st.layout:[];
+  const li=layout.findIndex(e=>e.b===bk && e.plot===plot);
+  if(li<0) return; // не должно случиться — кнопка/долгий тап видны только у уже стоящих
+  const entry=layout[li];
+  mpPlaceCtx={mode:'relocate', b:bk, plot, gx:entry.gx, gy:entry.gy, valid:true, li};
+  document.body.classList.add("mp-placing");
+  $("#mp-build-fab").style.display="none";
+  mpRenderFolio();
+}
+function mpCancelPlace(){
+  mpPlaceCtx=null;
+  document.body.classList.remove("mp-placing");
+  $("#mp-build-fab").style.display="";
+  mpRenderFolio();
+}
+// Фаза 6 — {b,plot,gx,gy,at} свежепоставленного/перенесённого здания или
+// null: mpRenderFreeformCity() навешивает .cbuild.landing (см. её CSS-
+// keyframe) на маркер с ТЕМИ ЖЕ b/plot/gx/gy, пока не прошло LAND_MS —
+// разовая анимация "встало на место" после подтверждения, не постоянный
+// признак. Само значение стирается таймером, чтобы случайный более поздний
+// рендер (тик опроса и т.п.) не проиграл её ещё раз впустую.
+let mpJustPlaced=null;
+const LAND_MS=380; // = длительность @keyframes cbuildLand
+async function mpDoPlaceConfirm(){
+  if(!mpPlaceCtx || !mpPlaceCtx.valid || mpState.loading) return;
+  const {mode,b,plot,gx,gy}=mpPlaceCtx;
+  mpState.loading=true; mpState.err=null; mpRerender();
+  // Фаза 6 — визуально блокируем галочку на время запроса (а не только
+  // логически, через ранний return выше) — иначе кнопка на вид оставалась
+  // живой всё время round-trip'а до сервера, хотя повторный тап по ней уже
+  // ничего не делал.
+  $("#place-confirm").disabled=true;
+  try{
+    const fn=mode==="relocate"?"mp-relocate-building":"mp-build";
+    await mpCall(fn, plot==null?{bk:b,gx,gy}:{bk:b,plot,gx,gy});
+    await mpRefreshPlayer();
+    mpPlaceCtx=null;
+    document.body.classList.remove("mp-placing");
+    $("#mp-build-fab").style.display="";
+    herald(mode==="relocate"?"Перенесено.":"Заложено.");
+    mpJustPlaced={b,plot,gx,gy,at:Date.now()};
+    setTimeout(()=>{ mpJustPlaced=null; },LAND_MS);
+  }catch(e){
+    mpState.err=e.message; herald(e.message);
+    mpUpdatePlaceDom(); // ошибка — остаёмся в размещении, вернуть галочку по valid
+  }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+// Курсор/палец → клетка сетки: тот же перевод %, что и cityGridCellToPct
+// в обратную сторону, плюс центрирование footprint под указателем (иначе
+// здание "прыгало" бы левым верхним углом точно под палец, а не серединой).
+function mpPlaceGridCellFromClient(clientX,clientY,fp){
+  const wrap=$("#citymap-wrap"); if(!wrap) return null;
+  const rect=wrap.getBoundingClientRect();
+  const relXPct=(clientX-rect.left)/rect.width*100, relYPct=(clientY-rect.top)/rect.height*100;
+  const gcw=CITY_GRID.width/CITY_GRID.w, gch=CITY_GRID.height/CITY_GRID.h;
+  let gx=Math.round((relXPct-CITY_GRID.left)/gcw - fp.w/2);
+  let gy=Math.round((relYPct-CITY_GRID.top)/gch - fp.h/2);
+  gx=Math.max(0, Math.min(CITY_GRID.w-fp.w, gx));
+  gy=Math.max(0, Math.min(CITY_GRID.h-fp.h, gy));
+  return {gx,gy};
+}
+// Прямая правка DOM вместо перерисовки — см. заголовок mpDragging.
+function mpUpdatePlaceDom(){
+  if(!mpPlaceCtx) return;
+  const fp=BUILDINGS[mpPlaceCtx.b].footprint;
+  const r=cityGridCellToPct(mpPlaceCtx.gx,mpPlaceCtx.gy,fp.w,fp.h);
+  const ghost=$("#place-ghost"), hl=$("#place-highlight"), confirmBtn=$("#place-confirm");
+  [ghost,hl].forEach(el=>{ if(!el) return; el.style.left=r.left+"%"; el.style.top=r.top+"%"; el.style.width=r.w+"%"; el.style.height=r.h+"%"; });
+  if(hl){ hl.classList.toggle("ok",mpPlaceCtx.valid); hl.classList.toggle("bad",!mpPlaceCtx.valid); }
+  if(confirmBtn) confirmBtn.disabled=!mpPlaceCtx.valid;
+}
+function mpPlaceDragMove(clientX,clientY){
+  if(!mpPlaceCtx) return;
+  const fp=BUILDINGS[mpPlaceCtx.b].footprint;
+  const cell=mpPlaceGridCellFromClient(clientX,clientY,fp); if(!cell) return;
+  if(cell.gx===mpPlaceCtx.gx && cell.gy===mpPlaceCtx.gy) return;
+  const st=mpState.player.state, layout=Array.isArray(st.layout)?st.layout:[];
+  mpPlaceCtx.gx=cell.gx; mpPlaceCtx.gy=cell.gy;
+  // li — свой же индекс при переносе (mode='relocate'), исключается из
+  // коллизии, иначе здание "не проходило" бы даже на исходную клетку.
+  mpPlaceCtx.valid=collisionOk(layout,fp,cell.gx,cell.gy,mpPlaceCtx.li);
+  mpUpdatePlaceDom();
 }
 // Автор пожаловался: кнопка "Общий мир" открывала один гигантский список,
 // смешивающий соседей/точки/лагеря/постройки/войско/генерала/инвентарь в
@@ -8732,7 +9217,12 @@ function mpMarchSheetHtml(){
 let lastMpFolio="";
 function mpRenderFolio(){
   if(!mpState.player) return;
-  const h=mpRenderCityMap();
+  // Фаза 4 — во время перетаскивания призрака сама позиция/подсветка
+  // двигаются прямой правкой DOM (см. mpUpdatePlaceDom), а не пересборкой
+  // #folio: полная перерисовка среди жеста уничтожила бы захваченный
+  // указателем узел (#place-ghost) и оборвала бы drag на середине.
+  if(mpDragging) return;
+  const h=mpRenderFreeformCity();
   if(h===lastMpFolio) return;
   lastMpFolio=h;
   const el=$("#folio"); if(!el) return;
@@ -10240,6 +10730,26 @@ function handleAct(e){
     if(mpCitySel===idx) mpCloseBuildingModal(); else mpOpenBuildingModal(idx);
     return;
   }
+  // Свободная застройка — то же самое, но по индексу в p.layout, для
+  // живой карты mpRenderFreeformCity() (см. её заголовок).
+  const mpLayoutCell=e.target.closest("[data-layout]");
+  if(mpLayoutCell){
+    // Долгий тап уже сработал (см. mpLongPressFired у pointerdown на
+    // #folio) — этот click пришёл следом на pointerup того же жеста, не
+    // открываем карточку здания поверх уже начатого переноса.
+    if(mpLongPressFired){ mpLongPressFired=false; return; }
+    const li=+mpLayoutCell.dataset.layout;
+    if(mpLayoutSel===li) mpCloseLayoutModal(); else mpOpenLayoutModal(li);
+    return;
+  }
+  // Ратуша/Стена на новой карте — фиксированные метки (не в p.layout, см.
+  // CITY_FIXED_GRID_POS), тот же приём, что и у data-layout выше.
+  const mpFixedCell=e.target.closest("[data-layoutfixed]");
+  if(mpFixedCell){
+    const bk=mpFixedCell.dataset.layoutfixed;
+    if(mpFixedSel===bk) mpCloseFixedModal(); else mpOpenFixedModal(bk);
+    return;
+  }
   // Клик по иконке похода в #fieldarmy (mpRenderFieldArmy) — тот же лёгкий
   // герольд, что и у одиночного marchinfo (см. её заголовок), не открывает
   // никакой модалки: подробности уже есть на вкладке Войско.
@@ -10622,6 +11132,13 @@ function closeBuildingModal(){
   // Тот же довод — крестик/подложка могут закрыть свиток похода (mpOpenMarchModal)
   // без прохода через mpDoAttack/mpDoGather/mpDoRaid, сбрасываем цель вручную.
   if(!SP_UNLOCKED && mpMarchCtx){ mpMarchCtx=null; mpState.attackTarget=null; mpState.gatherTarget=null; mpState.raidTarget=null; }
+  // Свободная застройка (Фаза 4) — тот же довод: крестик/подложка могут
+  // закрыть модалку здания с новой карты или сам пикер построек, минуя
+  // mpOpenLayoutModal/mpOpenFixedModal/mpOpenBuildPicker — сбрасываем
+  // состояние выбора вручную, иначе оно осталось бы "залипшим".
+  if(!SP_UNLOCKED && mpLayoutSel>=0){ mpLayoutSel=-1; mpRenderFolio(); }
+  if(!SP_UNLOCKED && mpFixedSel){ mpFixedSel=null; mpRenderFolio(); }
+  if(!SP_UNLOCKED && mpPickerOpen){ mpPickerOpen=false; }
 }
 $("#building-modal").addEventListener("click",e=>{ if(e.target.id==="building-modal") closeBuildingModal(); });
 $("#building-modal").addEventListener("click",handleAct);
@@ -11026,6 +11543,64 @@ $("#menu-modal").addEventListener("click",e=>{ if(e.target.id==="menu-modal") cl
 $("#menu-modal").addEventListener("click",handleAct);
 $("#view-toggle").addEventListener("click",toggleView);
 $("#crest").addEventListener("click",()=>openMenuModal("profile"));
+// Свободная застройка (Фаза 4) — тот же приём прямых addEventListener, что
+// и у #view-toggle/#menu-btn чуть выше (статичные элементы шаблона, не
+// внутри #folio — незачем гонять их через делегированный handleMpAct).
+$("#mp-build-fab").addEventListener("click",mpOpenBuildPicker);
+$("#place-cancel").addEventListener("click",mpCancelPlace);
+$("#place-confirm").addEventListener("click",mpDoPlaceConfirm);
+// Перетаскивание призрака — Pointer Events, делегировано на #folio (сам
+// #citymap-wrap внутри пересоздаётся при каждой mpRenderFolio(), слушатель
+// на нём не пережил бы даже первую перерисовку; #folio — стабильный узел,
+// пересобирается только его innerHTML). setPointerCapture на самом
+// призраке гарантирует, что move/up дойдут даже если палец/курсор уйдёт за
+// пределы картинки — a bubbling через #folio всё равно сработает.
+//
+// Долгий тап по уже стоящему зданию (Фаза 5) — второй, гесто-based способ
+// войти в перенос (первый — кнопка "Переместить" в карточке, см. её
+// заголовок). Таймер стартует на pointerdown по [data-layout], гасится
+// движением дальше LONG_PRESS_MOVE_PX (не путать долгий тап с началом
+// скролла/обычным тапом) или отпусканием раньше срока. Сработавший таймер
+// ставит mpLongPressFired — клик по data-layout чуть выше (handleAct)
+// проверяет её и не открывает карточку поверх уже начатого переноса
+// (иначе на pointerup после успешного долгого тапа тут же прилетел бы
+// обычный click и открыл модалку здания вперемешку с призраком).
+const LONG_PRESS_MS=450, LONG_PRESS_MOVE_PX=10;
+let mpLongPressTimer=null, mpLongPressStart=null;
+let mpLongPressFired=false;
+$("#folio").addEventListener("pointerdown",e=>{
+  const ghost=e.target.closest("#place-ghost");
+  if(ghost){
+    ghost.setPointerCapture(e.pointerId);
+    mpDragging=true;
+    e.preventDefault();
+    return;
+  }
+  if(mpPlaceCtx) return; // уже что-то в руках — не начинать второй перенос поверх
+  const marker=e.target.closest("[data-layout]"); if(!marker) return;
+  const li=+marker.dataset.layout;
+  mpLongPressStart={x:e.clientX,y:e.clientY};
+  mpLongPressTimer=setTimeout(()=>{
+    mpLongPressTimer=null; mpLongPressFired=true;
+    const entry=(mpState.player.state.layout||[])[li];
+    if(entry) mpEnterRelocateMode(entry.b, entry.plot);
+  },LONG_PRESS_MS);
+});
+$("#folio").addEventListener("pointermove",e=>{
+  if(mpDragging){ mpPlaceDragMove(e.clientX,e.clientY); return; }
+  if(mpLongPressTimer && mpLongPressStart){
+    const dx=e.clientX-mpLongPressStart.x, dy=e.clientY-mpLongPressStart.y;
+    if(Math.hypot(dx,dy)>LONG_PRESS_MOVE_PX){ clearTimeout(mpLongPressTimer); mpLongPressTimer=null; }
+  }
+});
+$("#folio").addEventListener("pointerup",()=>{
+  mpDragging=false;
+  if(mpLongPressTimer){ clearTimeout(mpLongPressTimer); mpLongPressTimer=null; }
+});
+$("#folio").addEventListener("pointercancel",()=>{
+  mpDragging=false;
+  if(mpLongPressTimer){ clearTimeout(mpLongPressTimer); mpLongPressTimer=null; }
+});
 // Общий мир — свой делегированный обработчик, отдельно от handleAct
 // (data-mp вместо data-act): панель полностью изолирована от одиночной
 // игры, ничего в handleAct трогать не пришлось.
@@ -11100,6 +11675,23 @@ function handleMpAct(e){
   if(healBtn){ mpDoHeal(healBtn.dataset.t); return; }
   const buildBtn=e.target.closest("[data-mp='build']");
   if(buildBtn){ mpDoBuild(buildBtn.dataset.bk, buildBtn.dataset.plot==null?null:+buildBtn.dataset.plot); return; }
+  // Пункт списка построек (mpBuildPickerHtml) — забрать здание "в руки"
+  // (см. заголовок mpEnterPlaceMode).
+  const pickBuildBtn=e.target.closest("[data-mp='pickbuild']");
+  if(pickBuildBtn){
+    const plot=pickBuildBtn.dataset.plot==null?null:+pickBuildBtn.dataset.plot;
+    mpEnterPlaceMode(pickBuildBtn.dataset.bk, plot);
+    return;
+  }
+  // "Переместить" внутри карточки здания (Фаза 5) — не гесто-зависимый
+  // способ переноса, дублирует долгий тап по маркеру на карте (см.
+  // pointerdown на #folio ниже) для тех, кто его не найдёт/на десктопе.
+  const relocateStartBtn=e.target.closest("[data-mp='relocatestart']");
+  if(relocateStartBtn){
+    const plot=relocateStartBtn.dataset.plot==null?null:+relocateStartBtn.dataset.plot;
+    mpEnterRelocateMode(relocateStartBtn.dataset.bk, plot);
+    return;
+  }
   // Фаза 19, кусочек 5 — Горн (абсолютная копия одиночных forgetab/
   // forgerarity, см. их же ветки в handleAct()). Ни та, ни другая не
   // сбрасывают контексты остальных каруселей — тот же приём, что и в
@@ -11975,6 +12567,13 @@ function mpRerender(){
       const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
     } else if(mpCitySel>=0){
       $("#bm-body").innerHTML = mpBuildingModalHtml(mpCitySel);
+    } else if(mpLayoutSel>=0){
+      const entry=(mpState.player.state.layout||[])[mpLayoutSel];
+      if(entry) $("#bm-body").innerHTML = mpBuildingModalHtmlFor(entry.b, entry.plot);
+    } else if(mpFixedSel){
+      $("#bm-body").innerHTML = mpBuildingModalHtmlFor(mpFixedSel, null);
+    } else if(mpPickerOpen){
+      $("#bm-body").innerHTML = mpBuildPickerHtml();
     // Свиток похода (mpOpenMarchModal) — тот же диф по содержимому, что и у
     // #menu-modal-body (lastMenuBody выше): расстояние/резервы/кулдаун могут
     // не измениться между опросами, перезапись убила бы набранные в полях
