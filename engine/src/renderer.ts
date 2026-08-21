@@ -46,12 +46,26 @@ const SHADOW_NEAR = 1;
 const SHADOW_FAR = 220;
 
 // Суша красится настоящими текстурами (см. textures.ts/textures/ground/*),
-// не запечённым на CPU градиентом цвета — 5 текстур смешиваются по высоте
-// (elevation, тот же порог, что раньше вёл groundColor(): 0.06/0.52/0.72),
-// в каждой точке участвуют максимум 2 соседние по высоте зоны, поэтому не
-// нужно смешивать все 5 сразу. Вода текстуры не сэмплит вообще — она
-// плоская и цвет ей уже посчитан на CPU (см. terrainMesh.ts), waterFlag
-// просто выбирает, какую ветку взять.
+// не запечённым на CPU градиентом цвета — 5 текстур участвуют в смеси по
+// высоте (elevation, те же пороги, что раньше вёл groundColor():
+// 0.06/0.55/0.74) И по крупномасштабной "влажности региона" (moistureAt,
+// см. terrain.ts) — раньше низина в любой точке карты красилась ОДНОЙ и
+// той же травой, автор заметил, что мир выглядит "хаотично раскиданным и
+// равномерно перемешанным". Теперь на месте старой ступеньки
+// grass→dry_meadow по высоте — смесь grass/dry_meadow по moistureAt в
+// ЛЮБОЙ точке низины: пышный луг там, где влажно, сухая степь там, где
+// сухо, читаемые издалека пятна, а не одна и та же трава-везде. На самых
+// высоких и при этом "холодных" (coldnessAt) пиках — процедурный белый
+// иней поверх текстуры (не каждая гора снежная — разные хребты по-разному
+// холодны, та же логика "не всё одинаковое").
+//
+// hash2/noiseAt/moistureAt/coldnessAt — дословный WGSL-порт одноимённых
+// функций terrain.ts (тот же SEED=12345, те же смещения +901/+902/+921),
+// не общий импорт — между TS и WGSL кода не разделить, тот же приём
+// дублирования с синхронной правкой, что и у collisionOk между
+// index.html/mp-*, см. подробный комментарий у moistureAt в terrain.ts.
+// Вода текстуры не сэмплит вообще — она плоская и цвет ей уже посчитан на
+// CPU (см. terrainMesh.ts), waterFlag просто выбирает, какую ветку взять.
 const TERRAIN_SHADER = /* wgsl */ `
 struct Uniforms { vp: mat4x4f };
 struct Fog { eye: vec4f, color: vec4f };
@@ -99,6 +113,37 @@ fn vs(
 // елям) смягчает ступенчатую границу тени — с одной выборкой на пиксель
 // карты 2048×2048 на объекте с чётким краем (дерево, скала) была бы
 // заметная лесенка.
+// ---- Порт terrain.ts:hash2/noise/moistureAt/coldnessAt (см. комментарий
+// выше TERRAIN_SHADER — держать в синхроне с исходником при правке).
+// bitcast<u32> от i32 даёт то же двоичное представление отрицательных
+// координат, что и неявный ToInt32/ToUint32 в JS-версии — умножение в u32
+// в WGSL переполняется (wrap) по модулю 2^32 так же, как усечение до
+// младших 32 бит в JS, поэтому результат совпадает бит-в-бит.
+fn hash2(xi: i32, yi: i32, s: i32) -> f32 {
+  var h: u32 = bitcast<u32>(xi) * 374761393u + bitcast<u32>(yi) * 668265263u + bitcast<u32>(s) * 1274126177u;
+  h = h ^ (h >> 13u);
+  h = h * 1274126177u;
+  h = h ^ (h >> 16u);
+  return f32(h) / 4294967296.0;
+}
+fn noiseAt(x: f32, y: f32, s: i32) -> f32 {
+  let xi = floor(x); let yi = floor(y);
+  let xf = x - xi; let yf = y - yi;
+  let u = xf * xf * (3.0 - 2.0 * xf);
+  let v = yf * yf * (3.0 - 2.0 * yf);
+  let xii = i32(xi); let yii = i32(yi);
+  let a = hash2(xii, yii, s); let b = hash2(xii + 1, yii, s);
+  let c = hash2(xii, yii + 1, s); let d = hash2(xii + 1, yii + 1, s);
+  return (a * (1.0 - u) + b * u) * (1.0 - v) + (c * (1.0 - u) + d * u) * v;
+}
+fn moistureAt(x: f32, y: f32) -> f32 {
+  let a = noiseAt(x / 210.0, y / 210.0, 13246); // SEED+901
+  let b = noiseAt(x / 90.0, y / 90.0, 13247);   // SEED+902
+  return clamp(a * 0.7 + b * 0.3, 0.0, 1.0);
+}
+fn coldnessAt(x: f32, y: f32) -> f32 {
+  return noiseAt(x / 260.0, y / 260.0, 13266); // SEED+921
+}
 fn shadowFactor(clip: vec4f) -> f32 {
   let ndc = clip.xyz / clip.w;
   if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) {
@@ -144,25 +189,43 @@ fn fs(in: VOut) -> @location(0) vec4f {
     albedo = mix(in.waterColor * (1.0 + ripple), fog.color.rgb * 1.3, grazing * 0.5);
   } else {
     let t = clamp((in.elevation - 0.235) / (1.0 - 0.235), 0.0, 1.0);
-    var a: vec3f; var b: vec3f; var blend: f32;
     // textureSample (неявный LOD через производные) запрещён WGSL внутри
     // неоднородного (per-fragment, зависящего от varying) control flow —
-    // отсюда и была настоящая причина чёрного экрана: шейдер вообще не
-    // компилировался (см. коммент у DECOR_SHADER — та же проблема была и
-    // там), пайплайн/bind group становились невалидными, terrain и decor
-    // молча переставали рисоваться целиком. textureSampleLevel с явным LOD
-    // не требует производных и разрешён в любом control flow — мипмапов у
-    // текстур всё равно нет, LOD 0 корректен сам по себе, не костыль.
+    // это уже раз было настоящей причиной чёрного экрана (см. коммент у
+    // DECOR_SHADER — та же проблема была и там). Раньше это обходили веткой
+    // if/else if, каждая из которых сэмплила только 2 нужные текстуры —
+    // теперь сэмплим все 5 БЕЗУСЛОВНО (textureSampleLevel и так не требует
+    // производных, ветвление было не обязательным, только экономило
+    // выборки) и смешиваем чистой математикой — заодно снимает сам вопрос
+    // о однородности control flow: сэмплы больше не внутри if вообще.
+    let sandC = textureSampleLevel(texSand, samp, in.uv, 0.0).rgb;
+    let grassC = textureSampleLevel(texGrass, samp, in.uv, 0.0).rgb;
+    let dryC = textureSampleLevel(texDry, samp, in.uv, 0.0).rgb;
+    let screeC = textureSampleLevel(texScree, samp, in.uv, 0.0).rgb;
+    let rockC = textureSampleLevel(texRock, samp, in.uv, 0.0).rgb;
+    // "Цвет равнины" в ЭТОЙ точке — не всегда grass: сухая степь (dryC) и
+    // пышный луг (grassC) смешиваются по moistureAt (см. комментарий выше
+    // TERRAIN_SHADER) — та самая замена одной ступеньки по высоте на
+    // читаемое региональное пятно.
+    let moist = moistureAt(in.worldPos.x, in.worldPos.z);
+    let lowland = mix(dryC, grassC, moist);
+    var albedoLand: vec3f;
     if (t < 0.06) {
-      a = textureSampleLevel(texSand, samp, in.uv, 0.0).rgb; b = textureSampleLevel(texGrass, samp, in.uv, 0.0).rgb; blend = t / 0.06;
-    } else if (t < 0.52) {
-      a = textureSampleLevel(texGrass, samp, in.uv, 0.0).rgb; b = textureSampleLevel(texDry, samp, in.uv, 0.0).rgb; blend = (t - 0.06) / 0.46;
-    } else if (t < 0.72) {
-      a = textureSampleLevel(texDry, samp, in.uv, 0.0).rgb; b = textureSampleLevel(texScree, samp, in.uv, 0.0).rgb; blend = (t - 0.52) / 0.2;
+      albedoLand = mix(sandC, lowland, t / 0.06);
+    } else if (t < 0.55) {
+      albedoLand = lowland;
+    } else if (t < 0.74) {
+      albedoLand = mix(lowland, screeC, (t - 0.55) / 0.19);
     } else {
-      a = textureSampleLevel(texScree, samp, in.uv, 0.0).rgb; b = textureSampleLevel(texRock, samp, in.uv, 0.0).rgb; blend = min(1.0, (t - 0.72) / 0.28);
+      albedoLand = mix(screeC, rockC, min(1.0, (t - 0.74) / 0.26));
     }
-    albedo = mix(a, b, blend);
+    // Иней на самых высоких пиках — но не на каждом одинаково: coldnessAt
+    // отдельное поле от высоты самой горы, часть хребтов остаётся голым
+    // камнем, другая часть — заснежена, как на настоящей карте кампании,
+    // а не "снег строго после такой-то отметки везде".
+    let cold = coldnessAt(in.worldPos.x, in.worldPos.z);
+    let snowT = smoothstep(0.90, 1.0, t) * smoothstep(0.35, 0.75, cold);
+    albedo = mix(albedoLand, vec3f(0.90, 0.93, 0.97), snowT * 0.9);
   }
 
   let lit = albedo * diffuse;

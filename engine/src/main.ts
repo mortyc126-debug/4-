@@ -10,7 +10,7 @@
 import { createWorld, addEntity, addComponent, removeEntity, query } from "bitecs";
 import { createRenderer, type MarkerEntity, type DecorEntity } from "./renderer";
 import { buildTerrainPatch } from "./terrainMesh";
-import { heightAt, HMAX, hash2, isWater, SEED, registerFlattenSite, WORLD_HALF } from "./terrain";
+import { heightAt, HMAX, hash2, isWater, SEED, registerFlattenSite, WORLD_HALF, forestMaskAt } from "./terrain";
 import { PINE, LEAF, GRASS_TONES, BUSH_TONES, ROCK_TONES } from "./decorMesh";
 import { mul, persp, look, modelMatrix, transformPoint, sub, cross, norm, type Vec3, type Mat4 } from "./mat4";
 import { attachOrbitControls, type OrbitCamera } from "./camera";
@@ -379,9 +379,23 @@ async function main() {
   // Пользователь явно попросил детализацию ценой FPS ("готов вытерпеть
   // 25 кадров, ради красоты") — плотность и число видов заметно выросли
   // против первой версии (была одна subgrid 4×4 и два вида дерева).
+  //
+  // Позже тот же автор заметил обратную сторону этой плотности: "выглядит,
+  // будто хаотично накидали всего подряд и перемешали" — деревья и камни
+  // стояли РАВНОМЕРНО по всей карте (TREE_FRACTION=0.82 — фиксированная
+  // доля деревьев в КАЖДОЙ клетке-кандидате, без разницы между открытым
+  // лугом и чащей). DECOR_CHANCE ниже по-прежнему решает, какие клетки
+  // подсетки вообще станут кандидатами (грубое разрежение), но что именно
+  // из кандидата вырастет — дерево, камень или ничего — теперь решает
+  // forestMaskAt(wx,wz) (terrain.ts, крупные пятна леса с линией
+  // деревьев по высоте) и сама высота: TREE_CHANCE_MIN/MAX и
+  // ROCK_CHANCE_MIN/MAX ниже заменяют один фиксированный TREE_FRACTION.
   const DECOR_CELL = 4; // сторона подсетки деревьев/камней, кратно CHUNK_SIZE (÷4)
   const DECOR_CHANCE = 0.65;
-  const TREE_FRACTION = 0.82; // доля деревьев среди сгенерированных — остальное камни
+  const TREE_CHANCE_MIN = 0.05; // вне лесного пятна — редкие одиночные деревья, не голое поле совсем
+  const TREE_CHANCE_MAX = 0.9;  // в сердце лесного пятна — почти каждый кандидат
+  const ROCK_CHANCE_MIN = 0.1;  // низина/луг — камень редкость, не через одного
+  const ROCK_CHANCE_MAX = 0.65; // склон/предгорье — камней заметно больше
   const GRASS_CELL = 2; // трава — своя, более мелкая подсетка (гуще)
   const GRASS_CHANCE = 0.7;
   const BUSH_CELL = 3; // кусты — средний ярус между травой и деревьями, своя подсетка
@@ -459,7 +473,6 @@ async function main() {
         const wz = cz * CHUNK_SIZE + j * DECOR_CELL + jz * DECOR_CELL;
         if (nearWater(wx, wz, 1.5)) continue; // деревья/камни — самый широкий силуэт
         if (blockedByStructure(wx, wz, 0.54, 0.68)) continue;
-        const isTree = hash2(gx, gz, SEED + 780) < TREE_FRACTION;
         const yaw = hash2(gx, gz, SEED + 781) * Math.PI * 2;
         const jitter = 0.85 + hash2(gx, gz, SEED + 782) * 0.3; // 0.85..1.15 — та же роль, что и tone/warm в старом прототипе
         const e = heightAt(wx, wz);
@@ -472,6 +485,17 @@ async function main() {
         // совпадает со стеной, какой бы формы она ни была.
         if (e > 1.0) continue;
         const wy = e * HMAX;
+        // Дерево или камень для ЭТОГО конкретного кандидата решает не одна
+        // фиксированная доля на всю карту, а forestMaskAt (пятно леса,
+        // террейн.ts) для дерева и сама высота для камня — тот самый
+        // переход от "везде поровну" к читаемым региона: густая роща тут,
+        // редкий одинокий дуб посреди луга там, камни гуще на склоне, чем
+        // в низине. hash2(...+780) — тот же бросок кубика, что раньше
+        // сравнивался с фиксированным TREE_FRACTION, теперь с "плавающим"
+        // порогом.
+        const forest = forestMaskAt(wx, wz);
+        const treeChance = TREE_CHANCE_MIN + (TREE_CHANCE_MAX - TREE_CHANCE_MIN) * forest;
+        const isTree = hash2(gx, gz, SEED + 780) < treeChance;
         // Неравномерный масштаб (высота отдельно от ширины) — разные
         // силуэты одной геометрии почти бесплатно, см. DECOR_SHADER.
         const scaleY = 1.0 + hash2(gx, gz, SEED + 785) * 1.3;
@@ -493,6 +517,14 @@ async function main() {
             color: jitterColor(base, jitter), kind,
           });
         } else {
+          // Кандидат "не дерево" раньше ВСЕГДА становился камнем — сама
+          // равномерная плотность камней по всей карте (даже на ровном
+          // лугу) была частью той же жалобы. Теперь только доля из них,
+          // растущая с высотой (склон/предгорье честно каменистее низины,
+          // та же логика, что уже красит террейн в scree/rock повыше) —
+          // остальные ничего не ставят, оставляя открытую траву/луг.
+          const rockChance = ROCK_CHANCE_MIN + (ROCK_CHANCE_MAX - ROCK_CHANCE_MIN) * Math.min(1, e / 0.65);
+          if (hash2(gx, gz, SEED + 795) >= rockChance) continue;
           const base = ROCK_TONES[Math.floor(hash2(gx, gz, SEED + 784) * ROCK_TONES.length)];
           const rockScaleY = 0.6 + hash2(gx, gz, SEED + 785) * 0.9;
           const rockScaleXZ = 0.6 + hash2(gx, gz, SEED + 786) * 0.9;
