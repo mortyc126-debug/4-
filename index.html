@@ -43,9 +43,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 
 /* top:18px, а не 10px — плашка Янтаря прижата вплотную к правому верхнему
    углу (#amber-badge, top:0), и кошелёк с ресурсами вплотную к ней подходил.
-   Небольшой сдвиг вниз разводит их по вертикали, не трогая саму шапку. */
+   Небольшой сдвиг вниз разводит их по вертикали, не трогая саму шапку.
+   flex-wrap:wrap — на узких телефонах (360px и уже) герб+ник слева и сетка
+   ресурсов справа в ОДНУ строку не помещались: max-width обрезал САМ #top
+   по границе экрана, но flex по умолчанию не сжимает контент, а просто
+   вылезает за эту границу — правый столбец ресурсов утекал за край
+   (репорт пользователя со скриншотом: часть цифр "тыс" срезана).
+   С переносом кошелёк, если не влез в строку с гербом, просто падает на
+   свою строку ниже — гарантированно весь в кадре при любой ширине экрана. */
 #top{position:fixed;top:18px;left:0;z-index:15;display:flex;flex-direction:row;
-  align-items:center;gap:8px;max-width:calc(100vw - 6px)}
+  flex-wrap:wrap;align-items:center;gap:8px;max-width:calc(100vw - 6px)}
 
 #crest{display:flex;align-items:center;cursor:pointer;flex:0 0 auto}
 #crest:hover .mark{color:var(--gilt-hi)}
@@ -75,10 +82,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    .profile-avatar-clip (см. её заголовок): портретные PNG сами уже медальон
    на холсте с тёмными полями, без обрезки эти поля лезли ПОД наше кольцо и
    давали пустой зазор между лицом и рамкой. object-fit:contain был вдобавок
-   ещё мягче cover — вписывал холст целиком, поля были видны гарантированно. */
+   ещё мягче cover — вписывал холст целиком, поля были видны гарантированно.
+   1.25× (98px = 78×1.25), не 1.6× — автор явно попросил меньше зумировать:
+   у портрета есть своя тонкая обводка медальона, задача нашего кольца —
+   лечь ровно на неё и скрыть ЕЁ (не более того), а не откусывать заодно и
+   плечи/доспех персонажа. Подобрано по всем 8 портретам (см. all_zoom125.png
+   при подборе) — 1.25 — минимум, при котором своя обводка нигде уже не
+   проглядывает, но кадр всё ещё широкий. */
 #crest .crest-avatar-clip{width:78px;height:78px;border-radius:50%;overflow:hidden;
   position:relative;z-index:2;display:block}
-#crest .avatar{position:absolute;top:50%;left:50%;width:125px;height:125px;
+#crest .avatar{position:absolute;top:50%;left:50%;width:98px;height:98px;
   transform:translate(-50%,-50%);object-fit:cover;display:block;
   filter:drop-shadow(0 2px 6px rgba(0,0,0,.7))}
 #crest .crest-ring{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
@@ -105,15 +118,19 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    круг это не учитывал — вокруг лица оставалось голое тёмное поле ХОЛСТА,
    поверх которого садилось уже НАШЕ золотое кольцо: получалось два кадра с
    пустым зазором между ними (репорт пользователя со скриншотом). Обрезающая
-   .profile-avatar-clip (96×96, overflow:hidden) + сам <img> в 1.6× (крупнее
-   контейнера, отцентрован transform'ом) — тот же приём, что object-fit:cover
+   .profile-avatar-clip (96×96, overflow:hidden) + сам <img> крупнее
+   контейнера (отцентрован transform'ом) — тот же приём, что object-fit:cover
    пытался сделать, но с явным перекрытием запаса, чтобы съесть поля холста
    и войти в сам нарисованный медальон, а не только в прямоугольник картинки.
-   Подобрано на глаз по всем 8 портретам (см. all_zoom16.png при подборе) —
-   1.6 достаточно, чтобы стереть поля, но не обрезает венцы/причёски. */
+   1.25× (120px = 96×1.25), не 1.6× — автор явно попросил меньше зумировать:
+   у портрета есть своя тонкая обводка медальона, задача нашего кольца —
+   лечь ровно на неё и скрыть ЕЁ (не более того), а не откусывать заодно и
+   плечи/доспех персонажа. Подобрано по всем 8 портретам (см. all_zoom125.png
+   при подборе) — 1.25 — минимум, при котором своя обводка нигде уже не
+   проглядывает, но кадр всё ещё широкий. */
 .profile-avatar-clip{width:96px;height:96px;border-radius:50%;overflow:hidden;
   position:relative;display:block}
-.profile-avatar{position:absolute;top:50%;left:50%;width:154px;height:154px;
+.profile-avatar{position:absolute;top:50%;left:50%;width:120px;height:120px;
   transform:translate(-50%,-50%);object-fit:cover;display:block}
 /* Золотое кольцо — раньше был плоский CSS-border, теперь отдельная
    декоративная картинка ПОВЕРХ аватара (тот же приём, что и уголки/печать
@@ -278,10 +295,14 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #menu-btn .nbadge{top:4px;right:4px;min-width:18px;height:18px;line-height:15px;font-size:11px}
 
 .purse{display:grid;grid-template-columns:repeat(2,auto);grid-auto-rows:auto;
-  gap:3px 12px;flex:0 0 auto}
-.coin{display:flex;align-items:center;gap:5px}
-.coin .disc{width:16px;height:16px;border-radius:50%;flex:0 0 auto;object-fit:contain}
-.coin .amt{font-family:var(--data);font-size:12px;font-variant-numeric:tabular-nums;
+  gap:4px 14px;flex:0 0 auto;margin-right:8px}
+/* Иконки/цифры чуть крупнее (20px/13px, было 16px/12px) — автор явно
+   попросил "иконки сделай больше". Сама плашка теперь может переноситься
+   на свою строку (см. flex-wrap у #top) — места на неё, даже увеличенную,
+   хватает при любой ширине экрана. */
+.coin{display:flex;align-items:center;gap:6px}
+.coin .disc{width:20px;height:20px;border-radius:50%;flex:0 0 auto;object-fit:contain}
+.coin .amt{font-family:var(--data);font-size:13px;font-variant-numeric:tabular-nums;
   letter-spacing:-.01em;color:var(--vellum);text-shadow:0 1px 3px rgba(0,0,0,.9),0 0 6px rgba(0,0,0,.7)}
 .coin .rate{font-family:var(--data);font-size:9px;color:var(--vellum-faint);
   display:block;letter-spacing:.02em;text-decoration:none;text-shadow:0 1px 3px rgba(0,0,0,.9)}
@@ -12400,6 +12421,17 @@ function foMultiplayer(embedded, only){
          "<div class='note'>Наши потери (лазарет): "+RU(lostN(myLoss))+" · потери соперника: "+RU(lostN(oppLoss))+"</div>"+
          "</div></div></div>";
     });
+  }
+  // Все пять рубрик почты (Гонцы/Бой/Разведка/Лагеря/Точки) условны на
+  // ".length" — ни одна не рисует даже заголовок при пустом списке. У
+  // нового игрока, который ни разу не воевал, ВСЕ пять пусты разом —
+  // вкладка "Почта" получала буквально ни одного байта содержимого, только
+  // тёмная подложка модалки и декор углов (репорт пользователя со
+  // скриншотом: "вкладка почты все равно не открывается" — открывалась,
+  // просто показывать было нечего). Один общий пробел на весь экран.
+  if(show("mail") && !mpState.siegeMail.length && !mpState.mail.length && !mpState.scoutMail.length
+     && !mpState.raidMail.length && !mpState.nodeBattleMail.length){
+    h+=hollow("&#9993;","Здесь пока пусто — донесения и боевые сводки появятся, как только начнутся первые походы.");
   }
 
   // Раньше здесь безусловно (без show()-гейта) рендерился блок "Ресурсы" —
