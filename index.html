@@ -11590,7 +11590,7 @@ async function claimChronicle(){
    восполняются со временem — серверное производство ещё не перенесено,
    стартовых 100000 хватает на несколько заказов набора для проверки.
    ========================================================================= */
-let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[], siegeMail:[], nodeBattleMail:[], worldBattles:[], gatherMail:[] };
+let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[], siegeMail:[], nodeBattleMail:[], worldBattles:[], gatherMail:[], noteMail:[] };
 let mpPollTimer = null;
 // ===== Фаза 20, кусочек 3 — местный кэш последнего known-состояния общего
 // мира. Автор: "медленно грузит мой замок и ресурсные точки, может их
@@ -11613,7 +11613,7 @@ function mpSaveCache(){
       player:mpState.player, neighbors:mpState.neighbors, nodes:mpState.nodes,
       camps:mpState.camps, marches:mpState.marches, incoming:mpState.incoming,
       mail:mpState.mail, scoutMail:mpState.scoutMail, raidMail:mpState.raidMail, siegeMail:mpState.siegeMail,
-      nodeBattleMail:mpState.nodeBattleMail, gatherMail:mpState.gatherMail,
+      nodeBattleMail:mpState.nodeBattleMail, gatherMail:mpState.gatherMail, noteMail:mpState.noteMail,
     }));
   }catch(e){ /* приватный режим/переполнение — кэш не обязателен, молча живём без него */ }
 }
@@ -11627,7 +11627,7 @@ function mpLoadCache(){
     mpState.neighbors=c.neighbors||[]; mpState.nodes=c.nodes||[]; mpState.camps=c.camps||[];
     mpState.marches=c.marches||[]; mpState.incoming=c.incoming||[];
     mpState.mail=c.mail||[]; mpState.scoutMail=c.scoutMail||[]; mpState.raidMail=c.raidMail||[]; mpState.siegeMail=c.siegeMail||[];
-    mpState.nodeBattleMail=c.nodeBattleMail||[]; mpState.gatherMail=c.gatherMail||[];
+    mpState.nodeBattleMail=c.nodeBattleMail||[]; mpState.gatherMail=c.gatherMail||[]; mpState.noteMail=c.noteMail||[];
     return true;
   }catch(e){ return false }
 }
@@ -11816,7 +11816,7 @@ function mpStopPolling(){
   // каждую секунду вхолостую, пока игрок вообще не в мультиплеере.
   if(mpBattleFastTimer){ clearInterval(mpBattleFastTimer); mpBattleFastTimer=null; }
 }
-async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); await mpRefreshNodeBattleMail(); await mpRefreshWorldBattles(); await mpRefreshGatherMail(); mpSaveCache(); }
+async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); await mpRefreshNodeBattleMail(); await mpRefreshWorldBattles(); await mpRefreshGatherMail(); await mpRefreshNoteMail(); mpSaveCache(); }
 // Баг-фикс — автор пожаловался: очередь стройки/тренировки/боя показывается
 // сразу, но САМ результат (новый уровень здания, исход боя) применял только
 // общий тикер (mp-tick), а тот раньше крутился раз в минуту — до минуты
@@ -11883,6 +11883,18 @@ async function mpRefreshGatherMail(){
     .eq("kind","gather").order("created_at",{ascending:false}).limit(10);
   if(!error && data){ mpState.gatherMail=data; mpRerender(); }
 }
+// Личные уведомления (mail, kind:"note") — сейчас единственный источник:
+// "Генерал повышен" (см. genLevelMailRow в mp-tick, зеркало pushMail
+// одиночки, index.html:5509-5510). Раньше этого письма в общем мире не было
+// вовсе — генерал честно повышался (addXp на сервере), но игрок об этом
+// никогда не узнавал, в отличие от одиночки. Своя рубрика, та же схема
+// выборки, что и у остальной почты.
+async function mpRefreshNoteMail(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
+    .eq("kind","note").order("created_at",{ascending:false}).limit(10);
+  if(!error && data){ mpState.noteMail=data; mpRerender(); }
+}
 // Открытие вкладки: если этот anon-uid уже заходил в общий мир раньше
 // (сессия сохранена в localStorage), mp-join без указания расы вернёт уже
 // существующего игрока — сразу дашборд, без анкеты. Если нет — тихо ловим
@@ -11900,7 +11912,7 @@ async function mpOpen(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{});
-    mpState.joined=true; mpState.player=j.player; if(!mpWorld3DFocused) mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); await mpRefreshNodeBattleMail(); await mpRefreshWorldBattles(); mpSaveCache();
+    mpState.joined=true; mpState.player=j.player; if(!mpWorld3DFocused) mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); await mpRefreshNodeBattleMail(); await mpRefreshWorldBattles(); await mpRefreshGatherMail(); await mpRefreshNoteMail(); mpSaveCache();
   }catch(e){
     // Фаза 20, кусочек 3 — если состояние уже показано из кэша, а сеть
     // моргнула, НЕ сбрасываем joined: игрок остаётся при своём городе (пусть
@@ -11954,7 +11966,7 @@ async function mpDoJoin(){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{race:mpState.race,nick:mpState.nick||""});
-    mpState.joined=true; mpState.player=j.player; mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); await mpRefreshNodeBattleMail(); await mpRefreshWorldBattles();
+    mpState.joined=true; mpState.player=j.player; mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); await mpRefreshNodeBattleMail(); await mpRefreshWorldBattles(); await mpRefreshGatherMail(); await mpRefreshNoteMail();
   }catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -12732,15 +12744,31 @@ function foMultiplayer(embedded, only){
          "</div></div></div>";
     });
   }
-  // Все шесть рубрик почты (Гонцы/Бой/Разведка/Лагеря/Точки/Сбор) условны на
-  // ".length" — ни одна не рисует даже заголовок при пустом списке. У
-  // нового игрока, который ни разу не воевал, ВСЕ шесть пусты разом —
-  // вкладка "Почта" получала буквально ни одного байта содержимого, только
-  // тёмная подложка модалки и декор углов (репорт пользователя со
+  // Личные уведомления (mail, kind:"note") — сейчас только "Генерал повышен"
+  // (см. genLevelMailRow в mp-tick). Раньше в общем мире такого письма не
+  // было вовсе: генерал честно повышался на сервере (addXp), но игрок об
+  // этом никогда не узнавал — в одиночке то же самое событие давало письмо
+  // (index.html, addXp: pushMail({cat:"personal",kind:"note",...})).
+  if(show("mail") && mpState.noteMail.length){
+    h+=rubric("Генерал","личные уведомления");
+    mpState.noteMail.forEach(m=>{
+      const d=m.data;
+      h+="<div class='entry calm'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+d.title+"</div>"+
+         "<div class='note'>"+d.body+"</div>"+
+         "</div></div></div>";
+    });
+  }
+  // Все семь рубрик почты (Гонцы/Бой/Разведка/Лагеря/Точки/Сбор/Генерал)
+  // условны на ".length" — ни одна не рисует даже заголовок при пустом
+  // списке. У нового игрока, который ни разу не воевал, все семь пусты
+  // разом — вкладка "Почта" получала буквально ни одного байта содержимого,
+  // только тёмная подложка модалки и декор углов (репорт пользователя со
   // скриншотом: "вкладка почты все равно не открывается" — открывалась,
   // просто показывать было нечего). Один общий пробел на весь экран.
   if(show("mail") && !mpState.siegeMail.length && !mpState.mail.length && !mpState.scoutMail.length
-     && !mpState.raidMail.length && !mpState.nodeBattleMail.length && !mpState.gatherMail.length){
+     && !mpState.raidMail.length && !mpState.nodeBattleMail.length && !mpState.gatherMail.length
+     && !mpState.noteMail.length){
     h+=hollow("&#9993;","Здесь пока пусто — донесения и боевые сводки появятся, как только начнутся первые походы.");
   }
 
