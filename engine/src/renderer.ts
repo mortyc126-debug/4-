@@ -159,9 +159,15 @@ fn coldnessAt(x: f32, y: f32) -> f32 {
 // с вершин, ровно то же число, что вернул бы heightAt(x,y) в этой точке.
 fn forestMaskAt(x: f32, y: f32, e: f32) -> f32 {
   let n = noiseAt(x / 150.0, y / 150.0, 13256) * 0.65 + noiseAt(x / 60.0, y / 60.0, 13257) * 0.35; // SEED+911, SEED+912
-  let patch = smoothstep(0.40, 0.62, n); // smoothstep(low,high,x) — тот же Эрмит, что и sstep() в terrain.ts
+  // "patch" — зарезервированное слово WGSL (используется в mesh shading
+  // расширениях спецификации), даже не будучи тут нужным по смыслу —
+  // компилятор WGPU у автора на реальном устройстве сразу поймал ошибку
+  // компиляции шейдера (эта песочница без живого WebGPU её просто не
+  // увидела бы, см. историю коммитов). forestPatch — то же самое значение,
+  // просто другое имя.
+  let forestPatch = smoothstep(0.40, 0.62, n); // smoothstep(low,high,x) — тот же Эрмит, что и sstep() в terrain.ts
   let treeline = 1.0 - smoothstep(0.55, 0.82, e);
-  return patch * treeline;
+  return forestPatch * treeline;
 }
 fn shadowFactor(clip: vec4f) -> f32 {
   let ndc = clip.xyz / clip.w;
