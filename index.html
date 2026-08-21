@@ -6613,15 +6613,17 @@ function catchUpProgress(f, awaySec){
   const bar=el.querySelector(".cu-bar i");
   if(bar) bar.style.width=Math.round(f*100)+"%";
 }
+// Автор попросил заменить "113.4 тыс" на международное "113.4K": короче
+// (решает наложение на плашке ресурсов) и не требует перевода/пробела.
 function fmt(n){ n=Math.round(n);
-  if(Math.abs(n)>=1e9) return (n/1e9).toFixed(2)+" млрд";
-  if(Math.abs(n)>=1e6) return (n/1e6).toFixed(2)+" млн";
-  if(Math.abs(n)>=1e4) return (n/1e3).toFixed(1)+" тыс";
+  if(Math.abs(n)>=1e9) return (n/1e9).toFixed(2)+"B";
+  if(Math.abs(n)>=1e6) return (n/1e6).toFixed(2)+"M";
+  if(Math.abs(n)>=1e4) return (n/1e3).toFixed(1)+"K";
   return RU(n) }
 function fmt0(n){ n=Math.round(n);              // без дробной части — для вместимости марша и т.п.
-  if(Math.abs(n)>=1e9) return Math.round(n/1e9)+" млрд";
-  if(Math.abs(n)>=1e6) return Math.round(n/1e6)+" млн";
-  if(Math.abs(n)>=1e4) return Math.round(n/1e3)+" тыс";
+  if(Math.abs(n)>=1e9) return Math.round(n/1e9)+"B";
+  if(Math.abs(n)>=1e6) return Math.round(n/1e6)+"M";
+  if(Math.abs(n)>=1e4) return Math.round(n/1e3)+"K";
   return RU(n) }
 function fmtDur(s){ s=Math.max(0,Math.round(s));
   const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),x=s%60;
