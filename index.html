@@ -296,10 +296,19 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #menu-btn{position:fixed}
 #menu-btn .nbadge{top:4px;right:4px;min-width:18px;height:18px;line-height:15px;font-size:11px}
 
-/* Свой fixed-угол справа сверху, под #amber-badge (28px = его высота: 3px
-   отступ + 22px иконка + 3px отступ) — не внутри #top, см. заголовок
-   #top. right:6px — тот же зазор от края, что и у #amber-badge (right:0,
-   но у него самого есть padding-right:10px, визуально тот же отступ). */
+/* Свой fixed-угол — не внутри #top, см. заголовок #top. top/right тут
+   просто запасное положение на случай, если JS ещё не успел отработать
+   (см. positionPurse) — реальные top/left выставляются из JS при каждой
+   отрисовке верхней плашки. Сначала стояла НИЖЕ #amber-badge (та была
+   первой в углу) — автор посчитал, что так плашка ресурсов "ниже плашки
+   с профилем" и попросил поднять её вровень с гербом. Ширина плашки
+   (158px при двух столбцах) физически не помещается между правым краем
+   герба и левым краем #amber-badge на узком экране (129px и меньше) —
+   ни при каком сдвиге по горизонтали, даже вплотную к гербу. Поэтому
+   вместо горизонтального зазора развели по вертикали: плашка ресурсов
+   теперь встаёт НА уровень герба, а #amber-badge, наоборот, сместился
+   под неё (см. её же комментарий и positionPurse) — так они физически
+   не могут наложиться друг на друга ни на одном экране. */
 .purse{position:fixed;top:34px;right:6px;z-index:15;
   display:grid;grid-template-columns:repeat(2,auto);grid-auto-rows:auto;
   gap:4px 14px;justify-items:end}
@@ -338,6 +347,9 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   background:rgba(0,0,0,.5);border:1px solid var(--rule-soft)}
 #catchup .cu-bar i{display:block;height:100%;width:0;border-radius:3px;
   background:linear-gradient(90deg,var(--gilt-dim),var(--gilt-hi));transition:width .12s linear}
+/* top:0 тут только запасное положение (см. .purse и её комментарий) —
+   реальный top выставляет positionPurse() сразу под плашкой ресурсов,
+   которая теперь стоит на месте бывшего #amber-badge, вровень с гербом. */
 #amber-badge{position:fixed;top:0;right:0;z-index:15;
   display:flex;align-items:center;gap:6px;
   padding:3px 10px 3px 3px;border-radius:20px;
@@ -473,6 +485,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   display:flex;flex-direction:column;gap:10px;overflow-y:auto;scrollbar-width:none;
   align-items:center}
 #fieldarmy-world::-webkit-scrollbar{display:none}
+/* Автор: «странно будет, что в городе они есть, а на мире их нет» — те же
+   бригады строительства (#brigades в городе), но зеркально слева поверх
+   3D-мира, тем же приёмом, что и #fieldarmy-world справа (см. её коммент
+   выше — z-index/top/скролл общие резоны). В одиночке своей "мировой"
+   панели у бригад раньше не было вовсе (там #fieldarmy-world добавляли
+   отдельным запросом только под марши) — теперь есть в обоих режимах. */
+#brigades-world{position:absolute;z-index:4;left:14px;top:190px;max-height:40vh;
+  display:flex;flex-direction:column;gap:10px;overflow-y:auto;scrollbar-width:none;
+  align-items:center}
+#brigades-world::-webkit-scrollbar{display:none}
 
 #key{left:14px;top:66px;padding:9px 12px;display:flex;flex-direction:column;gap:5px;
   pointer-events:none;font-size:11.5px}
@@ -1398,6 +1420,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
         <button id="t-out" title="Отдалить">&minus;</button>
         <button id="t-home" title="К своему городу">&#9884;</button>
       </div>
+      <div id="brigades-world"></div>
       <div id="fieldarmy-world"></div>
       <iframe id="world3d" title="Мир"></iframe>
     </div>
@@ -6613,16 +6636,68 @@ function catchUpProgress(f, awaySec){
   const bar=el.querySelector(".cu-bar i");
   if(bar) bar.style.width=Math.round(f*100)+"%";
 }
+// Автор попросил заменить "113.4 тыс" на международное "113.4K": короче
+// (решает наложение на плашке ресурсов) и не требует перевода/пробела.
 function fmt(n){ n=Math.round(n);
-  if(Math.abs(n)>=1e9) return (n/1e9).toFixed(2)+" млрд";
-  if(Math.abs(n)>=1e6) return (n/1e6).toFixed(2)+" млн";
-  if(Math.abs(n)>=1e4) return (n/1e3).toFixed(1)+" тыс";
+  if(Math.abs(n)>=1e9) return (n/1e9).toFixed(2)+"B";
+  if(Math.abs(n)>=1e6) return (n/1e6).toFixed(2)+"M";
+  if(Math.abs(n)>=1e4) return (n/1e3).toFixed(1)+"K";
   return RU(n) }
 function fmt0(n){ n=Math.round(n);              // без дробной части — для вместимости марша и т.п.
-  if(Math.abs(n)>=1e9) return Math.round(n/1e9)+" млрд";
-  if(Math.abs(n)>=1e6) return Math.round(n/1e6)+" млн";
-  if(Math.abs(n)>=1e4) return Math.round(n/1e3)+" тыс";
+  if(Math.abs(n)>=1e9) return Math.round(n/1e9)+"B";
+  if(Math.abs(n)>=1e6) return Math.round(n/1e6)+"M";
+  if(Math.abs(n)>=1e4) return Math.round(n/1e3)+"K";
   return RU(n) }
+// Центрирует плашку ресурсов (.purse) между правым краем герба игрока
+// (#crest) и правым краем экрана — вызывается из renderTop/mpRenderTop
+// сразу после отрисовки .purse, до того как браузер успевает нарисовать
+// кадр, так что запасные top/right из CSS (см. их комментарии) никогда
+// не мелькают. Меряем по факту, а не жёстким отступом: ширина плашки
+// растёт/сжимается вместе с разрядностью чисел (fmt()), а высота — при
+// появлении/исчезновении .rate (media).
+//
+// По высоте автор уточнил: не вровень с самим кругом аватара, а вровень
+// с .crest-card — той полупрозрачной "баннер"-плашкой внутри герба, где
+// лежат ник и мощь (у неё свой rgba-фон, отдельный от круга аватара,
+// именно её автор и имел в виду под "баннером"). Поэтому центр берём от
+// .crest-card.top, а не от #crest.top (герб в целом — с учётом самого
+// круга аватара — выше .crest-card, см. #crest .crest-avatar-wrap).
+//
+// #amber-badge ставим СРАЗУ ПОД плашкой (та же правая колонка), а не
+// наоборот, как было раньше: на узком экране ширины .purse (158px при
+// двух столбцах) не хватает, чтобы влезть между гербом и #amber-badge
+// ни при какой горизонтальной раскладке — раздвинуть по горизонтали
+// нечем, поэтому разводим по вертикали (см. предыдущий коммит).
+//
+// Автор уточнил ещё раз, со скриншотом с красной отметкой: важна высота
+// именно ИКОН (самых верхних — еда/камень), а не текста рядом с ними.
+// В .coin они и так на одной линии (align-items:center), так что верх
+// самой иконки (20px, самый высокий элемент строки) практически совпадает
+// с top всей .purse — считать/подгонять отдельно не нужно.
+//
+// maxTop — предохранитель, не более: #brigades/#fieldarmy своим top:108px
+// (см. их CSS) начинаются сразу под шапкой в режиме города, и если бы
+// .crest-card сидела достаточно низко, стопка "плашка + зазор + янтарь"
+// не влезла бы над ними. Зазор между плашкой и янтарём тут уже не 6px, а
+// 2px — впритык, но не внахлёст: на замерах именно этого не хватало,
+// чтобы влезть точно вровень с .crest-card (не хватало меньше 1px, было
+// видно только как более заметный сдвиг вверх, о чём и написал автор).
+function positionPurse(){
+  const purse=$("#purse"), crest=$("#crest"), card=$("#crest .crest-card"), amber=$("#amber-badge");
+  if(!purse || !crest) return;
+  const cr=crest.getBoundingClientRect(), pr=purse.getBoundingClientRect();
+  const mid=(cr.right+window.innerWidth)/2;
+  purse.style.right="auto";
+  purse.style.left=Math.round(mid-pr.width/2)+"px";
+  let top=(card||crest).getBoundingClientRect().top;
+  if(amber){
+    const ah=amber.getBoundingClientRect().height;
+    const maxTop=108-ah-2-pr.height;
+    top=Math.min(top,maxTop);
+  }
+  purse.style.top=Math.round(top)+"px";
+  if(amber) amber.style.top=Math.round(top+pr.height+2)+"px";
+}
 function fmtDur(s){ s=Math.max(0,Math.round(s));
   const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),x=s%60;
   if(d) return d+" д "+h+" ч";
@@ -6739,6 +6814,11 @@ function renderTop(){
   }
   const d=Math.floor(W.t/86400), hh=Math.floor(W.t%86400/3600), mm=Math.floor(W.t%3600/60);
   $("#daytime").textContent="д."+(d+1)+" "+String(hh).padStart(2,"0")+":"+String(mm).padStart(2,"0");
+  // В САМОМ КОНЦЕ, не сразу после innerHTML: crest-name/crest-power ещё
+  // не обновлены выше по функции на момент первого вызова — #crest мерялся
+  // бы по УСТАРЕВШЕЙ ширине (плейсхолдер "Безымянный лорд" вместо ника),
+  // и после первой же смены ника отступы бы разъехались до следующего тика.
+  positionPurse();
 }
 
 /* ---- Картуш: что выбрано на карте. Ник/уровень ратуши у каждого замка
@@ -7088,21 +7168,32 @@ function mpRenderCityMap(){
 // разница с renderBrigades(p): время берётся из Date.now()/1000 (реальные
 // секунды сервера), не из W.t одиночки — та же оговорка, что и у
 // mpCellPanelHtml (queued.t1-Date.now()/1000) чуть ниже по файлу.
+// Вынесено ради mpRenderBrigadesWorld — тот же приём, что и
+// mpFieldArmyCellHtml/brigadeSlotCellHtml (одиночка) ниже/выше по файлу.
+function mpBrigadeSlotCellHtml(q,p,nowSec){
+  if(!q) return "<div class='slotcell empty' title='Бригада свободна'><img src='images/ui/icon-free.png'></div>";
+  const f=(nowSec-q.t0)/Math.max(1,q.t1-q.t0);
+  const idx=cityCellIndexFor(q.b,q.plot);
+  return "<div class='slotcell' data-mpcell='"+idx+"' "+
+     "title='"+buildingName(q.b,p)+" — готово через "+fmtDur(q.t1-nowSec)+"'>"+
+     "<img src='images/ui/icon-build.png'><span class='timer'>"+fmtDur(q.t1-nowSec)+"</span>"+
+     "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
+}
 function mpRenderBrigades(){
   const p=mpCityShim(), st=mpState.player.state, nowSec=Date.now()/1000;
-  let h="<div id='brigades'>";
-  st.queues.forEach(q=>{
-    if(q){
-      const f=(nowSec-q.t0)/Math.max(1,q.t1-q.t0);
-      const idx=cityCellIndexFor(q.b,q.plot);
-      h+="<div class='slotcell' data-mpcell='"+idx+"' "+
-         "title='"+buildingName(q.b,p)+" — готово через "+fmtDur(q.t1-nowSec)+"'>"+
-         "<img src='images/ui/icon-build.png'><span class='timer'>"+fmtDur(q.t1-nowSec)+"</span>"+
-         "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
-    } else h+="<div class='slotcell empty' title='Бригада свободна'><img src='images/ui/icon-free.png'></div>";
-  });
-  h+="</div>";
-  return h;
+  return "<div id='brigades'>"+st.queues.map(q=>mpBrigadeSlotCellHtml(q,p,nowSec)).join("")+"</div>";
+}
+// Та же панель, что и mpRenderBrigades, но поверх 3D-мира (#brigades-world,
+// зеркально mpRenderFieldArmyWorld) — автор: «странно будет, что в городе
+// они есть, а на мире их нет». Тикает из mpRerender() (у общего мира MP
+// нет своего кадрового цикла), как и mpRenderFieldArmyWorld.
+let lastMpBrigadesWorld="";
+function mpRenderBrigadesWorld(){
+  const el=$("#brigades-world"); if(!el) return;
+  if(!mpState.player) return;
+  const p=mpCityShim(), st=mpState.player.state, nowSec=Date.now()/1000;
+  const h=st.queues.map(q=>mpBrigadeSlotCellHtml(q,p,nowSec)).join("");
+  if(h!==lastMpBrigadesWorld){ lastMpBrigadesWorld=h; el.innerHTML=h; }
 }
 // Отряды в поле общего мира — тот же #fieldarmy/.slotcell, что и в
 // одиночке (renderFieldArmy, index.html:foCity), справа от карты, зеркально
@@ -8545,25 +8636,39 @@ function mpRenderTop(){
       av.style.display="none"; if(ring) ring.style.display="none"; if(mark) mark.style.display="";
     }
   }
+  // В КОНЦЕ — тот же резон, что и у одиночного renderTop(): #crest должен
+  // быть уже в финальном виде (ник/мощь) на момент замера ширины.
+  positionPurse();
 }
 function cityCellIndexFor(bk,plot){
   const key = plot==null ? null : plot;
   return CITY_CELLS.findIndex(c=>c.bk===bk && (c.pl==null?null:c.pl)===key);
 }
+// Вынесено из renderBrigades ради renderBrigadesWorld (та же ячейка нужна
+// и на панели поверх 3D-мира) — тот же приём, что и marchSlotCellHtml ниже.
+function brigadeSlotCellHtml(q,p){
+  if(!q) return "<div class='slotcell empty' title='Бригада свободна'><img src='images/ui/icon-free.png'></div>";
+  const f=(W.t-q.t0)/Math.max(1,q.t1-q.t0);
+  const idx=cityCellIndexFor(q.b,q.plot);
+  return "<div class='slotcell' data-act='opencell' data-idx='"+idx+"' "+
+     "title='"+buildingName(q.b,p)+" — готово через "+fmtDur(q.t1-W.t)+"'>"+
+     "<img src='images/ui/icon-build.png'><span class='timer'>"+fmtDur(q.t1-W.t)+"</span>"+
+     "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
+}
 function renderBrigades(p){
-  let h="<div id='brigades'>";
-  p.queues.forEach(q=>{
-    if(q){
-      const f=(W.t-q.t0)/Math.max(1,q.t1-q.t0);
-      const idx=cityCellIndexFor(q.b,q.plot);
-      h+="<div class='slotcell' data-act='opencell' data-idx='"+idx+"' "+
-         "title='"+buildingName(q.b,p)+" — готово через "+fmtDur(q.t1-W.t)+"'>"+
-         "<img src='images/ui/icon-build.png'><span class='timer'>"+fmtDur(q.t1-W.t)+"</span>"+
-         "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
-    } else h+="<div class='slotcell empty' title='Бригада свободна'><img src='images/ui/icon-free.png'></div>";
-  });
-  h+="</div>";
-  return h;
+  return "<div id='brigades'>"+p.queues.map(q=>brigadeSlotCellHtml(q,p)).join("")+"</div>";
+}
+// Та же панель, что и renderBrigades, но поверх 3D-мира (#brigades-world,
+// зеркально renderFieldArmyWorld слева) — автор попросил: «странно будет,
+// что в городе они есть, а на мире их нет». Тикает из frame(), как и
+// renderFieldArmyWorld, не при каждой перерисовке #folio (панель живёт вне
+// #ledger, который в режиме "Мир" целиком скрыт).
+let lastBrigadesWorld="";
+function renderBrigadesWorld(){
+  const el=$("#brigades-world"); if(!el) return;
+  const p=me();
+  const h=p.queues.map(q=>brigadeSlotCellHtml(q,p)).join("");
+  if(h!==lastBrigadesWorld){ lastBrigadesWorld=h; el.innerHTML=h; }
 }
 // act — "marchinfo" (карточка города: клик просто показывает текстовый
 // герольд, см. handleAct) или "followmarch" (панель поверх 3D-мира: клик
@@ -10244,6 +10349,22 @@ function handleAct(e){
 }
 $("#folio").addEventListener("click",handleAct);
 $("#fieldarmy-world").addEventListener("click",handleAct);
+$("#brigades-world").addEventListener("click",handleAct);
+// positionPurse() внутри renderTop/mpRenderTop меряет #crest синхронно в
+// момент отрисовки — но сам #crest может дорисоваться АСИНХРОННО чуть позже
+// (шрифт @font-face догружается уже после первого кадра и меняет метрики
+// текста ника/мощи, из-за чего измеренная ширина герба на пару кадров шире
+// настоящей — плашка ресурсов уезжает вправо мимо расчётного центра).
+// ResizeObserver подстраховывает: как только герб фактически меняет размер
+// (шрифт догрузился, сменился ник, выросла мощь на разряд), плашка сама
+// пересчитывает центр — без этого рассинхрон держался бы до ближайшего
+// планового renderTop()/mpRerender() (до секунды, заметный "скачок").
+// Второй наблюдатель — за самой плашкой: #amber-badge встаёт под ней
+// (см. positionPurse), поэтому если высота .purse меняется сама по себе
+// (пропала/появилась .rate при пересечении media-запроса 900px), янтарь
+// должен пересчитаться следом, а не просто герб.
+new ResizeObserver(positionPurse).observe($("#crest"));
+new ResizeObserver(positionPurse).observe($("#purse"));
 $("#cartouche").addEventListener("click",handleAct);
 // Фаза 16 — аварийный откат в город. Зовётся из движка (engine/src/main.ts,
 // см. её же комментарий у device.lost) через window.parent.forceCityView(),
@@ -11141,7 +11262,7 @@ function frame(){
     return;
   }
   if(dt>0){ advanceTo(W.t+dt*tempo); sinceSave+=Math.min(dt,3600); sinceUi+=dt }
-  if(sinceUi>1.0){ sinceUi=0; renderTop(); renderFolio(); renderCartouche(); refreshOpenModal(); renderFieldArmyWorld() }
+  if(sinceUi>1.0){ sinceUi=0; renderTop(); renderFolio(); renderCartouche(); refreshOpenModal(); renderFieldArmyWorld(); renderBrigadesWorld() }
   if(sinceSave>20){ sinceSave=0; save() }
   requestAnimationFrame(frame);
 }
@@ -11563,6 +11684,10 @@ function mpRerender(){
   // тикающая из её собственного кадрового цикла) — у общего мира кадрового
   // цикла нет, опрос/mpRerender() и есть её тик.
   if(!SP_UNLOCKED) mpRenderFieldArmyWorld();
+  // Тот же довод, что чуть выше для маршей: «странно будет, что в городе
+  // они есть, а на мире их нет» — теперь и бригады строительства видны
+  // поверх 3D-мира (#brigades-world), не только на вкладке "Город".
+  if(!SP_UNLOCKED) mpRenderBrigadesWorld();
   // Фаза 17, кусочек 1 — тот же довод для открытого меню здания
   // (mpOpenBuildingModal): постройка могла завершиться, набор/лечение/ковка
   // подойти к концу, ресурсы истратиться — без этого кнопка "Улучшить"
