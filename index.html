@@ -398,8 +398,8 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 /* Тот же пергамент, что и у почты/модалки здания (пользователь явно
    попросил: "тот фон, что используется у нас в письмах, страничках
    зданий") — переопределяем ТОЛЬКО #cartouche, не сам .plate целиком:
-   .plate также рисует #key (легенда карты) и #tools (кнопки зума), их
-   светлый пергамент не просили и не нужно — это разные по духу элементы
+   .plate также рисует #key (легенда карты), её светлый пергамент не
+   просили и не нужно — это разные по духу элементы
    (лёгкие оверлей-кнопки поверх карты, не "документ"). Раз фон стал
    светлым — все внутренние цвета текста (были подобраны под тёмный
    .plate) переопределены здесь же на тёмные чернила, тот же приём и те же
@@ -454,16 +454,6 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #cartouche .seal:hover:not(:disabled){background:rgba(90,69,48,.22);color:#2c2114;border-color:#6b5230}
 #cartouche .seal.blood{border-color:#8a2f22;color:#8a2f22;background:rgba(138,47,34,.08)}
 #cartouche .seal.blood:hover{background:rgba(138,47,34,.18);color:#6b1f16;border-color:#6b1f16}
-
-/* bottom:92px, не 14px — #menu-btn (70×70, z-index:20) сидит в том же углу
-   (right:14px;bottom:14px) и перекрывал нижние две кнопки (t-out/t-home),
-   те были некликабельны ещё до 3D — этого никто не замечал, пока сама
-   панель #tools была не видна из-за z-index ниже iframe'а (см. .plate). */
-#tools{right:14px;bottom:92px;display:flex;flex-direction:column;gap:1px;overflow:hidden}
-#tools button{width:36px;height:34px;font-size:15px;color:var(--gilt);
-  border-bottom:1px solid var(--rule-soft);transition:background .15s,color .15s}
-#tools button:last-child{border-bottom:none}
-#tools button:hover{background:rgba(194,153,60,.14);color:var(--gilt-hi)}
 
 /* Отряды в поле поверх 3D-мира — раньше видны были только на вкладке
    "Город" (renderFieldArmy внутри #folio), приходилось переключаться туда
@@ -578,7 +568,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    памяти, см. комментарий у SP_UNLOCKED — просто невидима, не запускает
    рендер-цикл), но #app теперь НЕ спрятан целиком (Фаза 14, кусочек 1) —
    при .view-world (класс проставляется в start()) #app показывает ровно
-   #chart: объёмная карта (#world3d) + инструменты (#tools) + подпись
+   #chart: объёмная карта (#world3d) + подпись
    тапа (#cartouche) — та же самая связка, что уже была подключена к
    общему миру в Фазе 12, просто до сих пор не видна была за #app{display:
    none}. #ledger (одиночные вкладки Город/Войско/Генерал/Инвентарь) при
@@ -1415,11 +1405,6 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
         <span class="kr"><img class="sh" src="images/ui/Undead.png" alt="" style="width:11px;height:17px;object-fit:contain">Нежить</span>
       </div>
       <div id="cartouche" class="plate"></div>
-      <div id="tools" class="plate">
-        <button id="t-in" title="Приблизить">+</button>
-        <button id="t-out" title="Отдалить">&minus;</button>
-        <button id="t-home" title="К своему городу">&#9884;</button>
-      </div>
       <div id="brigades-world"></div>
       <div id="fieldarmy-world"></div>
       <iframe id="world3d" title="Мир"></iframe>
@@ -6617,6 +6602,13 @@ async function load(){
    мягкая размывка вместо пиксельных квадратов, и это дёшево.
    ========================================================================= */
 const $=s=>document.querySelector(s);
+// Тот же довод, что у isHidden() в engine/src/main.ts (см. её комментарий):
+// пока открыта вкладка "Город", панели поверх 3D-мира (#brigades-world/
+// #fieldarmy-world) просто не видны (#app.view-city #chart{display:none}),
+// но без этой проверки render*World() всё равно каждый тик пересчитывали
+// бы список маршей/бригад и диффили HTML впустую — лишняя работа в кадре
+// перехода Город↔Мир, тот же класс лага, что уже устранён внутри движка.
+const inWorldView=()=>$("#app").classList.contains("view-world");
 const me=()=>W.players[0];
 const RU=n=>Math.round(n).toLocaleString("ru-RU");
 // Полоса догона мира после долгого отсутствия (см. advanceToAnimated).
@@ -6687,6 +6679,27 @@ function fmtDur(s){ s=Math.max(0,Math.round(s));
   if(h) return h+" ч "+m+" мин";
   if(m) return m+" мин "+x+" с";
   return x+" с" }
+// Автор: вкладки меню "требуется много времени, чтобы загружаться... даже
+// при прокрутке" — вкладки вроде Войска/Почты содержат fmtDur() прямо в
+// разметке ("готово через 3 мин 42 с"), а эта строка меняется каждую
+// секунду по определению. Диф-кэш (lastMenuBody и т.п.) сравнивает готовый
+// HTML целиком — значит с такой строкой внутри он НИКОГДА не совпадает,
+// и вся вкладка пересобирается innerHTML'ом заново каждый тик: прокрутка
+// сбрасывается, картинки перерисовываются — то самое "грузит заново".
+// stripTimers вырезает именно эти четыре формы fmtDur() ПЕРЕД сравнением
+// (не из того, что реально уходит в DOM — только из копии для diff'а), тот
+// же принцип, что уже применяется к healCarouselOpen/trainCtx чуть ниже по
+// файлу (фингерпринт по составу, не по посчитанным цифрам) — просто
+// раньше не был доведён до самих вкладок меню. Секундные цифры внутри уже
+// открытой вкладки перестают тикать сами по себе (обновятся при следующем
+// СТРУКТУРНОМ изменении — новом письме, новом уровне и т.п., как и раньше
+// у healCarouselOpen) — тот же осознанный компромисс: автор явно попросил
+// в первую очередь убрать сбросы прокрутки/перезагрузки, а не секундную
+// точность таймеров внутри уже открытой вкладки.
+// (?![а-яёА-ЯЁ]) вместо \b на конце — \b в JS без /u определяется через \w,
+// а \w это только ASCII-буквы: кириллица для него "не буква", и \b между
+// "с" и пробелом/точкой попросту не сработал бы так, как ожидается.
+const stripTimers=h=>h.replace(/\d+ д \d+ ч(?![а-яёА-ЯЁ])|\d+ ч \d+ мин(?![а-яёА-ЯЁ])|\d+ мин \d+ с(?![а-яёА-ЯЁ])|\d+ с(?![а-яёА-ЯЁ])/g,"");
 
 const TINCT={human:"#d9b14b",dwarf:"#bb5730",elf:"#4c8d5e",undead:"#7d56a4"};
 const RSHADE={food:"#83a049",wood:"#9c6b3a",stone:"#8791a0",gold:"#d6ae40"};
@@ -7172,6 +7185,7 @@ function mpRenderBrigades(){
 // нет своего кадрового цикла), как и mpRenderFieldArmyWorld.
 let lastMpBrigadesWorld="";
 function mpRenderBrigadesWorld(){
+  if(!inWorldView()) return;
   const el=$("#brigades-world"); if(!el) return;
   if(!mpState.player) return;
   const p=mpCityShim(), st=mpState.player.state, nowSec=Date.now()/1000;
@@ -7228,6 +7242,7 @@ function mpRenderFieldArmy(){
 // есть её "тик".
 let lastMpFieldArmyWorld="";
 function mpRenderFieldArmyWorld(){
+  if(!inWorldView()) return;
   const el=$("#fieldarmy-world"); if(!el) return;
   const nowSec=Date.now()/1000;
   const h=mpState.marches.map(m=>mpFieldArmyCellHtml(m,nowSec,"followmarch")).join("");
@@ -8648,6 +8663,7 @@ function renderBrigades(p){
 // #ledger, который в режиме "Мир" целиком скрыт).
 let lastBrigadesWorld="";
 function renderBrigadesWorld(){
+  if(!inWorldView()) return;
   const el=$("#brigades-world"); if(!el) return;
   const p=me();
   const h=p.queues.map(q=>brigadeSlotCellHtml(q,p)).join("");
@@ -8677,6 +8693,7 @@ function renderFieldArmy(p){
 // который в режиме "Мир" целиком скрыт (см. #app.view-world #ledger).
 let lastFieldArmyWorld="";
 function renderFieldArmyWorld(){
+  if(!inWorldView()) return;
   const el=$("#fieldarmy-world"); if(!el) return;
   const p=me();
   const mine=W.marches.filter(m=>m.pid===p.id);
@@ -10798,7 +10815,10 @@ function refreshOpenModal(){
   if(menu.classList.contains("open") && !typingInModal){
     const t=menu.dataset.tab;
     const html = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): t==="mp"?foMultiplayer(!SP_UNLOCKED): foInv();
-    if(html!==lastMenuBody){                       // не перерисовываем зря (иначе моргает аватар)
+    // stripTimers — иначе не перерисовываем зря никогда бы не срабатывало:
+    // "готово через N с" внутри html меняется каждую секунду сама по себе
+    // (см. её комментарий) — сброс прокрутки на ровном месте.
+    if(stripTimers(html)!==stripTimers(lastMenuBody)){ // не перерисовываем зря (иначе моргает аватар)
       lastMenuBody=html;
       $("#menu-modal-body").innerHTML = html;
     }
@@ -11083,7 +11103,7 @@ function mpWorldSnapshot(){
 // далеко. Без явного перевода камеры игрок увидел бы пустую карту: все
 // сущности общего мира просто не попали бы в радиус выборки вокруг
 // устаревшего центра. window.cam.tx/tz — тот же готовый мост "к своему
-// городу", что уже использует кнопка "Домой" ($("#t-home") ниже), просто
+// городу", что уже использует клавиша "H" (goHome() ниже), просто
 // нацеленный на настоящую столицу общего мира, а не на me() из одиночки.
 // Если "Мир" ещё не открывали вовсе (iframe без src, world3dWin()===null)
 // — трогать нечего, самый первый рендер и так возьмёт верную точку через
@@ -11173,22 +11193,25 @@ function mpFocusWorld3D(){
     if(succeeded || tries>50){ clearInterval(iv); if(!succeeded) mpHideLoading(); }
   },100);
 }
-$("#t-in").onclick=()=>zoomAt(1.35);
-$("#t-out").onclick=()=>zoomAt(1/1.35);
+// Автор попросил полностью убрать плашку зума +/- и кнопку "домой"
+// (#tools) поверх 3D-мира — щипок/колесо уже зумят (см. camera.ts), а
+// "домой" остаётся клавишей H (ниже), просто без видимой кнопки. Раньше
+// это был $("#t-home").onclick — вынесено в обычную функцию, чтобы
+// клавиатурный шорткат мог звать её напрямую, а не искать удалённый
+// DOM-узел через $("#t-home").click().
 // Фаза 14, кусочек 1 — при .mp-gated "к своему городу" должно вести на
 // столицу ОБЩЕГО мира (mpState.player), а не на me() (столицу одиночки,
 // невидимой партии) — та же путаница, которую уже решала mpFocusWorld3D()
 // для случая "открыл общий мир, пока 3D уже смотрел на одиночку"; здесь
-// тот же самый сценарий, просто по клику на саму кнопку, а не один раз
-// при входе.
-$("#t-home").onclick=()=>{
+// тот же самый сценарий, просто по нажатию клавиши, а не один раз при входе.
+function goHome(){
   if(!SP_UNLOCKED){ mpFocusWorld3D(); return; }
   const p=me();
   centerOn(p.x,p.y);
   const w=world3dWin();
   if(w){ w.cam.dist=40; w.cam.pitch=0.5; }   // облёт пошире, не тот же, что у обычного тапа
   renderCartoucheFor(p.x,p.y);
-};
+}
 $("#tempo").onchange=e=>{ tempo=+e.target.value };
 
 /* Клавиши */
@@ -11197,7 +11220,7 @@ window.addEventListener("keydown",e=>{
   if(e.key==="Escape") closeScroll();
   else if(e.key==="+"||e.key==="=") zoomAt(1.3);
   else if(e.key==="-") zoomAt(1/1.3);
-  else if(e.key.toLowerCase()==="h"||e.key==="р") $("#t-home").click();
+  else if(e.key.toLowerCase()==="h"||e.key==="р") goHome();
   else {
     const n=["city","army","gen","world","log"][+e.key-1];
     if(n){ tab=n; syncRibbons(); lastFolio=""; renderFolio() }
@@ -11651,7 +11674,13 @@ function mpRerender(){
   const showsMp = menuTab==="mp" || (!SP_UNLOCKED && (menuTab==="army"||menuTab==="gen"||menuTab==="inv"||menuTab==="mail"||menuTab==="profile"));
   if($("#menu-modal").classList.contains("open") && showsMp){
     const html=mpMenuBodyHtml(menuTab);
-    if(html!==lastMenuBody){ lastMenuBody=html; $("#menu-modal-body").innerHTML=html; }
+    // stripTimers (см. её комментарий у fmtDur) — без него этот диф не
+    // срабатывал НИКОГДА: mpRerender() зовётся раз в секунду (см. frame()),
+    // а "готово через N с" в html меняется каждую секунду сама по себе —
+    // вкладка ПОЛНОСТЬЮ пересобиралась innerHTML'ом каждый тик, прокрутка
+    // сбрасывалась к началу. Автор сообщил именно это: "требуется много
+    // времени, чтобы загружаться... даже при прокрутке".
+    if(stripTimers(html)!==stripTimers(lastMenuBody)){ lastMenuBody=html; $("#menu-modal-body").innerHTML=html; }
   }
   // Фаза 14, кусочек 2 — держим 2D-карту города (#folio) свежей на каждый
   // опрос/действие, не только пока открыта модалка "Общий мир": пользователь
@@ -12677,8 +12706,8 @@ function foMultiplayer(embedded, only){
     mpShowLoading();
     // Фаза 14, кусочек 1 — объёмная карта общего мира видна и в
     // gate-режиме, не только при ?sp=1. #app.view-world прячет #ledger
-    // (одиночные вкладки) и показывает #chart (#world3d/#tools/
-    // #cartouche) — тот же переключатель классов, что и toggleView(),
+    // (одиночные вкладки) и показывает #chart (#world3d/#cartouche) —
+    // тот же переключатель классов, что и toggleView(),
     // просто выставлен сразу на "мир" по умолчанию. #view-toggle (кусочек 2)
     // умеет переключить на .view-city — там теперь mpRenderCityMap() (см.
     // mpRenderFolio() ниже), а не пустой #ledger, как было раньше.

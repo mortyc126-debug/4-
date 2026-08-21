@@ -10,7 +10,7 @@
 import { createWorld, addEntity, addComponent, removeEntity, query } from "bitecs";
 import { createRenderer, type MarkerEntity, type DecorEntity } from "./renderer";
 import { buildTerrainPatch } from "./terrainMesh";
-import { heightAt, HMAX, hash2, isWater, SEED, registerFlattenSite } from "./terrain";
+import { heightAt, HMAX, hash2, isWater, SEED, registerFlattenSite, WORLD_HALF } from "./terrain";
 import { PINE, LEAF, GRASS_TONES, BUSH_TONES, ROCK_TONES } from "./decorMesh";
 import { mul, persp, look, modelMatrix, transformPoint, sub, cross, norm, type Vec3, type Mat4 } from "./mat4";
 import { attachOrbitControls, type OrbitCamera } from "./camera";
@@ -942,9 +942,11 @@ async function main() {
   function goToCoords() {
     const x = parseFloat(coordX.value), y = parseFloat(coordY.value);
     if (!isFinite(x) || !isFinite(y)) return;
-    cam.target[0] = x;
-    cam.target[2] = y;
-    cam.target[1] = heightAt(x, y) * HMAX + 2;
+    // Тот же клэмп по границе мира, что и у ручной панорамы (camera.ts,
+    // panTargetBy) — иначе игрок вводом координат обходил бы ограничение.
+    cam.target[0] = Math.max(-WORLD_HALF, Math.min(WORLD_HALF, x));
+    cam.target[2] = Math.max(-WORLD_HALF, Math.min(WORLD_HALF, y));
+    cam.target[1] = heightAt(cam.target[0], cam.target[2]) * HMAX + 2;
     controls.stopAuto();
     coordDirty = false;
   }
@@ -1097,6 +1099,10 @@ async function main() {
   // heightAt(), затем бисекция на найденном отрезке для точности — тот же
   // общий приём, что и везде в этом проекте для heightfield-рейкастов.
   const CAM_FOVY = 0.72;
+  // Запас над рельефом для eye (см. draw()) — не 0: даже вплотную к
+  // поверхности ближняя плоскость (persp(...,0.5,...) — near=0.5) успевает
+  // резать землю на неровностях в паре мировых единиц перед камерой.
+  const EYE_GROUND_CLEARANCE = 2;
   const GROUND_RAY_STEP = 2, GROUND_RAY_MAX = 400, GROUND_RAY_BISECT_ITERS = 12;
   function groundRayT(origin: Vec3, dir: Vec3): { t: number; x: number; z: number } | null {
     let prevT = 0;
@@ -1543,6 +1549,18 @@ async function main() {
       cam.target[1] + Math.sin(cam.pitch) * cam.dist,
       cam.target[2] + Math.cos(cam.yaw) * Math.cos(cam.pitch) * cam.dist,
     ];
+    // Автор: «камера не вылетала в горы или землю». cam.target сам подтянут
+    // к рельефу (см. panTargetBy/jumpToMarchFor и т.п.), но eye — чисто
+    // геометрическое смещение от target по yaw/pitch/dist, ничем не
+    // проверенное: если между целью и камерой оказывается гора выше самой
+    // камеры (низкий pitch у подножия хребта, или орбита заводит камеру за
+    // склон), eye оказывается ПОД поверхностью рельефа в своей же точке —
+    // камера "внутри" горы, ближняя плоскость режет её изнутри. Раз рельеф
+    // — высотная карта без нависаний, достаточно подпереть eye по вертикали
+    // высотой рельефа в точке (eye[0], eye[2]) — не трогая yaw/pitch/dist,
+    // которыми управляет игрок, только фактическое положение над землёй.
+    const eyeFloor = heightAt(eye[0], eye[2]) * HMAX + EYE_GROUND_CLEARANCE;
+    if (eye[1] < eyeFloor) eye[1] = eyeFloor;
     const aspect = canvas.width / Math.max(1, canvas.height);
     const vp = mul(persp(CAM_FOVY, aspect, 0.5, 300), look(eye, cam.target, [0, 1, 0]));
     currentVP = vp;
