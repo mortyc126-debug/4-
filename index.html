@@ -1296,15 +1296,34 @@ body.mp-placing #place-toolbar{display:flex}
    mpPlaceDragMove. Подсветка — только прямоугольник footprint, не вся
    сетка целиком (решение по производительности на мобильных, см. план) —
    сам прямоугольник уже честно показывает, влезет здание или нет. */
+/* Фаза 6 — плавный "магнитный" довод до соседней клетки: mpUpdatePlaceDom
+   двигает left/top прямой правкой style на ТОМ ЖЕ узле (см. её заголовок),
+   поэтому transition тут реально анимирует, а не пропадает впустую, как
+   пропал бы у пересоздаваемых на каждый рендер .cbuild ниже. Коротко
+   (.09s) — это подсказка "клетка защёлкнулась", а не задержка отклика. */
 #place-highlight{position:absolute;z-index:5;box-sizing:border-box;border-radius:3px;
-  pointer-events:none}
+  pointer-events:none;transition:left .09s ease-out,top .09s ease-out,
+  width .09s ease-out,height .09s ease-out}
 #place-highlight.ok{background:rgba(70,190,70,.32);border:2px solid rgba(100,230,100,.9)}
 #place-highlight.bad{background:rgba(200,60,50,.32);border:2px solid rgba(230,80,70,.9)}
 .pghost{position:absolute;z-index:6;cursor:grab;opacity:.88;touch-action:none;
-  -webkit-tap-highlight-color:transparent}
+  -webkit-tap-highlight-color:transparent;transition:left .09s ease-out,top .09s ease-out}
 .pghost:active{cursor:grabbing}
 .pghost img{width:100%;height:100%;object-fit:contain;pointer-events:none;
   filter:drop-shadow(0 4px 8px rgba(0,0,0,.75))}
+/* "Приземление" — здание только что построено/перенесено (mpJustPlaced,
+   см. её заголовок в JS): свежий .cbuild-узел пересоздаётся innerHTML'ом
+   каждый рендер, поэтому transition тут бесполезен (не с чего анимировать
+   "от") — вместо него keyframe-анимация появления, лёгкий перехлёст на
+   финале (cubic-bezier с "прыжком" за 1) — тот же приём, что и в мобильных
+   играх для "здание встало на место". */
+@keyframes cbuildLand{from{opacity:0;transform:scale(.65)}to{opacity:1;transform:scale(1)}}
+.cbuild.landing{animation:cbuildLand .38s cubic-bezier(.34,1.56,.64,1)}
+/* Тактильный отклик на кнопках постройки — тот же приём, что .seal:active
+   (transform:translateY), но круглым кнопкам естественнее лёгкое сжатие. */
+.place-btn:active:not(:disabled){transform:scale(.9)}
+#mp-build-fab:active{transform:translateX(-50%) scale(.9)}
+.picker-item:not(.locked):active{transform:scale(.96)}
 
 /* Список построек (mpBuildPickerHtml, #mp-build-fab) — сетка из тех же
    картинок/имён, что и в самой карточке здания (#bm-art/buildingName),
@@ -7524,7 +7543,12 @@ function mpRenderFreeformCity(){
     const fp=BUILDINGS[e.b]&&BUILDINGS[e.b].footprint; if(!fp) return;
     const lv=(e.plot!=null?p.b[e.b][e.plot]:p.b[e.b])||0;
     const r=cityGridCellToPct(e.gx,e.gy,fp.w,fp.h);
-    h+="<div class='cbuild built"+(mpLayoutSel===li?" sel":"")+"' data-layout='"+li+"' "+
+    // "Приземление" (Фаза 6) — эта же запись только что была подтверждена
+    // (см. mpJustPlaced в mpDoPlaceConfirm): проигрываем анимацию появления
+    // ровно один раз, не на каждый рендер подряд.
+    const landing=mpJustPlaced && mpJustPlaced.b===e.b && mpJustPlaced.plot===e.plot &&
+      mpJustPlaced.gx===e.gx && mpJustPlaced.gy===e.gy && (Date.now()-mpJustPlaced.at)<LAND_MS;
+    h+="<div class='cbuild built"+(mpLayoutSel===li?" sel":"")+(landing?" landing":"")+"' data-layout='"+li+"' "+
        "style='left:"+r.left+"%;top:"+r.top+"%;width:"+r.w+"%;height:"+r.h+"%'>"+
        "<div class='shape'></div>"+
        "<img class='bimg' src='"+cityCellImg({bk:e.b,pl:e.plot})+"'><span class='lvl'>"+lv+"</span>"+
@@ -9020,10 +9044,23 @@ function mpCancelPlace(){
   $("#mp-build-fab").style.display="";
   mpRenderFolio();
 }
+// Фаза 6 — {b,plot,gx,gy,at} свежепоставленного/перенесённого здания или
+// null: mpRenderFreeformCity() навешивает .cbuild.landing (см. её CSS-
+// keyframe) на маркер с ТЕМИ ЖЕ b/plot/gx/gy, пока не прошло LAND_MS —
+// разовая анимация "встало на место" после подтверждения, не постоянный
+// признак. Само значение стирается таймером, чтобы случайный более поздний
+// рендер (тик опроса и т.п.) не проиграл её ещё раз впустую.
+let mpJustPlaced=null;
+const LAND_MS=380; // = длительность @keyframes cbuildLand
 async function mpDoPlaceConfirm(){
   if(!mpPlaceCtx || !mpPlaceCtx.valid || mpState.loading) return;
   const {mode,b,plot,gx,gy}=mpPlaceCtx;
   mpState.loading=true; mpState.err=null; mpRerender();
+  // Фаза 6 — визуально блокируем галочку на время запроса (а не только
+  // логически, через ранний return выше) — иначе кнопка на вид оставалась
+  // живой всё время round-trip'а до сервера, хотя повторный тап по ней уже
+  // ничего не делал.
+  $("#place-confirm").disabled=true;
   try{
     const fn=mode==="relocate"?"mp-relocate-building":"mp-build";
     await mpCall(fn, plot==null?{bk:b,gx,gy}:{bk:b,plot,gx,gy});
@@ -9032,7 +9069,12 @@ async function mpDoPlaceConfirm(){
     document.body.classList.remove("mp-placing");
     $("#mp-build-fab").style.display="";
     herald(mode==="relocate"?"Перенесено.":"Заложено.");
-  }catch(e){ mpState.err=e.message; herald(e.message); }
+    mpJustPlaced={b,plot,gx,gy,at:Date.now()};
+    setTimeout(()=>{ mpJustPlaced=null; },LAND_MS);
+  }catch(e){
+    mpState.err=e.message; herald(e.message);
+    mpUpdatePlaceDom(); // ошибка — остаёмся в размещении, вернуть галочку по valid
+  }
   finally{ mpState.loading=false; mpRerender(); }
 }
 // Курсор/палец → клетка сетки: тот же перевод %, что и cityGridCellToPct
