@@ -891,18 +891,21 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    "Разграблено: …", .mail-note вне .mail-res-row) остаются на базовом
    размере выше — там несколько чипов подряд внутри предложения, раздувать
    их так же не просили и не стоит. */
-.mail-res-row .res-chip{gap:12px;font-size:26px;font-weight:bold;margin-right:0}
+.mail-res-row .res-chip{gap:10px;font-size:22px;font-weight:bold;margin-right:0}
 /* Автор проверил вживую: даже втрое крупнее (см. выше) с contain внутри
    круга оставался видимый зазор — те же самые небольшие прозрачные поля
    исходных res-*.png (content bbox 87-99%, см. коммит "крупнее иконки"),
    просто увеличенные вместе с картинкой. overflow:hidden на самом .ico
    (тут это безопасно — в отличие от .icowrap-mask в списке письма, тут
    нет ::after-значка "непрочитано" сбоку, который бы обрезался) плюс
-   картинка КРУПНЕЕ круга (84px вместо 74px доступного места, object-fit:
-   cover вместо contain) — поля обрезаются краем медальона, монета/пирамида
-   ресурса выходит на всю иконку без кольца фона вокруг.*/
-.mail-res-row .res-chip .ico{width:78px;height:78px;border-width:2px;overflow:hidden}
-.mail-res-row .res-chip img{width:84px;height:84px;object-fit:cover}
+   картинка КРУПНЕЕ круга (object-fit:cover вместо contain) — поля
+   обрезаются краем медальона, монета/пирамида ресурса выходит на всю
+   иконку без кольца фона вокруг. Зазор пропал, но получившийся размер
+   автору показался чуть избыточным — минус 25% (78→59 / 84→63) от
+   исходной "втрое крупнее" версии, то же соотношение картинка/круг
+   (~1.14×) для того же среза полей. */
+.mail-res-row .res-chip .ico{width:59px;height:59px;border-width:2px;overflow:hidden}
+.mail-res-row .res-chip img{width:63px;height:63px;object-fit:cover}
 /* Координаты места (добыча/бой за точку/лагерь) — раньше просто хвостом
    текста ("· точка -22·12"), автор попросил вынести их первыми, по центру
    строки и кликабельными (переносит камеру 3D к этому месту, см. mpGoToLoc
