@@ -1740,14 +1740,30 @@ const BANDIT_XP=[100,120,140,160,180,200,220,240,260,300,330,360,390,420,450,480
 // и эффект вложенных талантов в bonuses() (Фаза 10, кусочек 3, см. bonuses()
 // в этом же файле) закрыты; addXp тут по-прежнему только копит очки в
 // p.gen.pts — трата отдельным действием, addXp её не делает и не обязана.
+// Возвращает новый уровень генерала, если за этот вызов он хоть раз
+// повысился, иначе null — зеркало pushMail({cat:"personal",kind:"note",
+// title:"Генерал повышен",...}) в addXp() одиночки (index.html:5503-5514).
+// Раньше этот сигнал терялся: сервер честно копил pts/lv, но письма о
+// повышении не было вовсе (автор в одиночке видел "Генерал достиг N
+// уровня", в общем мире — молчание) — оба вызывающих места (после победы в
+// PvP и после победы над лагерем варваров) теперь заводят kind:"note".
 function addXp(p, xp) {
   if (!p.gen) p.gen = { lv: 1, xp: 0, pts: 5, tal: {}, id: null, away: null }; // самоисцеление легаси-записей
   p.gen.xp = (p.gen.xp || 0) + xp;
   const cap = Math.min(60, epochOf(p.b && p.b.hall) * 12);
+  let leveledTo = null;
   while (p.gen.xp >= genXpNeed(p.gen.lv) && p.gen.lv < cap) {
     p.gen.xp -= genXpNeed(p.gen.lv);
     p.gen.lv++; p.gen.pts = (p.gen.pts || 0) + 1;
+    leveledTo = p.gen.lv;
   }
+  return leveledTo;
+}
+// Тем же текстом, что и pushMail(...) в одиночке (index.html:5509-5510) —
+// один общий помощник для обоих вызывающих мест ниже.
+function genLevelMailRow(worldId, playerId, lv) {
+  return { world_id: worldId, player_id: playerId, kind: "note",
+    data: { title: "Генерал повышен", body: "Ваш генерал достиг " + lv + " уровня. Доступно новое очко таланта." } };
 }
 function banditArmy(lv) {
   const u = { inf: {}, arc: {}, cav: {}, sie: {} };
@@ -2124,8 +2140,9 @@ async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, no
   // Фаза 10, кусочек 1 — опыт генерала за победу над игроком (только
   // атакующему, зеркало addXp(att,...) в battleCity, index.html:5093 —
   // защитник опыта за отражение штурма не получает, как и в клиенте).
+  let genLeveledTo = null;
   if (state.winner === "att") {
-    addXp(attP, Math.round(200 + (defP.b && defP.b.hall || 0) * 60));
+    genLeveledTo = addXp(attP, Math.round(200 + (defP.b && defP.b.hall || 0) * 60));
     // index.html:5385-5391 battleCity — грабёж склада защитника. syncRes(defP)
     // сначала — иначе грабился бы устаревший снимок с момента последнего
     // ДЕЙСТВИЯ защитника, а не реальный на секунду ЗАВЕРШЕНИЯ боя (не
@@ -2178,6 +2195,7 @@ async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, no
     { world_id: m.world_id, player_id: attRow.id, kind: "battle", data: { role: "attacker", opponent_id: defRow.id, opponent_nick: defRow.nick, ...summary } },
     { world_id: m.world_id, player_id: defRow.id, kind: "battle", data: { role: "defender", opponent_id: attRow.id, opponent_nick: attRow.nick, ...summary } },
   ];
+  if (genLeveledTo != null) mailRows.push(genLevelMailRow(m.world_id, attRow.id, genLeveledTo));
   const { error: mailErr } = await admin.from("mail").insert(mailRows);
   if (mailErr) throw mailErr;
 
@@ -2824,10 +2842,10 @@ async function finalizeRaidBattle(admin, m, attRow, attP, state, nowSec) {
 
   const cellX = m.data && m.data.cell_x, cellY = m.data && m.data.cell_y;
   const campLv = (m.data && m.data.camp_lv) || 1;
-  let carry = {}, tomeDrops = {};
+  let carry = {}, tomeDrops = {}, genLeveledTo = null;
   if (state.winner === "att") {
     carry = banditLoot(campLv);
-    addXp(attP, BANDIT_XP[Math.max(1, Math.min(25, campLv)) - 1]); // Фаза 10, кусочек 1 (25 = CFG.MAX_LEVEL, см. BANDIT_TROOPS выше)
+    genLeveledTo = addXp(attP, BANDIT_XP[Math.max(1, Math.min(25, campLv)) - 1]); // Фаза 10, кусочек 1 (25 = CFG.MAX_LEVEL, см. BANDIT_TROOPS выше)
     // index.html:5074-5077 — книги опыта СВЕРХ обычного addXp выше.
     tomeDrops = bookDrop(campLv * 100);
     if (!attP.tomes) attP.tomes = {};
@@ -2842,7 +2860,7 @@ async function finalizeRaidBattle(admin, m, attRow, attP, state, nowSec) {
     });
   }
 
-  const { error: mailErr } = await admin.from("mail").insert({
+  const raidMailRows = [{
     world_id: m.world_id, player_id: attRow.id, kind: "raid",
     data: {
       camp_lv: campLv, win: state.winner === "att", loot: carry, tomes: tomeDrops,
@@ -2853,7 +2871,9 @@ async function finalizeRaidBattle(admin, m, attRow, attP, state, nowSec) {
       attStart: state.attStartN, attPower: state.attStartPower, campPower: state.defStartPower,
       retreated: !!state.retreated, // Фаза 21 — честное отступление кнопкой, не обычное поражение (см. mp-recall)
     },
-  });
+  }];
+  if (genLeveledTo != null) raidMailRows.push(genLevelMailRow(m.world_id, attRow.id, genLeveledTo));
+  const { error: mailErr } = await admin.from("mail").insert(raidMailRows);
   if (mailErr) throw mailErr;
 
   // index.html:4950-4957 — та же логика, что и в applyMarchArrive выше
