@@ -7110,31 +7110,54 @@ function mpRenderBrigades(){
 // тот же счётчик, что уже показывает список "Отряды в поле" на вкладке
 // Войско) — свободные слоты, в отличие от бригад, не рисуются вовсе: марш
 // либо есть, либо его нет, "пустого похода" как отдельного ресурса, в
-// отличие от пустой бригады, не существует. Клик — тот же лёгкий герольд
-// с текстом, что и в одиночке (marchinfo), НЕ полноценный свиток похода:
-// подробности (бой/раунды/HP-полоски при осаде и бое за точку) уже есть
-// на вкладке Войско, эта иконка — только беглый взгляд с карты города.
+// отличие от пустой бригады, не существует.
+// act — та же развилка, что у одиночного marchSlotCellHtml(m,act) (см. её
+// заголовок): "mpmarchinfo" (карта города — свой обработчик data-mpmarch,
+// лёгкий герольд, читает mpState.marches, НЕ W.marches) или "followmarch"
+// (панель поверх 3D-мира, #fieldarmy-world — автор явно попросил и это:
+// "если в мире кликнуть по иконке, камеру переносит на отряд и она
+// следует за ней"). Для followmarch НАРОЧНО оставлен ТОТ ЖЕ data-act и та
+// же jumpToMarchFor/startFollowMarch, что и у одиночки — движок ищет
+// поход по id в lastMarches, а тот наполняется live-снимком общего мира
+// (mpWorldSnapshot/loadLiveMarches) точно так же, как в одиночке — W.marches;
+// самой jumpToMarchFor всё равно, откуда взялся id, никаких MP-версий
+// заводить не пришлось.
 // state:"siege" — отдельная ветка: во время многотикового боя m.t1 —
 // застрявшее время ПРИХОДА, не время конца боя (см. заголовок "Отряды в
 // поле" внутри foMultiplayer), поэтому вместо таймера/прогресса — просто
 // "Бой".
-function mpFieldArmyCellHtml(m,nowSec){
+function mpFieldArmyCellHtml(m,nowSec,act){
   const sieging=m.state==="siege";
   const st=MARCH_STATE_RU[m.state]||m.state;
+  const hint=act==="followmarch"?" — нажмите, чтобы проследить камерой":"";
   const title=RU(countUnits(m.units))+" воинов · "+st+" · цель "+m.tx+"·"+m.ty
-    +(sieging?"":" · осталось "+fmtDur(Math.max(0,m.t1-nowSec)));
+    +(sieging?"":" · осталось "+fmtDur(Math.max(0,m.t1-nowSec)))+hint;
+  const attrs=act==="followmarch" ? "data-act='followmarch' data-m='"+m.id+"'" : "data-mpmarch='"+m.id+"'";
   if(sieging){
-    return "<div class='slotcell' data-mpmarch='"+m.id+"' title='"+title+"'>"+
+    return "<div class='slotcell' "+attrs+" title='"+title+"'>"+
        "<img src='images/ui/icon-march.png'><span class='timer'>Бой</span></div>";
   }
   const f=Math.max(0,Math.min(1,(nowSec-m.t0)/Math.max(1,m.t1-m.t0)));
-  return "<div class='slotcell' data-mpmarch='"+m.id+"' title='"+title+"'>"+
+  return "<div class='slotcell' "+attrs+" title='"+title+"'>"+
      "<img src='images/ui/icon-march.png'><span class='timer'>"+fmtDur(Math.max(0,m.t1-nowSec))+"</span>"+
      "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
 }
 function mpRenderFieldArmy(){
   const nowSec=Date.now()/1000;
-  return "<div id='fieldarmy'>"+mpState.marches.map(m=>mpFieldArmyCellHtml(m,nowSec)).join("")+"</div>";
+  return "<div id='fieldarmy'>"+mpState.marches.map(m=>mpFieldArmyCellHtml(m,nowSec,"mpmarchinfo")).join("")+"</div>";
+}
+// Зеркало одиночного renderFieldArmyWorld() (см. её заголовок) — та же
+// панель, тот же DOM-узел #fieldarmy-world (уже слушает handleAct, см.
+// его addEventListener в разметке), просто источник данных mpState.marches/
+// Date.now(), не W.marches/W.t. Вызывается из mpRerender() на каждый
+// опрос — своего кадрового цикла (frame()) у общего мира нет, опрос и
+// есть её "тик".
+let lastMpFieldArmyWorld="";
+function mpRenderFieldArmyWorld(){
+  const el=$("#fieldarmy-world"); if(!el) return;
+  const nowSec=Date.now()/1000;
+  const h=mpState.marches.map(m=>mpFieldArmyCellHtml(m,nowSec,"followmarch")).join("");
+  if(h!==lastMpFieldArmyWorld){ lastMpFieldArmyWorld=h; el.innerHTML=h; }
 }
 // Та же ветвящаяся логика (участок ещё не открыт / в очереди / макс.
 // уровень / нужна ратуша / ратуше не хватает построек-требований HALL_REQ /
@@ -11535,6 +11558,11 @@ function mpRerender(){
   // запасы с добычей/час должны обновляться сами, а не только пока открыта
   // модалка меню — шапка видна поверх и карты, и города одновременно.
   if(!SP_UNLOCKED) mpRenderTop();
+  // Автор попросил: клик по иконке похода поверх 3D-мира должен переносить
+  // и вести камеру за отрядом, как в одиночке (renderFieldArmyWorld,
+  // тикающая из её собственного кадрового цикла) — у общего мира кадрового
+  // цикла нет, опрос/mpRerender() и есть её тик.
+  if(!SP_UNLOCKED) mpRenderFieldArmyWorld();
   // Фаза 17, кусочек 1 — тот же довод для открытого меню здания
   // (mpOpenBuildingModal): постройка могла завершиться, набор/лечение/ковка
   // подойти к концу, ресурсы истратиться — без этого кнопка "Улучшить"
