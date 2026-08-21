@@ -8983,68 +8983,129 @@ function mpNextPlaceableInfo(bk){
   }
   return null; // все 4 участка уже стоят
 }
-// Фаза 7 (по просьбе автора после обкатки Фазы 4-6 на живом сайте) —
-// список построек теперь карусель по одному зданию на разворот, тем же
-// #uc-track/.uc-card/#uc-nav, что и обучение войск (mpUnitCarouselHtml) —
-// автор явно попросил именно этот вид ("как вкладку с тренировкой
-// бойцов"). Раньше был плоский грид иконок (.picker-item) без цены/
-// времени и БЕЗ причины блокировки: заблокированные пункты были <button
-// disabled> — у disabled-кнопок в браузере click вообще не стреляет, title
-// на тач-экране не всплывает никогда, поэтому тап по серому пункту молча
-// ничего не показывал (баг, не просто "неинформативно"). Тут причина —
-// обычный текст ПРЯМО на развороте (.uc-lock, тот же класс, что и у
-// "нужно исследование в академии" в carousel войск), значит видна без
-// какого-либо тапа вообще, а не только по клику.
+// Список построек — карусель по одному зданию на разворот, тем же
+// #uc-track/.uc-card/#uc-nav, что и обучение войск (mpUnitCarouselHtml,
+// автор явно попросил именно этот вид). Раньше был плоский грид иконок
+// (.picker-item) без цены/времени и БЕЗ причины блокировки: заблокированные
+// пункты были <button disabled> — у disabled-кнопок в браузере click вообще
+// не стреляет, title на тач-экране не всплывает никогда, поэтому тап по
+// серому пункту молча ничего не показывал (баг, не просто
+// "неинформативно"). Тут причина — обычный текст ПРЯМО на развороте
+// (.uc-lock, тот же класс, что и у "нужно исследование в академии" в
+// carousel войск), значит видна без какого-либо тапа вообще.
+//
+// Автор с живого сайта: (1) сперва здания, которые реально можно построить
+// сейчас (по алфавиту), потом заблокированные — entries.sort ниже; (2)
+// список должен листаться по кругу, с конца на начало. Кольцевая
+// прокрутка — классический приём с клонами по краям: перед первой
+// настоящей карточкой лежит клон последней, после последней — клон первой
+// (data-clone, тот же bk/plot — клик "Взять" на клоне бьёт по тому же
+// зданию, что и на оригинале, отдельно обрабатывать нечего). Свайп/лист за
+// реальный край утыкается не в стену, а в клон — mpWireBuildPickerScroll
+// ниже слушает scroll на #uc-track и, когда прокрутка успокоилась ровно на
+// клоне, мгновенно (без анимации, обычным .scrollLeft) подменяет позицию
+// на настоящую карточку с другого конца.
 function mpBuildPickerHtml(){
   const pShim=mpCityShim(), st=mpState.player.state;
-  let h="<div id='bm-title'>Строительство</div>";
-  h+="<div id='uc-track'>";
-  let any=false;
+  const entries=[];
   PLACEABLE_BKEYS.forEach(bk=>{
     const info=mpNextPlaceableInfo(bk); if(!info) return;
-    any=true;
+    entries.push({bk,info});
+  });
+  entries.sort((a,b)=>{
+    if(a.info.locked!==b.info.locked) return a.info.locked?1:-1;
+    return buildingName(a.bk,pShim).localeCompare(buildingName(b.bk,pShim),"ru");
+  });
+  const cardHtml=(bk,info,clone)=>{
     const desc=(BUILDINGS[bk]&&BUILDINGS[bk].desc)||"";
-    h+="<div class='uc-card"+(info.locked?" locked":"")+"'>"+
+    let c="<div class='uc-card"+(info.locked?" locked":"")+"'"+(clone?" data-clone='1'":"")+">"+
       "<img class='uc-img' src='"+cityCellImg({bk,pl:info.plot})+"' alt=''>"+
       "<div class='uc-name'>"+buildingName(bk,pShim)+(info.plot!=null?" <span class='tag'>уч. "+(info.plot+1)+"</span>":"")+"</div>";
-    if(desc) h+="<div id='bm-desc'>"+desc+"</div>";
+    if(desc) c+="<div id='bm-desc'>"+desc+"</div>";
     if(info.locked){
-      h+="<div class='uc-lock'>&#128274; "+info.lockTxt+"</div>";
+      c+="<div class='uc-lock'>&#128274; "+info.lockTxt+"</div>";
     } else {
       const cst=buildCost(bk,1), t=buildTime(bk,1);
-      h+="<table class='bm-stats'><tr><td>Мощь здания</td><td>"+fmt(buildingPower(bk,1))+"</td></tr></table>";
-      h+="<div class='bm-reqs'>"+RES.map(r=>{
+      c+="<table class='bm-stats'><tr><td>Мощь здания</td><td>"+fmt(buildingPower(bk,1))+"</td></tr></table>";
+      c+="<div class='bm-reqs'>"+RES.map(r=>{
         const need=cst[r]||0; if(!need) return "";
         const short=st.res[r]<need;
         return "<div class='req-row'><img src='images/ui/res-"+r+".png'>"+
           "<span class='req-name'>"+RES_NAME[r]+"</span>"+
           "<span class='req-amt"+(short?" short":"")+"'>"+fmt(need)+" / "+fmt(st.res[r])+"</span></div>";
       }).join("")+"</div>";
-      h+="<div class='bm-time'>Время строительства: "+fmtDur(t)+"</div>";
-      h+="<button class='rnode-go uc-go' data-mp='pickbuild' data-bk='"+bk+"' "+
+      c+="<div class='bm-time'>Время строительства: "+fmtDur(t)+"</div>";
+      c+="<button class='rnode-go uc-go' data-mp='pickbuild' data-bk='"+bk+"' "+
          (info.plot!=null?"data-plot='"+info.plot+"' ":"")+(mpState.loading?"disabled":"")+">Взять</button>";
     }
-    h+="</div>";
-  });
+    c+="</div>";
+    return c;
+  };
+  let h="<div id='bm-title'>Строительство</div>";
+  h+="<div id='uc-track'>";
+  if(entries.length){
+    h+=cardHtml(entries[entries.length-1].bk,entries[entries.length-1].info,true);
+    entries.forEach(({bk,info})=>{ h+=cardHtml(bk,info,false); });
+    h+=cardHtml(entries[0].bk,entries[0].info,true);
+  }
   h+="</div>";
-  if(!any) h+="<div id='bm-desc'>Все доступные здания уже стоят на карте.</div>";
+  if(!entries.length) h+="<div id='bm-desc'>Все доступные здания уже стоят на карте.</div>";
   else h+="<div id='uc-nav'><button data-act='ucnav' data-dir='-1'>&lsaquo; Назад</button>"+
     "<button data-act='ucnav' data-dir='1'>Вперёд &rsaquo;</button></div>";
   return h;
 }
+// resetToFirst=true — только при самом открытии (позиция ставится на
+// первую НАСТОЯЩУЮ карточку, индекс 1, минуя клон-заглушку на индексе 0);
+// false — после перерисовки по тику (там позицию уже вручную вернули на
+// прежнее место, см. mpPickerOpen-ветку ниже, слушатель просто навешивается
+// заново на свежий #uc-track — старый вместе со своим слушателем уничтожен
+// вместе с innerHTML). n<3 — 0 или 1 настоящих зданий, обёртывать нечего
+// (1 настоящее + 2 клона того же самого — оборачивание в саму себя не
+// нужно, но и не вредит, на всякий случай отсекаем явно).
+function mpWireBuildPickerScroll(resetToFirst){
+  const track=$("#uc-track"); if(!track) return;
+  const n=track.querySelectorAll(".uc-card").length;
+  if(n<3) return;
+  const cw=()=>track.clientWidth||1;
+  if(resetToFirst) track.scrollLeft=cw();
+  let t=null;
+  track.addEventListener("scroll",()=>{
+    clearTimeout(t);
+    t=setTimeout(()=>{
+      const idx=Math.round(track.scrollLeft/cw());
+      if(idx<=0) track.scrollLeft=(n-2)*cw();
+      else if(idx>=n-1) track.scrollLeft=cw();
+    },120);
+  });
+}
 let mpPickerOpen=false;
+// Диф по содержимому (тот же приём, что у lastMpFolio/lastMenuBody) — автор
+// сообщил на живом сайте: страница стройки "виснет и без тапа моргает,
+// крутит". Причина найдена: тиковый пере-рендер (см. ветку mpPickerOpen
+// в общем цикле ниже) раньше писал innerHTML БЕЗУСЛОВНО каждую секунду
+// (mpRerender зовётся из frame(), см. её заголовок) — карусель из 15
+// карточек пересобиралась заново каждую секунду, сбрасывая прокрутку на
+// начало и подгружая картинки заново, то самое "моргает, крутит" даже без
+// касания экрана. Теперь пишем в DOM только когда html реально изменился
+// (цены/мощь статичны, меняется по сути только "хватает ли ресурсов"), и
+// возвращаем прокрутку на прежнее место, когда всё-таки перерисовали.
+let lastBuildPickerHtml="";
 function mpOpenBuildPicker(){
   if(!mpState.player) return;
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpForgeTab=null; mpForgeRarity=null; mpCitySel=-1; mpLayoutSel=-1; mpFixedSel=null;
   mpPickerOpen=true;
-  $("#bm-body").innerHTML=mpBuildPickerHtml();
+  const html=mpBuildPickerHtml();
+  lastBuildPickerHtml=html;
+  $("#bm-body").innerHTML=html;
   $("#building-modal").classList.add("open");
+  mpWireBuildPickerScroll(true);
   mpRenderFolio();
 }
 function mpCloseBuildPicker(){
   $("#building-modal").classList.remove("open");
   mpPickerOpen=false;
+  lastBuildPickerHtml="";
 }
 // mpPlaceCtx: {mode:'new'|'relocate', b, plot, gx, gy, valid, li} | null —
 // здание "в руках" игрока. mode='new' — из пикера (mpEnterPlaceMode), ещё
@@ -12627,7 +12688,14 @@ function mpRerender(){
     } else if(mpFixedSel){
       $("#bm-body").innerHTML = mpBuildingModalHtmlFor(mpFixedSel, null);
     } else if(mpPickerOpen){
-      $("#bm-body").innerHTML = mpBuildPickerHtml();
+      const html=mpBuildPickerHtml();
+      if(html!==lastBuildPickerHtml){
+        const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
+        lastBuildPickerHtml=html;
+        $("#bm-body").innerHTML=html;
+        const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
+        mpWireBuildPickerScroll(false);
+      }
     // Свиток похода (mpOpenMarchModal) — тот же диф по содержимому, что и у
     // #menu-modal-body (lastMenuBody выше): расстояние/резервы/кулдаун могут
     // не измениться между опросами, перезапись убила бы набранные в полях
