@@ -42,17 +42,19 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #app{position:relative;z-index:1;display:flex;flex-direction:column;height:100%}
 
 /* top:18px, а не 10px — плашка Янтаря прижата вплотную к правому верхнему
-   углу (#amber-badge, top:0), и кошелёк с ресурсами вплотную к ней подходил.
-   Небольшой сдвиг вниз разводит их по вертикали, не трогая саму шапку.
-   flex-wrap:wrap — на узких телефонах (360px и уже) герб+ник слева и сетка
-   ресурсов справа в ОДНУ строку не помещались: max-width обрезал САМ #top
-   по границе экрана, но flex по умолчанию не сжимает контент, а просто
-   вылезает за эту границу — правый столбец ресурсов утекал за край
-   (репорт пользователя со скриншотом: часть цифр "тыс" срезана).
-   С переносом кошелёк, если не влез в строку с гербом, просто падает на
-   свою строку ниже — гарантированно весь в кадре при любой ширине экрана. */
+   углу (#amber-badge, top:0). Небольшой сдвиг вниз разводит их по
+   вертикали, не трогая саму шапку.
+   Перенос кошелька (.purse) на свою строку внутри этого же #top (была
+   такая попытка) сломал другое: #brigades/#fieldarmy на карте города
+   заведомо начинаются НИЖЕ шапки на фиксированный отступ (top:108px) — с
+   двухстрочной шапкой это "ниже" превращалось в "поверх кошелька"
+   (репорт пользователя со скриншотом: цифры ресурсов налезли на слоты
+   бригад). Кошелёк теперь вообще не в #top — свой fixed-угол справа
+   сверху, тем же приёмом, что уже применён к #amber-badge (см. его
+   заголовок): #top остаётся строго одной строкой (герб+ник+мощь) при
+   любой длине ника, а кошелёк никогда ни с чем не соревнуется за ширину. */
 #top{position:fixed;top:18px;left:0;z-index:15;display:flex;flex-direction:row;
-  flex-wrap:wrap;align-items:center;gap:8px;max-width:calc(100vw - 6px)}
+  align-items:center;gap:8px;max-width:calc(100vw - 6px)}
 
 #crest{display:flex;align-items:center;cursor:pointer;flex:0 0 auto}
 #crest:hover .mark{color:var(--gilt-hi)}
@@ -294,12 +296,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #menu-btn{position:fixed}
 #menu-btn .nbadge{top:4px;right:4px;min-width:18px;height:18px;line-height:15px;font-size:11px}
 
-.purse{display:grid;grid-template-columns:repeat(2,auto);grid-auto-rows:auto;
-  gap:4px 14px;flex:0 0 auto;margin-right:8px}
+/* Свой fixed-угол справа сверху, под #amber-badge (28px = его высота: 3px
+   отступ + 22px иконка + 3px отступ) — не внутри #top, см. заголовок
+   #top. right:6px — тот же зазор от края, что и у #amber-badge (right:0,
+   но у него самого есть padding-right:10px, визуально тот же отступ). */
+.purse{position:fixed;top:34px;right:6px;z-index:15;
+  display:grid;grid-template-columns:repeat(2,auto);grid-auto-rows:auto;
+  gap:4px 14px;justify-items:end}
 /* Иконки/цифры чуть крупнее (20px/13px, было 16px/12px) — автор явно
-   попросил "иконки сделай больше". Сама плашка теперь может переноситься
-   на свою строку (см. flex-wrap у #top) — места на неё, даже увеличенную,
-   хватает при любой ширине экрана. */
+   попросил "иконки сделай больше" — теперь у плашки СВОЙ угол, ничьей
+   ширины она больше не делит, есть где расти. */
 .coin{display:flex;align-items:center;gap:6px}
 .coin .disc{width:20px;height:20px;border-radius:50%;flex:0 0 auto;object-fit:contain}
 .coin .amt{font-family:var(--data);font-size:13px;font-variant-numeric:tabular-nums;
@@ -1366,7 +1372,6 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
         <span id="crest-power"><img class="ico" src="images/ui/icon-power.png" alt="">—</span>
       </div>
     </div>
-    <div class="purse" id="purse"></div>
     <div id="chron" style="display:none">
       <div class="stat"><b id="daytime">—</b><s>Хроника</s></div>
       <select id="tempo" title="Ускорение времени — только для проверки">
@@ -1376,6 +1381,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
     </div>
   </header>
   <div id="amber-badge" title="Янтарь"><img class="disc" src="images/ui/res-amber.png" alt=""><span class="amt" id="amber-amt">0</span></div>
+  <div class="purse" id="purse"></div>
 
   <div id="main">
     <div id="chart">
