@@ -7518,6 +7518,9 @@ function mpRenderFreeformCity(){
        "</div>";
   });
   layout.forEach((e,li)=>{
+    // Переносимое здание (mode='relocate') показано только как призрак
+    // ниже — не рисуем ещё и "настоящий" маркер на старом месте поверх.
+    if(mpPlaceCtx && mpPlaceCtx.mode==="relocate" && mpPlaceCtx.li===li) return;
     const fp=BUILDINGS[e.b]&&BUILDINGS[e.b].footprint; if(!fp) return;
     const lv=(e.plot!=null?p.b[e.b][e.plot]:p.b[e.b])||0;
     const r=cityGridCellToPct(e.gx,e.gy,fp.w,fp.h);
@@ -8781,6 +8784,15 @@ function mpBuildingModalHtmlFor(bld,plot){
   const actionLabel=lv<=0?"Построить":"Улучшить";
   h+="<button id='bm-btn' data-mp='build' data-bk='"+bld+"' "+(plot!=null?"data-plot='"+plot+"' ":"")+
      (canGo&&!mpState.loading?"":"disabled")+">"+(maxed?"Предел уровня":queued?"Уже строится":canGo?actionLabel:"Недоступно")+"</button>";
+  // Свободная застройка (Фаза 5) — "Переместить" видна только у уже
+  // стоящих (lv>0) размещаемых зданий (не Ратуша/Стена — не в PLACEABLE_BKEYS,
+  // у них своих координат в p.layout вообще нет). Мидстройка (queued) —
+  // сервер (mp-relocate-building) её всё равно отклонит, прячем кнопку сразу,
+  // чтобы не гонять заведомо неудачный запрос.
+  if(PLACEABLE_BKEYS.includes(bld) && lv>0 && !queued){
+    h+="<button class='seal' style='margin-top:8px;width:100%' data-mp='relocatestart' data-bk='"+bld+"' "+
+       (plot!=null?"data-plot='"+plot+"' ":"")+(mpState.loading?"disabled":"")+">Переместить</button>";
+  }
   // Фаза 19, кусочек 4 — Ратуша/Склад: раньше клик по ним в модалке
   // показывал ТОЛЬКО базовую карточку (арт/уровень/мощь/цена) — hallInfoHtml
   // (эпоха, отряды в поле, вместимость марша, черты расы, список эпох
@@ -8956,10 +8968,15 @@ function mpCloseBuildPicker(){
   $("#building-modal").classList.remove("open");
   mpPickerOpen=false;
 }
-// mpPlaceCtx: {b, plot, gx, gy, valid} | null — здание "в руках" игрока.
-// gx/gy — левый верхний угол footprint в клетках CITY_GRID, valid — живой
-// результат collisionOk на текущей позиции (перерисовывает подсветку и
-// включает/выключает галочку, см. mpUpdatePlaceDom).
+// mpPlaceCtx: {mode:'new'|'relocate', b, plot, gx, gy, valid, li} | null —
+// здание "в руках" игрока. mode='new' — из пикера (mpEnterPlaceMode), ещё
+// не существует в p.layout, li=-1 (нечего исключать из коллизии).
+// mode='relocate' — уже стоящее здание (mpEnterRelocateMode), li — его
+// индекс в p.layout, передаётся как excludeIdx в collisionOk (иначе
+// здание "сталкивалось" бы само с собой на исходной клетке). gx/gy — левый
+// верхний угол footprint в клетках CITY_GRID, valid — живой результат
+// collisionOk на текущей позиции (двигает подсветку/галочку, см.
+// mpUpdatePlaceDom).
 let mpPlaceCtx=null;
 // true строго между pointerdown на призраке и pointerup/pointercancel —
 // см. её же смысл в mpRenderFolio() выше (глушит полную перерисовку #folio
@@ -8974,7 +8991,25 @@ function mpEnterPlaceMode(bk,plot){
     const spot=findFreeSpot(layout,fp);
     if(spot){ gx=spot.gx; gy=spot.gy; }
   }
-  mpPlaceCtx={b:bk, plot, gx, gy, valid:collisionOk(layout,fp,gx,gy,-1)};
+  mpPlaceCtx={mode:'new', b:bk, plot, gx, gy, valid:collisionOk(layout,fp,gx,gy,-1), li:-1};
+  document.body.classList.add("mp-placing");
+  $("#mp-build-fab").style.display="none";
+  mpRenderFolio();
+}
+// Свободная застройка (Фаза 5) — перенос уже стоящего здания: "в руки"
+// берётся его ТЕКУЩАЯ позиция (валидна сама по себе — против самой себя же
+// li исключён из collisionOk), а не центр экрана, чтобы не дёргать
+// картинку сразу при входе в режим. Закрывает любую открытую модалку
+// (кнопка "Переместить" внутри неё же и вызывает эту функцию), сбрасывает
+// все три индекса выбора — тот же довод, что и в mpOpenBuildPicker.
+function mpEnterRelocateMode(bk,plot){
+  $("#building-modal").classList.remove("open");
+  mpCitySel=-1; mpLayoutSel=-1; mpFixedSel=null; mpPickerOpen=false;
+  const st=mpState.player.state, layout=Array.isArray(st.layout)?st.layout:[];
+  const li=layout.findIndex(e=>e.b===bk && e.plot===plot);
+  if(li<0) return; // не должно случиться — кнопка/долгий тап видны только у уже стоящих
+  const entry=layout[li];
+  mpPlaceCtx={mode:'relocate', b:bk, plot, gx:entry.gx, gy:entry.gy, valid:true, li};
   document.body.classList.add("mp-placing");
   $("#mp-build-fab").style.display="none";
   mpRenderFolio();
@@ -8987,15 +9022,16 @@ function mpCancelPlace(){
 }
 async function mpDoPlaceConfirm(){
   if(!mpPlaceCtx || !mpPlaceCtx.valid || mpState.loading) return;
-  const {b,plot,gx,gy}=mpPlaceCtx;
+  const {mode,b,plot,gx,gy}=mpPlaceCtx;
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
-    await mpCall("mp-build", plot==null?{bk:b,gx,gy}:{bk:b,plot,gx,gy});
+    const fn=mode==="relocate"?"mp-relocate-building":"mp-build";
+    await mpCall(fn, plot==null?{bk:b,gx,gy}:{bk:b,plot,gx,gy});
     await mpRefreshPlayer();
     mpPlaceCtx=null;
     document.body.classList.remove("mp-placing");
     $("#mp-build-fab").style.display="";
-    herald("Заложено.");
+    herald(mode==="relocate"?"Перенесено.":"Заложено.");
   }catch(e){ mpState.err=e.message; herald(e.message); }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -9030,7 +9066,9 @@ function mpPlaceDragMove(clientX,clientY){
   if(cell.gx===mpPlaceCtx.gx && cell.gy===mpPlaceCtx.gy) return;
   const st=mpState.player.state, layout=Array.isArray(st.layout)?st.layout:[];
   mpPlaceCtx.gx=cell.gx; mpPlaceCtx.gy=cell.gy;
-  mpPlaceCtx.valid=collisionOk(layout,fp,cell.gx,cell.gy,-1);
+  // li — свой же индекс при переносе (mode='relocate'), исключается из
+  // коллизии, иначе здание "не проходило" бы даже на исходную клетку.
+  mpPlaceCtx.valid=collisionOk(layout,fp,cell.gx,cell.gy,mpPlaceCtx.li);
   mpUpdatePlaceDom();
 }
 // Автор пожаловался: кнопка "Общий мир" открывала один гигантский список,
@@ -10654,6 +10692,10 @@ function handleAct(e){
   // живой карты mpRenderFreeformCity() (см. её заголовок).
   const mpLayoutCell=e.target.closest("[data-layout]");
   if(mpLayoutCell){
+    // Долгий тап уже сработал (см. mpLongPressFired у pointerdown на
+    // #folio) — этот click пришёл следом на pointerup того же жеста, не
+    // открываем карточку здания поверх уже начатого переноса.
+    if(mpLongPressFired){ mpLongPressFired=false; return; }
     const li=+mpLayoutCell.dataset.layout;
     if(mpLayoutSel===li) mpCloseLayoutModal(); else mpOpenLayoutModal(li);
     return;
@@ -11471,18 +11513,52 @@ $("#place-confirm").addEventListener("click",mpDoPlaceConfirm);
 // пересобирается только его innerHTML). setPointerCapture на самом
 // призраке гарантирует, что move/up дойдут даже если палец/курсор уйдёт за
 // пределы картинки — a bubbling через #folio всё равно сработает.
+//
+// Долгий тап по уже стоящему зданию (Фаза 5) — второй, гесто-based способ
+// войти в перенос (первый — кнопка "Переместить" в карточке, см. её
+// заголовок). Таймер стартует на pointerdown по [data-layout], гасится
+// движением дальше LONG_PRESS_MOVE_PX (не путать долгий тап с началом
+// скролла/обычным тапом) или отпусканием раньше срока. Сработавший таймер
+// ставит mpLongPressFired — клик по data-layout чуть выше (handleAct)
+// проверяет её и не открывает карточку поверх уже начатого переноса
+// (иначе на pointerup после успешного долгого тапа тут же прилетел бы
+// обычный click и открыл модалку здания вперемешку с призраком).
+const LONG_PRESS_MS=450, LONG_PRESS_MOVE_PX=10;
+let mpLongPressTimer=null, mpLongPressStart=null;
+let mpLongPressFired=false;
 $("#folio").addEventListener("pointerdown",e=>{
-  const ghost=e.target.closest("#place-ghost"); if(!ghost) return;
-  ghost.setPointerCapture(e.pointerId);
-  mpDragging=true;
-  e.preventDefault();
+  const ghost=e.target.closest("#place-ghost");
+  if(ghost){
+    ghost.setPointerCapture(e.pointerId);
+    mpDragging=true;
+    e.preventDefault();
+    return;
+  }
+  if(mpPlaceCtx) return; // уже что-то в руках — не начинать второй перенос поверх
+  const marker=e.target.closest("[data-layout]"); if(!marker) return;
+  const li=+marker.dataset.layout;
+  mpLongPressStart={x:e.clientX,y:e.clientY};
+  mpLongPressTimer=setTimeout(()=>{
+    mpLongPressTimer=null; mpLongPressFired=true;
+    const entry=(mpState.player.state.layout||[])[li];
+    if(entry) mpEnterRelocateMode(entry.b, entry.plot);
+  },LONG_PRESS_MS);
 });
 $("#folio").addEventListener("pointermove",e=>{
-  if(!mpDragging) return;
-  mpPlaceDragMove(e.clientX,e.clientY);
+  if(mpDragging){ mpPlaceDragMove(e.clientX,e.clientY); return; }
+  if(mpLongPressTimer && mpLongPressStart){
+    const dx=e.clientX-mpLongPressStart.x, dy=e.clientY-mpLongPressStart.y;
+    if(Math.hypot(dx,dy)>LONG_PRESS_MOVE_PX){ clearTimeout(mpLongPressTimer); mpLongPressTimer=null; }
+  }
 });
-$("#folio").addEventListener("pointerup",()=>{ mpDragging=false; });
-$("#folio").addEventListener("pointercancel",()=>{ mpDragging=false; });
+$("#folio").addEventListener("pointerup",()=>{
+  mpDragging=false;
+  if(mpLongPressTimer){ clearTimeout(mpLongPressTimer); mpLongPressTimer=null; }
+});
+$("#folio").addEventListener("pointercancel",()=>{
+  mpDragging=false;
+  if(mpLongPressTimer){ clearTimeout(mpLongPressTimer); mpLongPressTimer=null; }
+});
 // Общий мир — свой делегированный обработчик, отдельно от handleAct
 // (data-mp вместо data-act): панель полностью изолирована от одиночной
 // игры, ничего в handleAct трогать не пришлось.
@@ -11563,6 +11639,15 @@ function handleMpAct(e){
   if(pickBuildBtn){
     const plot=pickBuildBtn.dataset.plot==null?null:+pickBuildBtn.dataset.plot;
     mpEnterPlaceMode(pickBuildBtn.dataset.bk, plot);
+    return;
+  }
+  // "Переместить" внутри карточки здания (Фаза 5) — не гесто-зависимый
+  // способ переноса, дублирует долгий тап по маркеру на карте (см.
+  // pointerdown на #folio ниже) для тех, кто его не найдёт/на десктопе.
+  const relocateStartBtn=e.target.closest("[data-mp='relocatestart']");
+  if(relocateStartBtn){
+    const plot=relocateStartBtn.dataset.plot==null?null:+relocateStartBtn.dataset.plot;
+    mpEnterRelocateMode(relocateStartBtn.dataset.bk, plot);
     return;
   }
   // Фаза 19, кусочек 5 — Горн (абсолютная копия одиночных forgetab/
