@@ -6,7 +6,7 @@
 // (сам автор знает, что часть соседних вкладок вроде "Альянс" пока
 // нефункциональны, это не баг).
 //
-// Тело запроса: { toNick: string, body: string }
+// Тело запроса: { toNick: string, subject?: string, body: string }
 // Ответ: { ok:true } либо { err }.
 //
 // Формат письма — та же таблица mail (миграция 0001), что и вся остальная
@@ -45,6 +45,7 @@ function handleOptions(req) {
 // если/когда переписка станет реально массовой).
 const MAX_BODY_LEN = 2000;
 const MAX_NICK_LEN = 24; // index.html #mp-nick maxlength
+const MAX_SUBJECT_LEN = 80; // index.html #mp-compose-subject maxlength
 
 Deno.serve(async (req) => {
   const pre = handleOptions(req);
@@ -64,9 +65,14 @@ Deno.serve(async (req) => {
     let body = {};
     try { body = await req.json(); } catch (_) { /* noop */ }
     const toNick = String(body.toNick || "").trim();
+    // subject — необязательное поле (index.html оставляет пустым как
+    // допустимый ввод, рисует "(без темы)" при показе) — в отличие от ника/
+    // текста письма, отсутствие темы не отменяет отправку.
+    const subject = String(body.subject || "").trim();
     const text = String(body.body || "").trim();
     if (!toNick) return jsonResponse({ err: "Укажите ник получателя" }, 400);
     if (toNick.length > MAX_NICK_LEN) return jsonResponse({ err: "Слишком длинный ник" }, 400);
+    if (subject.length > MAX_SUBJECT_LEN) return jsonResponse({ err: "Слишком длинная тема" }, 400);
     if (!text) return jsonResponse({ err: "Письмо не может быть пустым" }, 400);
     if (text.length > MAX_BODY_LEN) return jsonResponse({ err: "Письмо длиннее " + MAX_BODY_LEN + " символов" }, 400);
 
@@ -93,9 +99,9 @@ Deno.serve(async (req) => {
     const nowIso = new Date().toISOString();
     const { error: mailErr } = await admin.from("mail").insert([
       { world_id: world.id, player_id: toRow.id, kind: "pm",
-        data: { role: "recipient", from_id: fromRow.id, from_nick: fromRow.nick, to_id: toRow.id, to_nick: toRow.nick, body: text } },
+        data: { role: "recipient", from_id: fromRow.id, from_nick: fromRow.nick, to_id: toRow.id, to_nick: toRow.nick, subject, body: text } },
       { world_id: world.id, player_id: fromRow.id, kind: "pm",
-        data: { role: "sender", from_id: fromRow.id, from_nick: fromRow.nick, to_id: toRow.id, to_nick: toRow.nick, body: text } },
+        data: { role: "sender", from_id: fromRow.id, from_nick: fromRow.nick, to_id: toRow.id, to_nick: toRow.nick, subject, body: text } },
     ]);
     if (mailErr) return jsonResponse({ err: mailErr.message }, 500);
 
