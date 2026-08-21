@@ -811,22 +811,42 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .mail-tabs-mp button{flex:0 0 auto;white-space:nowrap;padding:8px 11px}
 .mail-divider{display:block;width:100%;height:auto;position:relative;z-index:2;opacity:.85}
 .mail-list{flex:1;min-height:0;overflow-y:auto;position:relative;z-index:2;
-  background:rgba(236,226,202,.55)}
-.mail-row{display:flex;align-items:center;gap:10px;padding:11px 14px;
-  border-bottom:1px solid rgba(90,69,48,.22);cursor:pointer;transition:background .12s}
-.mail-row:hover{background:rgba(90,69,48,.08)}
-.mail-row:active{background:rgba(90,69,48,.16)}
-.mail-row .ico{width:30px;height:30px;border-radius:50%;flex:0 0 auto;object-fit:contain;
-  background:rgba(90,69,48,.12);border:1px solid rgba(90,69,48,.35);padding:5px}
-.mail-row .ico.win{filter:sepia(1) saturate(2) hue-rotate(60deg) brightness(.9)}
-.mail-row .ico.lose{filter:sepia(1) saturate(3) hue-rotate(-40deg) brightness(.85)}
+  background:rgba(236,226,202,.55);padding:9px 9px 4px}
+/* Ряд почты — карточка, не строка в подшивке (референс автора: закруглённые
+   плашки с цветным медальоном-иконкой и стрелкой справа, а не тонкая линия
+   с плоской картинкой). Общий класс для одиночки и общего мира — обеим
+   играм он был одинаково "плосковат", обе получают полировку разом. */
+.mail-row{display:flex;align-items:center;gap:11px;padding:10px 12px;margin-bottom:7px;
+  border-radius:11px;background:linear-gradient(180deg,rgba(255,255,255,.34),rgba(255,255,255,.1));
+  border:1px solid rgba(90,69,48,.28);box-shadow:0 1px 0 rgba(255,255,255,.5) inset,0 2px 5px rgba(90,69,48,.14);
+  cursor:pointer;transition:background .12s,transform .08s,box-shadow .12s}
+.mail-row:hover{background:linear-gradient(180deg,rgba(255,255,255,.5),rgba(255,255,255,.18));
+  box-shadow:0 1px 0 rgba(255,255,255,.6) inset,0 3px 8px rgba(90,69,48,.2)}
+.mail-row:active{transform:scale(.985)}
+/* Медальон — круглый цветной "щит" под иконку, тон по смыслу письма
+   (mpMailRowHtml/mailRowHtml задают tone-*): зелёный — добыча/победа,
+   красный — поражение, синий — разведка/движение войск, золотой — личное,
+   серый — нейтральные сводки. Тот же язык цвета, что уже красит
+   .chron-row.good/.bad и .mail-stamp.win/.lose рядом. */
+.mail-row .icowrap{width:42px;height:42px;border-radius:50%;flex:0 0 auto;display:flex;
+  align-items:center;justify-content:center;position:relative;
+  background:radial-gradient(circle at 34% 28%,rgba(255,255,255,.4),transparent 62%),var(--tone-bg,rgba(90,69,48,.16));
+  border:2px solid var(--tone-bd,rgba(90,69,48,.4));
+  box-shadow:0 1px 2px rgba(0,0,0,.2),0 0 0 1px rgba(255,255,255,.25) inset}
+.mail-row .icowrap img{width:23px;height:23px;object-fit:contain;filter:drop-shadow(0 1px 1px rgba(0,0,0,.35))}
+.mail-row .icowrap.tone-green{--tone-bg:rgba(74,124,63,.24);--tone-bd:#4a7c3f}
+.mail-row .icowrap.tone-red{--tone-bg:rgba(163,60,44,.22);--tone-bd:#a33c2c}
+.mail-row .icowrap.tone-blue{--tone-bg:rgba(58,85,133,.22);--tone-bd:#3a5585}
+.mail-row .icowrap.tone-gold{--tone-bg:rgba(194,153,60,.24);--tone-bd:#8a6d2c}
+.mail-row:not(.read) .icowrap::after{content:"";position:absolute;top:-1px;right:-1px;width:11px;height:11px;
+  border-radius:50%;background:#a33c2c;border:2px solid #ece2ca}
 .mail-row .tx{flex:1;min-width:0}
 .mail-row .tt{font-size:13.5px;color:#2c2114;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mail-row:not(.read) .tt{font-weight:bold}
-.mail-row .sb{font-size:11.5px;color:#5a4530;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.mail-row .tm{font-size:10.5px;color:#8a6d2c;flex:0 0 auto;white-space:nowrap}
-.mail-row:not(.read)::before{content:"";width:7px;height:7px;border-radius:50%;background:#8a2f22;flex:0 0 auto}
-.mail-row.read::before{content:"";width:7px;flex:0 0 auto}
+.mail-row .sb{font-size:11.5px;color:#5a4530;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.mail-row .tail{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+.mail-row .tm{font-size:10px;color:#8a6d2c;white-space:nowrap}
+.mail-row .chev{font-size:15px;color:rgba(90,69,48,.4);line-height:1}
 .mail-empty{padding:40px 20px;text-align:center;color:#5a4530;font-size:13px;font-style:italic;
   position:relative;z-index:2}
 .mail-detail{flex:1;min-height:0;overflow-y:auto;position:relative;z-index:2;padding:16px 16px 8px;
@@ -834,6 +854,10 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .mail-back{display:flex;align-items:center;gap:6px;color:#5a4530;font-size:12.5px;
   font-variant:small-caps;letter-spacing:.08em;margin-bottom:12px}
 .mail-note{font-size:13.5px;line-height:1.6;color:#2c2114;padding:6px 2px}
+/* Иконка ресурса вместо голого текста в добыче/грабеже/отчётах о сборе —
+   см. заголовок resIconSpan(). */
+.res-chip{display:inline-flex;align-items:center;gap:4px;margin-right:12px;white-space:nowrap}
+.res-chip img{width:16px;height:16px;object-fit:contain;vertical-align:-3px}
 .mail-vs{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:14px}
 .mail-side{flex:1;min-width:0;text-align:center}
 /* object-fit:cover+border-radius:50%+CSS-border тут раньше кроило и
@@ -9275,6 +9299,13 @@ function mailRowHtml(m){
              : isBarb ? battleOutcomeTier(m.start,m.dead,m.hurt,true,m.myPower,m.oppPower)
              : null;
   const cls = tier ? tier.cls : "";
+  // tone — цвет медальона (см. .icowrap.tone-* в CSS): бой/лагерь красят по
+  // исходу (как и раньше cls), разведка синяя (наблюдение, не столкновение),
+  // сбор зелёный (чистая прибыль), личное — золото (генерал/родня, не поход).
+  const tone = cls==="win"?"green":cls==="lose"?"red"
+             : (m.kind==="scout"||m.kind==="scoutmarch") ? "blue"
+             : m.kind==="gather" ? "green"
+             : m.cat==="personal" ? "gold" : "blue";
   const title = tier ? tier.name
               : m.kind==="scout" ? "Разведка"
               : m.kind==="scoutmarch" ? "Разведка отряда"
@@ -9287,9 +9318,9 @@ function mailRowHtml(m){
             : m.kind==="gather" ? resName(m.res)+" "+fmt(m.amount)+" · X:"+m.coords.x+" Y:"+m.coords.y
             : m.body;
   return "<div class='mail-row"+(m.read?" read":"")+"' data-act='mailopen' data-id='"+m.id+"'>"+
-    "<img class='ico "+cls+"' src='"+icon+"' alt=''>"+
+    "<div class='icowrap tone-"+tone+"'><img src='"+icon+"' alt=''></div>"+
     "<div class='tx'><div class='tt'>"+title+"</div><div class='sb'>"+sub+"</div></div>"+
-    "<div class='tm'>"+mailAgo(m.t)+"</div></div>";
+    "<div class='tail'><div class='tm'>"+mailAgo(m.t)+"</div><span class='chev'>&#8250;</span></div></div>";
 }
 /* Хроника боя в письме. Записи приходят из движка помеченными "A"/"D" —
    чья это была удача. Читателю же надо видеть "моя/чужая", а отчёт у каждой
@@ -9529,14 +9560,14 @@ function mailDetailHtml(m){
        "Опыт генерала: +"+RU(m.xp)+"<br>"+
        "Потери отряда: убито "+RU(m.dead)+", ранено "+RU(m.hurt)+
        (m.tomesTxt?"<br>Найдены книги опыта: "+m.tomesTxt:"")+
-       "<br>Захвачено: "+RES.filter(rr=>m.loot[rr]>0).map(rr=>RES_NAME[rr]+" "+fmt(m.loot[rr])).join(", ")+"</div>"+
+       "<br>Захвачено: "+RES.filter(rr=>m.loot[rr]>0).map(rr=>resIconSpan(rr,fmt(m.loot[rr]))).join("")+"</div>"+
        battleLogHtml(m);
   } else if(m.kind==="scout"){
     h+=scoutReportHtml(m);
   } else if(m.kind==="scoutmarch"){
     h+=scoutMarchReportHtml(m);
   } else if(m.kind==="gather"){
-    h+="<div class='mail-note'>Обоз собрал "+resName(m.res)+": "+fmt(m.amount)+".<br>"+
+    h+="<div class='mail-note'>Обоз собрал "+resIconSpan(m.res,fmt(m.amount))+".<br>"+
        "Точка сбора: X:"+m.coords.x+" Y:"+m.coords.y+"</div>";
   } else {
     h+="<div class='mail-note'><b>"+m.title+"</b><br>"+m.body+"</div>";
@@ -12536,6 +12567,15 @@ const MP_MAIL_TABS=[["report","Отчёты"],["personal","Личное"],["alli
 function escHtml(s){
   return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 }
+// Иконка ресурса + число вместо голого "Золото 1234" — тот же язык, что уже
+// у req-row по всей игре (images/ui/res-{food|wood|stone|gold}.png), просто
+// в письмах раньше нигде не подключался: добыча/добро/грабёж читались
+// сплошным текстом. r — ключ ресурса ("food"/"wood"/"stone"/"gold"), text —
+// уже готовая подпись (число или "Название число"), чтобы вызывающий код
+// сам решал, нужно ли имя ресурса рядом с иконкой или иконки достаточно.
+function resIconSpan(r,text){
+  return "<span class='res-chip'><img src='images/ui/res-"+r+".png' alt=''>"+text+"</span>";
+}
 
 // Прочитанность — только на этом устройстве (localStorage), сервер mail.read
 // не трогаем: RLS уже разрешает игроку апдейтить свои письма, но синхронизация
@@ -12637,7 +12677,8 @@ function mpMailSiegeEntry(m){
     else { cls="war"; title="Наша армия отступает"; note="Войска у "+target+" начали отход — на отступление нужно время."; }
   }
   return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-march.png",
-    cls: cls==="hot"?"win":cls==="war"?"lose":"", title, sub:note, detailHtml:"<div class='note'>"+note+"</div>"};
+    cls: cls==="hot"?"win":cls==="war"?"lose":"", tone: cls==="hot"?"green":cls==="war"?"red":"blue",
+    title, sub:note, detailHtml:"<div class='note'>"+note+"</div>"};
 }
 function mpMailBattleEntry(m){
   const d=m.data, mine=d.role==="attacker";
@@ -12688,7 +12729,7 @@ function mpMailBattleEntry(m){
         "<table class='mail-stats'><tr><th></th><th>"+selfNick+"</th><th>"+oppNick+"</th></tr>"+
         battleStatsRows(selfBuffs,oppBuffs)+"</table></div>":"")+
       (d.defCoords?"<div class='mail-note'>Место боя: X:"+d.defCoords.x+" Y:"+d.defCoords.y+"</div>":"");
-    const lootTxt=d.loot&&RES.filter(r=>d.loot[r]).map(r=>RES_NAME[r]+" "+RU(d.loot[r])).join(" · ");
+    const lootTxt=d.loot&&RES.filter(r=>d.loot[r]).map(r=>resIconSpan(r,RU(d.loot[r]))).join("");
     if(mine&&won&&lootTxt) detailHtml+="<div class='mail-note'>Захвачено: "+lootTxt+"</div>";
     else if(!mine&&!won&&lootTxt) detailHtml+="<div class='mail-note'>Разграблено: "+lootTxt+"</div>";
     detailHtml+=mpBattleLogHtml(d.log,mine);
@@ -12696,11 +12737,11 @@ function mpMailBattleEntry(m){
     const hospPart=(label,x)=>x.dead!=null?(" · "+label+": легкораненые "+RU(x.slight||0)+", тяжелораненые "+RU(x.hurt||0)+", убито "+RU(x.dead||0)):"";
     const hospNote=hospPart("у нас",myHs)+hospPart("у противника",oppHs);
     detailHtml="<div class='note'>"+sub+hospNote+"</div>";
-    const lootTxt=d.loot&&RES.filter(r=>d.loot[r]).map(r=>RES_NAME[r]+" "+RU(d.loot[r])).join(" · ");
+    const lootTxt=d.loot&&RES.filter(r=>d.loot[r]).map(r=>resIconSpan(r,RU(d.loot[r]))).join("");
     if(mine&&won&&lootTxt) detailHtml+="<div class='note'>Захвачено: "+lootTxt+"</div>";
     else if(!mine&&!won&&lootTxt) detailHtml+="<div class='note'>Разграблено: "+lootTxt+"</div>";
   }
-  return {id:m.id, created_at:m.created_at, icon:"images/ui/mail-seal.png", cls:tier.cls==="win"?"win":"lose", title, sub, detailHtml};
+  return {id:m.id, created_at:m.created_at, icon:"images/ui/mail-seal.png", cls:tier.cls==="win"?"win":"lose", tone:tier.cls==="win"?"green":"red", title, sub, detailHtml};
 }
 function mpMailScoutEntry(m){
   const d=m.data;
@@ -12731,7 +12772,7 @@ function mpMailScoutEntry(m){
     if(se>=4) detailHtml+="<div class='note'>Гарнизон (башня): "+d.garrison+" ур.</div>";
     if(se>=5) detailHtml+="<div class='note'>Лазарет: "+RU(d.wounded)+" раненых · снаряжение: мощь "+RU(d.gearPower)+"</div>";
   }
-  return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-world.png", cls:"", title, sub, detailHtml};
+  return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-world.png", cls:"", tone:"blue", title, sub, detailHtml};
 }
 function mpMailRaidEntry(m){
   const d=m.data;
@@ -12748,12 +12789,12 @@ function mpMailRaidEntry(m){
     "<div class='mail-note'>"+(d.campX!=null?"Лагерь разбойников "+d.camp_lv+" ур. у X:"+d.campX+" Y:"+d.campY+".<br>":"")+
     "Потери отряда: убито "+RU(d.dead||0)+", ранено "+RU(d.hurt||0)+" (из "+RU(lostN(d.attLoss))+" пострадавших)</div>";
   if(d.win){
-    detailHtml+="<div class='mail-note'>Добыча: "+RES.filter(r=>d.loot&&d.loot[r]).map(r=>RES_NAME[r]+" "+RU(d.loot[r])).join(" · ")+"</div>";
+    detailHtml+="<div class='mail-note'>Добыча: "+RES.filter(r=>d.loot&&d.loot[r]).map(r=>resIconSpan(r,RU(d.loot[r]))).join("")+"</div>";
     const tomesTxt=Object.keys(d.tomes||{}).map(v=>TOME_NAME[v]+" ×"+d.tomes[v]).join(", ");
     if(tomesTxt) detailHtml+="<div class='mail-note'>Книги опыта: "+tomesTxt+"</div>";
   }
   detailHtml+=mpBattleLogHtml(d.log,true);
-  return {id:m.id, created_at:m.created_at, icon:"images/ui/mail-seal.png", cls:tier.cls==="win"?"win":"lose", title, sub, detailHtml};
+  return {id:m.id, created_at:m.created_at, icon:"images/ui/mail-seal.png", cls:tier.cls==="win"?"win":"lose", tone:tier.cls==="win"?"green":"red", title, sub, detailHtml};
 }
 function mpMailNodeEntry(m){
   const d=m.data, mine=d.role==="attacker";
@@ -12808,17 +12849,18 @@ function mpMailNodeEntry(m){
   } else {
     detailHtml="<div class='note'>"+sub+"</div>";
   }
-  return {id:m.id, created_at:m.created_at, icon:"images/ui/mail-seal.png", cls:tier.cls==="win"?"win":"lose", title, sub, detailHtml};
+  return {id:m.id, created_at:m.created_at, icon:"images/ui/mail-seal.png", cls:tier.cls==="win"?"win":"lose", tone:tier.cls==="win"?"green":"red", title, sub, detailHtml};
 }
 function mpMailGatherEntry(m){
   const d=m.data;
   const sub=RES_NAME[d.res]+" "+fmt(d.amount)+" · точка "+d.x+"·"+d.y;
-  return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-march.png", cls:"",
-    title:"Обоз вернулся с добычей", sub, detailHtml:"<div class='note'>"+sub+"</div>"};
+  const detailHtml="<div class='note'>"+resIconSpan(d.res,fmt(d.amount))+" · точка "+d.x+"·"+d.y+"</div>";
+  return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-march.png", cls:"", tone:"green",
+    title:"Обоз вернулся с добычей", sub, detailHtml};
 }
 function mpMailNoteEntry(m){
   const d=m.data;
-  return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-gen.png", cls:"",
+  return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-gen.png", cls:"", tone:"gold",
     title:d.title, sub:d.body, detailHtml:"<div class='note'>"+d.body+"</div>"};
 }
 // Личное письмо игрок→игрок (mp-sendmail, kind:"pm") — role:"recipient" на
@@ -12844,7 +12886,7 @@ function mpMailPmEntry(m){
       (incoming?"От <b style=\"color:#2c2114\">":"Кому: <b style=\"color:#2c2114\">")+escHtml(who)+"</b>"+
     "</div>"+
     "<div class='note'>"+bodyEsc+"</div>";
-  return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-mail.png", cls:"",
+  return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-mail.png", cls:"", tone:"gold",
     title:escHtml(title), sub:escHtml(sub), detailHtml};
 }
 // "Отчёты" — бой/разведка/сбор/лагеря/точки одной хронологической лентой
@@ -12893,9 +12935,9 @@ function mpMailEntryById(id){
 // заголовок mpMailReadIds выше — своя, локальная отметка "открывал").
 function mpMailRowHtml(m){
   return "<div class='mail-row"+(mpMailReadIds.has(m.id)?" read":"")+"' data-mp='mpmailopen' data-id='"+m.id+"'>"+
-    "<img class='ico"+(m.cls?" "+m.cls:"")+"' src='"+m.icon+"' alt=''>"+
+    "<div class='icowrap tone-"+(m.tone||"blue")+"'><img src='"+m.icon+"' alt=''></div>"+
     "<div class='tx'><div class='tt'>"+m.title+"</div><div class='sb'>"+m.sub+"</div></div>"+
-    "<div class='tm'>"+mpMailAgo(m.created_at)+"</div></div>";
+    "<div class='tail'><div class='tm'>"+mpMailAgo(m.created_at)+"</div><span class='chev'>&#8250;</span></div></div>";
 }
 // Экран "Почта" целиком (only==="mail", см. mailFull в foMultiplayer) —
 // тот же .mail-wrap/.mail-card/.mail-tabs/.mail-divider/.mail-list/
@@ -13223,7 +13265,7 @@ function foMultiplayer(embedded, only){
       // Грабёж склада — то же поле d.loot, что и у мока mp-tick, лежит в
       // обоих письмах (атакующему и защитнику), но реально ненулевое
       // только когда won && mine (штурм чужого города удался).
-      const lootTxt=d.loot&&RES.filter(r=>d.loot[r]).map(r=>RES_NAME[r]+" "+RU(d.loot[r])).join(" · ");
+      const lootTxt=d.loot&&RES.filter(r=>d.loot[r]).map(r=>resIconSpan(r,RU(d.loot[r]))).join("");
       if(mine&&won&&lootTxt) notesHtml+="<div class='note'>Захвачено: "+lootTxt+"</div>";
       else if(!mine&&!won&&lootTxt) notesHtml+="<div class='note'>Разграблено: "+lootTxt+"</div>";
       h+="<div class='entry"+(tier.cls==="win"?" hot":" war")+"'><div class='line'><div class='fill'>"+
@@ -13290,7 +13332,7 @@ function foMultiplayer(embedded, only){
       let notesHtml="<div class='note'>Потери: легкораненые "+RU(d.slight||0)+", тяжелораненые "+RU(d.hurt||0)+
          ", убито "+RU(d.dead||0)+" (из "+RU(lostN(d.attLoss))+" пострадавших)</div>";
       if(d.win){
-        notesHtml+="<div class='note'>Добыча: "+RES.filter(r=>d.loot&&d.loot[r]).map(r=>RES_NAME[r]+" "+RU(d.loot[r])).join(" · ")+"</div>";
+        notesHtml+="<div class='note'>Добыча: "+RES.filter(r=>d.loot&&d.loot[r]).map(r=>resIconSpan(r,RU(d.loot[r]))).join("")+"</div>";
         const tomesTxt=Object.keys(d.tomes||{}).map(v=>TOME_NAME[v]+" ×"+d.tomes[v]).join(", ");
         if(tomesTxt) notesHtml+="<div class='note'>Книги опыта: "+tomesTxt+"</div>";
       }
