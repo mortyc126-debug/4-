@@ -2495,6 +2495,20 @@ async function applyGathered(admin, ev) {
   const { error: updM } = await admin.from("marches")
     .update({ state: "back", t0: nowSec, t1: nowSec + travelBack, data: { ...m.data, carry } }).eq("id", m.id);
   if (updM) throw updM;
+  // Донесение о сборе — зеркало pushMail({cat:"report",kind:"gather",...})
+  // в EV.gathered одиночки (index.html) — автор сообщил: «я собрал
+  // ресурсы, а письма нет». Ресурсы честно зачисляются позже, в
+  // applyMarchHome (m.data.carry), но письмо об этом никогда не заводилось
+  // — целая ветка была пропущена при переносе. kind:"gather", отдельная от
+  // "battle"/"scout"/... — свой fetch (mpRefreshGatherMail) и своя рубрика
+  // в index.html (foMultiplayer, "Сбор").
+  if (m.data && m.data.res && (m.data.take || 0) > 0) {
+    const { error: gatherMailErr } = await admin.from("mail").insert({
+      world_id: m.world_id, player_id: m.player_id, kind: "gather",
+      data: { res: m.data.res, amount: m.data.take, x: m.tx, y: m.ty },
+    });
+    if (gatherMailErr) throw gatherMailErr;
+  }
   const { error: evErr } = await admin.from("events").insert({
     world_id: m.world_id, fire_at: new Date((nowSec + travelBack) * 1000).toISOString(),
     type: "march_home", data: { march_id: m.id },

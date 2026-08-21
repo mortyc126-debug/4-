@@ -7033,25 +7033,57 @@ function renderCartoucheMp(){
   const o=snap.map[key(sel.x,sel.y)];
   const coord="<span class='n' style='font-family:var(--data);font-size:10px;color:var(--vellum-faint)'>"+
     sel.x+" · "+sel.y+"</span>";
-  // Пустошь в общем мире отрядом не засеять — march-по-клетке (в одиночке
-  // ведущий домой марш просто разворачивается сам, arriveMarch) для
-  // общего мира не перенесён: у mp-attack/mp-gather/mp-raid всегда есть
-  // конкретная цель (город/точка/лагерь), похода "в пустоту" тут нет.
-  if(!o){ put(""); return; }
+  // Пустошь — автор попросил перенести интерфейс из одиночки, где панель
+  // показывает координаты (см. renderCartouche выше). Отправить туда отряд
+  // общий мир пока не умеет: march-по-клетке (в одиночке ведущий домой
+  // марш просто разворачивается сам, arriveMarch) для него не перенесён —
+  // у mp-attack/mp-gather/mp-raid всегда есть конкретная цель (город/точка/
+  // лагерь), похода "в пустоту" тут нет (это отдельная серверная фича, не
+  // просто перенос разметки). Показываем то, что честно можем — координаты
+  // и пояснение, а не молчим совсем, как раньше.
+  if(!o){ put("<div class='hd'>Пустошь "+coord+"</div>"+
+    "<div class='hint'>Общий мир пока не умеет отправлять отряд в пустоту — только на город, точку сбора или лагерь.</div>"); return; }
   if(o.t==="node"){
     const amount=o.amount||0;
+    // Своя добыча — то же самое "Собрано X/Y" + "Отозвать", что и в
+    // одиночке (renderCartouche выше), вместо ПОВТОРНОГО "Собрать" поверх
+    // уже идущего сбора. g.data.take — целевое количество, посчитанное на
+    // отправке (см. mp-gather), то же поле, что уже читает applyGathered.
+    const g=mpState.marches.find(m=>m.tx===o.x&&m.ty===o.y&&m.state==="gather");
     let body="<div class='hd'>"+(RES_SITE_NAME[o.res]||o.res)+" "+coord+"</div>"+
       "<div class='co'><span>Уровень</span><b>"+(o.lv||1)+"</b></div>"+
       "<div class='co'><span>Резервы</span><b>"+fmt(amount)+"</b></div>";
-    body += amount>0
-      ? "<button class='seal wide' style='margin-top:9px' data-mp='cartgatherpick' data-k='"+o.x+","+o.y+"'>Собрать</button>"
-      : "<div class='hint'>Точка истощена.</div>";
+    if(g){
+      const nowSec=Date.now()/1000;
+      const f=clamp((nowSec-g.t0)/Math.max(1,g.t1-g.t0),0,1);
+      const target=(g.data&&g.data.take)||0, got=Math.round(target*f);
+      body+="<div class='co'><span>Собрано</span><b>"+fmt(got)+" / "+fmt(target)+"</b></div>"+
+        "<button class='seal wide' style='margin-top:9px' data-mp='cartrecall' data-id='"+g.id+"'>Отозвать</button>";
+    } else {
+      body += amount>0
+        ? "<button class='seal wide' style='margin-top:9px' data-mp='cartgatherpick' data-k='"+o.x+","+o.y+"'>Собрать</button>"
+        : "<div class='hint'>Точка истощена.</div>";
+    }
     put(body);
     return;
   }
   if(o.t==="camp"||o.t==="fort"){
+    // Прогноз боя — тот же banditPower/armyPower и те же три порога, что и
+    // в одиночке (renderCartouche выше): свои войска считаем через
+    // mpFullShim (тот же приём, что уже даёт "Смотр войск" в foMultiplayer),
+    // чужой состав тут и не нужен — противник НПС, его сила известна заранее.
+    const fp=banditPower(o.lv||1);
+    const myShim=mpFullShim(mpState.player,st), myB=bonuses(myShim);
+    const my=armyPower(st.troops,myB,mpState.player.race);
+    const ok = my>fp*1.8?["Разгром без потерь","var(--verdigris)"]
+             : my>fp*1.1?["Победа с потерями","var(--gilt)"]
+             : my>fp*0.8?["Исход не ясен","var(--gilt)"]
+             : ["Отряд поляжет","var(--garnet)"];
     put("<div class='hd'>"+(o.t==="fort"?"Форт":"Лагерь")+" варваров "+coord+"</div>"+
       "<div class='co'><span>Уровень</span><b>"+(o.lv||1)+"</b></div>"+
+      "<div class='co'><span>Сила заставы</span><b>"+fmt(fp)+"</b></div>"+
+      "<div class='co'><span>Ваше войско</span><b>"+fmt(my)+"</b></div>"+
+      "<div class='co'><span>Прогноз</span><b style='color:"+ok[1]+"'>"+ok[0]+"</b></div>"+
       "<button class='seal wide blood' style='margin-top:9px' data-mp='cartraidpick' data-k='"+o.x+","+o.y+"'>Атаковать</button>");
     return;
   }
@@ -7059,11 +7091,20 @@ function renderCartoucheMp(){
     const q=snap.players.find(z=>z.id===o.pid);
     if(!q || q.id===me.id){ put(""); return; } // своя столица — панель тут ни к чему, свободная клетка выше уже отсеяна
     const hasScout=(st.b&&st.b.scout)>0;
+    // Щит — тот же безопасный минимум, что и в одиночке (renderCartouche):
+    // скрываем "Атака" и показываем статус, а не молчим и не даём нажать
+    // кнопку, которую сервер всё равно отклонит (mp-attack уже проверяет
+    // shield_until — см. её же комментарий). Состав/мощь соперника здесь
+    // НЕ показываем (см. коммент у renderCartouche: тот же RoK-принцип,
+    // войска — только через настоящую разведку, не бесплатной строкой тут);
+    // shield_until — голый scalar, не вскрывает состав (см. mpRefreshNeighbors).
+    const shielded=(q.shieldUntil||0)>Date.now()/1000;
     put("<div class='hd'>"+shieldSvg(q.race,14)+q.nick+" "+coord+"</div>"+
       "<div class='co'><span>Ратуша</span><b>"+q.b.hall+"</b></div>"+
+      (shielded?"<div class='co'><span>Статус</span><b style='color:#7ab2e0'>Под щитом мира</b></div>":"")+
       "<div class='chips' style='margin-top:9px'>"+
         (hasScout?"<button class='seal' data-mp='cartscout' data-id='"+q.id+"'>Разведать</button>":"")+
-        "<button class='seal blood' data-mp='cartattackpick' data-id='"+q.id+"'>Атака</button>"+
+        (shielded?"":"<button class='seal blood' data-mp='cartattackpick' data-id='"+q.id+"'>Атака</button>")+
       "</div>");
     return;
   }
@@ -10396,6 +10437,16 @@ function toggleView(){
     // откат на одну прежнюю строку, если найдётся серьёзная регрессия).
     const w3d=$("#world3d");
     if(w3d && !w3d.src) w3d.src="engine/dist/index.html";
+    // Автор: «при нажатии кнопки Мир, меня должно переносить к модельки
+    // моего города, даже если я улетел к краю мира... камера должна
+    // перенестись опять к моему городу, стартуя оттуда». Раньше камера
+    // просто оставалась там, где её в последний раз оставили (можно было
+    // уйти к границе мира — см. WORLD_HALF — и застрять там при каждом
+    // повторном заходе). goHome() — та же функция, что уже стоит на
+    // клавише H (см. её заголовок): в .mp-gated зовёт mpFocusWorld3D()
+    // (у неё уже есть поллинг на случай, если камера движка ещё не готова
+    // — первый заход в "Мир" в эту сессию), иначе centerOn(me()) напрямую.
+    goHome();
   }
 }
 // Фаза 17, кусочек 2 — #side-menu теперь виден и при .mp-gated (см. CSS
@@ -11051,7 +11102,7 @@ function mpWorldSnapshot(){
   const players=[{id:me.id, race:me.race, nick:me.nick, x:me.x, y:me.y, b:{hall:meHall}}];
   const byId={}; byId[me.id]=players[0];
   mpState.neighbors.forEach(n=>{
-    const p={id:n.id, race:n.race, nick:n.nick, x:n.x, y:n.y, b:{hall:Number(n.hall)||1}};
+    const p={id:n.id, race:n.race, nick:n.nick, x:n.x, y:n.y, b:{hall:Number(n.hall)||1}, shieldUntil:Number(n.shield_until)||0};
     players.push(p); byId[n.id]=p;
   });
   const map={};
@@ -11065,14 +11116,28 @@ function mpWorldSnapshot(){
     map[c.x+","+c.y]={t:c.t, x:c.x, y:c.y, lv:d.lv};
   });
   // withPath(m,home) — та же честная прямая, что и marchPos у recall/gather/
-  // raid-маршей общего мира: путь всегда из ДВУХ точек (текущий дом
-  // отправителя → цель), а не настоящий рельефный path[] одиночки. pathCum/
-  // pathLen — тот же формат, что pathPointAt(m,f) в index.html уже умеет
-  // читать (дословный порт в marchData.ts), поэтому дальше 3D ничего
-  // отдельного знать не должно.
+  // raid-маршей общего мира: путь всегда из ДВУХ точек, а не настоящий
+  // рельефный path[] одиночки. pathCum/pathLen — тот же формат, что
+  // pathPointAt(m,f) в index.html уже умеет читать (дословный порт в
+  // marchData.ts), поэтому дальше 3D ничего отдельного знать не должно.
+  //
+  // НАЙДЕН реальный баг (автор сообщил: «при возвращении отряд почему-то
+  // наоборот идёт к цели, то есть два раза идёт к одной цели и
+  // телепортируется домой»): направление точек тут раньше было всегда
+  // ДОМ→ЦЕЛЬ, без разбора m.state. Для "go" это верно, но у "back" (марш
+  // возвращается) f=(now-t0)/(t1-t0) точно так же растёт от 0 до 1 за то же
+  // время в пути — с прежним путём ДОМ→ЦЕЛЬ это ЕЩЁ РАЗ рисовало движение
+  // из дома к цели (та же анимация, что и на пути туда), а не обратно; по
+  // прибытии домой марш просто пропадал из mpState.marches — от этого и
+  // ощущение "телепортации" вместо честного пути назад. Тот же самый
+  // разбор состояния уже был у одиночки (см. чуть выше по файлу: "back" →
+  // waterPath(m.tx,m.ty,p.x,p.y), иначе → waterPath(m.x0,m.y0,m.tx,m.ty)) —
+  // тут просто не был перенесён.
   function withPath(m,home){
-    const dist=Math.hypot(m.tx-home.x, m.ty-home.y);
-    return Object.assign({}, m, { path:[{x:home.x,y:home.y},{x:m.tx,y:m.ty}], pathCum:[0,dist], pathLen:dist });
+    const back=m.state==="back";
+    const from=back?{x:m.tx,y:m.ty}:home, to=back?home:{x:m.tx,y:m.ty};
+    const dist=Math.hypot(to.x-from.x, to.y-from.y);
+    return Object.assign({}, m, { path:[{x:from.x,y:from.y},{x:to.x,y:to.y}], pathCum:[0,dist], pathLen:dist });
   }
   const marches=[];
   const seenIds=new Set();
@@ -11525,7 +11590,7 @@ async function claimChronicle(){
    восполняются со временem — серверное производство ещё не перенесено,
    стартовых 100000 хватает на несколько заказов набора для проверки.
    ========================================================================= */
-let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[], siegeMail:[], nodeBattleMail:[], worldBattles:[] };
+let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[], siegeMail:[], nodeBattleMail:[], worldBattles:[], gatherMail:[] };
 let mpPollTimer = null;
 // ===== Фаза 20, кусочек 3 — местный кэш последнего known-состояния общего
 // мира. Автор: "медленно грузит мой замок и ресурсные точки, может их
@@ -11548,7 +11613,7 @@ function mpSaveCache(){
       player:mpState.player, neighbors:mpState.neighbors, nodes:mpState.nodes,
       camps:mpState.camps, marches:mpState.marches, incoming:mpState.incoming,
       mail:mpState.mail, scoutMail:mpState.scoutMail, raidMail:mpState.raidMail, siegeMail:mpState.siegeMail,
-      nodeBattleMail:mpState.nodeBattleMail,
+      nodeBattleMail:mpState.nodeBattleMail, gatherMail:mpState.gatherMail,
     }));
   }catch(e){ /* приватный режим/переполнение — кэш не обязателен, молча живём без него */ }
 }
@@ -11562,7 +11627,7 @@ function mpLoadCache(){
     mpState.neighbors=c.neighbors||[]; mpState.nodes=c.nodes||[]; mpState.camps=c.camps||[];
     mpState.marches=c.marches||[]; mpState.incoming=c.incoming||[];
     mpState.mail=c.mail||[]; mpState.scoutMail=c.scoutMail||[]; mpState.raidMail=c.raidMail||[]; mpState.siegeMail=c.siegeMail||[];
-    mpState.nodeBattleMail=c.nodeBattleMail||[];
+    mpState.nodeBattleMail=c.nodeBattleMail||[]; mpState.gatherMail=c.gatherMail||[];
     return true;
   }catch(e){ return false }
 }
@@ -11751,7 +11816,7 @@ function mpStopPolling(){
   // каждую секунду вхолостую, пока игрок вообще не в мультиплеере.
   if(mpBattleFastTimer){ clearInterval(mpBattleFastTimer); mpBattleFastTimer=null; }
 }
-async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); await mpRefreshNodeBattleMail(); await mpRefreshWorldBattles(); mpSaveCache(); }
+async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); await mpRefreshNodeBattleMail(); await mpRefreshWorldBattles(); await mpRefreshGatherMail(); mpSaveCache(); }
 // Баг-фикс — автор пожаловался: очередь стройки/тренировки/боя показывается
 // сразу, но САМ результат (новый уровень здания, исход боя) применял только
 // общий тикер (mp-tick), а тот раньше крутился раз в минуту — до минуты
@@ -11784,7 +11849,12 @@ async function mpRefreshNeighbors(){
   // соседей по-прежнему нарочно не тянем (то же решение, что и раньше),
   // ровно как в RoK: размер замка на карте виден всем без разведки, состав
   // войск — нет.
-  const { data, error } = await sb.from("players").select("id,nick,race,x,y,is_bot,hall:state->b->>hall")
+  // shield_until — тот же приём, что и hall: голый scalar, не вскрывает
+  // состав войск (тир/число/снаряжение остаются недоступны без разведки,
+  // см. коммент выше), просто "стоит ли сейчас щит" — нужен renderCartoucheMp
+  // (см. её же коммент): автор попросил перенести интерфейс окон мира из
+  // одиночки, а там кнопка "Атака" скрывается под щитом (см. renderCartouche).
+  const { data, error } = await sb.from("players").select("id,nick,race,x,y,is_bot,hall:state->b->>hall,shield_until")
     .eq("world_id", mpState.player.world_id).neq("id", mpState.player.id).order("id");
   if(!error && data){ mpState.neighbors=data; mpRerender(); }
 }
@@ -11804,6 +11874,14 @@ async function mpRefreshScoutMail(){
   const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
     .eq("kind","scout").order("created_at",{ascending:false}).limit(10);
   if(!error && data){ mpState.scoutMail=data; mpRerender(); }
+}
+// Донесения о сборе (mail, kind:"gather") — та же схема выборки, что и у
+// scoutMail выше, только свой kind (см. applyGathered в mp-tick).
+async function mpRefreshGatherMail(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
+    .eq("kind","gather").order("created_at",{ascending:false}).limit(10);
+  if(!error && data){ mpState.gatherMail=data; mpRerender(); }
 }
 // Открытие вкладки: если этот anon-uid уже заходил в общий мир раньше
 // (сессия сохранена в localStorage), mp-join без указания расы вернёт уже
@@ -12639,15 +12717,30 @@ function foMultiplayer(embedded, only){
          "</div></div></div>";
     });
   }
-  // Все пять рубрик почты (Гонцы/Бой/Разведка/Лагеря/Точки) условны на
+  // Донесения о сборе (mail, kind:"gather", см. applyGathered в mp-tick) —
+  // раньше почта тут не заводилась вовсе (автор сообщил: «собрал ресурсы, а
+  // письма нет»), хотя ресурсы честно зачислялись. Формат — то же "Обоз
+  // собрал..." сообщение, что и у одиночки (EV.gathered), просто карточкой
+  // в общем списке, как остальные рубрики почты общего мира.
+  if(show("mail") && mpState.gatherMail.length){
+    h+=rubric("Сбор","добыча с точек ресурсов");
+    mpState.gatherMail.forEach(m=>{
+      const d=m.data;
+      h+="<div class='entry calm'><div class='line'><div class='fill'>"+
+         "<div class='title'>Обоз вернулся с добычей</div>"+
+         "<div class='note'>"+RES_NAME[d.res]+" "+fmt(d.amount)+" · точка "+d.x+"·"+d.y+"</div>"+
+         "</div></div></div>";
+    });
+  }
+  // Все шесть рубрик почты (Гонцы/Бой/Разведка/Лагеря/Точки/Сбор) условны на
   // ".length" — ни одна не рисует даже заголовок при пустом списке. У
-  // нового игрока, который ни разу не воевал, ВСЕ пять пусты разом —
+  // нового игрока, который ни разу не воевал, ВСЕ шесть пусты разом —
   // вкладка "Почта" получала буквально ни одного байта содержимого, только
   // тёмная подложка модалки и декор углов (репорт пользователя со
   // скриншотом: "вкладка почты все равно не открывается" — открывалась,
   // просто показывать было нечего). Один общий пробел на весь экран.
   if(show("mail") && !mpState.siegeMail.length && !mpState.mail.length && !mpState.scoutMail.length
-     && !mpState.raidMail.length && !mpState.nodeBattleMail.length){
+     && !mpState.raidMail.length && !mpState.nodeBattleMail.length && !mpState.gatherMail.length){
     h+=hollow("&#9993;","Здесь пока пусто — донесения и боевые сводки появятся, как только начнутся первые походы.");
   }
 
