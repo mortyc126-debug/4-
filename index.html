@@ -7402,6 +7402,50 @@ function mpRenderCityMap(){
   h+=mpRenderFieldArmy();
   return h;
 }
+// Свободная застройка (Фаза 3 из 6, план "город как в RoK") — читает
+// p.layout вместо CITY_CELLS, рисует поверх city-map.png (новая картинка,
+// см. CITY_GRID) по той же координатной системе, что и collisionOk на
+// сервере (gx/gy в клетках, переводится в % через CITY_GRID.left/top/
+// width/height). ПАРАЛЛЕЛЬНО mpRenderCityMap() выше, не заменяет её —
+// ничего не вызывает эту функцию из живой отрисовки: это Фаза 3, только
+// проверка, что данные читаются верно и модалка открывается, ПЕРЕД тем как
+// вкладываться в UI выбора/перетаскивания (Фаза 4). Ратуша/Стена — не в
+// layout (фиксированы по смыслу, см. PLACEABLE_BKEYS), их место на новой
+// картинке — временные координаты-плейсхолдер (в клетках той же сетки, для
+// единообразия), финальные — вместе с реальным артом в Фазе 6.
+const CITY_FIXED_GRID_POS = {
+  hall: {gx:6, gy:9, w:4, h:4},
+  wall: {gx:7, gy:20, w:2, h:2},
+};
+function cityGridCellToPct(gx,gy,w,h){
+  const gcw=CITY_GRID.width/CITY_GRID.w, gch=CITY_GRID.height/CITY_GRID.h;
+  return {left:CITY_GRID.left+gx*gcw, top:CITY_GRID.top+gy*gch, w:w*gcw, h:h*gch};
+}
+function mpRenderFreeformCity(){
+  const p=mpCityShim(), st=mpState.player.state;
+  const layout=Array.isArray(st.layout)?st.layout:[];
+  let h="<div id='citymap-wrap'><img class='base' src='city-map.png'>";
+  ["hall","wall"].forEach(bk=>{
+    const lv=p.b[bk]||0, pos=CITY_FIXED_GRID_POS[bk], r=cityGridCellToPct(pos.gx,pos.gy,pos.w,pos.h);
+    h+="<div class='cbuild"+(lv>0?" built":"")+"' data-layoutfixed='"+bk+"' "+
+       "style='left:"+r.left+"%;top:"+r.top+"%;width:"+r.w+"%;height:"+r.h+"%'>"+
+       "<div class='shape'></div>"+
+       (lv>0?(bk!=="wall"?"<img class='bimg' src='"+cityCellImg({bk,pl:null})+"'>":"")+"<span class='lvl'>"+lv+"</span>":"")+
+       "</div>";
+  });
+  layout.forEach((e,li)=>{
+    const fp=BUILDINGS[e.b]&&BUILDINGS[e.b].footprint; if(!fp) return;
+    const lv=(e.plot!=null?p.b[e.b][e.plot]:p.b[e.b])||0;
+    const r=cityGridCellToPct(e.gx,e.gy,fp.w,fp.h);
+    h+="<div class='cbuild built"+(mpLayoutSel===li?" sel":"")+"' data-layout='"+li+"' "+
+       "style='left:"+r.left+"%;top:"+r.top+"%;width:"+r.w+"%;height:"+r.h+"%'>"+
+       "<div class='shape'></div>"+
+       "<img class='bimg' src='"+cityCellImg({bk:e.b,pl:e.plot})+"'><span class='lvl'>"+lv+"</span>"+
+       "</div>";
+  });
+  h+="</div>";
+  return h;
+}
 // Бригады общего мира — дословно тот же #brigades/.slotcell, что и в
 // одиночке (renderBrigades, index.html:foCity): два круглых слота
 // строительной очереди слева от карты города — автор пояснил, что именно
@@ -8582,11 +8626,16 @@ function mpResearchCarouselHtml(){
 // Все data-mp-кнопки внутри слушает handleMpAct(), навешанная и на
 // #building-modal (см. Фазу 19 у её объявления — раньше висел только
 // handleAct(), про data-mp не знавший, кнопки были мёртвыми).
-function mpBuildingModalHtml(idx){
-  const c=CITY_CELLS[idx]; if(!c||!c.bk) return "";
+// Свободная застройка (Фаза 3 из 6) — то же самое меню здания, но без
+// привязки к индексу CITY_CELLS: и старая карта с фиксированными слотами
+// (mpBuildingModalHtml(idx) ниже — тонкая обёртка), и новая mpRenderFreeformCity()
+// зовут этот код по bk/plot напрямую, ни одна строчка логики модалки не
+// продублирована. img/desc берутся напрямую по bld, не через cityCellImg(c)
+// (та принимает {bk,pl}, а не отдельные bld/plot — тот же вид данных).
+function mpBuildingModalHtmlFor(bld,plot){
   const st=mpState.player.state, pShim=mpCityShim();
-  const bld=c.bk, isMultiBld=BUILD_MP_MULTI.has(bld), plot=isMultiBld?c.pl:null;
-  const lv=cityCellLevel(pShim,c)||0, nextLv=lv+1, hallLv=st.b.hall||0;
+  const isMultiBld=BUILD_MP_MULTI.has(bld);
+  const lv=(plot!=null?pShim.b[bld][plot]:pShim.b[bld])||0, nextLv=lv+1, hallLv=st.b.hall||0;
   const maxed=nextLv>buildingMax(bld);
   const queued=st.queues.find(q=>q&&q.b===bld&&q.plot===plot);
   let gated=false, gateTxt="";
@@ -8602,7 +8651,7 @@ function mpBuildingModalHtml(idx){
   }
   const canGo=!maxed&&!gated&&!queued;
   const cst=buildCost(bld,nextLv), t=buildTime(bld,nextLv);
-  const img=cityCellImg(c);
+  const img=cityCellImg({bk:bld,pl:plot});
   const desc=(BUILDINGS[bld]&&BUILDINGS[bld].desc)||"";
   let h="<img id='bm-art' src='"+img+"'>";
   h+="<div id='bm-title'>"+buildingName(bld,pShim)+(plot!=null?" · участок&nbsp;"+(plot+1):"")+"</div>";
@@ -8659,6 +8708,12 @@ function mpBuildingModalHtml(idx){
   }
   return h;
 }
+// Старая карта с фиксированными слотами (CITY_CELLS) — тонкая обёртка над
+// mpBuildingModalHtmlFor выше, ничего не изменилось для неё по поведению.
+function mpBuildingModalHtml(idx){
+  const c=CITY_CELLS[idx]; if(!c||!c.bk) return "";
+  return mpBuildingModalHtmlFor(c.bk, BUILD_MP_MULTI.has(c.bk)?c.pl:null);
+}
 // Фаза 17, кусочек 1 — открыть/закрыть иллюстрированное меню здания общего
 // мира: тот же #building-modal/#bm-body, что и у одиночного
 // openBuildingModal()/closeBuildingModal() (см. их комментарии ниже по
@@ -8697,6 +8752,29 @@ function mpCloseBuildingModal(){
   // же проверки mpCarouselCtx&&mpTrainCtx / mpHealCarouselOpen).
   // Фаза 19, кусочек 3 — и mpResearchCtx (карусель исследований) той же
   // причине.
+  mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
+  mpRenderFolio();
+}
+// Свободная застройка (Фаза 3 из 6) — та же пара открыть/закрыть, что и
+// mpOpenBuildingModal/mpCloseBuildingModal выше, но индекс — в
+// mpState.player.state.layout (см. mpRenderFreeformCity), не в CITY_CELLS.
+// Не переиспользует mpCitySel: mpRenderFreeformCity() пока нигде не
+// подключена к живой отрисовке (параллельно старой карте, см. её
+// комментарий) — своя переменная, чтобы ничего не задеть в уже рабочей
+// mpCitySel-логике, пока обе карты существуют одновременно.
+let mpLayoutSel=-1;
+function mpOpenLayoutModal(li){
+  const entry=(mpState.player.state.layout||[])[li]; if(!entry) return;
+  mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
+  mpForgeTab=null; mpForgeRarity=null;
+  mpLayoutSel=li;
+  $("#bm-body").innerHTML = mpBuildingModalHtmlFor(entry.b, entry.plot);
+  $("#building-modal").classList.add("open");
+  mpRenderFolio();
+}
+function mpCloseLayoutModal(){
+  $("#building-modal").classList.remove("open");
+  mpLayoutSel=-1;
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpRenderFolio();
 }
@@ -10310,6 +10388,16 @@ function handleAct(e){
   if(mpCell){
     const idx=+mpCell.dataset.mpcell;
     if(mpCitySel===idx) mpCloseBuildingModal(); else mpOpenBuildingModal(idx);
+    return;
+  }
+  // Свободная застройка (Фаза 3) — то же самое, но по индексу в
+  // p.layout, для mpRenderFreeformCity() (см. её комментарий: пока нигде
+  // не подключена к живой отрисовке, обработчик готов заранее и не мешает
+  // ничему уже рабочему — data-layout просто ещё не появляется в DOM).
+  const mpLayoutCell=e.target.closest("[data-layout]");
+  if(mpLayoutCell){
+    const li=+mpLayoutCell.dataset.layout;
+    if(mpLayoutSel===li) mpCloseLayoutModal(); else mpOpenLayoutModal(li);
     return;
   }
   // Клик по иконке похода в #fieldarmy (mpRenderFieldArmy) — тот же лёгкий
@@ -12047,6 +12135,9 @@ function mpRerender(){
       const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
     } else if(mpCitySel>=0){
       $("#bm-body").innerHTML = mpBuildingModalHtml(mpCitySel);
+    } else if(mpLayoutSel>=0){
+      const entry=(mpState.player.state.layout||[])[mpLayoutSel];
+      if(entry) $("#bm-body").innerHTML = mpBuildingModalHtmlFor(entry.b, entry.plot);
     // Свиток похода (mpOpenMarchModal) — тот же диф по содержимому, что и у
     // #menu-modal-body (lastMenuBody выше): расстояние/резервы/кулдаун могут
     // не измениться между опросами, перезапись убила бы набранные в полях
