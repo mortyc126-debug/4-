@@ -1108,14 +1108,17 @@ const BATTLE_PACE = 0.45;
 // погода за бой (не "везение одной стороны"), бьёт по РОДУ войск
 // атакующего в конкретном ударе (см. wMod(at) в dmgTo ниже), веса w —
 // вероятность выпадения (ясно намеренно вдвое вероятнее всего остального).
+// desc — index.html:4395-4401, дословно (раньше сюда не переносилось: сама
+// погода в MP только считает модификаторы урона, описание для письма никто
+// не читал — почта была без хроники вовсе, см. заголовок pushLog выше).
 const BATTLE_WEATHER = [
-  { id: "clear", w: 50, name: "Ясно", mod: {} },
-  { id: "rain", w: 11, name: "Проливной дождь", mod: { arc: 0.82 } },
-  { id: "mud", w: 11, name: "Распутица", mod: { cav: 0.82 } },
-  { id: "fog", w: 9, name: "Густой туман", mod: { arc: 0.85, sie: 0.80 } },
-  { id: "wind", w: 8, name: "Порывистый ветер", mod: { arc: 0.88, sie: 0.88 } },
-  { id: "heat", w: 7, name: "Палящий зной", mod: { inf: 0.92, arc: 0.92, cav: 0.92, sie: 0.92 } },
-  { id: "storm", w: 4, name: "Гроза", mod: { arc: 0.85 }, jitter: 0.14 },
+  { id: "clear", w: 50, name: "Ясно", desc: "Погода не мешает ни одной стороне.", mod: {} },
+  { id: "rain", w: 11, name: "Проливной дождь", desc: "Тетивы намокли — лучники бьют слабее.", mod: { arc: 0.82 } },
+  { id: "mud", w: 11, name: "Распутица", desc: "Конница вязнет в грязи и теряет разгон.", mod: { cav: 0.82 } },
+  { id: "fog", w: 9, name: "Густой туман", desc: "Дальний бой почти вслепую: лучники и осадные бьют неточно.", mod: { arc: 0.85, sie: 0.80 } },
+  { id: "wind", w: 8, name: "Порывистый ветер", desc: "Ветер сносит стрелы и мешает наводить орудия.", mod: { arc: 0.88, sie: 0.88 } },
+  { id: "heat", w: 7, name: "Палящий зной", desc: "Люди и кони изнурены — все бьют вполсилы.", mod: { inf: 0.92, arc: 0.92, cav: 0.92, sie: 0.92 } },
+  { id: "storm", w: 4, name: "Гроза", desc: "В такой свалке исход куда меньше зависит от расчёта.", mod: { arc: 0.85 }, jitter: 0.14 },
 ];
 // index.html:2692 mulberry — тот же генератор, дословно.
 function mulberry(a) {
@@ -1378,6 +1381,60 @@ const ROUND_CAP = 60; // index.html:4190 while(round<60) — то же числ�
 // чуть плыть от вызова к вызову (снаряжение/бонусы живые, см. выше), доля
 // же остаётся честной вне зависимости от того, что при этом произошло с
 // максимумом.
+// ---- Хроника боя (почта общего мира на пергаменте догоняет одиночную
+// battleLogHtml/BATTLE_LOG_ICON, index.html) — раньше её не было вовсе,
+// checkDiscipline() сама явно предупреждала в комментарии: "тут нет
+// боевого лога". state.log — плоский массив {r,kind,text,side}, копится в
+// state (JSON, лежит в marches.data.battle между тиками) теми же
+// категориями, что клиент уже красит значком/цветом (BATTLE_LOG_ICON:
+// weather/volley/tower/panic/counter/raise/general/mark/round/rout/end) —
+// просто заполняется на сервере, а не в клиентском resolveBattle().
+// side — "att"/"def" (не "A"/"D", как в одиночке — тут ровно две
+// однозначные роли на любой бой этого типа); клиент переводит их в
+// "наше"/"чужое" по роли читающего, см. mpMailBattleEntry в index.html.
+function pushLog(state, kind, text, side) {
+  if (!state.log) state.log = [];
+  state.log.push({ r: state.round || 0, kind, text, side: side || null });
+}
+// checkDiscipline() мутирует broken на месте и не говорит, что именно
+// сломалось — сравниваем снимок ДО/ПОСЛЕ вызова и возвращаем РОДА войск
+// (TROOP_TYPES[t].name — общее имя рода, не полное имя юнита по расе/тиру,
+// как в одиночке: там целая таблица UNIT_NAMES по 4 расам — переносить её
+// сюда целиком ради одной строки письма было бы непропорционально), НОВО
+// сломавшиеся именно за этот вызов, не раньше.
+function snapshotBroken(broken) {
+  const out = {};
+  TKEYS.forEach((t) => { out[t] = {}; for (let i = 1; i <= 5; i++) out[t][i] = !!broken[t][i]; });
+  return out;
+}
+function newlyBrokenTypes(before, broken) {
+  const out = [];
+  TKEYS.forEach((t) => {
+    let hit = false;
+    for (let i = 1; i <= 5; i++) if (broken[t][i] && !(before[t] && before[t][i])) hit = true;
+    if (hit) out.push(TROOP_TYPES[t].name);
+  });
+  return out;
+}
+// index.html:4316-4328 battleBuffSnapshot — дословно, только принимает
+// готовый B (bonuses(p)/bonuses(p,true)) напрямую, не через f.B (тут нет
+// "force"-объектов одиночки) — итоговые проценты бонусов по роду войск на
+// секунду боя, для таблицы "Статистика войск" в письме (index.html
+// battleStatsRows). Раньше в MP этого не было вовсе — письмо несло только
+// голые числа потерь, без разбора "почему".
+function battleBuffSnapshotMp(B) {
+  B = B || {};
+  const TYPE_ATK = { inf: "atkInf", arc: "atkArc", cav: "atkCav", sie: "atkSie" };
+  const TYPE_DEF = { inf: "defInf", arc: "defArc", cav: "defCav", sie: "defSie" };
+  const out = { hp: B.hp || 0 };
+  TKEYS.forEach((t) => {
+    let atk = (1 + (B.atk || 0)) * (1 + (B[TYPE_ATK[t]] || 0)) - 1;
+    if (t === "arc") atk = (1 + atk) * (1 + (B.archer || 0)) - 1;
+    const def = (1 + (B.def || 0)) * (1 + (B[TYPE_DEF[t]] || 0)) - 1;
+    out[t] = { atk, def };
+  });
+  return out;
+}
 function pvpTotalTroops(attUnits, defUnits) { return unitsTotal(attUnits) + unitsTotal(defUnits); }
 
 function initPvpBattle(attUnits, attP, defUnits, defP, defWallLv, defGarrisonLv, marchId, attHasGen, attDeathFrac, defDeathFrac) {
@@ -1392,6 +1449,11 @@ function initPvpBattle(attUnits, attP, defUnits, defP, defWallLv, defGarrisonLv,
   const wMod = (t) => (weather.mod && weather.mod[t]) || 1;
   const jit = weather.jitter || 0.05;
   const roll = () => 1 + (rnd() * 2 - 1) * jit;
+  // Хроника — см. заголовок pushLog выше. state ещё не существует (return
+  // только в конце функции), копим в локальный log и кладём в state внизу.
+  const log = [];
+  const fakeState = { round: 0, log };
+  if (weather.id !== "clear") pushLog(fakeState, "weather", weather.name + ". " + (weather.desc || ""), null);
   // index.html:4169-4188 первый залп лучников (elf firstStrike) + залп
   // Сторожевой башни защитника — ДО общей схватки, один раз на весь бой,
   // здесь и остаются (не часть раундового цикла — переносить их в
@@ -1400,22 +1462,37 @@ function initPvpBattle(attUnits, attP, defUnits, defP, defWallLv, defGarrisonLv,
   const openA = volleyDamage(attU, attP.race, attB, sideStats(defU, defP.race, defB), defWallLv, defB.wallBonus);
   if (openA) {
     const scaled = {}; TKEYS.forEach((t) => { scaled[t] = (openA[t] || 0) * wMod("arc") * roll(); });
+    const before = unitsTotal(defU);
     const l = applyLosses(defU, scaled, defP.race, defB.hp, null, rnd);
     defU = unitsSub(defU, l.units); defLossTotal = unitsAdd(defLossTotal, l.units);
+    const fell = before - unitsTotal(defU);
+    if (fell > 0) pushLog(fakeState, "volley", "Атакующие: лучники дали залп ещё до сшибки — пало " + fell + ".", "att");
   }
   const openD = volleyDamage(defU, defP.race, defB, sideStats(attU, attP.race, attB));
   if (openD) {
     const scaled = {}; TKEYS.forEach((t) => { scaled[t] = (openD[t] || 0) * wMod("arc") * roll(); });
+    const before = unitsTotal(attU);
     const l = applyLosses(attU, scaled, attP.race, attB.hp, null, rnd);
     attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
+    const fell = before - unitsTotal(attU);
+    if (fell > 0) pushLog(fakeState, "volley", "Обороняющиеся: встречный залп лучников — пало " + fell + ".", "def");
   }
   const openG = garrisonVolley(defGarrisonLv, sideStats(attU, attP.race, attB));
   if (openG) {
+    const before = unitsTotal(attU);
     const l = applyLosses(attU, openG, attP.race, attB.hp, null, rnd);
     attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
+    const fell = before - unitsTotal(attU);
+    if (fell > 0) pushLog(fakeState, "tower", "Сторожевая башня встретила подходящих — пало " + fell + ".", "def");
   }
-  checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
-  checkDiscipline(defUnits, defLossTotal, defP.race, defBroken);
+  {
+    const attBrokenBefore = snapshotBroken(attBroken), defBrokenBefore = snapshotBroken(defBroken);
+    checkDiscipline(attUnits, attLossTotal, attP.race, attBroken);
+    checkDiscipline(defUnits, defLossTotal, defP.race, defBroken);
+    const attBrokeNow = newlyBrokenTypes(attBrokenBefore, attBroken), defBrokeNow = newlyBrokenTypes(defBrokenBefore, defBroken);
+    if (attBrokeNow.length) pushLog(fakeState, "panic", "Атакующие: " + attBrokeNow.join(", ") + " дрогнули ещё на подходе.", "def");
+    if (defBrokeNow.length) pushLog(fakeState, "panic", "Обороняющиеся: " + defBrokeNow.join(", ") + " дрогнули ещё на подходе.", "att");
+  }
   const attStartN = unitsTotal(attUnits);
   const attStartHp = sideStats(attU, attP.race, attB, attBroken, attRisen).totalHp;
   const defStartHp = sideStats(defU, defP.race, defB, defBroken, defRisen).totalHp;
@@ -1427,7 +1504,11 @@ function initPvpBattle(attUnits, attP, defUnits, defP, defWallLv, defGarrisonLv,
   const attStartPower = armyPower(attUnits, attB, attP.race);
   const defStartPower = armyPower(defUnits, defB, defP.race);
   return {
-    marchId, round: 0, ticksBudget, weather,
+    marchId, round: 0, ticksBudget, weather, log,
+    // marks — рубежи "в строю осталась половина/четверть", о которых
+    // сообщаем ровно один раз (index.html:4439 marks) — своё поле в state,
+    // переживает между тиками так же, как и весь остальной ход боя.
+    marks: { att: { 50: false, 25: false }, def: { 50: false, 25: false } },
     attU, defU, attStartUnits: attUnits, defStartUnits: defUnits, attStartN,
     attStartPower, defStartPower,
     attLossTotal, defLossTotal, attBroken, defBroken,
@@ -1489,12 +1570,23 @@ function runPvpBattleRounds(state, attP, defP, defWallLv, defGarrisonLv, roundsB
   const attBroken = state.attBroken, defBroken = state.defBroken;
   const attRisen = state.attRisen, defRisen = state.defRisen;
   const attRaisedCum = state.attRaisedCum, defRaisedCum = state.defRaisedCum;
+  // Хроника (см. заголовок pushLog) — защита от старых боёв, уже лежавших
+  // в marches.data.battle ДО этого деплоя: у них этих полей ещё нет.
+  if (!state.log) state.log = [];
+  if (!state.marks) state.marks = { att: { 50: false, 25: false }, def: { 50: false, 25: false } };
+  const defStartTotal = unitsTotal(state.defStartUnits);
 
   let roundsThisCall = 0;
   while (state.round < ROUND_CAP && roundsThisCall < roundsBudget) {
     const attS = sideStats(attU, attP.race, attB, attBroken, attRisen), defS = sideStats(defU, defP.race, defB, defBroken, defRisen);
     if (attS.totalN <= 0 || defS.totalN <= 0) break;
     state.round++; roundsThisCall++;
+    // Снимки ДО этого раунда — не влияют на бой, только на то, что от них
+    // отсчитывать в хронике ниже (index.html:4508-4510 beforeA/beforeD/
+    // genAliveA/genAliveD/risenA0/risenD0 — дословно тот же приём).
+    const beforeAttN = unitsTotal(attU), beforeDefN = unitsTotal(defU);
+    const genAliveAtt = !!(attGen && attGen.hp > 0), genAliveDef = !!(defGen && defGen.hp > 0);
+    const risenAttBefore = unitsTotal(attRaisedCum), risenDefBefore = unitsTotal(defRaisedCum);
     const dmgToDef = dmgTo(attS, defS, defWallLv, defB.wallBonus, wMod, roll());
     const dmgToAtt = dmgTo(defS, attS, 0, 0, wMod, roll());
     const defLoss = applyLosses(defU, dmgToDef, defP.race, defB.hp, defRisen, rnd);
@@ -1508,8 +1600,11 @@ function runPvpBattleRounds(state, attP, defP, defWallLv, defGarrisonLv, roundsB
       if (extra > 0) {
         const reflect = {};
         TKEYS.forEach((t) => { if (attS[t].n > 0) reflect[t] = extra * (attS[t].hp / Math.max(1, attS.totalHp)); });
+        const beforeCounter = unitsTotal(attU);
         const l = applyLosses(attU, reflect, attP.race, attB.hp, null, rnd);
         attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
+        const fell = beforeCounter - unitsTotal(attU);
+        if (fell > 0) pushLog(state, "counter", "Обороняющиеся: гарнизон отвечает контрударом — пало " + fell + ".", "def");
       }
     }
     const genDmgToDef = generalDamage(attGen, defS);
@@ -1524,11 +1619,44 @@ function runPvpBattleRounds(state, attP, defP, defWallLv, defGarrisonLv, roundsB
     }
     if (attGen) attGen.hp = Math.max(0, attGen.hp - damageToGeneral(attGen, defS));
     if (defGen) defGen.hp = Math.max(0, defGen.hp - damageToGeneral(defGen, attS));
+    if (genAliveAtt && attGen.hp <= 0) pushLog(state, "general", "Атакующие: полководец пал и больше не ведёт войско.", "def");
+    if (genAliveDef && defGen.hp <= 0) pushLog(state, "general", "Обороняющиеся: полководец пал и больше не ведёт войско.", "att");
+    const attBrokenBefore = snapshotBroken(attBroken), defBrokenBefore = snapshotBroken(defBroken);
     checkDiscipline(state.attStartUnits, attLossTotal, attP.race, attBroken);
     checkDiscipline(state.defStartUnits, defLossTotal, defP.race, defBroken);
+    const attBrokeNow = newlyBrokenTypes(attBrokenBefore, attBroken), defBrokeNow = newlyBrokenTypes(defBrokenBefore, defBroken);
+    if (attBrokeNow.length) pushLog(state, "panic", "Атакующие: " + attBrokeNow.join(", ") + " дрогнули — бьются и держатся хуже до конца боя.", "def");
+    if (defBrokeNow.length) pushLog(state, "panic", "Обороняющиеся: " + defBrokeNow.join(", ") + " дрогнули — бьются и держатся хуже до конца боя.", "att");
     applyRaise(defP, defB, defLossTotal, defRisen, defRaisedCum, state.defDeathFrac, defBroken);
     applyRaise(attP, attB, attLossTotal, attRisen, attRaisedCum, state.attDeathFrac, attBroken);
-    if (unitsTotal(attU) / Math.max(1, state.attStartN) < 0.28) break;
+    const risenAttNow = unitsTotal(attRaisedCum) - risenAttBefore, risenDefNow = unitsTotal(defRaisedCum) - risenDefBefore;
+    if (risenAttNow > 0) pushLog(state, "raise", "Атакующие: павшие поднимаются и встают обратно в строй — " + risenAttNow + ".", "att");
+    if (risenDefNow > 0) pushLog(state, "raise", "Обороняющиеся: павшие поднимаются и встают обратно в строй — " + risenDefNow + ".", "def");
+    // Сводка по раунду (index.html:4543-4551) — не каждый, иначе хроника
+    // превращается в столбец цифр: первые два, затем каждый пятый, и
+    // обязательно тот, где полегло особенно много.
+    const lostAtt = beforeAttN - unitsTotal(attU), lostDef = beforeDefN - unitsTotal(defU);
+    const heavyRound = (beforeAttN > 0 && lostAtt / beforeAttN >= 0.2) || (beforeDefN > 0 && lostDef / beforeDefN >= 0.2);
+    if (state.round <= 2 || state.round % 5 === 0 || heavyRound) {
+      pushLog(state, "round", "Схватка " + state.round + ": атакующие теряют " + lostAtt + " (в строю " + unitsTotal(attU) + "), обороняющиеся теряют " + lostDef + " (в строю " + unitsTotal(defU) + ").", null);
+    }
+    // Рубежи "в строю осталась половина/четверть" (index.html:4438-4451
+    // checkMarks) — по разу на сторону за весь бой, state.marks переживает
+    // между тиками наравне со всем остальным ходом боя.
+    [["att", attU, state.attStartN, "def", "Атакующие"], ["def", defU, defStartTotal, "att", "Обороняющиеся"]].forEach(([k, u, st, otherSide, label]) => {
+      if (st <= 0) return;
+      const left = unitsTotal(u) / st;
+      [50, 25].forEach((pc) => {
+        if (!state.marks[k][pc] && left <= pc / 100) {
+          state.marks[k][pc] = true;
+          pushLog(state, "mark", label + ": в строю осталась " + (pc === 50 ? "половина" : "четверть") + " войска.", otherSide);
+        }
+      });
+    });
+    if (unitsTotal(attU) / Math.max(1, state.attStartN) < 0.28) {
+      pushLog(state, "rout", "Атакующие: потеряно больше двух третей войска — уцелевшие отходят.", "def");
+      break;
+    }
   }
 
   state.attU = attU; state.defU = defU;
@@ -1553,6 +1681,15 @@ function runPvpBattleRounds(state, attP, defP, defWallLv, defGarrisonLv, roundsB
   if (state.concluded) {
     const powA = armyPower(attU, attB, attP.race), powD = armyPower(defU, defB, defP.race);
     state.winner = attAlive > 0 && defAlive <= 0 ? "att" : defAlive > 0 && attAlive <= 0 ? "def" : (powA > powD ? "att" : "def");
+    // Итоговая строка хроники (index.html:4578-4584 note("end",...)) —
+    // называет ПРИЧИНУ исхода, не только победителя.
+    pushLog(state, "end",
+      defAlive <= 0 && attAlive > 0 ? "Обороняющиеся перебиты целиком. Поле осталось за нападавшими." :
+      attAlive <= 0 && defAlive > 0 ? "Нападавшие перебиты целиком. Штурм отбит." :
+      attAlive <= 0 && defAlive <= 0 ? "Обе стороны полегли до последнего. Поле осталось за оборонявшимися." :
+      state.winner === "att" ? "Бой выдохся. Нападавшие сохранили больше сил — поле за ними." :
+                  "Бой выдохся. Оборонявшиеся сохранили больше сил — штурм не удался.",
+      state.winner);
   }
   return state;
 }
@@ -1817,12 +1954,22 @@ function initRaidBattle(attUnits, attP, campLv, marchId, attHasGen) {
   const wMod = (t) => (weather.mod && weather.mod[t]) || 1;
   const jit = weather.jitter || 0.05;
   const roll = () => 1 + (rnd() * 2 - 1) * jit;
+  // Хроника (см. заголовок pushLog у initPvpBattle) — раид читает только
+  // атакующий (finalizeRaidBattle шлёт письмо ему одному), поэтому текст
+  // прямо от первого лица ("наш отряд"/"лагерь"), без нейтральных
+  // "атакующие/обороняющиеся", как в симметричном PvP-логе.
+  const log = [];
+  const fakeState = { round: 0, log };
+  if (weather.id !== "clear") pushLog(fakeState, "weather", weather.name + ". " + (weather.desc || ""), null);
   const openA = volleyDamage(attU, attP.race, attB, sideStats(bandU, null, BANDIT_B));
   if (openA) {
     const scaled = {}; TKEYS.forEach((t) => { scaled[t] = (openA[t] || 0) * wMod("arc") * roll(); });
+    const before = unitsTotal(bandU);
     const l = applyLosses(bandU, scaled, null, 0, null, rnd);
     bandU = unitsSub(bandU, l.units); bandLossTotal = unitsAdd(bandLossTotal, l.units);
     checkDiscipline(bandStart, bandLossTotal, null, bandBroken);
+    const fell = before - unitsTotal(bandU);
+    if (fell > 0) pushLog(fakeState, "volley", "Наш отряд: лучники дали залп ещё до сшибки — пало " + fell + ".", "att");
   }
   const attStartN = unitsTotal(attUnits);
   const attStartHp = sideStats(attU, attP.race, attB, attBroken, attRisen).totalHp;
@@ -1834,7 +1981,8 @@ function initRaidBattle(attUnits, attP, campLv, marchId, attHasGen) {
   const attStartPower = armyPower(attUnits, attB, attP.race);
   const defStartPower = armyPower(bandStart, BANDIT_B, null);
   return {
-    marchId, round: 0, ticksBudget, weather, campLv,
+    marchId, round: 0, ticksBudget, weather, campLv, log,
+    marks: { att: { 50: false, 25: false }, def: { 50: false, 25: false } },
     attU, defU: bandU, attStartUnits: attUnits, defStartUnits: bandStart, attStartN,
     attStartPower, defStartPower,
     attLossTotal, defLossTotal: bandLossTotal, attBroken, defBroken: bandBroken,
@@ -1874,12 +2022,18 @@ function runRaidBattleRounds(state, attP, roundsBudget) {
   let attLossTotal = state.attLossTotal, bandLossTotal = state.defLossTotal;
   const attBroken = state.attBroken, bandBroken = state.defBroken;
   const attRisen = state.attRisen, attRaisedCum = state.attRaisedCum;
+  if (!state.log) state.log = [];
+  if (!state.marks) state.marks = { att: { 50: false, 25: false }, def: { 50: false, 25: false } };
+  const bandStartTotal = unitsTotal(state.defStartUnits);
 
   let roundsThisCall = 0;
   while (state.round < ROUND_CAP && roundsThisCall < roundsBudget) {
     const attS = sideStats(attU, attP.race, attB, attBroken, attRisen), bandS = sideStats(bandU, null, BANDIT_B, bandBroken);
     if (attS.totalN <= 0 || bandS.totalN <= 0) break;
     state.round++; roundsThisCall++;
+    const beforeAttN = unitsTotal(attU), beforeBandN = unitsTotal(bandU);
+    const genAliveAtt = !!(attGen && attGen.hp > 0);
+    const risenAttBefore = unitsTotal(attRaisedCum);
     const dmgToBand = dmgTo(attS, bandS, 0, 0, wMod, roll()); // лагерь без стены/башни
     const dmgToAtt = dmgTo(bandS, attS, 0, 0, wMod, roll());
     const bandLoss = applyLosses(bandU, dmgToBand, null, 0, null, rnd);
@@ -1893,12 +2047,37 @@ function runRaidBattleRounds(state, attP, roundsBudget) {
       bandU = unitsSub(bandU, l.units); bandLossTotal = unitsAdd(bandLossTotal, l.units);
     }
     if (attGen) attGen.hp = Math.max(0, attGen.hp - damageToGeneral(attGen, bandS));
+    if (genAliveAtt && attGen.hp <= 0) pushLog(state, "general", "Наш полководец пал и больше не ведёт войско.", "att");
+    const attBrokenBefore = snapshotBroken(attBroken), bandBrokenBefore = snapshotBroken(bandBroken);
     checkDiscipline(state.defStartUnits, bandLossTotal, null, bandBroken);
     checkDiscipline(state.attStartUnits, attLossTotal, attP.race, attBroken);
+    const attBrokeNow = newlyBrokenTypes(attBrokenBefore, attBroken), bandBrokeNow = newlyBrokenTypes(bandBrokenBefore, bandBroken);
+    if (attBrokeNow.length) pushLog(state, "panic", "Наш отряд: " + attBrokeNow.join(", ") + " дрогнули — бьются и держатся хуже до конца боя.", "att");
+    if (bandBrokeNow.length) pushLog(state, "panic", "Лагерь: " + bandBrokeNow.join(", ") + " дрогнули — держатся хуже до конца боя.", "att");
     // Лазарет атакующего тут работает как обычно (Фаза 28 — как и везде
     // теперь, включая PvP-штурм), raiseHurt для него реален.
     applyRaise(attP, attB, attLossTotal, attRisen, attRaisedCum);
-    if (unitsTotal(attU) / Math.max(1, state.attStartN) < 0.28) break; // rout, index.html:5066 — тоже roundует с бандитами
+    const risenAttNow = unitsTotal(attRaisedCum) - risenAttBefore;
+    if (risenAttNow > 0) pushLog(state, "raise", "Наши павшие поднимаются и встают обратно в строй — " + risenAttNow + ".", "att");
+    const lostAtt = beforeAttN - unitsTotal(attU), lostBand = beforeBandN - unitsTotal(bandU);
+    const heavyRound = (beforeAttN > 0 && lostAtt / beforeAttN >= 0.2) || (beforeBandN > 0 && lostBand / beforeBandN >= 0.2);
+    if (state.round <= 2 || state.round % 5 === 0 || heavyRound) {
+      pushLog(state, "round", "Схватка " + state.round + ": наш отряд теряет " + lostAtt + " (в строю " + unitsTotal(attU) + "), лагерь теряет " + lostBand + " (в строю " + unitsTotal(bandU) + ").", null);
+    }
+    [["att", attU, state.attStartN, "Наш отряд"], ["def", bandU, bandStartTotal, "Лагерь"]].forEach(([k, u, st, label]) => {
+      if (st <= 0) return;
+      const left = unitsTotal(u) / st;
+      [50, 25].forEach((pc) => {
+        if (!state.marks[k][pc] && left <= pc / 100) {
+          state.marks[k][pc] = true;
+          pushLog(state, "mark", label + ": в строю осталась " + (pc === 50 ? "половина" : "четверть") + " войска.", "att");
+        }
+      });
+    });
+    if (unitsTotal(attU) / Math.max(1, state.attStartN) < 0.28) { // rout, index.html:5066 — тоже roundует с бандитами
+      pushLog(state, "rout", "Наш отряд: потеряно больше двух третей войска — уцелевшие отходят.", "att");
+      break;
+    }
   }
 
   state.attU = attU; state.defU = bandU;
@@ -1916,6 +2095,13 @@ function runRaidBattleRounds(state, attP, roundsBudget) {
   if (state.concluded) {
     const powA = armyPower(attU, attB, attP.race), powBand = armyPower(bandU, BANDIT_B, null);
     state.winner = attAlive > 0 && bandAlive <= 0 ? "att" : bandAlive > 0 && attAlive <= 0 ? "band" : (powA > powBand ? "att" : "band");
+    pushLog(state, "end",
+      bandAlive <= 0 && attAlive > 0 ? "Лагерь разбит целиком. Поле осталось за нашим отрядом." :
+      attAlive <= 0 && bandAlive > 0 ? "Наш отряд перебит целиком. Лагерь устоял." :
+      attAlive <= 0 && bandAlive <= 0 ? "Обе стороны полегли до последнего." :
+      state.winner === "att" ? "Бой выдохся. Наш отряд сохранил больше сил — лагерь взят." :
+                  "Бой выдохся. Лагерь сохранил больше сил — не взят.",
+      "att");
   }
   return state;
 }
@@ -2190,6 +2376,12 @@ async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, no
     rounds: state.round, weather: state.weather.id, weatherName: state.weather.name,
     loot: carry, // {} при поражении/ничьей — RES.forEach выше не заполнил ни рубля
     retreated: !!state.retreated, // Фаза 21 — честное отступление кнопкой, не обычное поражение (см. mp-recall)
+    attRace: attRow.race, defRace: defRow.race,
+    attCoords: { x: attRow.x, y: attRow.y }, defCoords: { x: defRow.x, y: defRow.y },
+    attGen: state.attHasGen && attP.gen && attP.gen.id != null ? { id: attP.gen.id, lv: attP.gen.lv, tal: attP.gen.tal || {} } : null,
+    defGen: (defP.gen && defP.gen.away == null && defP.gen.id != null) ? { id: defP.gen.id, lv: defP.gen.lv, tal: defP.gen.tal || {} } : null,
+    attBuffs: battleBuffSnapshotMp(bonuses(attP)), defBuffs: battleBuffSnapshotMp(bonuses(defP, true)),
+    log: state.log || [],
   };
   const mailRows = [
     { world_id: m.world_id, player_id: attRow.id, kind: "battle", data: { role: "attacker", opponent_id: defRow.id, opponent_nick: defRow.nick, ...summary } },
@@ -2244,10 +2436,13 @@ function applyRetreatVolley(state, attP, defP) {
   let attLossTotal = state.attLossTotal;
   const attBroken = state.attBroken, defBroken = state.defBroken;
   const attRisen = state.attRisen, defRisen = state.defRisen;
+  if (!state.log) state.log = []; // защита от боёв, заведённых до этого деплоя
 
   const attS = sideStats(attU, attP.race, attB, attBroken, attRisen), defS = sideStats(defU, defP.race, defB, defBroken, defRisen);
   if (attS.totalN > 0 && defS.totalN > 0) {
     state.round++;
+    const genAliveAtt = !!(attGen && attGen.hp > 0);
+    const beforeAttN = unitsTotal(attU);
     // Стена/башня в dmgTo митигируют урон, получаемый ЦЕЛЬЮ (см. её 3-й/4-й
     // параметр в runPvpBattleRounds выше) — здесь цель атакующий, у него их
     // никогда не было, поэтому 0,0, тем же порядком, что и dmgToAtt там.
@@ -2264,7 +2459,10 @@ function applyRetreatVolley(state, attP, defP) {
       attU = unitsSub(attU, l.units); attLossTotal = unitsAdd(attLossTotal, l.units);
     }
     if (attGen) attGen.hp = Math.max(0, attGen.hp - damageToGeneral(attGen, defS));
+    if (genAliveAtt && attGen.hp <= 0) pushLog(state, "general", "Атакующие: полководец пал и больше не ведёт войско.", "def");
     checkDiscipline(state.attStartUnits, attLossTotal, attP.race, attBroken);
+    const fellRetreat = beforeAttN - unitsTotal(attU);
+    if (fellRetreat > 0) pushLog(state, "rout", "Обороняющиеся бьют вслед отступающим — пало " + fellRetreat + ".", "def");
   }
 
   state.attU = attU; state.attLossTotal = attLossTotal;
@@ -2303,16 +2501,22 @@ function applyRaidRetreatVolley(state, attP) {
   let attLossTotal = state.attLossTotal;
   const attBroken = state.attBroken, bandBroken = state.defBroken;
   const attRisen = state.attRisen;
+  if (!state.log) state.log = [];
 
   const attS = sideStats(attU, attP.race, attB, attBroken, attRisen), bandS = sideStats(bandU, null, BANDIT_B, bandBroken);
   if (attS.totalN > 0 && bandS.totalN > 0) {
     state.round++;
+    const genAliveAtt = !!(attGen && attGen.hp > 0);
+    const beforeAttN = unitsTotal(attU);
     const dmgToAtt = dmgTo(bandS, attS, 0, 0, wMod, roll());
     const attLoss = applyLosses(attU, dmgToAtt, attP.race, attB.hp, attRisen, rnd);
     attU = unitsSub(attU, attLoss.units); attLossTotal = unitsAdd(attLossTotal, attLoss.units);
     TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) attRisen[t][i] = Math.max(0, (attRisen[t][i] || 0) - (attLoss.risen[t][i] || 0)); });
     if (attGen) attGen.hp = Math.max(0, attGen.hp - damageToGeneral(attGen, bandS));
+    if (genAliveAtt && attGen.hp <= 0) pushLog(state, "general", "Наш полководец пал и больше не ведёт войско.", "att");
     checkDiscipline(state.attStartUnits, attLossTotal, attP.race, attBroken);
+    const fellRetreat = beforeAttN - unitsTotal(attU);
+    if (fellRetreat > 0) pushLog(state, "rout", "Лагерь бьёт вслед отступающим — пало " + fellRetreat + ".", "att");
   }
 
   state.attU = attU; state.attLossTotal = attLossTotal;
@@ -2717,6 +2921,22 @@ async function finalizeNodeBattle(admin, m, attRow, occRow, occMarch, attP, occP
     attPower: state.attStartPower, defPower: state.defStartPower,
     rounds: state.round, weather: state.weather.id, weatherName: state.weather.name,
     retreated: !!state.retreated, res: (m.data && m.data.res) || null,
+    // Тот же полный разбор, что и у finalizePvpBattle (см. её заголовок) —
+    // бой за точку идёт через тот же initPvpBattle/runPvpBattleRounds
+    // (только defWallLv/defGarrisonLv=0, в поле укреплений нет), поэтому
+    // state.log уже накоплен тем же самым кодом, просто раньше никто из
+    // finalize-функций его не читал и не клал в письмо.
+    attRace: attRow.race, defRace: occRow.race,
+    attCoords: { x: attRow.x, y: attRow.y }, defCoords: { x: occRow.x, y: occRow.y },
+    attGen: state.attHasGen && attP.gen && attP.gen.id != null ? { id: attP.gen.id, lv: attP.gen.lv, tal: attP.gen.tal || {} } : null,
+    // state.defHasGen (не occP.gen.away==null, как у finalizePvpBattle/
+    // finalizeRaidBattle выше) — оккупант точки сам маршем, свой away у
+    // occP.gen может стоять на СВОЙ ЖЕ occMarch, applyRaidArrive-style
+    // "away==null" здесь ничего не значил бы; defHasGen — явный флаг с
+    // самой завязки боя (см. её вызов выше: state.defHasGen = occHasGen).
+    defGen: (state.defHasGen && occP.gen && occP.gen.id != null) ? { id: occP.gen.id, lv: occP.gen.lv, tal: occP.gen.tal || {} } : null,
+    attBuffs: battleBuffSnapshotMp(bonuses(attP)), defBuffs: battleBuffSnapshotMp(bonuses(occP, true)),
+    log: state.log || [],
   };
   const mailRows = [
     { world_id: m.world_id, player_id: attRow.id, kind: "node_battle", data: { role: "attacker", opponent_id: occRow.id, opponent_nick: occRow.nick, ...summary } },
@@ -2870,6 +3090,11 @@ async function finalizeRaidBattle(admin, m, attRow, attP, state, nowSec) {
       // "героическим" (лагерь заметно сильнее) или "пирровым" (дорогой ценой).
       attStart: state.attStartN, attPower: state.attStartPower, campPower: state.defStartPower,
       retreated: !!state.retreated, // Фаза 21 — честное отступление кнопкой, не обычное поражение (см. mp-recall)
+      // Погода/хроника (index.html mailDetailHtml, kind:"barbarian") — см.
+      // заголовок pushLog у initRaidBattle/runRaidBattleRounds выше, раньше
+      // письмо о рейде несло только итоговые числа, без единой строки о
+      // том, как шёл бой.
+      weather: state.weather.id, weatherName: state.weather.name, log: state.log || [],
     },
   }];
   if (genLeveledTo != null) raidMailRows.push(genLevelMailRow(m.world_id, attRow.id, genLeveledTo));
