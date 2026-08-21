@@ -42,17 +42,19 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #app{position:relative;z-index:1;display:flex;flex-direction:column;height:100%}
 
 /* top:18px, а не 10px — плашка Янтаря прижата вплотную к правому верхнему
-   углу (#amber-badge, top:0), и кошелёк с ресурсами вплотную к ней подходил.
-   Небольшой сдвиг вниз разводит их по вертикали, не трогая саму шапку.
-   flex-wrap:wrap — на узких телефонах (360px и уже) герб+ник слева и сетка
-   ресурсов справа в ОДНУ строку не помещались: max-width обрезал САМ #top
-   по границе экрана, но flex по умолчанию не сжимает контент, а просто
-   вылезает за эту границу — правый столбец ресурсов утекал за край
-   (репорт пользователя со скриншотом: часть цифр "тыс" срезана).
-   С переносом кошелёк, если не влез в строку с гербом, просто падает на
-   свою строку ниже — гарантированно весь в кадре при любой ширине экрана. */
+   углу (#amber-badge, top:0). Небольшой сдвиг вниз разводит их по
+   вертикали, не трогая саму шапку.
+   Перенос кошелька (.purse) на свою строку внутри этого же #top (была
+   такая попытка) сломал другое: #brigades/#fieldarmy на карте города
+   заведомо начинаются НИЖЕ шапки на фиксированный отступ (top:108px) — с
+   двухстрочной шапкой это "ниже" превращалось в "поверх кошелька"
+   (репорт пользователя со скриншотом: цифры ресурсов налезли на слоты
+   бригад). Кошелёк теперь вообще не в #top — свой fixed-угол справа
+   сверху, тем же приёмом, что уже применён к #amber-badge (см. его
+   заголовок): #top остаётся строго одной строкой (герб+ник+мощь) при
+   любой длине ника, а кошелёк никогда ни с чем не соревнуется за ширину. */
 #top{position:fixed;top:18px;left:0;z-index:15;display:flex;flex-direction:row;
-  flex-wrap:wrap;align-items:center;gap:8px;max-width:calc(100vw - 6px)}
+  align-items:center;gap:8px;max-width:calc(100vw - 6px)}
 
 #crest{display:flex;align-items:center;cursor:pointer;flex:0 0 auto}
 #crest:hover .mark{color:var(--gilt-hi)}
@@ -294,12 +296,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 #menu-btn{position:fixed}
 #menu-btn .nbadge{top:4px;right:4px;min-width:18px;height:18px;line-height:15px;font-size:11px}
 
-.purse{display:grid;grid-template-columns:repeat(2,auto);grid-auto-rows:auto;
-  gap:4px 14px;flex:0 0 auto;margin-right:8px}
+/* Свой fixed-угол справа сверху, под #amber-badge (28px = его высота: 3px
+   отступ + 22px иконка + 3px отступ) — не внутри #top, см. заголовок
+   #top. right:6px — тот же зазор от края, что и у #amber-badge (right:0,
+   но у него самого есть padding-right:10px, визуально тот же отступ). */
+.purse{position:fixed;top:34px;right:6px;z-index:15;
+  display:grid;grid-template-columns:repeat(2,auto);grid-auto-rows:auto;
+  gap:4px 14px;justify-items:end}
 /* Иконки/цифры чуть крупнее (20px/13px, было 16px/12px) — автор явно
-   попросил "иконки сделай больше". Сама плашка теперь может переноситься
-   на свою строку (см. flex-wrap у #top) — места на неё, даже увеличенную,
-   хватает при любой ширине экрана. */
+   попросил "иконки сделай больше" — теперь у плашки СВОЙ угол, ничьей
+   ширины она больше не делит, есть где расти. */
 .coin{display:flex;align-items:center;gap:6px}
 .coin .disc{width:20px;height:20px;border-radius:50%;flex:0 0 auto;object-fit:contain}
 .coin .amt{font-family:var(--data);font-size:13px;font-variant-numeric:tabular-nums;
@@ -1366,7 +1372,6 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
         <span id="crest-power"><img class="ico" src="images/ui/icon-power.png" alt="">—</span>
       </div>
     </div>
-    <div class="purse" id="purse"></div>
     <div id="chron" style="display:none">
       <div class="stat"><b id="daytime">—</b><s>Хроника</s></div>
       <select id="tempo" title="Ускорение времени — только для проверки">
@@ -1376,6 +1381,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
     </div>
   </header>
   <div id="amber-badge" title="Янтарь"><img class="disc" src="images/ui/res-amber.png" alt=""><span class="amt" id="amber-amt">0</span></div>
+  <div class="purse" id="purse"></div>
 
   <div id="main">
     <div id="chart">
@@ -7068,6 +7074,7 @@ function mpRenderCityMap(){
   // больше отсюда не зовётся.
   h+="</div>";
   h+=mpRenderBrigades();
+  h+=mpRenderFieldArmy();
   return h;
 }
 // Бригады общего мира — дословно тот же #brigades/.slotcell, что и в
@@ -7096,6 +7103,38 @@ function mpRenderBrigades(){
   });
   h+="</div>";
   return h;
+}
+// Отряды в поле общего мира — тот же #fieldarmy/.slotcell, что и в
+// одиночке (renderFieldArmy, index.html:foCity), справа от карты, зеркально
+// #brigades слева. До 5 иконок (mpMarchSlots — потолок по уровню ратуши,
+// тот же счётчик, что уже показывает список "Отряды в поле" на вкладке
+// Войско) — свободные слоты, в отличие от бригад, не рисуются вовсе: марш
+// либо есть, либо его нет, "пустого похода" как отдельного ресурса, в
+// отличие от пустой бригады, не существует. Клик — тот же лёгкий герольд
+// с текстом, что и в одиночке (marchinfo), НЕ полноценный свиток похода:
+// подробности (бой/раунды/HP-полоски при осаде и бое за точку) уже есть
+// на вкладке Войско, эта иконка — только беглый взгляд с карты города.
+// state:"siege" — отдельная ветка: во время многотикового боя m.t1 —
+// застрявшее время ПРИХОДА, не время конца боя (см. заголовок "Отряды в
+// поле" внутри foMultiplayer), поэтому вместо таймера/прогресса — просто
+// "Бой".
+function mpFieldArmyCellHtml(m,nowSec){
+  const sieging=m.state==="siege";
+  const st=MARCH_STATE_RU[m.state]||m.state;
+  const title=RU(countUnits(m.units))+" воинов · "+st+" · цель "+m.tx+"·"+m.ty
+    +(sieging?"":" · осталось "+fmtDur(Math.max(0,m.t1-nowSec)));
+  if(sieging){
+    return "<div class='slotcell' data-mpmarch='"+m.id+"' title='"+title+"'>"+
+       "<img src='images/ui/icon-march.png'><span class='timer'>Бой</span></div>";
+  }
+  const f=Math.max(0,Math.min(1,(nowSec-m.t0)/Math.max(1,m.t1-m.t0)));
+  return "<div class='slotcell' data-mpmarch='"+m.id+"' title='"+title+"'>"+
+     "<img src='images/ui/icon-march.png'><span class='timer'>"+fmtDur(Math.max(0,m.t1-nowSec))+"</span>"+
+     "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
+}
+function mpRenderFieldArmy(){
+  const nowSec=Date.now()/1000;
+  return "<div id='fieldarmy'>"+mpState.marches.map(m=>mpFieldArmyCellHtml(m,nowSec)).join("")+"</div>";
 }
 // Та же ветвящаяся логика (участок ещё не открыт / в очереди / макс.
 // уровень / нужна ратуша / ратуше не хватает построек-требований HALL_REQ /
@@ -9887,6 +9926,19 @@ function handleAct(e){
   if(mpCell){
     const idx=+mpCell.dataset.mpcell;
     if(mpCitySel===idx) mpCloseBuildingModal(); else mpOpenBuildingModal(idx);
+    return;
+  }
+  // Клик по иконке похода в #fieldarmy (mpRenderFieldArmy) — тот же лёгкий
+  // герольд, что и у одиночного marchinfo (см. её заголовок), не открывает
+  // никакой модалки: подробности уже есть на вкладке Войско.
+  const mpMarch=e.target.closest("[data-mpmarch]");
+  if(mpMarch){
+    const m=mpState.marches.find(x=>x.id==mpMarch.dataset.mpmarch);
+    if(m){
+      const st=MARCH_STATE_RU[m.state]||m.state;
+      const tail=m.state==="siege"?"":" · осталось "+fmtDur(Math.max(0,m.t1-Date.now()/1000));
+      herald(RU(countUnits(m.units))+" воинов · "+st+" · цель "+m.tx+"·"+m.ty+tail);
+    }
     return;
   }
   const mpCellClose=e.target.closest("[data-mp='citycellclose']");
