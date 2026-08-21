@@ -799,11 +799,23 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .mail-tabs button.on{background:rgba(236,226,202,.9);color:#2c2114;font-weight:bold}
 .mail-tabs button .n{position:absolute;top:-6px;right:2px;min-width:15px;height:15px;padding:0 3px;
   border-radius:8px;background:#8a2f22;color:#fce9c9;font-size:9.5px;line-height:15px;font-family:var(--data)}
+/* Общий мир — 6 вкладок (Отчёты/Личное/Альянс/Система/Отправленные/Новое
+   письмо), одиночка — 4: делить одиночную .mail-tabs поровну на 6 давало бы
+   тесноту/перенос текста в две строки. Свой модификатор вместо правки
+   базового .mail-tabs — одиночную вкладку почты этим не трогаем вовсе;
+   вкладки не делят ширину поровну, а лежат по своей ширине в горизонтально
+   прокручиваемой ленте (тот же приём, что и нижние табы в мобильных
+   интерфейсах — привычно пальцем).*/
+.mail-tabs-mp{overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.mail-tabs-mp::-webkit-scrollbar{display:none}
+.mail-tabs-mp button{flex:0 0 auto;white-space:nowrap;padding:8px 11px}
 .mail-divider{display:block;width:100%;height:auto;position:relative;z-index:2;opacity:.85}
 .mail-list{flex:1;min-height:0;overflow-y:auto;position:relative;z-index:2;
   background:rgba(236,226,202,.55)}
 .mail-row{display:flex;align-items:center;gap:10px;padding:11px 14px;
-  border-bottom:1px solid rgba(90,69,48,.22)}
+  border-bottom:1px solid rgba(90,69,48,.22);cursor:pointer;transition:background .12s}
+.mail-row:hover{background:rgba(90,69,48,.08)}
+.mail-row:active{background:rgba(90,69,48,.16)}
 .mail-row .ico{width:30px;height:30px;border-radius:50%;flex:0 0 auto;object-fit:contain;
   background:rgba(90,69,48,.12);border:1px solid rgba(90,69,48,.35);padding:5px}
 .mail-row .ico.win{filter:sepia(1) saturate(2) hue-rotate(60deg) brightness(.9)}
@@ -1055,13 +1067,22 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 /* Вкладка "Новое письмо" (mp-sendmail) — на пергаменте, поэтому свои
    input/textarea: #mp-nick/#nick-input (см. их заголовок) одеты под
    тёмную кожаную анкету регистрации, здесь фон светлый. */
-.mail-compose{padding:14px;position:relative;z-index:2}
+.mail-compose{padding:16px 14px 14px;position:relative;z-index:2}
+.mail-compose-hd{font-family:var(--serif);font-size:17px;color:#5a3a1e;font-weight:bold;
+  display:flex;align-items:center;gap:8px;letter-spacing:.01em}
+.mail-compose-hd .qu{font-size:19px;color:#8a6d2c;transform:rotate(-8deg);display:inline-block}
+.mail-compose-sub{font-size:12px;color:#6b5320;font-style:italic;line-height:1.5;margin:5px 0 16px;
+  padding-bottom:12px;border-bottom:1px solid rgba(90,69,48,.25)}
+.mail-compose-row{display:flex;gap:10px}
+.mail-compose-row>div{flex:1;min-width:0}
 .mail-compose label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;
   color:#8a6d2c;margin:10px 0 4px}
 .mail-compose label:first-child{margin-top:0}
 .mail-compose input,.mail-compose textarea{display:block;width:100%;box-sizing:border-box;
-  background:rgba(255,255,255,.4);color:#2c2114;border:1px solid rgba(90,69,48,.4);border-radius:4px;
-  font:inherit;font-size:13.5px;padding:8px 10px}
+  background:rgba(255,255,255,.45);color:#2c2114;border:1px solid rgba(90,69,48,.4);border-radius:4px;
+  font:inherit;font-size:13.5px;padding:8px 10px;transition:border-color .15s,background .15s}
+.mail-compose input:focus,.mail-compose textarea:focus{outline:none;border-color:#8a6d2c;
+  background:rgba(255,255,255,.65)}
 .mail-compose textarea{resize:vertical;min-height:110px;line-height:1.5}
 .mail-compose .err{color:#8a2f22;font-size:12.5px;margin-top:8px}
 .mail-compose .ok{color:#3f6b3f;font-size:12.5px;margin-top:8px}
@@ -11158,11 +11179,27 @@ function mpWorldSnapshot(){
     const d=c.data||{};
     map[c.x+","+c.y]={t:c.t, x:c.x, y:c.y, lv:d.lv};
   });
-  // withPath(m,home) — та же честная прямая, что и marchPos у recall/gather/
-  // raid-маршей общего мира: путь всегда из ДВУХ точек, а не настоящий
-  // рельефный path[] одиночки. pathCum/pathLen — тот же формат, что
-  // pathPointAt(m,f) в index.html уже умеет читать (дословный порт в
-  // marchData.ts), поэтому дальше 3D ничего отдельного знать не должно.
+  // withPath(m,home) — теперь настоящий рельефный путь (waterPath), тот же,
+  // что уже строит одиночная игра (index.html:4983, огибает воду вместо
+  // того чтобы резать по прямой через озеро/пролив) — раньше здесь честно
+  // лежала прямая: waterPath()/isRealWater() сами по себе не завязаны на
+  // W (одиночную партию) вовсе, сеются от собственного RW_SEED (см. её
+  // заголовок), поэтому годятся тут без единой правки. pathCum/pathLen —
+  // тот же формат (см. setMarchPath), что pathPointAt(m,f) в index.html
+  // уже умеет читать (дословный порт в marchData.ts), поэтому дальше 3D
+  // ничего отдельного знать не должно.
+  //
+  // Время в пути (t0/t1) по-прежнему считает сервер (mp-attack/mp-gather/
+  // mp-raid/mp-recall) по прямой (Math.hypot) — трогать боевой расчёт
+  // скорости общего мира здесь не стали (это отдельная, куда более крупная
+  // правка сразу в нескольких Edge Functions). Реальное следствие: f=0..1
+  // по-прежнему растягивается на всё то же t0..t1, pathPointAt(m,f) кладёт
+  // точку на f*pathLen пути — марш всегда честно стартует в t0 и приходит
+  // В ТОЧНОСТИ к цели в t1, просто вдоль более длинного (огибающего)
+  // пути видимая скорость на детуре будет чуть выше кажущейся прямой —
+  // не рассинхрон, а тот же приём, что и у одиночки с портальным
+  // сокращением пути (portalShortcut): путь и время не обязаны считаться
+  // одной и той же формулой, лишь бы оба доходили до цели к t1.
   //
   // НАЙДЕН реальный баг (автор сообщил: «при возвращении отряд почему-то
   // наоборот идёт к цели, то есть два раза идёт к одной цели и
@@ -11179,8 +11216,10 @@ function mpWorldSnapshot(){
   function withPath(m,home){
     const back=m.state==="back";
     const from=back?{x:m.tx,y:m.ty}:home, to=back?home:{x:m.tx,y:m.ty};
-    const dist=Math.hypot(to.x-from.x, to.y-from.y);
-    return Object.assign({}, m, { path:[{x:from.x,y:from.y},{x:to.x,y:to.y}], pathCum:[0,dist], pathLen:dist });
+    const path=waterPath(from.x,from.y,to.x,to.y);
+    const cum=[0]; let total=0;
+    for(let i=1;i<path.length;i++){ total+=Math.hypot(path[i].x-path[i-1].x,path[i].y-path[i-1].y); cum.push(total); }
+    return Object.assign({}, m, { path, pathCum:cum, pathLen:total });
   }
   const marches=[];
   const seenIds=new Set();
@@ -11957,15 +11996,15 @@ async function mpRefreshPmMail(){
 // следующего 5-секундного опроса — mpRefreshPmMail() вызывается сразу же).
 async function mpDoSendMail(){
   if(mpComposeSending) return;
-  const nickInp=$("#mp-compose-nick"), bodyInp=$("#mp-compose-body");
-  const toNick=(nickInp&&nickInp.value||"").trim(), body=(bodyInp&&bodyInp.value||"").trim();
-  if(!toNick){ mpComposeErr="Укажите ник получателя"; mpComposeOk=null; mpRerender(); return; }
+  const nickInp=$("#mp-compose-nick"), subjInp=$("#mp-compose-subject"), bodyInp=$("#mp-compose-body");
+  const toNick=(nickInp&&nickInp.value||"").trim(), subject=(subjInp&&subjInp.value||"").trim(), body=(bodyInp&&bodyInp.value||"").trim();
+  if(!toNick){ mpComposeErr="Укажите имя правителя-получателя"; mpComposeOk=null; mpRerender(); return; }
   if(!body){ mpComposeErr="Письмо не может быть пустым"; mpComposeOk=null; mpRerender(); return; }
   mpComposeSending=true; mpComposeErr=null; mpComposeOk=null; mpRerender();
   try{
-    const r=await mpCall("mp-sendmail",{toNick,body});
-    mpComposeSending=false; mpComposeOk="Письмо отправлено игроку «"+(r.to_nick||toNick)+"».";
-    if(nickInp) nickInp.value=""; if(bodyInp) bodyInp.value="";
+    const r=await mpCall("mp-sendmail",{toNick,subject,body});
+    mpComposeSending=false; mpComposeOk="Письмо запечатано и отправлено правителю «"+(r.to_nick||toNick)+"».";
+    if(nickInp) nickInp.value=""; if(subjInp) subjInp.value=""; if(bodyInp) bodyInp.value="";
     await mpRefreshPmMail();
     mpMailCat="sent"; mpRerender();
   }catch(e){
@@ -12791,11 +12830,22 @@ function mpMailNoteEntry(m){
 function mpMailPmEntry(m){
   const d=m.data, incoming=d.role==="recipient";
   const who=(incoming?d.from_nick:d.to_nick)||"Безымянный лорд";
-  const title=incoming?("От "+who):("Кому: "+who);
+  // Тема — заголовок строки (как в любой почте: тема виднее собеседника в
+  // списке), собеседник и превью текста — в подпись под ней. Тема
+  // необязательна (mp-sendmail это допускает) — "(без темы)" курсивом,
+  // чтобы отличаться от настоящих тем, а не молчать пустым местом.
+  const subject=(d.subject||"").trim();
+  const title=subject||"(без темы)";
   const bodyEsc=escHtml(d.body||"").replace(/\n/g,"<br>");
-  const sub=(d.body||"").length>60?(d.body.slice(0,60)+"…"):(d.body||"");
+  const preview=(d.body||"").length>50?(d.body.slice(0,50)+"…"):(d.body||"");
+  const sub=(incoming?"От ":"Кому: ")+who+" · "+preview;
+  const detailHtml=
+    "<div class='mail-note' style='color:#8a6d2c;font-size:11.5px;margin-bottom:10px'>"+
+      (incoming?"От <b style=\"color:#2c2114\">":"Кому: <b style=\"color:#2c2114\">")+escHtml(who)+"</b>"+
+    "</div>"+
+    "<div class='note'>"+bodyEsc+"</div>";
   return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-mail.png", cls:"",
-    title, sub:escHtml(sub), detailHtml:"<div class='note'>"+bodyEsc+"</div>"};
+    title:escHtml(title), sub:escHtml(sub), detailHtml};
 }
 // "Отчёты" — бой/разведка/сбор/лагеря/точки одной хронологической лентой
 // (тот же приём, что у одиночной "Отчёты": там тоже это всё один и тот же
@@ -12858,11 +12908,11 @@ function mpMailRowHtml(m){
 // источник существует, но пока ничего не накопил (или не накопит никогда —
 // "Альянс").
 const MP_MAIL_ENTRY_FNS={
-  report:{fn:mpMailReportEntries, empty:"Здесь пока пусто — донесения и боевые сводки появятся, как только начнутся первые походы."},
-  personal:{fn:mpMailPersonalEntries, empty:"Здесь пока пусто — письма от игроков и уведомления о генерале появятся здесь."},
-  system:{fn:mpMailSystemEntries, empty:"Здесь пока пусто — извещения о движении войск появятся, как только начнутся первые походы."},
-  sent:{fn:mpMailSentEntries, empty:"Вы ещё никому не писали — воспользуйтесь вкладкой «Новое письмо»."},
-  alliance:{fn:mpMailAllianceEntries, empty:"Альянсов в игре пока нет — раздел заведён как задел на будущее."},
+  report:{fn:mpMailReportEntries, empty:"Гонцы ещё не приносили вестей. Первый же поход, набег или обоз с добычей ляжет сюда."},
+  personal:{fn:mpMailPersonalEntries, empty:"Ни письма, ни вести о вашем полководце. Напишите кому-нибудь через «Новое письмо» — и переписка начнётся отсюда же."},
+  system:{fn:mpMailSystemEntries, empty:"Тихо. Ни одна армия — ни ваша, ни чужая — пока не тронулась с места."},
+  sent:{fn:mpMailSentEntries, empty:"Вы ещё никому не писали. Откройте «Новое письмо» — и первое отправленное появится здесь."},
+  alliance:{fn:mpMailAllianceEntries, empty:"Альянсов в этом мире пока не заключают — ни одного, ни у кого. Раздел ждёт своего часа."},
 };
 function mpMailScreenHtml(){
   const openEntry = mpMailOpenId!=null ? mpMailEntryById(mpMailOpenId) : null;
@@ -12871,7 +12921,7 @@ function mpMailScreenHtml(){
     "<img class='mail-corner tr' src='images/ui/mail-corner.png' alt=''>"+
     "<img class='mail-corner bl' src='images/ui/mail-corner.png' alt=''>"+
     "<img class='mail-corner br' src='images/ui/mail-corner.png' alt=''>";
-  h+="<div class='mail-tabs'>"+MP_MAIL_TABS.map(([cat,label])=>{
+  h+="<div class='mail-tabs mail-tabs-mp'>"+MP_MAIL_TABS.map(([cat,label])=>{
     return "<button data-mp='mpmailtab' data-cat='"+cat+"' class='"+(mpMailCat===cat&&!openEntry?"on":"")+"'>"+label+"</button>";
   }).join("")+"</div>";
   h+="<img class='mail-divider' src='images/ui/mail-divider.png' alt=''>";
@@ -12881,14 +12931,20 @@ function mpMailScreenHtml(){
        openEntry.detailHtml+"</div>";
   } else if(mpMailCat==="compose"){
     h+="<div class='mail-compose'>"+
-       "<label for='mp-compose-nick'>Кому (ник получателя)</label>"+
-       "<input id='mp-compose-nick' maxlength='24' placeholder='Ник правителя'>"+
-       "<label for='mp-compose-body'>Письмо</label>"+
+       "<div class='mail-compose-hd'><span class='qu'>&#9998;</span>Королевская канцелярия</div>"+
+       "<div class='mail-compose-sub'>Гонец найдёт адресата по имени в этом же мире — просто напишите, кому и что.</div>"+
+       "<div class='mail-compose-row'>"+
+         "<div><label for='mp-compose-nick'>Имя правителя</label>"+
+         "<input id='mp-compose-nick' maxlength='24' placeholder='Кому пишете?'></div>"+
+         "<div><label for='mp-compose-subject'>Тема</label>"+
+         "<input id='mp-compose-subject' maxlength='80' placeholder='О чём письмо?'></div>"+
+       "</div>"+
+       "<label for='mp-compose-body'>Сообщение</label>"+
        "<textarea id='mp-compose-body' maxlength='2000' placeholder='Что хотите сказать?'></textarea>"+
-       (mpComposeErr?"<div class='err'>"+escHtml(mpComposeErr)+"</div>":"")+
-       (mpComposeOk?"<div class='ok'>"+escHtml(mpComposeOk)+"</div>":"")+
+       (mpComposeErr?"<div class='err'>&#10007; "+escHtml(mpComposeErr)+"</div>":"")+
+       (mpComposeOk?"<div class='ok'>&#10003; "+escHtml(mpComposeOk)+"</div>":"")+
        "<button class='seal' data-mp='mpsendmail'"+(mpComposeSending?" disabled":"")+">"+
-       (mpComposeSending?"Отправляю...":"Отправить")+"</button>"+
+       (mpComposeSending?"Гонец седлает коня...":"Запечатать и отправить")+"</button>"+
        "</div>";
   } else {
     const spec = MP_MAIL_ENTRY_FNS[mpMailCat] || MP_MAIL_ENTRY_FNS.report;
