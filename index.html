@@ -1043,31 +1043,15 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .mail-bar button:disabled{opacity:.4}
 .mail-bar button.danger{color:#8a2f22}
 
-/* Почта общего мира (foMultiplayer, only="mail") — тот же пергамент/печать/
-   уголки, что и у одиночной foMail() выше (.mail-wrap/.mail-card целиком
-   переиспользованы, см. их заголовок), но без вкладок Отчёты/Личное/
-   Система и без клика в отдельную детальную карточку: письма общего мира
-   лежат в СЕМИ разных списках mpState (mail/scoutMail/raidMail/siegeMail/
-   nodeBattleMail/gatherMail/noteMail, у каждого свой fetch с сервера, без
-   общего id/read/fav — не то же самое, что один W.mail одиночки), поэтому
-   рубрики (Гонцы/Бой/Разведка/Лагеря/Точки/Сбор/Генерал) остаются, просто
-   одеты в тот же пергамент, а не в тёмный кожаный `.entry`, как раньше
-   (автор: "оформление не то" — почта была ЕДИНСТВЕННЫМ экраном в игре с
-   пергаментом и печатью, а в общем мире выглядела как обычный тёмный
-   список построек). */
-.mp-mail-hd{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:#8a6d2c;
-  padding:12px 14px 4px;position:relative;z-index:2}
-.mp-mail-hd .n{font-weight:normal;text-transform:none;letter-spacing:0;opacity:.7}
-.mp-mail-item{padding:8px 14px;border-top:1px solid rgba(90,69,48,.16);position:relative;z-index:2}
-.mp-mail-hd+.mp-mail-item{border-top:none}
-.mp-mail-item .hd{display:flex;align-items:center;gap:10px}
-.mp-mail-item .hd img.ico{width:28px;height:28px;border-radius:50%;object-fit:contain;flex:0 0 auto}
-.mp-mail-item .hd img.ico.win{filter:sepia(1) saturate(2) hue-rotate(60deg) brightness(.9)}
-.mp-mail-item .hd img.ico.lose{filter:sepia(1) saturate(3) hue-rotate(-40deg) brightness(.85)}
-.mp-mail-item .hd .tt{flex:1;min-width:0;font-size:13px;color:#2c2114;font-weight:bold;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.mp-mail-item .hd .tm{font-size:10.5px;color:#8a6d2c;flex:0 0 auto;white-space:nowrap}
-.mp-mail-item .note{font-size:12.5px;line-height:1.5;color:#5a4530;margin-top:3px;padding-left:38px}
+/* Почта общего мира (foMultiplayer, only="mail", см. mpMailScreenHtml) —
+   переиспользует ЦЕЛИКОМ те же классы, что и одиночная foMail() выше
+   (.mail-wrap/.mail-card/.mail-tabs/.mail-row/.mail-detail/.mail-back/
+   .mail-empty) — своя разметка не нужна, только свои данные (MP_MAIL_TABS/
+   mpMailReportEntries вместо MAIL_TABS/W.mail). Автор: "у меня были
+   вкладки, можно было переключаться и открывать, а сейчас нельзя" — первая
+   версия этого экрана (просто одетые в пергамент рубрики без переключения)
+   этого не давала; теперь вкладки/список/открытая карточка — то же самое
+   поведение, что и в одиночке, см. mpMailScreenHtml(). */
 
 /* ─────────────── Правая колонна ─────────────── */
 #ledger{width:400px;flex:0 0 400px;min-height:0;display:flex;flex-direction:column;
@@ -11046,6 +11030,16 @@ function handleMpAct(e){
   // её же ветку в handleAct()).
   const invTabBtn=e.target.closest("[data-mp='invtab']");
   if(invTabBtn){ mpInvTab=invTabBtn.dataset.t; mpRerender(); return; }
+  // Почта общего мира (mpMailScreenHtml) — та же тройка действий, что и
+  // одиночные mailtab/mailopen/mailback в handleAct(), но на своих
+  // mpMailCat/mpMailOpenId (не mailCat/mailOpenId одиночки — другой массив
+  // писем, см. заголовок mpMailScreenHtml).
+  const mpMailTabBtn=e.target.closest("[data-mp='mpmailtab']");
+  if(mpMailTabBtn){ mpMailCat=mpMailTabBtn.dataset.cat; mpMailOpenId=null; mpRerender(); return; }
+  const mpMailOpenBtn=e.target.closest("[data-mp='mpmailopen']");
+  if(mpMailOpenBtn){ mpMailOpenId=+mpMailOpenBtn.dataset.id; mpMailMarkRead(mpMailOpenId); mpRerender(); return; }
+  const mpMailBackBtn=e.target.closest("[data-mp='mpmailback']");
+  if(mpMailBackBtn){ mpMailOpenId=null; mpRerender(); return; }
 }
 $("#menu-modal-body").addEventListener("click",e=>{
   // Фаза 20 — гейт был `dataset.tab!=="mp"`, и это глушило ВСЕ кнопки
@@ -12404,11 +12398,9 @@ function mpHpBarHtml(label, hpLeft, startHp, genFrac){
   if(genFrac!=null) h += "<div class='hpbar hpbar-gen'><i style='width:"+(Math.max(0,Math.min(1,genFrac))*100).toFixed(1)+"%'></i></div>";
   return h;
 }
-// Почта общего мира одета в тот же пергамент, что и одиночная foMail() —
-// см. заголовок .mp-mail-hd/.mp-mail-item в CSS. mailAgo() выше (одиночка)
-// принимает эпоху в мс (W.mail хранит m.t числом); почта общего мира лежит
-// в Postgres и приходит created_at ISO-строкой — свой парсер, тот же вид
-// "N мин назад".
+// mailAgo() выше (одиночка) принимает эпоху в мс (W.mail хранит m.t
+// числом); почта общего мира лежит в Postgres и приходит created_at
+// ISO-строкой — свой парсер, тот же вид "N мин назад".
 function mpMailAgo(iso){
   const s=Math.max(0,(Date.now()-new Date(iso).getTime())/1000);
   if(s<60) return "только что";
@@ -12416,21 +12408,230 @@ function mpMailAgo(iso){
   if(s<86400) return Math.floor(s/3600)+" ч назад";
   return Math.floor(s/86400)+" дн назад";
 }
-// Один "конверт" в почте общего мира — иконка (та же логика, что у
-// одиночного mailRowHtml: печать для боя, глобус для разведки, обоз для
-// сбора/рейда, герб генерала для личных уведомлений), заголовок+время в
-// одной строке, дальше сколько угодно строк заметок (notes — уже готовый
-// HTML одной или нескольких строк, что раньше шло в `.note`, теперь в
-// `.note` того же класса, но на пергаменте, не на коже).
-function mpMailItem(iconSrc, cls, title, notesHtml, iso){
-  return "<div class='mp-mail-item'><div class='hd'>"+
-    "<img class='ico"+(cls?" "+cls:"")+"' src='"+iconSrc+"' alt=''>"+
-    "<div class='tt'>"+title+"</div>"+
-    "<div class='tm'>"+mpMailAgo(iso)+"</div>"+
-    "</div>"+notesHtml+"</div>";
+// ---- Почта общего мира: вкладки + открытая карточка письма, тот же приём,
+// что и одиночная foMail()/mailCat/mailOpenId (см. их заголовок) ----
+// mpMailCat/mpMailOpenId — свои переменные, не переиспользуют mailCat/
+// mailOpenId одиночки (та почта — совсем другой массив, W.mail, которого
+// при .mp-gated может не быть вовсе, см. заголовок mailFull).
+// Реальный id письма — bigint из ОДНОЙ таблицы mail на все kind сразу
+// (см. миграцию 0001), общий на все 7 источников (mpState.siegeMail и
+// т.д.) — искать/открывать по нему напрямую, без составного ключа.
+let mpMailCat="report", mpMailOpenId=null;
+// Отчёты/Личное — та же разбивка, что и одиночная MAIL_TABS: там тоже
+// "Отчёты" — это ВСЁ (бой/разведка/сбор/лагеря), кроме "Личное" (только
+// повышения генерала); "Система"/"Избранное" одиночки не переносим — в
+// общем мире у них нет ни одного настоящего источника данных (см. её же
+// комментарий у MAIL_TABS).
+const MP_MAIL_TABS=[["report","Отчёты"],["personal","Генерал"]];
+
+// Прочитанность — только на этом устройстве (localStorage), сервер mail.read
+// не трогаем: RLS уже разрешает игроку апдейтить свои письма, но синхронизация
+// между устройствами игроку из беты не критична, а локальная заметка
+// "я это уже открывал" не требует лишнего запроса на каждый клик.
+const MP_MAIL_READ_KEY="fourbanners:mpmailread1";
+let mpMailReadIds=new Set();
+(function mpLoadMailRead(){
+  try{ const raw=localStorage.getItem(MP_MAIL_READ_KEY); if(raw) mpMailReadIds=new Set(JSON.parse(raw)); }catch(e){ /* приватный режим — молча без чтения */ }
+})();
+function mpMailMarkRead(id){
+  if(mpMailReadIds.has(id)) return;
+  mpMailReadIds.add(id);
+  try{ localStorage.setItem(MP_MAIL_READ_KEY, JSON.stringify([...mpMailReadIds])); }catch(e){}
 }
-function mpMailHd(text,n){
-  return "<div class='mp-mail-hd'>"+text+(n?"<span class='n'> · "+n+"</span>":"")+"</div>";
+
+// mailAgo() (одиночка) принимает эпоху в мс (W.mail хранит m.t числом);
+// почта общего мира лежит в Postgres и приходит created_at ISO-строкой —
+// свой парсер, тот же вид "N мин назад".
+function mpMailAgo(iso){
+  const s=Math.max(0,(Date.now()-new Date(iso).getTime())/1000);
+  if(s<60) return "только что";
+  if(s<3600) return Math.floor(s/60)+" мин назад";
+  if(s<86400) return Math.floor(s/3600)+" ч назад";
+  return Math.floor(s/86400)+" дн назад";
+}
+// Каждая из шести mpMailXxxEntry ниже — дословно та же логика (тир исхода/
+// разбор потерь/текст), что уже была в соответствующей рубрике foMultiplayer()
+// (см. Гонцы/Бой/Разведка/Лагеря/Точки/Сбор чуть ниже) — только вместо
+// прямой записи в h возвращает единый объект {id, created_at, icon, cls,
+// title, sub, detailHtml}: sub — короткая одна строка для компактного ряда
+// списка (см. mpMailRowHtml), detailHtml — полный разбор (что раньше и было
+// единственным видом) для открытой карточки (см. mpMailScreenHtml).
+function mpMailSiegeEntry(m){
+  const d=m.data, isRaid=d.mode==="raid", isNode=d.mode==="node", isDef=d.role==="defender", isRetreat=d.phase==="retreat";
+  const who=d.opponent_nick||"Безымянный лорд";
+  const target=isRaid?("лагеря варваров (ур. "+(d.camp_lv||1)+")"):isNode?"точки сбора":("города «"+who+"»");
+  let cls, title, note;
+  if(!isRetreat){
+    if(isRaid){ cls="calm"; title="Отряд у цели"; note="Наш отряд подошёл к "+target+" — начинается развёртывание перед боем."; }
+    else if(isNode){
+      if(isDef){ cls="war"; title="Нашу точку сбора оспаривают"; note="Войска «"+who+"» подошли к нашей точке сбора — начинается развёртывание перед боем за право сбора."; }
+      else { cls="calm"; title="Точка занята — завязывается бой"; note="Точка сбора уже занята войсками «"+who+"» — начинается развёртывание перед боем за право сбора."; }
+    }
+    else if(isDef){ cls="war"; title="Враг у ворот"; note="Войска «"+who+"» подошли к нашему городу — начинается развёртывание перед боем."; }
+    else { cls="calm"; title="Армия настигла цель"; note="Наши войска подошли к "+target+" — начинается развёртывание перед боем."; }
+  } else {
+    if(isRaid){ cls="war"; title="Отряд отступает"; note="Наш отряд начал отход от "+target+" — на отступление нужно время."; }
+    else if(isNode){
+      if(isDef){ cls="hot"; title="Соперник отступает"; note="Войска «"+who+"» начали отход от нашей точки сбора — точка остаётся за нами."; }
+      else { cls="war"; title="Наш отряд отступает"; note="Наш отряд начал отход от "+target+" — на отступление нужно время."; }
+    }
+    else if(isDef){ cls="hot"; title="Враг отступает"; note="Войска «"+who+"» начали отход от наших стен — сражение окончится в нашу пользу."; }
+    else { cls="war"; title="Наша армия отступает"; note="Войска у "+target+" начали отход — на отступление нужно время."; }
+  }
+  return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-march.png",
+    cls: cls==="hot"?"win":cls==="war"?"lose":"", title, sub:note, detailHtml:"<div class='note'>"+note+"</div>"};
+}
+function mpMailBattleEntry(m){
+  const d=m.data, mine=d.role==="attacker";
+  const myLoss=mine?d.attLoss:d.defLoss, oppLoss=mine?d.defLoss:d.attLoss;
+  const lostN=u=>{ u=u||{}; return TKEYS.reduce((s,t)=>s+[1,2,3,4,5].reduce((s2,i)=>s2+((u[t]&&u[t][i])||0),0),0); };
+  const won=(mine&&d.winner==="att")||(!mine&&d.winner==="def");
+  const myHs={dead:mine?d.attDead:d.defDead, hurt:mine?d.attHurt:d.defHurt, slight:mine?d.attSlight:d.defSlight};
+  const oppHs={dead:mine?d.defDead:d.attDead, hurt:mine?d.defHurt:d.attHurt, slight:mine?d.defSlight:d.attSlight};
+  const hospPart=(label,x)=>x.dead!=null?(" · "+label+": легкораненые "+RU(x.slight||0)+", тяжелораненые "+RU(x.hurt||0)+", убито "+RU(x.dead||0)):"";
+  const hospNote=hospPart("у нас",myHs)+hospPart("у противника",oppHs);
+  const myStart=mine?d.attStart:d.defStart, myPower=mine?d.attPower:d.defPower, oppPower=mine?d.defPower:d.attPower;
+  const tier=battleOutcomeTier(myStart,myHs.dead||0,myHs.hurt||0,won,myPower,oppPower);
+  const title=(mine?"Напали на ":"Напали от ")+(d.opponent_nick||"Безымянный лорд")+" — "+tier.name;
+  const sub="Наши потери: "+RU(lostN(myLoss))+" · потери противника: "+RU(lostN(oppLoss));
+  let detailHtml="<div class='note'>"+sub+hospNote+"</div>";
+  const lootTxt=d.loot&&RES.filter(r=>d.loot[r]).map(r=>RES_NAME[r]+" "+RU(d.loot[r])).join(" · ");
+  if(mine&&won&&lootTxt) detailHtml+="<div class='note'>Захвачено: "+lootTxt+"</div>";
+  else if(!mine&&!won&&lootTxt) detailHtml+="<div class='note'>Разграблено: "+lootTxt+"</div>";
+  return {id:m.id, created_at:m.created_at, icon:"images/ui/mail-seal.png", cls:tier.cls==="win"?"win":"lose", title, sub, detailHtml};
+}
+function mpMailScoutEntry(m){
+  const d=m.data;
+  const title=d.found?(d.opponent_nick||"Безымянный лорд"):"Донесение";
+  let detailHtml="", sub="";
+  if(!d.found){
+    sub="Лазутчик не нашёл цель на месте — она пропала между отправкой и прибытием.";
+    detailHtml="<div class='note'>"+sub+"</div>";
+  } else {
+    const se=d.se||0;
+    sub="Ратуша "+d.hall+" ур."+(d.shielded?" · под щитом мира":"");
+    detailHtml+="<div class='note'>"+sub+"</div>";
+    if(se>=1){
+      detailHtml+="<div class='note'>Войск: "+(se>=3?RU(d.total):"около "+RU(Math.round(d.total/100)*100))+"</div>";
+      if(se>=3 && d.byType && d.byType.length){
+        detailHtml+="<div class='note'>"+d.byType.map(x=>{
+          const tiers=se>=4 && d.byTier ? (d.byTier.find(y=>y.t===x.t)||{}).parts : null;
+          return TROOP_TYPES[x.t].name+" "+RU(x.n)+
+            (tiers&&tiers.length?" ("+tiers.map(pp=>SCOUT_TIER_LABEL[pp.i-1]+" "+RU(pp.n)).join(", ")+")":"");
+        }).join(" · ")+"</div>";
+      }
+      detailHtml+="<div class='note'>Запасы: "+RES.map(r=>RES_NAME[r]+" "+RU(d.res[r])).join(" · ")+"</div>";
+    } else {
+      detailHtml+="<div class='note'>Без очков в «Маскировку» (mil_scout2) видно только ратушу и щит.</div>";
+    }
+    if(se>=2) detailHtml+="<div class='note'>Стена: "+d.wall+" ур. · Полководец: "+(d.genLv!=null?"ур. "+d.genLv:"не выбран")+"</div>";
+    if(se>=3) detailHtml+="<div class='note'>Академия: "+d.academy+" ур.</div>";
+    if(se>=4) detailHtml+="<div class='note'>Гарнизон (башня): "+d.garrison+" ур.</div>";
+    if(se>=5) detailHtml+="<div class='note'>Лазарет: "+RU(d.wounded)+" раненых · снаряжение: мощь "+RU(d.gearPower)+"</div>";
+  }
+  return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-world.png", cls:"", title, sub, detailHtml};
+}
+function mpMailRaidEntry(m){
+  const d=m.data;
+  const lostN=u=>TKEYS.reduce((s,t)=>s+[1,2,3,4,5].reduce((s2,i)=>s2+((u&&u[t]&&u[t][i])||0),0),0);
+  const tier=battleOutcomeTier(d.attStart,d.dead||0,d.hurt||0,!!d.win,d.attPower,d.campPower);
+  const title="Лагерь "+d.camp_lv+" ур. — "+tier.name;
+  const sub="Потери: легкораненые "+RU(d.slight||0)+", тяжелораненые "+RU(d.hurt||0)+", убито "+RU(d.dead||0);
+  let detailHtml="<div class='note'>"+sub+" (из "+RU(lostN(d.attLoss))+" пострадавших)</div>";
+  if(d.win){
+    detailHtml+="<div class='note'>Добыча: "+RES.filter(r=>d.loot&&d.loot[r]).map(r=>RES_NAME[r]+" "+RU(d.loot[r])).join(" · ")+"</div>";
+    const tomesTxt=Object.keys(d.tomes||{}).map(v=>TOME_NAME[v]+" ×"+d.tomes[v]).join(", ");
+    if(tomesTxt) detailHtml+="<div class='note'>Книги опыта: "+tomesTxt+"</div>";
+  }
+  return {id:m.id, created_at:m.created_at, icon:"images/ui/mail-seal.png", cls:tier.cls==="win"?"win":"lose", title, sub, detailHtml};
+}
+function mpMailNodeEntry(m){
+  const d=m.data, mine=d.role==="attacker";
+  const myLoss=mine?d.attLoss:d.defLoss, oppLoss=mine?d.defLoss:d.attLoss;
+  const lostN=u=>{ u=u||{}; return TKEYS.reduce((s,t)=>s+[1,2,3,4,5].reduce((s2,i)=>s2+((u[t]&&u[t][i])||0),0),0); };
+  const won=(mine&&d.winner==="att")||(!mine&&d.winner==="def");
+  const who=d.opponent_nick||"Безымянный лорд";
+  const shortTitle = mine
+    ? (d.retreated ? "Отступили от точки сбора" : won ? "Точка сбора наша" : "Точку сбора не отбили")
+    : (d.retreated ? "Соперник отступил от нашей точки" : won ? "Точку сбора отстояли" : "Точку сбора не удержали");
+  const myHs={dead:mine?d.attDead:d.defDead, hurt:mine?d.attHurt:d.defHurt};
+  const myStart=mine?d.attStart:d.defStart, myPower=mine?d.attPower:d.defPower, oppPower=mine?d.defPower:d.attPower;
+  const tier=battleOutcomeTier(myStart,myHs.dead||0,myHs.hurt||0,won,myPower,oppPower);
+  const title=shortTitle+" — «"+who+"» ("+tier.name+")";
+  const sub="Наши потери (лазарет): "+RU(lostN(myLoss))+" · потери соперника: "+RU(lostN(oppLoss));
+  return {id:m.id, created_at:m.created_at, icon:"images/ui/mail-seal.png", cls:tier.cls==="win"?"win":"lose", title, sub, detailHtml:"<div class='note'>"+sub+"</div>"};
+}
+function mpMailGatherEntry(m){
+  const d=m.data;
+  const sub=RES_NAME[d.res]+" "+fmt(d.amount)+" · точка "+d.x+"·"+d.y;
+  return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-march.png", cls:"",
+    title:"Обоз вернулся с добычей", sub, detailHtml:"<div class='note'>"+sub+"</div>"};
+}
+function mpMailNoteEntry(m){
+  const d=m.data;
+  return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-gen.png", cls:"",
+    title:d.title, sub:d.body, detailHtml:"<div class='note'>"+d.body+"</div>"};
+}
+// "Отчёты" — все пять боевых/хозяйственных источников общего мира разом,
+// одной хронологической лентой (тот же приём, что у одиночной "Отчёты":
+// там тоже бой/разведка/сбор/лагеря — один и тот же cat:"report", не 6
+// разных вкладок). id общий на всю таблицу mail — сортировка по created_at
+// достаточна, коллизий между источниками нет.
+function mpMailReportEntries(){
+  return [].concat(
+    mpState.siegeMail.map(mpMailSiegeEntry),
+    mpState.mail.map(mpMailBattleEntry),
+    mpState.scoutMail.map(mpMailScoutEntry),
+    mpState.raidMail.map(mpMailRaidEntry),
+    mpState.nodeBattleMail.map(mpMailNodeEntry),
+    mpState.gatherMail.map(mpMailGatherEntry)
+  ).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+}
+function mpMailPersonalEntries(){
+  return mpState.noteMail.map(mpMailNoteEntry).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+}
+function mpMailEntryById(id){
+  return mpMailReportEntries().concat(mpMailPersonalEntries()).find(x=>x.id===id) || null;
+}
+// Компактная строка списка — тот же вид, что у одиночного mailRowHtml
+// (иконка+заголовок+короткая подпись+время), но без .read/.fav (см.
+// заголовок mpMailReadIds выше — своя, локальная отметка "открывал").
+function mpMailRowHtml(m){
+  return "<div class='mail-row"+(mpMailReadIds.has(m.id)?" read":"")+"' data-mp='mpmailopen' data-id='"+m.id+"'>"+
+    "<img class='ico"+(m.cls?" "+m.cls:"")+"' src='"+m.icon+"' alt=''>"+
+    "<div class='tx'><div class='tt'>"+m.title+"</div><div class='sb'>"+m.sub+"</div></div>"+
+    "<div class='tm'>"+mpMailAgo(m.created_at)+"</div></div>";
+}
+// Экран "Почта" целиком (only==="mail", см. mailFull в foMultiplayer) —
+// тот же .mail-wrap/.mail-card/.mail-tabs/.mail-divider/.mail-list/
+// .mail-detail, что и у одиночной foMail(), просто вкладки/данные свои
+// (MP_MAIL_TABS/mpMailReportEntries вместо MAIL_TABS/W.mail) — то самое,
+// про что автор спросил: "у меня были вкладки, можно было переключаться
+// и открывать, а сейчас нельзя".
+function mpMailScreenHtml(){
+  const openEntry = mpMailOpenId!=null ? mpMailEntryById(mpMailOpenId) : null;
+  let h="<div class='mail-wrap'><div class='mail-card'>"+
+    "<img class='mail-corner tl' src='images/ui/mail-corner.png' alt=''>"+
+    "<img class='mail-corner tr' src='images/ui/mail-corner.png' alt=''>"+
+    "<img class='mail-corner bl' src='images/ui/mail-corner.png' alt=''>"+
+    "<img class='mail-corner br' src='images/ui/mail-corner.png' alt=''>";
+  h+="<div class='mail-tabs'>"+MP_MAIL_TABS.map(([cat,label])=>{
+    return "<button data-mp='mpmailtab' data-cat='"+cat+"' class='"+(mpMailCat===cat&&!openEntry?"on":"")+"'>"+label+"</button>";
+  }).join("")+"</div>";
+  h+="<img class='mail-divider' src='images/ui/mail-divider.png' alt=''>";
+  if(openEntry){
+    h+="<div class='mail-detail'><div class='mail-back' data-mp='mpmailback'>&#8592; Назад к списку</div>"+
+       "<div class='mail-note' style='font-size:14.5px;font-weight:bold;color:#2c2114;margin-bottom:6px'>"+openEntry.title+"</div>"+
+       openEntry.detailHtml+"</div>";
+  } else {
+    const list = mpMailCat==="personal" ? mpMailPersonalEntries() : mpMailReportEntries();
+    h+="<div class='mail-list'>"+
+       (list.length ? list.map(mpMailRowHtml).join("")
+                     : "<div class='mail-empty'>Здесь пока пусто — донесения и боевые сводки появятся, как только начнутся первые походы.</div>")+
+       "</div>";
+  }
+  h+="</div></div>";
+  return h;
 }
 function foMultiplayer(embedded, only){
   const show = k => !only || only===k;
@@ -12616,27 +12817,23 @@ function foMultiplayer(embedded, only){
     });
   }
 
-  // mailFull — тот же .mail-wrap/.mail-card, что и у одиночной foMail()
-  // (пергамент, печать, уголки), открыт перед первой рубрикой почты и
-  // закрыт после последней (см. её закрытие у пустого списка ниже). Все
-  // рубрики внутри рисуют СТРОГО тот же текст/логику исхода, что и раньше
-  // (тёмный `.entry`-путь ниже не удалён — на него по-прежнему попадает
-  // старая объединённая страница, only не задан, см. заголовок mailFull).
-  if(mailFull) h+="<div class='mail-wrap'><div class='mail-card'>"+
-    "<img class='mail-corner tl' src='images/ui/mail-corner.png' alt=''>"+
-    "<img class='mail-corner tr' src='images/ui/mail-corner.png' alt=''>"+
-    "<img class='mail-corner bl' src='images/ui/mail-corner.png' alt=''>"+
-    "<img class='mail-corner br' src='images/ui/mail-corner.png' alt=''>"+
-    "<img class='mail-divider' style='margin-top:56px' src='images/ui/mail-divider.png' alt=''>"+
-    "<div class='mail-list'>";
+  // mailFull — настоящий отдельный экран "Почта" (only==="mail") больше не
+  // собирается по кусочкам вперемешку с остальным h ниже: mpMailScreenHtml()
+  // строит его целиком (вкладки Отчёты/Генерал + список + открытая
+  // карточка письма — см. её заголовок и MP_MAIL_TABS выше foMultiplayer())
+  // из тех же mpState.*Mail. Семь блоков ниже (Гонцы/Бой/.../Генерал)
+  // остаются НЕТРОНУТЫМИ для старой объединённой страницы (only не задан,
+  // только у автора при ?sp=1) — просто пропускают себя целиком при
+  // mailFull, чтобы не задваивать одни и те же письма на странице.
+  if(mailFull) h+=mpMailScreenHtml();
 
   // Фаза 24 — извещения "начинается развёртывание"/"начинает отступление"
   // (kind:"siege_event") — приходят ДО итогового письма о бое (рубрика
   // "Бой" ниже), пока армия ещё стоит/отходит, а не когда всё уже решено.
   // Своя рубрика — не смешиваем с исходом, чтобы не путать "бой начался" с
   // "бой окончен" в одном списке.
-  if(show("mail") && mpState.siegeMail.length){
-    h+= mailFull ? mpMailHd("Гонцы","движение войск") : rubric("Гонцы","движение войск");
+  if(show("mail") && !mailFull && mpState.siegeMail.length){
+    h+=rubric("Гонцы","движение войск");
     mpState.siegeMail.forEach(m=>{
       const d=m.data, isRaid=d.mode==="raid", isNode=d.mode==="node", isDef=d.role==="defender", isRetreat=d.phase==="retreat";
       const who=d.opponent_nick||"Безымянный лорд";
@@ -12662,19 +12859,14 @@ function foMultiplayer(embedded, only){
         else if(isDef){ cls="hot"; title="Враг отступает"; note="Войска «"+who+"» начали отход от наших стен — сражение окончится в нашу пользу."; }
         else { cls="war"; title="Наша армия отступает"; note="Войска у "+target+" начали отход — на отступление нужно время."; }
       }
-      if(mailFull){
-        const ico = cls==="hot"?"win":cls==="war"?"lose":"";
-        h+=mpMailItem("images/ui/icon-march.png", ico, title, "<div class='note'>"+note+"</div>", m.created_at);
-      } else {
-        h+="<div class='entry "+cls+"'><div class='line'><div class='fill'>"+
-           "<div class='title'>"+title+"</div><div class='note'>"+note+"</div>"+
-           "</div></div></div>";
-      }
+      h+="<div class='entry "+cls+"'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+title+"</div><div class='note'>"+note+"</div>"+
+         "</div></div></div>";
     });
   }
 
-  if(show("mail") && mpState.mail.length){
-    h+= mailFull ? mpMailHd("Бой","последние стычки") : rubric("Бой","последние стычки","mp-anchor-mail");
+  if(show("mail") && !mailFull && mpState.mail.length){
+    h+=rubric("Бой","последние стычки","mp-anchor-mail");
     mpState.mail.forEach(m=>{
       const d=m.data, mine=d.role==="attacker";
       const myLoss=mine?d.attLoss:d.defLoss, oppLoss=mine?d.defLoss:d.attLoss;
@@ -12710,12 +12902,8 @@ function foMultiplayer(embedded, only){
       const lootTxt=d.loot&&RES.filter(r=>d.loot[r]).map(r=>RES_NAME[r]+" "+RU(d.loot[r])).join(" · ");
       if(mine&&won&&lootTxt) notesHtml+="<div class='note'>Захвачено: "+lootTxt+"</div>";
       else if(!mine&&!won&&lootTxt) notesHtml+="<div class='note'>Разграблено: "+lootTxt+"</div>";
-      if(mailFull){
-        h+=mpMailItem("images/ui/mail-seal.png", tier.cls==="win"?"win":"lose", title, notesHtml, m.created_at);
-      } else {
-        h+="<div class='entry"+(tier.cls==="win"?" hot":" war")+"'><div class='line'><div class='fill'>"+
-           "<div class='title'>"+title+"</div>"+notesHtml+"</div></div></div>";
-      }
+      h+="<div class='entry"+(tier.cls==="win"?" hot":" war")+"'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+title+"</div>"+notesHtml+"</div></div></div>";
     });
   }
 
@@ -12730,8 +12918,8 @@ function foMultiplayer(embedded, only){
   // сервер честно шлёт null/0/[]. Ступени и пороги — те же самые se>=1..5,
   // что и в scoutSnapshot/scoutReportHtml одиночной игры (index.html:
   // 5237-5282/7080-7151), просто короче (без блочной вёрстки — тут почта).
-  if(show("mail") && mpState.scoutMail.length){
-    h+= mailFull ? mpMailHd("Разведка","донесения лазутчиков") : rubric("Разведка","донесения лазутчиков");
+  if(show("mail") && !mailFull && mpState.scoutMail.length){
+    h+=rubric("Разведка","донесения лазутчиков");
     mpState.scoutMail.forEach(m=>{
       const d=m.data;
       const title=d.found?(d.opponent_nick||"Безымянный лорд"):"Донесение";
@@ -12759,18 +12947,14 @@ function foMultiplayer(embedded, only){
         if(se>=4) notesHtml+="<div class='note'>Гарнизон (башня): "+d.garrison+" ур.</div>";
         if(se>=5) notesHtml+="<div class='note'>Лазарет: "+RU(d.wounded)+" раненых · снаряжение: мощь "+RU(d.gearPower)+"</div>";
       }
-      if(mailFull){
-        h+=mpMailItem("images/ui/icon-world.png", "", title, notesHtml, m.created_at);
-      } else {
-        h+="<div class='entry'><div class='line'><div class='fill'>"+
-           "<div class='title'>"+title+"</div>"+notesHtml+"</div></div></div>";
-      }
+      h+="<div class='entry'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+title+"</div>"+notesHtml+"</div></div></div>";
     });
   }
 
   // Фаза 8, кусочек 2 — донесения о походах на лагеря (mail, kind:"raid").
-  if(show("mail") && mpState.raidMail.length){
-    h+= mailFull ? mpMailHd("Лагеря","походы на варваров") : rubric("Лагеря","походы на варваров");
+  if(show("mail") && !mailFull && mpState.raidMail.length){
+    h+=rubric("Лагеря","походы на варваров");
     mpState.raidMail.forEach(m=>{
       const d=m.data;
       const lostN=u=>TKEYS.reduce((s,t)=>s+[1,2,3,4,5].reduce((s2,i)=>s2+((u&&u[t]&&u[t][i])||0),0),0);
@@ -12786,12 +12970,8 @@ function foMultiplayer(embedded, only){
         const tomesTxt=Object.keys(d.tomes||{}).map(v=>TOME_NAME[v]+" ×"+d.tomes[v]).join(", ");
         if(tomesTxt) notesHtml+="<div class='note'>Книги опыта: "+tomesTxt+"</div>";
       }
-      if(mailFull){
-        h+=mpMailItem("images/ui/mail-seal.png", tier.cls==="win"?"win":"lose", title, notesHtml, m.created_at);
-      } else {
-        h+="<div class='entry"+(tier.cls==="win"?" hot":" war")+"'><div class='line'><div class='fill'>"+
-           "<div class='title'>"+title+"</div>"+notesHtml+"</div></div></div>";
-      }
+      h+="<div class='entry"+(tier.cls==="win"?" hot":" war")+"'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+title+"</div>"+notesHtml+"</div></div></div>";
     });
   }
 
@@ -12799,8 +12979,8 @@ function foMultiplayer(embedded, only){
   // finalizeNodeBattle в mp-tick). Своя рубрика — не "Бой" (там только
   // города) и не "Лагеря" (там только НПС-разбойники), а именно PvP-стычка
   // с другим правителем, но за право сбора, а не за его город.
-  if(show("mail") && mpState.nodeBattleMail.length){
-    h+= mailFull ? mpMailHd("Точки","бои за право сбора") : rubric("Точки","бои за право сбора");
+  if(show("mail") && !mailFull && mpState.nodeBattleMail.length){
+    h+=rubric("Точки","бои за право сбора");
     mpState.nodeBattleMail.forEach(m=>{
       const d=m.data, mine=d.role==="attacker";
       const myLoss=mine?d.attLoss:d.defLoss, oppLoss=mine?d.defLoss:d.attLoss;
@@ -12821,12 +13001,8 @@ function foMultiplayer(embedded, only){
       const tier=battleOutcomeTier(myStart,myHs.dead||0,myHs.hurt||0,won,myPower,oppPower);
       const fullTitle=title+" — «"+who+"» ("+tier.name+")";
       const notesHtml="<div class='note'>Наши потери (лазарет): "+RU(lostN(myLoss))+" · потери соперника: "+RU(lostN(oppLoss))+"</div>";
-      if(mailFull){
-        h+=mpMailItem("images/ui/mail-seal.png", tier.cls==="win"?"win":"lose", fullTitle, notesHtml, m.created_at);
-      } else {
-        h+="<div class='entry"+(tier.cls==="win"?" hot":" war")+"'><div class='line'><div class='fill'>"+
-           "<div class='title'>"+fullTitle+"</div>"+notesHtml+"</div></div></div>";
-      }
+      h+="<div class='entry"+(tier.cls==="win"?" hot":" war")+"'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+fullTitle+"</div>"+notesHtml+"</div></div></div>";
     });
   }
   // Донесения о сборе (mail, kind:"gather", см. applyGathered в mp-tick) —
@@ -12834,18 +13010,14 @@ function foMultiplayer(embedded, only){
   // письма нет»), хотя ресурсы честно зачислялись. Формат — то же "Обоз
   // собрал..." сообщение, что и у одиночки (EV.gathered), просто карточкой
   // в общем списке, как остальные рубрики почты общего мира.
-  if(show("mail") && mpState.gatherMail.length){
-    h+= mailFull ? mpMailHd("Сбор","добыча с точек ресурсов") : rubric("Сбор","добыча с точек ресурсов");
+  if(show("mail") && !mailFull && mpState.gatherMail.length){
+    h+=rubric("Сбор","добыча с точек ресурсов");
     mpState.gatherMail.forEach(m=>{
       const d=m.data;
-      const title="Обоз вернулся с добычей";
-      const notesHtml="<div class='note'>"+RES_NAME[d.res]+" "+fmt(d.amount)+" · точка "+d.x+"·"+d.y+"</div>";
-      if(mailFull){
-        h+=mpMailItem("images/ui/icon-march.png", "", title, notesHtml, m.created_at);
-      } else {
-        h+="<div class='entry calm'><div class='line'><div class='fill'>"+
-           "<div class='title'>"+title+"</div>"+notesHtml+"</div></div></div>";
-      }
+      h+="<div class='entry calm'><div class='line'><div class='fill'>"+
+         "<div class='title'>Обоз вернулся с добычей</div>"+
+         "<div class='note'>"+RES_NAME[d.res]+" "+fmt(d.amount)+" · точка "+d.x+"·"+d.y+"</div>"+
+         "</div></div></div>";
     });
   }
   // Личные уведомления (mail, kind:"note") — сейчас только "Генерал повышен"
@@ -12853,17 +13025,14 @@ function foMultiplayer(embedded, only){
   // было вовсе: генерал честно повышался на сервере (addXp), но игрок об
   // этом никогда не узнавал — в одиночке то же самое событие давало письмо
   // (index.html, addXp: pushMail({cat:"personal",kind:"note",...})).
-  if(show("mail") && mpState.noteMail.length){
-    h+= mailFull ? mpMailHd("Генерал","личные уведомления") : rubric("Генерал","личные уведомления");
+  if(show("mail") && !mailFull && mpState.noteMail.length){
+    h+=rubric("Генерал","личные уведомления");
     mpState.noteMail.forEach(m=>{
       const d=m.data;
-      const notesHtml="<div class='note'>"+d.body+"</div>";
-      if(mailFull){
-        h+=mpMailItem("images/ui/icon-gen.png", "", d.title, notesHtml, m.created_at);
-      } else {
-        h+="<div class='entry calm'><div class='line'><div class='fill'>"+
-           "<div class='title'>"+d.title+"</div>"+notesHtml+"</div></div></div>";
-      }
+      h+="<div class='entry calm'><div class='line'><div class='fill'>"+
+         "<div class='title'>"+d.title+"</div>"+
+         "<div class='note'>"+d.body+"</div>"+
+         "</div></div></div>";
     });
   }
   // Все семь рубрик почты (Гонцы/Бой/Разведка/Лагеря/Точки/Сбор/Генерал)
@@ -12873,15 +13042,13 @@ function foMultiplayer(embedded, only){
   // только тёмная подложка модалки и декор углов (репорт пользователя со
   // скриншотом: "вкладка почты все равно не открывается" — открывалась,
   // просто показывать было нечего). Один общий пробел на весь экран.
-  if(show("mail") && !mpState.siegeMail.length && !mpState.mail.length && !mpState.scoutMail.length
+  // (только для старой !mailFull-страницы — у mailFull свой "пусто" уже
+  // внутри mpMailScreenHtml()/mpMailListHtml()).
+  if(show("mail") && !mailFull && !mpState.siegeMail.length && !mpState.mail.length && !mpState.scoutMail.length
      && !mpState.raidMail.length && !mpState.nodeBattleMail.length && !mpState.gatherMail.length
      && !mpState.noteMail.length){
-    h+= mailFull ? "<div class='mail-empty'>Здесь пока пусто — донесения и боевые сводки появятся, как только начнутся первые походы.</div>"
-                 : hollow("&#9993;","Здесь пока пусто — донесения и боевые сводки появятся, как только начнутся первые походы.");
+    h+=hollow("&#9993;","Здесь пока пусто — донесения и боевые сводки появятся, как только начнутся первые походы.");
   }
-  // Закрывает .mail-list/.mail-card/.mail-wrap, открытые перед рубрикой
-  // "Гонцы" выше — см. её заголовок про mailFull.
-  if(mailFull) h+="</div></div></div>";
 
   // Раньше здесь безусловно (без show()-гейта) рендерился блок "Ресурсы" —
   // те же самые числа, что и так уже висят в шапке (#purse), просто
