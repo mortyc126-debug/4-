@@ -19,7 +19,7 @@
    местное дополнение этого движка, в оригинале его не было; останавливается
    тем же способом (stopAuto), что и в остальных жестах.
    ========================================================================= */
-import { heightAt, HMAX } from "./terrain";
+import { heightAt, HMAX, WORLD_HALF } from "./terrain";
 
 export interface OrbitCamera {
   yaw: number;
@@ -91,8 +91,14 @@ export function attachOrbitControls(canvas: HTMLCanvasElement, cam: OrbitCamera)
     const k = cam.dist * 0.0022;
     const dx = dxScreen * k, dy = dyScreen * k;
     const c = Math.cos(cam.yaw), s = Math.sin(cam.yaw);
-    cam.target[0] -= dx * c - dy * s;
-    cam.target[2] += dx * s + dy * c;
+    // Автор: «мир ограниченный, от центра по 500 клеток... придётся
+    // добавить ограничения, чтобы не улетать дальше». Клэмп тут, а не
+    // только визуальной горной стеной (см. terrain.ts) — стена сама по
+    // себе не блокирует панораму, её просто не видно достаточно резко,
+    // чтобы игрок не мог всё равно уйти камерой за неё в пустоту, где
+    // рельеф дальше не подгружен ни в одном чанке (см. main.ts).
+    cam.target[0] = Math.max(-WORLD_HALF, Math.min(WORLD_HALF, cam.target[0] - (dx * c - dy * s)));
+    cam.target[2] = Math.max(-WORLD_HALF, Math.min(WORLD_HALF, cam.target[2] + (dx * s + dy * c)));
     cam.target[1] = heightAt(cam.target[0], cam.target[2]) * HMAX + 1;
   }
 
