@@ -2824,28 +2824,34 @@ function talentBranchSpent(p){
 }
 
 /* ---- Здания ---- */
+// footprint — размер в клетках CITY_GRID для свободной застройки МП
+// (см. CITY_GRID ниже); ratio взят из старых процентных размеров
+// CITY_CELLS, сама сетка ещё не финальная — будет уточняться по месту.
 const BUILDINGS = {
   hall:    {name:"Ратуша",        max:25, req:null,  desc:"Задаёт потолок всех зданий и размер города"},
-  farm:    {name:"Ферма",         max:25, prod:"food", plots:4, desc:"Добывает еду в город"},
-  lumber:  {name:"Лесопилка",     max:25, prod:"wood", plots:4, desc:"Добывает дерево в город"},
-  quarry:  {name:"Каменоломня",   max:25, prod:"stone", plots:4, desc:"Добывает камень в город"},
-  mine:    {name:"Золотая шахта", max:25, prod:"gold", plots:4, desc:"Добывает золото в город"},
-  store:   {name:"Склад",         max:25, desc:"Защищает ресурсы от разграбления при штурме города"},
-  barracks:{name:"Казармы",       max:25, train:"inf", desc:"Обучает пехоту"},
-  range:   {name:"Стрельбище",    max:25, train:"arc", desc:"Обучает лучников"},
-  stable:  {name:"Конюшня",       max:25, train:"cav", desc:"Обучает конницу"},
-  siege:   {name:"Мастерская",    max:25, train:"sie", desc:"Обучает осадные орудия"},
-  hospital:{name:"Госпиталь",     max:25, desc:"Раненые вместо убитых", plots:4},
-  academy: {name:"Академия",      max:25, desc:"Исследования и открытие тиров"},
+  farm:    {name:"Ферма",         max:25, prod:"food", plots:4, desc:"Добывает еду в город", footprint:{w:2,h:2}},
+  lumber:  {name:"Лесопилка",     max:25, prod:"wood", plots:4, desc:"Добывает дерево в город", footprint:{w:2,h:2}},
+  quarry:  {name:"Каменоломня",   max:25, prod:"stone", plots:4, desc:"Добывает камень в город", footprint:{w:2,h:2}},
+  mine:    {name:"Золотая шахта", max:25, prod:"gold", plots:4, desc:"Добывает золото в город", footprint:{w:2,h:2}},
+  store:   {name:"Склад",         max:25, desc:"Защищает ресурсы от разграбления при штурме города", footprint:{w:3,h:2}},
+  barracks:{name:"Казармы",       max:25, train:"inf", desc:"Обучает пехоту", footprint:{w:3,h:3}},
+  range:   {name:"Стрельбище",    max:25, train:"arc", desc:"Обучает лучников", footprint:{w:3,h:2}},
+  stable:  {name:"Конюшня",       max:25, train:"cav", desc:"Обучает конницу", footprint:{w:3,h:2}},
+  siege:   {name:"Мастерская",    max:25, train:"sie", desc:"Обучает осадные орудия", footprint:{w:2,h:2}},
+  hospital:{name:"Госпиталь",     max:25, desc:"Раненые вместо убитых", plots:4, footprint:{w:2,h:2}},
+  academy: {name:"Академия",      max:25, desc:"Исследования и открытие тиров", footprint:{w:3,h:2}},
   wall:    {name:"Стена",         max:25, desc:"Защита города при обороне"},
-  garrison:{name:"Гарнизон",      max:25, desc:"Доп. защита при осаде и предупреждение о марше врага"},
-  scout:   {name:"Разведка",      max:25, desc:"Раскрывает сведения о войсках противника: чем выше эпоха здания, тем точнее разведданные"},
+  garrison:{name:"Гарнизон",      max:25, desc:"Доп. защита при осаде и предупреждение о марше врага", footprint:{w:2,h:2}},
+  scout:   {name:"Разведка",      max:25, desc:"Раскрывает сведения о войсках противника: чем выше эпоха здания, тем точнее разведданные", footprint:{w:2,h:2}},
   // Горн = Кузница в RoK, а она вообще без уровней — разовая постройка,
   // апгрейдов не бывает (см. buildingMax/FORGE_TABLE). max:1, не 25.
-  forge:   {name:"Горн",          max:1, desc:"Добыча материалов и ковка снаряжения для полководца"},
-  portal:  {name:"Портал",        max:25, desc:"Пассивно ускоряет марш; с 3 эпохи открывает проход, сокращающий путь отрядов"},
+  forge:   {name:"Горн",          max:1, desc:"Добыча материалов и ковка снаряжения для полководца", footprint:{w:2,h:2}},
+  portal:  {name:"Портал",        max:25, desc:"Пассивно ускоряет марш; с 3 эпохи открывает проход, сокращающий путь отрядов", footprint:{w:3,h:3}},
 };
 const BKEYS = Object.keys(BUILDINGS);
+// Здания, которые размещаются игроком свободно на сетке (все, кроме
+// ратуши и стены — те фиксированы по смыслу и не участвуют в p.layout).
+const PLACEABLE_BKEYS = BKEYS.filter(k => k!=="hall" && k!=="wall");
 // Разметка карты города: координаты в % от изображения, bk — ключ здания (null = задел на будущее)
 const CITY_CELLS=[
 {n:"Ратуша",bk:"hall",x:42.8,y:10.49,w:14.16,h:16.83,ch:14},{n:"Лесопилка1",bk:"lumber",pl:0,x:59.32,y:13.8,w:7.24,h:6.86,ch:20},{n:"Лесопилка2",bk:"lumber",pl:1,x:67.22,y:14.66,w:7.3,h:5.82,ch:20},
@@ -2862,6 +2868,72 @@ const CITY_CELLS=[
 ];
 const cityShapeCss = c => c.pill ? "border-radius:50%;" :
   (v=>`clip-path:polygon(${v}% 0%,${100-v}% 0%,100% ${v}%,100% ${100-v}%,${100-v}% 100%,${v}% 100%,0% ${100-v}%,0% ${v}%);`)(c.ch||18);
+
+// Свободная застройка МП (см. CITY_GRID/PLACEABLE_BKEYS): невидимая сетка
+// поверх city-map.png, вписанная в овал стен вручную по картинке (лучевая
+// трассировка границы стены из центра + ручной запас 7%, чтобы здания не
+// залезали на саму стену). w×h — размер в клетках, mask — по строкам,
+// сверху вниз, '1' = можно строить, '0' — нельзя (стена/лес/ворота).
+// left/top/w/h — прямоугольник сетки в % от city-map.png (position:absolute
+// поверх той же картинки, тем же способом, что и старые CITY_CELLS).
+const CITY_GRID = {
+  w: 16, h: 24,
+  left: 11.966, top: 12.081, width: 74.900, height: 64.456,
+  mask: [
+    "0000000000000000",
+    "0000001111000000",
+    "0000111111110000",
+    "0001111111111000",
+    "0011111111111100",
+    "0111111111111100",
+    "0111111111111110",
+    "0111111111111110",
+    "0111111111111110",
+    "1111111111111110",
+    "1111111111111110",
+    "1111111111111111",
+    "1111111111111111",
+    "1111111111111111",
+    "1111111111111111",
+    "1111111111111111",
+    "1111111111111111",
+    "0111111111111110",
+    "0111111111111110",
+    "0111111111111110",
+    "0011111111111100",
+    "0001111111111000",
+    "0001111111111000",
+    "0000000000000000",
+  ],
+};
+// true, если footprint w×h, поставленный левым верхним углом в (gx,gy),
+// целиком попадает в маску CITY_GRID и не пересекается ни с одним другим
+// зданием в layout (список {b,plot,gx,gy}); excludeIdx — свой же индекс при
+// проверке переноса уже стоящего здания. Общая для клиента (живая подсветка
+// при перетаскивании) и сервера (mp-build/mp-relocate-building) — при
+// правке синхронно копировать в обе стороны, ES-импортов между функциями
+// Supabase нет (см. остальные mp-* — та же договорённость).
+function collisionOk(layout, footprint, gx, gy, excludeIdx){
+  const {w,h} = footprint;
+  if(!Number.isInteger(gx) || !Number.isInteger(gy)) return false;
+  if(gx<0 || gy<0 || gx+w>CITY_GRID.w || gy+h>CITY_GRID.h) return false;
+  for(let y=gy; y<gy+h; y++){
+    const row = CITY_GRID.mask[y];
+    for(let x=gx; x<gx+w; x++){
+      if(row[x]!=="1") return false;
+    }
+  }
+  for(let i=0;i<layout.length;i++){
+    if(i===excludeIdx) continue;
+    const e = layout[i];
+    const fp = BUILDINGS[e.b] && BUILDINGS[e.b].footprint;
+    if(!fp) continue;
+    const ex2=e.gx+fp.w, ey2=e.gy+fp.h;
+    if(gx<ex2 && gx+w>e.gx && gy<ey2 && gy+h>e.gy) return false;
+  }
+  return true;
+}
+
 const isMulti = bk => !!BUILDINGS[bk].plots;
 const plotUnlocked = (bk,idx,hall) => !isMulti(bk) || idx===0 || epochOf(hall)>=idx+1;   // участок N — с эпохи N
 // Была придумана как 25% защиты Склада — реальный RoK-столбец "Ёмкость"
