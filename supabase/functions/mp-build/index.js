@@ -2,9 +2,8 @@
 // mp-build — Фаза 5: постройка/улучшение зданий. Все здания из BUILDINGS
 // (index.html) перенесены: barracks/range/stable/siege, hall + весь
 // HALL_REQ (wall/store/academy/hospital), farm/lumber/quarry/mine,
-// garrison/scout, forge (Фаза 11, кусочек 1), portal (см. отдельный
-// кусочек ниже — единственное здание без своей ценовой кривой в
-// источнике, работает через общую BUILD_TABLE). Зеркало
+// garrison/scout, forge (Фаза 11, кусочек 1), portal (своей выдумки,
+// прообраза в RoK нет — PORTAL_TABLE ниже, среднее Академии и Стены). Зеркало
 // startBuild(p,bk,plot) из index.html:5712.
 //
 // hospital/farm/lumber/quarry/mine — multi-здания (BUILDINGS.*.plots=4 в
@@ -241,38 +240,37 @@ const SCOUT_TABLE = [
 // ниже). Фаза 11, кусочек 1 — до сих пор нигде не деплоилось (mp-build
 // сам об этом честно предупреждал: "кузница пока не переносилась").
 const FORGE_TABLE = [{ food: 1000, wood: 1000, stone: 1000, t: 11, power: 5 }];
-// index.html:1262-1288 BUILD_TABLE — общая "кривая Ратуши", запасной вариант
-// для зданий БЕЗ собственной таблицы (buildCost/buildTime в источнике:
-// tblRow(BUILDING_TABLE[bk]||BUILD_TABLE, lv)). Из всех зданий этого модуля
-// в такое положение попадает только Портал — у него, в отличие от Горна,
-// нет прообраза в RoK вообще, поэтому и отдельной кривой стоимости/времени
-// в источнике никогда не было — только эта общая.
-const BUILD_TABLE = [
-  { t: 0, food: 0, wood: 0, stone: 0 },
-  { t: 2, food: 3500, wood: 3500, stone: 0 },
-  { t: 300, food: 6500, wood: 6500, stone: 0 },
-  { t: 1200, food: 11800, wood: 11800, stone: 0 },
-  { t: 3600, food: 21300, wood: 21300, stone: 0 },
-  { t: 7200, food: 36300, wood: 36300, stone: 12000 },
-  { t: 18000, food: 54400, wood: 54400, stone: 19200 },
-  { t: 36000, food: 81800, wood: 81800, stone: 30800 },
-  { t: 54000, food: 122800, wood: 122800, stone: 49200 },
-  { t: 79200, food: 184300, wood: 184300, stone: 78700 },
-  { t: 108000, food: 277500, wood: 277500, stone: 120000 },
-  { t: 144000, food: 417500, wood: 417500, stone: 180000 },
-  { t: 180000, food: 627500, wood: 627500, stone: 270000 },
-  { t: 216000, food: 942500, wood: 942500, stone: 405000 },
-  { t: 252000, food: 1400000, wood: 1400000, stone: 607500 },
-  { t: 345600, food: 2100000, wood: 2100000, stone: 912500 },
-  { t: 417600, food: 3200000, wood: 3200000, stone: 1400000 },
-  { t: 504000, food: 4800000, wood: 4800000, stone: 2100000 },
-  { t: 604800, food: 7200000, wood: 7200000, stone: 3100000 },
-  { t: 712800, food: 10800000, wood: 10800000, stone: 4700000 },
-  { t: 950400, food: 16200000, wood: 16200000, stone: 7000000 },
-  { t: 1483200, food: 24300000, wood: 24300000, stone: 10600000 },
-  { t: 2070000, food: 36500000, wood: 36500000, stone: 15900000 },
-  { t: 3110400, food: 54800000, wood: 54800000, stone: 24000000 },
-  { t: 10915200, food: 82200000, wood: 82200000, stone: 36000000 },
+// Портал — своей выдумки, прообраза в RoK нет. Раньше пользовался общей
+// BUILD_TABLE ниже (на деле кривая Ратуши, 1 уровень бесплатный — годится
+// для стартового здания, но не для того, что игрок строит с нуля) — теперь
+// собственная таблица, среднее Академии и Стены по каждому полю на каждом
+// уровне (см. index.html:PORTAL_TABLE, те же самые числа).
+const PORTAL_TABLE = [
+  { food: 250, wood: 400, t: 3, power: 5 },
+  { food: 1650, wood: 2150, t: 21, power: 13 },
+  { food: 3150, wood: 3900, t: 125, power: 32 },
+  { food: 5800, wood: 7000, stone: 400, t: 480, power: 78 },
+  { food: 10400, wood: 12700, stone: 750, t: 1500, power: 186 },
+  { food: 14800, wood: 18300, stone: 14100, t: 3350, power: 428 },
+  { food: 22200, wood: 27700, stone: 22500, t: 6720, power: 863 },
+  { food: 33500, wood: 41000, stone: 36000, t: 13380, power: 1656 },
+  { food: 50000, wood: 61800, stone: 57600, t: 26820, power: 3124 },
+  { food: 75300, wood: 92400, stone: 92300, t: 53580, power: 5880 },
+  { food: 114000, wood: 140000, stone: 141000, t: 64320, power: 9393 },
+  { food: 171000, wood: 210000, stone: 213000, t: 77190, power: 13870 },
+  { food: 256000, wood: 315000, stone: 320000, t: 93600, power: 19676 },
+  { food: 385000, wood: 473000, stone: 481000, t: 109800, power: 27280 },
+  { food: 578000, wood: 709000, stone: 735000, t: 145800, power: 37355 },
+  { food: 844000, wood: 1060000, stone: 1080000, t: 158400, power: 50874 },
+  { food: 1300000, wood: 1600000, stone: 1640000, t: 192600, power: 69237 },
+  { food: 2000000, wood: 2400000, stone: 2490000, t: 230400, power: 94544 },
+  { food: 2900000, wood: 3600000, stone: 3740000, t: 275400, power: 129869 },
+  { food: 4400000, wood: 5450000, stone: 5600000, t: 331200, power: 179600 },
+  { food: 6630000, wood: 8180000, stone: 8400000, t: 477000, power: 250281 },
+  { food: 9950000, wood: 12300000, stone: 12600000, t: 516600, power: 353115 },
+  { food: 14900000, wood: 18400000, stone: 18900000, t: 723600, power: 505339 },
+  { food: 22400000, wood: 27700000, stone: 28400000, t: 1085400, power: 734015 },
+  { food: 33700000, wood: 41600000, stone: 42600000, t: 2383200, power: 1164412 },
 ];
 // Рынок/Центр Альянса — цена/время/мощь по 25 уровням дословно из таблицы
 // RoK (Trading Post/Alliance Center), которую прислал автор — время из
@@ -318,7 +316,7 @@ const BUILD_BLD_TABLE = {
   barracks: BARRACKS_TABLE, range: BARRACKS_TABLE, stable: BARRACKS_TABLE, siege: SIEGE_TABLE,
   hall: HALL_TABLE, wall: WALL_TABLE, store: STORE_BUILD_TABLE, academy: ACADEMY_BUILD_TABLE, hospital: HOSPITAL_BUILD_TABLE,
   farm: FARM_TABLE, lumber: LUMBER_TABLE, quarry: QUARRY_TABLE, mine: MINE_TABLE,
-  garrison: WATCH_TABLE, scout: SCOUT_TABLE, forge: FORGE_TABLE, portal: BUILD_TABLE,
+  garrison: WATCH_TABLE, scout: SCOUT_TABLE, forge: FORGE_TABLE, portal: PORTAL_TABLE,
   market: TRADING_TABLE, alliance: ALLIANCE_TABLE,
 };
 const BUILD_MAX_LV = 25;
@@ -599,9 +597,8 @@ const ACADEMY_TREE = {
 //      ОБЕ записи на расу (не только index 0), apply() читается по
 //      реальному p.gen.id||0, как в клиенте.
 //   4. portalMarchBonus(p.b.portal) — Портал теперь настоящее здание общего
-//      мира (mp-build, отдельный кусочек после Фазы 11 — единственное
-//      здание без собственной ценовой кривой и в источнике, работает через
-//      общую BUILD_TABLE), p.b.portal — реальный уровень, не всегда 0.
+//      мира (mp-build, отдельный кусочек после Фазы 11, своя PORTAL_TABLE),
+//      p.b.portal — реальный уровень, не всегда 0.
 //   5. Бонусы дерева исследований (ACADEMY_TREE[*].field/effects, по
 //      p.tech) — уже перенесено в Фазе 5, здесь наконец подключается.
 //
