@@ -833,15 +833,22 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   background:radial-gradient(circle at 34% 28%,rgba(255,255,255,.4),transparent 62%),var(--tone-bg,rgba(90,69,48,.16));
   border:2px solid var(--tone-bd,rgba(90,69,48,.4));
   box-shadow:0 1px 2px rgba(0,0,0,.2),0 0 0 1px rgba(255,255,255,.25) inset}
-/* 32px внутри 42px круга автору всё ещё казалось "с зазором от ободка" —
-   *{box-sizing:border-box} (см. сброс в начале файла) значит, что у
-   .icowrap (border-box, border:2px) фактическая область ПОД содержимое —
-   42-2*2=38px, ровно край в край с ободком. Автор явно попросил "устрани
-   зазор, но обводку зелёную оставь" — вот эти 38px и есть максимум без
-   наезда на саму рамку. Сами PNG почти без полей (content bbox 88-97% кадра
-   у icon-march/mail-seal/icon-world/icon-gen/icon-mail — проверено), так
-   что дальше увеличивать уже некуда, упрёмся в саму рамку медальона. */
-.mail-row .icowrap img{width:38px;height:38px;object-fit:contain;filter:drop-shadow(0 1px 1px rgba(0,0,0,.35))}
+/* 38px img впритык к рамке (42px круг минус 2×2px рамки = ровно 38px
+   содержимого) всё равно оставлял на глаз заметное кольцо: object-fit:contain
+   честно показывает ВСЮ картинку целиком, а у неё самой есть небольшие
+   прозрачные поля (content bbox 88-97% кадра у icon-march/mail-seal/
+   icon-world/icon-gen/icon-mail) — вот эти самые несколько процентов и
+   читались как "зазор от ободка", хотя CSS-размер уже упирался в максимум.
+   Автор: "устрани зазор, но обводку зелёную оставь" — единственный способ
+   выбрать поля именно с картинки, а не увеличивать бесконечно кольцо —
+   отдельная круглая маска (.icowrap-mask, overflow:hidden ЛЕЖИТ НЕ на самом
+   .icowrap: там позиционирован ::after значок "непрочитано" за пределами
+   круга, top:-1px;right:-1px — обрезался бы вместе с картинкой) с картинкой
+   немного КРУПНЕЕ рамки внутри (object-fit:cover, а не contain): лишние
+   прозрачные поля обрезаются краем круга, сам рисунок остаётся целым. */
+.mail-row .icowrap-mask{width:38px;height:38px;border-radius:50%;overflow:hidden;
+  display:flex;align-items:center;justify-content:center}
+.mail-row .icowrap-mask img{width:46px;height:46px;object-fit:cover}
 .mail-row .icowrap.tone-green{--tone-bg:rgba(74,124,63,.24);--tone-bd:#4a7c3f}
 .mail-row .icowrap.tone-red{--tone-bg:rgba(163,60,44,.22);--tone-bd:#a33c2c}
 .mail-row .icowrap.tone-blue{--tone-bg:rgba(58,85,133,.22);--tone-bd:#3a5585}
@@ -885,8 +892,17 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    размере выше — там несколько чипов подряд внутри предложения, раздувать
    их так же не просили и не стоит. */
 .mail-res-row .res-chip{gap:12px;font-size:26px;font-weight:bold;margin-right:0}
-.mail-res-row .res-chip .ico{width:78px;height:78px;border-width:2px}
-.mail-res-row .res-chip img{width:60px;height:60px}
+/* Автор проверил вживую: даже втрое крупнее (см. выше) с contain внутри
+   круга оставался видимый зазор — те же самые небольшие прозрачные поля
+   исходных res-*.png (content bbox 87-99%, см. коммит "крупнее иконки"),
+   просто увеличенные вместе с картинкой. overflow:hidden на самом .ico
+   (тут это безопасно — в отличие от .icowrap-mask в списке письма, тут
+   нет ::after-значка "непрочитано" сбоку, который бы обрезался) плюс
+   картинка КРУПНЕЕ круга (84px вместо 74px доступного места, object-fit:
+   cover вместо contain) — поля обрезаются краем медальона, монета/пирамида
+   ресурса выходит на всю иконку без кольца фона вокруг.*/
+.mail-res-row .res-chip .ico{width:78px;height:78px;border-width:2px;overflow:hidden}
+.mail-res-row .res-chip img{width:84px;height:84px;object-fit:cover}
 /* Координаты места (добыча/бой за точку/лагерь) — раньше просто хвостом
    текста ("· точка -22·12"), автор попросил вынести их первыми, по центру
    строки и кликабельными (переносит камеру 3D к этому месту, см. mpGoToLoc
@@ -9362,7 +9378,7 @@ function mailRowHtml(m){
             : m.kind==="gather" ? resName(m.res)+" "+fmt(m.amount)+" · X:"+m.coords.x+" Y:"+m.coords.y
             : m.body;
   return "<div class='mail-row"+(m.read?" read":"")+"' data-act='mailopen' data-id='"+m.id+"'>"+
-    "<div class='icowrap tone-"+tone+"'><img src='"+icon+"' alt=''></div>"+
+    "<div class='icowrap tone-"+tone+"'><span class='icowrap-mask'><img src='"+icon+"' alt=''></span></div>"+
     "<div class='tx'><div class='tt'>"+title+"</div><div class='sb'>"+sub+"</div></div>"+
     "<div class='tail'><div class='tm'>"+mailAgo(m.t)+"</div><span class='chev'>&#8250;</span></div></div>";
 }
@@ -13054,7 +13070,7 @@ function mpMailEntryById(id){
 // заголовок mpMailReadIds выше — своя, локальная отметка "открывал").
 function mpMailRowHtml(m){
   return "<div class='mail-row"+(mpMailReadIds.has(m.id)?" read":"")+"' data-mp='mpmailopen' data-id='"+m.id+"'>"+
-    "<div class='icowrap tone-"+(m.tone||"blue")+"'><img src='"+m.icon+"' alt=''></div>"+
+    "<div class='icowrap tone-"+(m.tone||"blue")+"'><span class='icowrap-mask'><img src='"+m.icon+"' alt=''></span></div>"+
     "<div class='tx'><div class='tt'>"+m.title+"</div><div class='sb'>"+m.sub+"</div></div>"+
     "<div class='tail'><div class='tm'>"+mpMailAgo(m.created_at)+"</div><span class='chev'>&#8250;</span></div></div>";
 }
