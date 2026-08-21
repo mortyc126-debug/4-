@@ -46,24 +46,30 @@ const SHADOW_NEAR = 1;
 const SHADOW_FAR = 220;
 
 // Суша красится настоящими текстурами (см. textures.ts/textures/ground/*),
-// не запечённым на CPU градиентом цвета — 5 текстур участвуют в смеси по
+// не запечённым на CPU градиентом цвета — 7 текстур участвуют в смеси по
 // высоте (elevation, те же пороги, что раньше вёл groundColor():
-// 0.06/0.55/0.74) И по крупномасштабной "влажности региона" (moistureAt,
-// см. terrain.ts) — раньше низина в любой точке карты красилась ОДНОЙ и
-// той же травой, автор заметил, что мир выглядит "хаотично раскиданным и
-// равномерно перемешанным". Теперь на месте старой ступеньки
-// grass→dry_meadow по высоте — смесь grass/dry_meadow по moistureAt в
-// ЛЮБОЙ точке низины: пышный луг там, где влажно, сухая степь там, где
-// сухо, читаемые издалека пятна, а не одна и та же трава-везде. На самых
-// высоких и при этом "холодных" (coldnessAt) пиках — процедурный белый
-// иней поверх текстуры (не каждая гора снежная — разные хребты по-разному
-// холодны, та же логика "не всё одинаковое").
+// 0.06/0.55/0.74), по крупномасштабной "влажности региона" (moistureAt,
+// см. terrain.ts) и по лесным пятнам/снежным пикам — раньше низина в
+// любой точке карты красилась ОДНОЙ и той же травой, автор заметил, что
+// мир выглядит "хаотично раскиданным и равномерно перемешанным". Теперь
+// на месте старой ступеньки grass→dry_meadow по высоте — смесь grass/
+// dry_meadow по moistureAt в ЛЮБОЙ точке низины: пышный луг там, где
+// влажно, сухая степь там, где сухо, читаемые издалека пятна, а не одна и
+// та же трава-везде. Внутри лесных пятен (forestMaskAt, та же линия леса,
+// что решает main.ts плотность декора) равнина темнеет до forestFloor —
+// земля под пологом леса читается лесной, не той же травой. На самых
+// высоких и при этом "холодных" (coldnessAt) пиках — настоящая снежная
+// текстура (не каждая гора снежная — разные хребты по-разному холодны, та
+// же логика "не всё одинаковое"). texSnow/texForestFloor — те же две
+// текстуры, что автор прислал по промптам из предыдущего ответа этой
+// сессии (снег и лесная подстилка).
 //
-// hash2/noiseAt/moistureAt/coldnessAt — дословный WGSL-порт одноимённых
-// функций terrain.ts (тот же SEED=12345, те же смещения +901/+902/+921),
-// не общий импорт — между TS и WGSL кода не разделить, тот же приём
-// дублирования с синхронной правкой, что и у collisionOk между
-// index.html/mp-*, см. подробный комментарий у moistureAt в terrain.ts.
+// hash2/noiseAt/moistureAt/coldnessAt/forestMaskAt — дословный WGSL-порт
+// одноимённых функций terrain.ts (тот же SEED=12345, те же смещения
+// +901/+902/+911/+912/+921), не общий импорт — между TS и WGSL кода не
+// разделить, тот же приём дублирования с синхронной правкой, что и у
+// collisionOk между index.html/mp-*, см. подробный комментарий у
+// moistureAt в terrain.ts.
 // Вода текстуры не сэмплит вообще — она плоская и цвет ей уже посчитан на
 // CPU (см. terrainMesh.ts), waterFlag просто выбирает, какую ветку взять.
 const TERRAIN_SHADER = /* wgsl */ `
@@ -81,6 +87,8 @@ struct Light { vp: mat4x4f };
 @group(0) @binding(8) var<uniform> light: Light;
 @group(0) @binding(9) var shadowSamp: sampler_comparison;
 @group(0) @binding(10) var shadowTex: texture_depth_2d;
+@group(0) @binding(11) var texSnow: texture_2d<f32>;
+@group(0) @binding(12) var texForestFloor: texture_2d<f32>;
 
 struct VOut {
   @builtin(position) pos: vec4f, @location(0) waterColor: vec3f, @location(1) worldPos: vec3f,
@@ -144,6 +152,17 @@ fn moistureAt(x: f32, y: f32) -> f32 {
 fn coldnessAt(x: f32, y: f32) -> f32 {
   return noiseAt(x / 260.0, y / 260.0, 13266); // SEED+921
 }
+// forestMaskAt — тот же порт, что и выше, но e (elevation) тут НЕ
+// пересчитывается через heightAt (вся цепочка heightRaw/regionKind в WGSL
+// не портирована — она нужна main.ts для геометрии рельефа, шейдеру только
+// для готового цвета) — она уже пришла как in.elevation, интерполированная
+// с вершин, ровно то же число, что вернул бы heightAt(x,y) в этой точке.
+fn forestMaskAt(x: f32, y: f32, e: f32) -> f32 {
+  let n = noiseAt(x / 150.0, y / 150.0, 13256) * 0.65 + noiseAt(x / 60.0, y / 60.0, 13257) * 0.35; // SEED+911, SEED+912
+  let patch = smoothstep(0.40, 0.62, n); // smoothstep(low,high,x) — тот же Эрмит, что и sstep() в terrain.ts
+  let treeline = 1.0 - smoothstep(0.55, 0.82, e);
+  return patch * treeline;
+}
 fn shadowFactor(clip: vec4f) -> f32 {
   let ndc = clip.xyz / clip.w;
   if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) {
@@ -203,12 +222,20 @@ fn fs(in: VOut) -> @location(0) vec4f {
     let dryC = textureSampleLevel(texDry, samp, in.uv, 0.0).rgb;
     let screeC = textureSampleLevel(texScree, samp, in.uv, 0.0).rgb;
     let rockC = textureSampleLevel(texRock, samp, in.uv, 0.0).rgb;
+    let snowC = textureSampleLevel(texSnow, samp, in.uv, 0.0).rgb;
+    let forestFloorC = textureSampleLevel(texForestFloor, samp, in.uv, 0.0).rgb;
     // "Цвет равнины" в ЭТОЙ точке — не всегда grass: сухая степь (dryC) и
     // пышный луг (grassC) смешиваются по moistureAt (см. комментарий выше
     // TERRAIN_SHADER) — та самая замена одной ступеньки по высоте на
-    // читаемое региональное пятно.
+    // читаемое региональное пятно. Дальше в лесных пятнах (forestMaskAt —
+    // тот же порог/линия леса, что решает, где main.ts вообще ставит
+    // деревья) это же поле "равнины" темнеет до forestFloorC: земля под
+    // пологом леса читается лесной, не той же травой, что и открытый луг
+    // рядом — то самое "лес тут, поле там" не только силуэтами деревьев
+    // сверху, но и цветом земли под ними.
     let moist = moistureAt(in.worldPos.x, in.worldPos.z);
-    let lowland = mix(dryC, grassC, moist);
+    let forest = forestMaskAt(in.worldPos.x, in.worldPos.z, in.elevation);
+    let lowland = mix(mix(dryC, grassC, moist), forestFloorC, forest);
     var albedoLand: vec3f;
     if (t < 0.06) {
       albedoLand = mix(sandC, lowland, t / 0.06);
@@ -222,10 +249,11 @@ fn fs(in: VOut) -> @location(0) vec4f {
     // Иней на самых высоких пиках — но не на каждом одинаково: coldnessAt
     // отдельное поле от высоты самой горы, часть хребтов остаётся голым
     // камнем, другая часть — заснежена, как на настоящей карте кампании,
-    // а не "снег строго после такой-то отметки везде".
+    // а не "снег строго после такой-то отметки везде". Настоящая текстура
+    // (texSnow) вместо прежнего плоского белого тона.
     let cold = coldnessAt(in.worldPos.x, in.worldPos.z);
     let snowT = smoothstep(0.90, 1.0, t) * smoothstep(0.35, 0.75, cold);
-    albedo = mix(albedoLand, vec3f(0.90, 0.93, 0.97), snowT * 0.9);
+    albedo = mix(albedoLand, snowC, snowT);
   }
 
   let lit = albedo * diffuse;
@@ -572,12 +600,18 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   // грузим ДО создания пайплайна/bind group (см. createRenderer теперь
   // async), тот же порядок, что и у моделей в main.ts: сцена не должна
   // начинать рисоваться, пока не готовы её текстуры.
-  const [texSand, texGrass, texDry, texScree, texRock] = await Promise.all([
+  // texSnow/texForestFloor — те же две из промптов автора этой сессии (см.
+  // комментарий выше TERRAIN_SHADER): раньше снег был плоским процедурным
+  // тоном (mix к белому), лесная подстилка не существовала вовсе (густой
+  // лес стоял на обычной grass/dry_meadow, как и открытое поле).
+  const [texSand, texGrass, texDry, texScree, texRock, texSnow, texForestFloor] = await Promise.all([
     loadTexture(device, "/textures/ground/sand.png"),
     loadTexture(device, "/textures/ground/grass.png"),
     loadTexture(device, "/textures/ground/dry_meadow.png"),
     loadTexture(device, "/textures/ground/scree.png"),
     loadTexture(device, "/textures/ground/rock.png"),
+    loadTexture(device, "/textures/ground/snow.png"),
+    loadTexture(device, "/textures/ground/forest_floor.png"),
   ]);
   const groundSampler = device.createSampler({ addressModeU: "repeat", addressModeV: "repeat", magFilter: "linear", minFilter: "linear" });
   const terrainModule = device.createShaderModule({ code: TERRAIN_SHADER });
@@ -626,6 +660,8 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
       { binding: 8, resource: { buffer: lightBuf } },
       { binding: 9, resource: shadowSampler },
       { binding: 10, resource: shadowView },
+      { binding: 11, resource: texSnow.createView() },
+      { binding: 12, resource: texForestFloor.createView() },
     ],
   });
   // Depth-only проход для теневой карты (см. TERRAIN_SHADOW_SHADER выше) —
