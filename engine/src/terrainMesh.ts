@@ -123,8 +123,15 @@ export function buildTerrainPatch(x0: number, y0: number, x1: number, y1: number
     // уже даёт в 16 раз меньше вершин на ту же площадь, чем у ближних
     // чанков, а именно там (не тут) настоящая цена двух bilinear-выборок.
     const n = water ? UP : (smooth ? normalAt(x, y) : UP);
-    const forest = forestMaskAt(x, y);
-    const moisture = moistureAt(x, y);
+    // Шейдер (renderer.ts, fs(): if (in.waterFlag > 0.5) {...}) НИКОГДА не
+    // читает forestFrac/moistureFrac на водных вершинах — та ветка красит
+    // воду отдельно, без текстур земли. Два билинейных чтения на воде
+    // (ощутимая доля меша — океан+реки) были чистым расходом впустую;
+    // в отличие от прошлого бага (см. историю: `smooth ? x : 0` ломало
+    // ЗЕМЛЮ, которую шейдер как раз читает) это условие бьёт ТОЧНО по той
+    // же развилке, что и сам шейдер, — не может разойтись с ней молча.
+    const forest = water ? 0 : forestMaskAt(x, y);
+    const moisture = water ? 0 : moistureAt(x, y);
     return { p, c, n, uv: [x / GROUND_TILE, y / GROUND_TILE], e, water: water ? 1 : 0, forest, moisture };
   }
 
