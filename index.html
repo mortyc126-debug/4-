@@ -3464,16 +3464,16 @@ function noise(x,y,s){
 }
 function ridge(x,y,s){ return 1-Math.abs(2*noise(x,y,s)-1) }   // излом шума даёт хребты
 
-/* ---- Настоящая вода 3D-мира (obyom-3d-infinite.html): её сеет ФИКСИРОВАННЫЙ
-   RW_SEED, один и тот же на любой партии (не W.seed) — рельеф там не зависит
-   от того, чья это карта. Раньше 2D-генератор клеток вообще не знал про
-   рельеф и мог посадить город/лагерь/точку прямо в море: 3D-сторона потом
-   искусственно поднимала landtу ПОД объектом (flattenNear), но саму воду
-   вокруг это не убирало — выглядело как замок в озере. Порт heightAt/isWater
-   сюда даёт 2D-генератору спросить "тут вода?" ДО того, как объект лёг на
-   карту, вместо косметической подчистки постфактум. Формула — дословная
-   копия heightRaw/heightAt из obyom-3d-infinite.html; hash2/noise/ridge выше
-   уже совпадают с тамошними один в один. ---- */
+/* ---- Настоящая вода 3D-мира — ПРОЦЕДУРНЫЙ ФОЛБЭК (obyom-3d-infinite.html,
+   давно заменённый на engine/ с настоящими данными высот, см. engine/src/
+   terrain.ts) её сеет ФИКСИРОВАННЫЙ RW_SEED, один и тот же на любой партии
+   (не W.seed) — рельеф там не зависит от того, чья это карта. Раньше 2D-
+   генератор клеток вообще не знал про рельеф и мог посадить город/лагерь/
+   точку прямо в море: 3D-сторона потом искусственно поднимала landtу ПОД
+   объектом (flattenNear), но саму воду вокруг это не убирало — выглядело
+   как замок в озере. Формула — дословная копия heightRaw/heightAt из уже
+   не используемого obyom-3d-infinite.html; hash2/noise/ridge выше всё ещё
+   совпадают с тамошними один в один. ---- */
 const RW_SEED=12345, RW_SEA=0.235;
 function rwSstep(a,b,x){ const t=Math.min(1,Math.max(0,(x-a)/(b-a))); return t*t*(3-2*t) }
 function rwRegionKind(x,y){
@@ -3509,9 +3509,62 @@ function rwHeightAt(x,y){
   const s=(rwHeightRaw(x+0.7,y)+rwHeightRaw(x-0.7,y)+rwHeightRaw(x,y+0.7)+rwHeightRaw(x,y-0.7))*0.25;
   return c*0.55+s*0.45;
 }
+
+/* ---- Настоящая вода 3D-мира — НАСТОЯЩИЕ ДАННЫЕ (engine/heightmap/
+   elevation.bin, тот же файл, что грузит и рисует новый WebGPU-движок,
+   engine/src/terrain.ts: heightRaw/toPixel/bilinear ниже — построчная
+   портировка ОТТУДА, держать в синхроне вручную при правке любой из двух
+   копий). Раньше isRealWater ниже ходил ТОЛЬКО в rwHeightAt — старую
+   процедурную формулу из уже не используемого движка (см. её комментарий
+   выше), которая понятия не имеет о настоящих реках нового рельефа: 2D-игра
+   (спавн города/лагеря/точки, findSpot/findFreeCellInChunk, и маршрут
+   армии, waterPath ниже) и то, что реально нарисовано в 3D, жили каждый в
+   своей собственной "воде" — потому город/точка могли лечь ровно на
+   настоящую реку с 3D-картинки, а марш армии её в упор не замечал (шёл
+   напрямик, будто суша). Автор с устройства: "перенеси города, чтобы они
+   не спавнились на реках" — исправление в корне: 2D-сторона теперь
+   спрашивает ТУ ЖЕ карту высот, что и 3D.
+   Грузится асинхронно (5.76МБ) — HEIGHTMAP_VERSION ниже ОБЯЗАН совпадать с
+   HEIGHTMAP_VERSION в engine/src/terrain.ts (та же кэш-бастинг причина: имя
+   файла постоянное, кэшируется на неделю, см. её комментарий). Пока не
+   загрузилось (первые секунды страницы) — isRealWater молча использует
+   старый процедурный фолбэк выше, тот же путь, что был всегда; как только
+   промис резолвится, ВСЕ дальнейшие вызовы (а генерация дикого контента —
+   по чанкам, по мере исследования, не одним махом при старте) уже честно
+   читают настоящую реку. За пределами запечённой области (WORLD_HALF_X/Z —
+   там просто нет данных, бесконечный мир игры шире зафиксированного
+   3D-региона) — тоже фолбэк на процедурную формулу, без него toPixel клэмп
+   тихо принял бы любую далёкую клетку за океанский край запечённого мира. */
+const HEIGHTMAP_VERSION=3, RW_HEIGHT_W=2400, RW_HEIGHT_H=1200,
+      RW_WORLD_HALF_X=RW_HEIGHT_W/2, RW_WORLD_HALF_Z=RW_HEIGHT_H/2, RW_ELEV_SCALE=2.5;
+let realElevData=null; // Uint16Array, пока не догрузится — null (см. фолбэк выше)
+fetch("/heightmap/elevation.bin?v="+HEIGHTMAP_VERSION).then(r=>{
+  if(!r.ok) throw new Error("HTTP "+r.status);
+  return r.arrayBuffer();
+}).then(buf=>{
+  if(buf.byteLength!==RW_HEIGHT_W*RW_HEIGHT_H*2) throw new Error("неверный размер: "+buf.byteLength);
+  realElevData=new Uint16Array(buf);
+}).catch(err=>{
+  console.warn("настоящие данные высот не загрузились, isRealWater остаётся на процедурном фолбэке:", err);
+});
+function rwBilinear(px,py){
+  const x0=Math.floor(px), y0=Math.floor(py);
+  const x1=Math.min(x0+1,RW_HEIGHT_W-1), y1=Math.min(y0+1,RW_HEIGHT_H-1);
+  const fx=px-x0, fy=py-y0;
+  const i00=y0*RW_HEIGHT_W+x0, i10=y0*RW_HEIGHT_W+x1, i01=y1*RW_HEIGHT_W+x0, i11=y1*RW_HEIGHT_W+x1;
+  const e0=realElevData[i00]+(realElevData[i10]-realElevData[i00])*fx;
+  const e1=realElevData[i01]+(realElevData[i11]-realElevData[i01])*fx;
+  return (e0+(e1-e0)*fy)*(RW_ELEV_SCALE/65535);
+}
 // Клетка (x,y) — центр клетки (+0.5), та же точка, что 3D берёт под объект
-// (см. buildRealCandidate в obyom-3d-infinite.html).
-function isRealWater(x,y){ return rwHeightAt(x+0.5,y+0.5)<RW_SEA }
+// (см. buildRealCandidate/heightAt в engine/src/terrain.ts и main.ts).
+function isRealWater(x,y){
+  const cx=x+0.5, cy=y+0.5;
+  if(realElevData && cx>=-RW_WORLD_HALF_X && cx<RW_WORLD_HALF_X && cy>=-RW_WORLD_HALF_Z && cy<RW_WORLD_HALF_Z){
+    return rwBilinear(cx+RW_WORLD_HALF_X, cy+RW_WORLD_HALF_Z) < RW_SEA;
+  }
+  return rwHeightAt(cx,cy) < RW_SEA;
+}
 
 
 // bk — какое здание (см. BUILDING_TABLE): у Стены/Гарнизона/Разведки своя
@@ -3907,7 +3960,21 @@ function hashPick(arr,x,y,salt){ return arr[Math.floor(hash2(x,y,salt)*arr.lengt
 // Пользователь снова счёл карту слишком плотной — сократил ещё на 66%
 // (×0.34) поверх прежних 22/49 и 13/49 (см. thinMapDensity6 ниже для
 // ретроактивного применения к уже сгенерированным чанкам).
-const NODE_CHUNK_CHANCE=22/49*0.34, CAMP_CHUNK_CHANCE=13/49*0.34;
+//
+// NODE_CHUNK_CHANCE=0 — временно ОТКЛЮЧЕНО по прямой просьбе автора
+// ("убери пока ресурсные точки вообще"): реальные реки (новый рельеф 3D-
+// мира) точки ресурсов не учитывали при спавне — findFreeCellInChunk ниже
+// проверяет только isRealWater (ниже по файлу), а тот до сих пор считал
+// воду по СТАРОЙ процедурной формуле из уже неактуального obyom-3d-
+// infinite.html, не по настоящим данным нового движка (см. её же
+// комментарий) — точки могли класться прямо на настоящую реку. Это НЕ
+// трогает уже существующие точки на уже сгенерированных чанках (W.genChunks
+// не сбрасывается) — только останавливает появление НОВЫХ при исследовании
+// новых чанков, пока isRealWater не почитает настоящие данные (см. её
+// комментарий — это сделано этим же коммитом) и не будет проверено вживую.
+// Верните ненулевое значение (22/49*0.34), когда автор подтвердит, что
+// возврат уместен.
+const NODE_CHUNK_CHANCE=0, CAMP_CHUNK_CHANCE=13/49*0.34;
 // Доля точек, которые оказываются Янтарной жилой вместо обычного ресурса.
 // Янтарь — валюта не из общей четвёрки (в запас склада не идёт, в стройку не
 // уходит), поэтому и на карте он должен быть находкой, а не рядовой точкой:
