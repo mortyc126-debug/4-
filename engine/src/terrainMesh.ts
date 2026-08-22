@@ -32,7 +32,7 @@
    раньше; waterFlag говорит шейдеру, что в этой точке брать colors как
    есть, а не сэмплить текстуры земли.
    ========================================================================= */
-import { heightAt, waterColor, SEA, HMAX, isWater } from "./terrain";
+import { heightAt, waterColor, forestMaskAt, moistureAt, SEA, HMAX, isWater } from "./terrain";
 import { norm, cross, sub, type Vec3 } from "./mat4";
 
 export interface MeshData {
@@ -42,6 +42,18 @@ export interface MeshData {
   uvs: Float32Array;
   elevations: Float32Array;
   waterFlags: Float32Array;
+  // Настоящая доля древесного покрова в этой точке (terrain.ts:forestMaskAt,
+  // теперь читает ESA WorldCover, не синтетический шум) — кладём как
+  // атрибут вершины по ТОЙ ЖЕ причине, что и elevation выше: у фрагментного
+  // WGSL-шейдера (renderer.ts) нет доступа к heightRaw/сырым данным
+  // растра (та же цепочка, что и раньше не портировалась в WGSL), только к
+  // готовому числу с CPU, интерполированному по треугольнику.
+  forestFracs: Float32Array;
+  // Та же логика, что и у forestFracs выше, только для влажности региона
+  // (terrain.ts:moistureAt — теперь тоже настоящие классы ESA WorldCover,
+  // не синтетический шум) — WGSL не может прочитать moisture.bin напрямую,
+  // поэтому CPU считает готовое число в каждой вершине и кладёт атрибутом.
+  moistureFracs: Float32Array;
   vertexCount: number;
 }
 
@@ -64,7 +76,7 @@ function normalAt(x: number, y: number): Vec3 {
   return norm([-(hR - hL) / (2 * e), 1, -(hU - hD) / (2 * e)]);
 }
 
-interface Vert { p: Vec3; c: [number, number, number]; n: Vec3; uv: [number, number]; e: number; water: number }
+interface Vert { p: Vec3; c: [number, number, number]; n: Vec3; uv: [number, number]; e: number; water: number; forest: number; moisture: number }
 
 // sink — насколько опустить весь патч по вертикали. Нужен ТОЛЬКО грубому
 // дальнему кольцу: оно теперь местами лежит под детальными ближними чанками
@@ -85,6 +97,8 @@ export function buildTerrainPatch(x0: number, y0: number, x1: number, y1: number
   const uvs: number[] = [];
   const elevations: number[] = [];
   const waterFlags: number[] = [];
+  const forestFracs: number[] = [];
+  const moistureFracs: number[] = [];
 
   function vertexAt(x: number, y: number): Vert {
     const e = heightAt(x, y);
@@ -95,7 +109,7 @@ export function buildTerrainPatch(x0: number, y0: number, x1: number, y1: number
     // чанках (!smooth) аналитическую нормаль не считаем — face-нормаль
     // подставит pushTri ниже, дешевле и не заметно на таком расстоянии.
     const n = water ? UP : (smooth ? normalAt(x, y) : UP);
-    return { p, c, n, uv: [x / GROUND_TILE, y / GROUND_TILE], e, water: water ? 1 : 0 };
+    return { p, c, n, uv: [x / GROUND_TILE, y / GROUND_TILE], e, water: water ? 1 : 0, forest: forestMaskAt(x, y), moisture: moistureAt(x, y) };
   }
 
   // Сетка углов ячеек считается один раз на угол, а не заново в КАЖДОЙ из
@@ -123,6 +137,8 @@ export function buildTerrainPatch(x0: number, y0: number, x1: number, y1: number
       uvs.push(v.uv[0], v.uv[1]);
       elevations.push(v.e);
       waterFlags.push(v.water);
+      forestFracs.push(v.forest);
+      moistureFracs.push(v.moisture);
     }
   }
 
@@ -147,6 +163,8 @@ export function buildTerrainPatch(x0: number, y0: number, x1: number, y1: number
     uvs: new Float32Array(uvs),
     elevations: new Float32Array(elevations),
     waterFlags: new Float32Array(waterFlags),
+    forestFracs: new Float32Array(forestFracs),
+    moistureFracs: new Float32Array(moistureFracs),
     vertexCount: positions.length / 3,
   };
 }

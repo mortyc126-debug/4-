@@ -48,15 +48,13 @@ const SHADOW_FAR = 220;
 // Суша красится настоящими текстурами (см. textures.ts/textures/ground/*),
 // не запечённым на CPU градиентом цвета — 7 текстур участвуют в смеси по
 // высоте (elevation, те же пороги, что раньше вёл groundColor():
-// 0.06/0.55/0.74), по крупномасштабной "влажности региона" (moistureAt,
-// см. terrain.ts) и по лесным пятнам/снежным пикам — раньше низина в
-// любой точке карты красилась ОДНОЙ и той же травой, автор заметил, что
-// мир выглядит "хаотично раскиданным и равномерно перемешанным". Теперь
-// на месте старой ступеньки grass→dry_meadow по высоте — смесь grass/
-// dry_meadow по moistureAt в ЛЮБОЙ точке низины: пышный луг там, где
-// влажно, сухая степь там, где сухо, читаемые издалека пятна, а не одна и
-// та же трава-везде. Внутри лесных пятен (forestMaskAt, та же линия леса,
-// что решает main.ts плотность декора) равнина темнеет до forestFloor —
+// 0.06/0.55/0.74), по влажности региона и по лесным пятнам/снежным пикам —
+// раньше низина в любой точке карты красилась ОДНОЙ и той же травой, автор
+// заметил, что мир выглядит "хаотично раскиданным и равномерно
+// перемешанным". На месте старой ступеньки grass→dry_meadow по высоте —
+// смесь grass/dry_meadow по влажности в ЛЮБОЙ точке низины: пышный луг там,
+// где влажно, сухая степь там, где сухо, читаемые издалека пятна, а не одна
+// и та же трава-везде. Внутри лесных пятен равнина темнеет до forestFloor —
 // земля под пологом леса читается лесной, не той же травой. На самых
 // высоких и при этом "холодных" (coldnessAt) пиках — настоящая снежная
 // текстура (не каждая гора снежная — разные хребты по-разному холодны, та
@@ -64,12 +62,16 @@ const SHADOW_FAR = 220;
 // текстуры, что автор прислал по промптам из предыдущего ответа этой
 // сессии (снег и лесная подстилка).
 //
-// hash2/noiseAt/moistureAt/coldnessAt/forestMaskAt — дословный WGSL-порт
-// одноимённых функций terrain.ts (тот же SEED=12345, те же смещения
-// +901/+902/+911/+912/+921), не общий импорт — между TS и WGSL кода не
-// разделить, тот же приём дублирования с синхронной правкой, что и у
-// collisionOk между index.html/mp-*, см. подробный комментарий у
-// moistureAt в terrain.ts.
+// Влажность и лесистость (in.moistureFrac/in.forestFrac) теперь настоящие
+// данные (ESA WorldCover, см. terrain.ts:moistureAt/forestMaskAt) — CPU
+// считает их в вершинах меша (terrainMesh.ts) и кладёт атрибутами, шейдер
+// просто интерполирует, WGSL-порт для них не нужен. hash2/noiseAt/
+// coldnessAt — единственное, что ещё честный WGSL-порт одноимённых функций
+// terrain.ts (тот же SEED=12345, то же смещение +921) — coldnessAt остался
+// процедурным (нет открытого climate-датасета, доступного из этой
+// песочницы, см. её комментарий в terrain.ts), не общий импорт — между TS и
+// WGSL кода не разделить, тот же приём дублирования с синхронной правкой,
+// что и у collisionOk между index.html/mp-*.
 // Вода текстуры не сэмплит вообще — она плоская и цвет ей уже посчитан на
 // CPU (см. terrainMesh.ts), waterFlag просто выбирает, какую ветку взять.
 const TERRAIN_SHADER = /* wgsl */ `
@@ -106,13 +108,14 @@ struct Light { vp: mat4x4f };
 struct VOut {
   @builtin(position) pos: vec4f, @location(0) waterColor: vec3f, @location(1) worldPos: vec3f,
   @location(2) normal: vec3f, @location(3) uv: vec2f, @location(4) elevation: f32, @location(5) waterFlag: f32,
-  @location(6) lightClip: vec4f,
+  @location(6) lightClip: vec4f, @location(7) forestFrac: f32, @location(8) moistureFrac: f32,
 };
 
 @vertex
 fn vs(
   @location(0) pos: vec3f, @location(1) waterColor: vec3f, @location(2) normal: vec3f,
-  @location(3) uv: vec2f, @location(4) elevation: f32, @location(5) waterFlag: f32
+  @location(3) uv: vec2f, @location(4) elevation: f32, @location(5) waterFlag: f32, @location(6) forestFrac: f32,
+  @location(7) moistureFrac: f32
 ) -> VOut {
   var out: VOut;
   out.pos = u.vp * vec4f(pos, 1.0);
@@ -123,6 +126,8 @@ fn vs(
   out.elevation = elevation;
   out.waterFlag = waterFlag;
   out.lightClip = light.vp * vec4f(pos, 1.0);
+  out.forestFrac = forestFrac;
+  out.moistureFrac = moistureFrac;
   return out;
 }
 // Доля света, дошедшая до точки: 1.0 — на свету, 0.0 — в тени. clip —
@@ -134,8 +139,11 @@ fn vs(
 // елям) смягчает ступенчатую границу тени — с одной выборкой на пиксель
 // карты 2048×2048 на объекте с чётким краем (дерево, скала) была бы
 // заметная лесенка.
-// ---- Порт terrain.ts:hash2/noise/moistureAt/coldnessAt (см. комментарий
-// выше TERRAIN_SHADER — держать в синхроне с исходником при правке).
+// ---- Порт terrain.ts:hash2/noise/coldnessAt (см. комментарий выше
+// TERRAIN_SHADER — держать в синхроне с исходником при правке). moistureAt
+// раньше был тут же — теперь настоящие данные (moisture.bin, см.
+// terrain.ts), приходит как атрибут вершины in.moistureFrac, WGSL-версия
+// не нужна (тот же приём, что и у forestFrac).
 // bitcast<u32> от i32 даёт то же двоичное представление отрицательных
 // координат, что и неявный ToInt32/ToUint32 в JS-версии — умножение в u32
 // в WGSL переполняется (wrap) по модулю 2^32 так же, как усечение до
@@ -157,30 +165,8 @@ fn noiseAt(x: f32, y: f32, s: i32) -> f32 {
   let c = hash2(xii, yii + 1, s); let d = hash2(xii + 1, yii + 1, s);
   return (a * (1.0 - u) + b * u) * (1.0 - v) + (c * (1.0 - u) + d * u) * v;
 }
-fn moistureAt(x: f32, y: f32) -> f32 {
-  let a = noiseAt(x / 210.0, y / 210.0, 13246); // SEED+901
-  let b = noiseAt(x / 90.0, y / 90.0, 13247);   // SEED+902
-  return clamp(a * 0.7 + b * 0.3, 0.0, 1.0);
-}
 fn coldnessAt(x: f32, y: f32) -> f32 {
   return noiseAt(x / 260.0, y / 260.0, 13266); // SEED+921
-}
-// forestMaskAt — тот же порт, что и выше, но e (elevation) тут НЕ
-// пересчитывается через heightAt (вся цепочка heightRaw/regionKind в WGSL
-// не портирована — она нужна main.ts для геометрии рельефа, шейдеру только
-// для готового цвета) — она уже пришла как in.elevation, интерполированная
-// с вершин, ровно то же число, что вернул бы heightAt(x,y) в этой точке.
-fn forestMaskAt(x: f32, y: f32, e: f32) -> f32 {
-  let n = noiseAt(x / 150.0, y / 150.0, 13256) * 0.65 + noiseAt(x / 60.0, y / 60.0, 13257) * 0.35; // SEED+911, SEED+912
-  // "patch" — зарезервированное слово WGSL (используется в mesh shading
-  // расширениях спецификации), даже не будучи тут нужным по смыслу —
-  // компилятор WGPU у автора на реальном устройстве сразу поймал ошибку
-  // компиляции шейдера (эта песочница без живого WebGPU её просто не
-  // увидела бы, см. историю коммитов). forestPatch — то же самое значение,
-  // просто другое имя.
-  let forestPatch = smoothstep(0.40, 0.62, n); // smoothstep(low,high,x) — тот же Эрмит, что и sstep() в terrain.ts
-  let treeline = 1.0 - smoothstep(0.55, 0.82, e);
-  return forestPatch * treeline;
 }
 fn shadowFactor(clip: vec4f) -> f32 {
   let ndc = clip.xyz / clip.w;
@@ -252,7 +238,11 @@ fn fs(in: VOut) -> @location(0) vec4f {
     let detailC = textureSampleLevel(texWaterDetail, samp, waterUV, 0.0).rgb;
     albedo = mix(base, base * (0.7 + detailC * 0.6), 0.16);
   } else {
-    let t = clamp((in.elevation - 0.235) / (1.0 - 0.235), 0.0, 1.0);
+    // Знаменатель был (1.0-0.235) — под старый синтетический потолок высоты
+    // ~1.0. Настоящие данные высот (terrain.ts) регулярно доходят до ~2.34
+    // — со старым знаменателем весь мир выше ~0.765 щёлкал бы в t=1 (голый
+    // камень/снег) независимо от настоящей высоты, единообразно серым.
+    let t = clamp((in.elevation - 0.235) / (2.34 - 0.235), 0.0, 1.0);
     // textureSample (неявный LOD через производные) запрещён WGSL внутри
     // неоднородного (per-fragment, зависящего от varying) control flow —
     // это уже раз было настоящей причиной чёрного экрана (см. коммент у
@@ -279,13 +269,18 @@ fn fs(in: VOut) -> @location(0) vec4f {
     // dryC ("сухой луг") сам по себе не читается как настоящая пустыня —
     // при moist→0 подмешиваем к нему desertC (трещины/дюны, без травы
     // вообще), к moist=0.3 полностью переходя обратно на dryC/grassC-мешь.
-    // Дальше в лесных пятнах (forestMaskAt — тот же порог/линия леса, что
-    // решает, где main.ts вообще ставит деревья) это же поле "равнины"
-    // темнеет до forestFloorC: земля под пологом леса читается лесной, не
-    // той же травой, что и открытый луг рядом.
-    let moist = moistureAt(in.worldPos.x, in.worldPos.z);
+    // Дальше в лесных пятнах это же поле "равнины" темнеет до forestFloorC:
+    // земля под пологом леса читается лесной, не той же травой, что и
+    // открытый луг рядом. in.forestFrac — НАСТОЯЩАЯ доля древесного покрова
+    // (ESA WorldCover, см. terrain.ts:forestMaskAt) — та же величина, что
+    // main.ts читает для расстановки самих деревьев, интерполированная с
+    // вершин как обычный атрибут (см. terrainMesh.ts), а не пересчитанная
+    // тут заново синтетическим шумом, как было раньше (два независимых
+    // приближения одного и того же поля неизбежно расходились — деревья
+    // стояли не совсем там, где земля уже читалась лесной).
+    let moist = in.moistureFrac;
     let dryPole = mix(desertC, dryC, smoothstep(0.0, 0.3, moist));
-    let forest = forestMaskAt(in.worldPos.x, in.worldPos.z, in.elevation);
+    let forest = in.forestFrac;
     var lowland = mix(mix(dryPole, grassC, moist), forestFloorC, forest);
     // Топь — узкое кольцо НИЗКОЙ (но не пляжной — не пересекается с
     // sand-переходом ниже) высоты при высокой влажности: не "весь низкий
@@ -777,8 +772,9 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     vertex: {
       module: terrainModule,
       entryPoint: "vs",
-      // Один interleaved буфер на чанк (pos+color+normal+uv+elevation+water
-      // подряд на вершину), не шесть раздельных — раньше на ~130
+      // Один interleaved буфер на чанк (pos+color+normal+uv+elevation+water+
+      // forestFrac+moistureFrac подряд на вершину), не восемь раздельных —
+      // раньше на ~130
       // одновременно загруженных чанков (ближние+дальнее кольцо) выходило
       // до 780 отдельных GPU-буферов только на рельеф; у слабого/софтверного
       // GPU-драйвера (в т.ч. в этой песочнице, см. коммит про device.lost)
@@ -787,7 +783,7 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
       // interleaving, что уже был у декора.
       buffers: [
         {
-          arrayStride: 13 * 4,
+          arrayStride: 15 * 4,
           attributes: [
             { shaderLocation: 0, offset: 0, format: "float32x3" },
             { shaderLocation: 1, offset: 3 * 4, format: "float32x3" },
@@ -795,6 +791,8 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
             { shaderLocation: 3, offset: 9 * 4, format: "float32x2" },
             { shaderLocation: 4, offset: 11 * 4, format: "float32" },
             { shaderLocation: 5, offset: 12 * 4, format: "float32" },
+            { shaderLocation: 6, offset: 13 * 4, format: "float32" },
+            { shaderLocation: 7, offset: 14 * 4, format: "float32" },
           ],
         },
       ],
@@ -881,7 +879,11 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     vertex: {
       module: terrainShadowModule,
       entryPoint: "vs",
-      buffers: [{ arrayStride: 13 * 4, attributes: [{ shaderLocation: 0, offset: 0, format: "float32x3" }] }],
+      // Тот же interleaved-буфер, что и у основного пайплайна (см.
+      // setTerrainChunk ниже) — stride обязан совпадать (15*4), даже
+      // читая только позицию: иначе шаг между вершинами разъедется с тем,
+      // как буфер реально упакован, и глубина возьмётся из чужого байта.
+      buffers: [{ arrayStride: 15 * 4, attributes: [{ shaderLocation: 0, offset: 0, format: "float32x3" }] }],
     },
     primitive: { topology: "triangle-list", cullMode: "back" },
     depthStencil: { format: "depth32float", depthWriteEnabled: true, depthCompare: "less" },
@@ -1110,21 +1112,23 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     const prev = terrainChunks.get(key);
     prev?.buf.destroy();
     const buf = device.createBuffer({
-      size: Math.max(mesh.vertexCount * 13 * 4, 4),
+      size: Math.max(mesh.vertexCount * 15 * 4, 4),
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
-    const interleaved = new Float32Array(mesh.vertexCount * 13);
+    const interleaved = new Float32Array(mesh.vertexCount * 15);
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
     for (let i = 0; i < mesh.vertexCount; i++) {
       const px = mesh.positions[i * 3], pz = mesh.positions[i * 3 + 2];
       if (px < minX) minX = px; if (px > maxX) maxX = px;
       if (pz < minZ) minZ = pz; if (pz > maxZ) maxZ = pz;
-      interleaved.set(mesh.positions.subarray(i * 3, i * 3 + 3), i * 13);
-      interleaved.set(mesh.colors.subarray(i * 3, i * 3 + 3), i * 13 + 3);
-      interleaved.set(mesh.normals.subarray(i * 3, i * 3 + 3), i * 13 + 6);
-      interleaved.set(mesh.uvs.subarray(i * 2, i * 2 + 2), i * 13 + 9);
-      interleaved[i * 13 + 11] = mesh.elevations[i];
-      interleaved[i * 13 + 12] = mesh.waterFlags[i];
+      interleaved.set(mesh.positions.subarray(i * 3, i * 3 + 3), i * 15);
+      interleaved.set(mesh.colors.subarray(i * 3, i * 3 + 3), i * 15 + 3);
+      interleaved.set(mesh.normals.subarray(i * 3, i * 3 + 3), i * 15 + 6);
+      interleaved.set(mesh.uvs.subarray(i * 2, i * 2 + 2), i * 15 + 9);
+      interleaved[i * 15 + 11] = mesh.elevations[i];
+      interleaved[i * 15 + 12] = mesh.waterFlags[i];
+      interleaved[i * 15 + 13] = mesh.forestFracs[i];
+      interleaved[i * 15 + 14] = mesh.moistureFracs[i];
     }
     device.queue.writeBuffer(buf, 0, interleaved);
     terrainChunks.set(key, { buf, vertexCount: mesh.vertexCount, minX, maxX, minZ, maxZ });
