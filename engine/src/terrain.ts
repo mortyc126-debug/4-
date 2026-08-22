@@ -98,7 +98,12 @@ async function fetchBinary(path: string, expectBytes: number): Promise<ArrayBuff
 // навсегда — при следующей правке пайплайна нужно только увеличить
 // HEIGHTMAP_VERSION здесь: новый URL = гарантированный промах кэша, без
 // ручной очистки у игрока, а между правками кэш по-прежнему работает.
-const HEIGHTMAP_VERSION = 2;
+//
+// index.html теперь читает ТОТ ЖЕ elevation.bin своей копией (isRealWater,
+// см. её комментарий там) — держать HEIGHTMAP_VERSION синхронно в ОБОИХ
+// местах при каждой перепечке пайплайна, иначе одна сторона обновится
+// раньше другой и 2D/3D снова разъедутся в том, где вода.
+const HEIGHTMAP_VERSION = 3;
 export async function loadHeightmapData(): Promise<void> {
   const cellCount = HEIGHT_W * HEIGHT_H;
   const v = `?v=${HEIGHTMAP_VERSION}`;
