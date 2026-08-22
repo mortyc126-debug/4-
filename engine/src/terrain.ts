@@ -84,12 +84,28 @@ async function fetchBinary(path: string, expectBytes: number): Promise<ArrayBuff
   return buf;
 }
 
+// render.yaml кэширует /heightmap/* на неделю (Cache-Control: max-age=
+// 604800) — правильно для игрока, который заходит повторно В ТЕЧЕНИЕ этой
+// недели: не качать заново 8.6МБ каждый раз. Но имя файла постоянное
+// (elevation.bin, не хэш содержимого, как у собранного JS-бандла) — когда
+// пайплайн перезапекает данные (см. историю: фикс рек), у игрока, уже
+// заходившего в Мир на этой неделе, браузер молча отдаёт СТАРУЮ версию из
+// кэша, вообще не обращаясь к сети — 200 из диска, не 304 после проверки.
+// Реальный репорт с устройства: "русла есть, но без воды" — ровно то, что
+// давал старый баг (см. коммит про heightAtNatural), хотя фикс уже был
+// задеплоен: тестировали на том же телефоне/браузере, что грузил старые
+// данные раньше в этой же сессии. Версия в query-строке решает раз и
+// навсегда — при следующей правке пайплайна нужно только увеличить
+// HEIGHTMAP_VERSION здесь: новый URL = гарантированный промах кэша, без
+// ручной очистки у игрока, а между правками кэш по-прежнему работает.
+const HEIGHTMAP_VERSION = 2;
 export async function loadHeightmapData(): Promise<void> {
   const cellCount = HEIGHT_W * HEIGHT_H;
+  const v = `?v=${HEIGHTMAP_VERSION}`;
   const [elevBuf, forestBuf, moistureBuf] = await Promise.all([
-    fetchBinary("/heightmap/elevation.bin", cellCount * 2), // Uint16
-    fetchBinary("/heightmap/forest.bin", cellCount),        // Uint8
-    fetchBinary("/heightmap/moisture.bin", cellCount),      // Uint8
+    fetchBinary("/heightmap/elevation.bin" + v, cellCount * 2), // Uint16
+    fetchBinary("/heightmap/forest.bin" + v, cellCount),        // Uint8
+    fetchBinary("/heightmap/moisture.bin" + v, cellCount),      // Uint8
   ]);
   elevData = new Uint16Array(elevBuf);
   forestData = new Uint8Array(forestBuf);
