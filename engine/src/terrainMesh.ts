@@ -107,9 +107,17 @@ export function buildTerrainPatch(x0: number, y0: number, x1: number, y1: number
     const c: [number, number, number] = water ? waterColor((SEA - e) * 3) : [0, 0, 0];
     // вода — плоская подложка (см. выше), нормаль честно "вверх"; на грубых
     // чанках (!smooth) аналитическую нормаль не считаем — face-нормаль
-    // подставит pushTri ниже, дешевле и не заметно на таком расстоянии.
+    // подставит pushTri ниже, дешевле и не заметно на таком расстоянии. Та
+    // же экономия теперь и для forest/moisture (два новых bilinear-лукапа
+    // в запечённые растры на КАЖДЫЙ угол, см. terrain.ts) — дальнее кольцо
+    // почти всегда затянуто туманом (FOG_K в main.ts) и не несёт декора
+    // вообще (genDecorForChunk зовётся только для ближних чанков), так что
+    // точный тон травы/леса там физически не виден — плоский 0 обходится
+    // без двух лишних выборок на каждый из сотен углов грубой сетки.
     const n = water ? UP : (smooth ? normalAt(x, y) : UP);
-    return { p, c, n, uv: [x / GROUND_TILE, y / GROUND_TILE], e, water: water ? 1 : 0, forest: forestMaskAt(x, y), moisture: moistureAt(x, y) };
+    const forest = smooth ? forestMaskAt(x, y) : 0;
+    const moisture = smooth ? moistureAt(x, y) : 0;
+    return { p, c, n, uv: [x / GROUND_TILE, y / GROUND_TILE], e, water: water ? 1 : 0, forest, moisture };
   }
 
   // Сетка углов ячеек считается один раз на угол, а не заново в КАЖДОЙ из
