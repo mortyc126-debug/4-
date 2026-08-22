@@ -3535,7 +3535,7 @@ function rwHeightAt(x,y){
    там просто нет данных, бесконечный мир игры шире зафиксированного
    3D-региона) — тоже фолбэк на процедурную формулу, без него toPixel клэмп
    тихо принял бы любую далёкую клетку за океанский край запечённого мира. */
-const HEIGHTMAP_VERSION=3, RW_HEIGHT_W=2400, RW_HEIGHT_H=1200,
+const HEIGHTMAP_VERSION=4, RW_HEIGHT_W=2400, RW_HEIGHT_H=1200,
       RW_WORLD_HALF_X=RW_HEIGHT_W/2, RW_WORLD_HALF_Z=RW_HEIGHT_H/2, RW_ELEV_SCALE=2.5;
 let realElevData=null; // Uint16Array, пока не догрузится — null (см. фолбэк выше)
 fetch("/heightmap/elevation.bin?v="+HEIGHTMAP_VERSION).then(r=>{
