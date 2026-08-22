@@ -70,9 +70,18 @@ fn fs(in: VOut) -> @location(0) vec4f {
   let sun = normalize(vec3f(0.62, 0.38, 0.30));
   let ndotl = max(0.0, dot(in.worldNormal, sun));
   let shadow = shadowFactor(in.lightClip);
-  let diffuse = max(0.35, ndotl * shadow);
+  // Тот же полусферный ambient, что и в TERRAIN_SHADER/DECOR_SHADER
+  // (renderer.ts) — та же палитра там же держится в синхроне при правке.
+  // Без этого здания/лагеря светились бы плоским скаляром 0.35, как земля
+  // раньше — заметный разнобой, если земля вокруг уже цветная в тени, а
+  // постройка на ней — просто темнее сама себя.
+  let skyTint = vec3f(0.42, 0.37, 0.28);
+  let groundTint = vec3f(0.20, 0.16, 0.13);
+  let sunLightColor = vec3f(0.85, 0.70, 0.48);
+  let hemi = mix(groundTint, skyTint, clamp(in.worldNormal.y * 0.5 + 0.5, 0.0, 1.0));
+  let lighting = hemi + sunLightColor * ndotl * shadow;
   let base = textureSample(tex, samp, in.uv);
-  let lit = base.rgb * diffuse;
+  let lit = base.rgb * lighting;
   // Туман — тот же расчёт, что и у рельефа/маркеров (см. renderer.ts):
   // здания/лагеря вдали тоже должны таять в дымке, а не обрываться резким
   // контуром на фоне уже затуманенной земли под ними.
