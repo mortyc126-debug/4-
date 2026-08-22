@@ -10,7 +10,7 @@
 import { createWorld, addEntity, addComponent, removeEntity, query } from "bitecs";
 import { createRenderer, type MarkerEntity, type DecorEntity } from "./renderer";
 import { buildTerrainPatch } from "./terrainMesh";
-import { heightAt, HMAX, hash2, noise, isWater, SEED, registerFlattenSite, WORLD_HALF, forestMaskAt, NATURAL_ELEVATION_CAP } from "./terrain";
+import { heightAt, HMAX, hash2, noise, isWater, SEED, registerFlattenSite, WORLD_HALF_X, WORLD_HALF_Z, forestMaskAt, loadHeightmapData } from "./terrain";
 import { PINE, LEAF, GRASS_TONES, BUSH_TONES, ROCK_TONES } from "./decorMesh";
 import { mul, persp, look, modelMatrix, transformPoint, sub, cross, norm, type Vec3, type Mat4 } from "./mat4";
 import { attachOrbitControls, type OrbitCamera } from "./camera";
@@ -56,6 +56,15 @@ function setErrorStatus(lines: string[]) {
 
 async function main() {
   const lines: string[] = [];
+
+  // Настоящий рельеф теперь грузится асинхронно (см. terrain.ts,
+  // loadHeightmapData — два бинарных файла, настоящие данные высот и
+  // покрова растительности). Раньше heightAt был чистым noise(), доступным
+  // сразу же; первому вызову ниже (registerFlattenSite для стартовых
+  // сущностей, первые чанки рельефа) физически неоткуда взять высоту без
+  // сети — ждём загрузки здесь, один раз, до первой сущности/чанка.
+  await loadHeightmapData();
+  lines.push("рельеф: настоящие данные высот загружены");
 
   // Чанк 16×16 — то же пространство координат, что и STRUCT_CHUNK в
   // index.html (см. ensureChunkContent/W.mapChunks): и рельеф (ниже), и
@@ -413,10 +422,13 @@ async function main() {
   const GRASS_CHANCE = 0.7;
   const BUSH_CELL = 3; // кусты — средний ярус между травой и деревьями, своя подсетка
   const BUSH_CHANCE = 0.35;
-  // Хвойный/лиственный порог по высоте — тот же приём, что и в старом
-  // прототипе (obyom-3d-infinite.html: `const conif = e>0.50`) — хвоя на
-  // возвышенностях, лиственный лес в низинах, а не вперемешку где попало.
-  const CONIFER_ELEVATION = 0.50;
+  // Хвойный/лиственный порог по высоте — хвоя на возвышенностях, лиственный
+  // лес в низинах, а не вперемешку где попало. Раньше 0.50 — калибровано под
+  // старый синтетический рельеф (потолок ~1.0-1.3). Теперь e — настоящая
+  // высота (terrain.ts: 0.30 на ~90м, 2.30 на ~2500м, см. bake-скрипт) —
+  // порог пересчитан под реальный субальпийский пояс Карпат (хвоя примерно
+  // от ~1300м).
+  const CONIFER_ELEVATION = 1.36;
   const decorByChunk = new Map<string, DecorEntity[]>();
   function jitterColor(base: readonly [number, number, number], k: number): [number, number, number] {
     return [base[0] * k, base[1] * k, base[2] * k];
@@ -505,19 +517,12 @@ async function main() {
         const yaw = hash2(gx, gz, SEED + 781) * Math.PI * 2;
         const jitter = 0.85 + hash2(gx, gz, SEED + 782) * 0.3; // 0.85..1.15 — та же роль, что и tone/warm в старом прототипе
         const e = heightAt(wx, wz);
-        // Автор: «никаких деревьев, травы, камней и прочего на горах [у
-        // границы мира] нет». Трава/кусты уже отсекались по e>0.75 (голые
-        // скалы), а деревья/камни — нет, обычные горы этого не требовали.
-        // Раньше сравнивали с 1.0 (старый жёсткий потолок обычного рельефа)
-        // — теперь у обычных гор нет жёсткого потолка (см. softCapElevation
-        // в terrain.ts, борьба с "все вершины одинаковой высоты"), их
-        // натуральная высота честно доходит почти до NATURAL_ELEVATION_CAP.
-        // Порог 1.0 срезал бы декор с настоящих высоких вершин, которых
-        // раньше физически не бывало выше 1.0 — теперь бывают.
-        // NATURAL_ELEVATION_CAP — тот же самый признак "это стена", что и
-        // раньше, просто пересчитанный под новый диапазон естественной
-        // высоты (см. terrain.ts).
-        if (e > NATURAL_ELEVATION_CAP) continue;
+        // Раньше тут был порог "это уже граница мира/стена, декор не
+        // сажаем" — стены-из-гор больше нет (мир теперь настоящий рельеф,
+        // окружённый океаном, см. terrain.ts), высота никогда естественно
+        // не улетает в космос, отдельный потолок не нужен — верхнюю границу
+        // леса уже поставила сама природа (forestMaskAt читает настоящий
+        // спутниковый покров, на голой вершине там просто нет леса).
         const wy = e * HMAX;
         // Дерево или камень для ЭТОГО конкретного кандидата решает не одна
         // фиксированная доля на всю карту, а forestMaskAt (пятно леса,
@@ -557,7 +562,11 @@ async function main() {
           // растущая с высотой (склон/предгорье честно каменистее низины,
           // та же логика, что уже красит террейн в scree/rock повыше) —
           // остальные ничего не ставят, оставляя открытую траву/луг.
-          const rockChance = ROCK_CHANCE_MIN + (ROCK_CHANCE_MAX - ROCK_CHANCE_MIN) * Math.min(1, e / 0.65);
+          // Делитель 0.65→1.6 — тот же пересчёт под настоящую высоту, что и
+          // у CONIFER_ELEVATION выше (см. её комментарий): полная плотность
+          // камня достигается примерно к реальным ~1600м, не к прежним
+          // синтетическим отметкам.
+          const rockChance = ROCK_CHANCE_MIN + (ROCK_CHANCE_MAX - ROCK_CHANCE_MIN) * Math.min(1, e / 1.6);
           if (hash2(gx, gz, SEED + 795) >= rockChance) continue;
           const base = ROCK_TONES[Math.floor(hash2(gx, gz, SEED + 784) * ROCK_TONES.length)];
           const rockScaleY = 0.6 + hash2(gx, gz, SEED + 785) * 0.9;
@@ -577,10 +586,12 @@ async function main() {
         if (nearWater(wx, wz, 0.4)) continue; // трава мелкая — небольшой отступ
         if (blockedByStructure(wx, wz, 0.36, 0.17)) continue;
         const e = heightAt(wx, wz);
-        // Трава заметна только на невысокой/пологой траве-местности —
-        // на голых скалистых верхах (SCREE, см. terrain.ts) её и в живой
-        // игре не бывает.
-        if (e > 0.75) continue;
+        // Трава заметна только ниже голых скалистых/снеговых верхов — было
+        // 0.75 под старый синтетический потолок, пересчитано под настоящую
+        // высоту (см. CONIFER_ELEVATION выше): альпийские луга в Карпатах
+        // тянутся почти до линии снега, обрывать траву у подножия было бы
+        // неправдой в другую сторону.
+        if (e > 2.0) continue;
         const wy = e * HMAX;
         const yaw = hash2(gx, gz, SEED + 890) * Math.PI * 2;
         const jitter = 0.8 + hash2(gx, gz, SEED + 891) * 0.4;
@@ -600,7 +611,7 @@ async function main() {
         if (nearWater(wx, wz, 0.9)) continue;
         if (blockedByStructure(wx, wz, 0.44, 0.34)) continue;
         const e = heightAt(wx, wz);
-        if (e > 0.75) continue;
+        if (e > 2.0) continue; // см. комментарий у травы выше — тот же пересчёт под настоящую высоту
         const wy = e * HMAX;
         const yaw = hash2(gx, gz, SEED + 1000) * Math.PI * 2;
         const jitter = 0.85 + hash2(gx, gz, SEED + 1001) * 0.3;
@@ -1018,8 +1029,8 @@ async function main() {
     if (!isFinite(x) || !isFinite(y)) return;
     // Тот же клэмп по границе мира, что и у ручной панорамы (camera.ts,
     // panTargetBy) — иначе игрок вводом координат обходил бы ограничение.
-    cam.target[0] = Math.max(-WORLD_HALF, Math.min(WORLD_HALF, x));
-    cam.target[2] = Math.max(-WORLD_HALF, Math.min(WORLD_HALF, y));
+    cam.target[0] = Math.max(-WORLD_HALF_X, Math.min(WORLD_HALF_X, x));
+    cam.target[2] = Math.max(-WORLD_HALF_Z, Math.min(WORLD_HALF_Z, y));
     cam.target[1] = heightAt(cam.target[0], cam.target[2]) * HMAX + 2;
     controls.stopAuto();
     coordDirty = false;
