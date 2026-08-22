@@ -106,13 +106,13 @@ struct Light { vp: mat4x4f };
 struct VOut {
   @builtin(position) pos: vec4f, @location(0) waterColor: vec3f, @location(1) worldPos: vec3f,
   @location(2) normal: vec3f, @location(3) uv: vec2f, @location(4) elevation: f32, @location(5) waterFlag: f32,
-  @location(6) lightClip: vec4f,
+  @location(6) lightClip: vec4f, @location(7) forestFrac: f32,
 };
 
 @vertex
 fn vs(
   @location(0) pos: vec3f, @location(1) waterColor: vec3f, @location(2) normal: vec3f,
-  @location(3) uv: vec2f, @location(4) elevation: f32, @location(5) waterFlag: f32
+  @location(3) uv: vec2f, @location(4) elevation: f32, @location(5) waterFlag: f32, @location(6) forestFrac: f32
 ) -> VOut {
   var out: VOut;
   out.pos = u.vp * vec4f(pos, 1.0);
@@ -123,6 +123,7 @@ fn vs(
   out.elevation = elevation;
   out.waterFlag = waterFlag;
   out.lightClip = light.vp * vec4f(pos, 1.0);
+  out.forestFrac = forestFrac;
   return out;
 }
 // Доля света, дошедшая до точки: 1.0 — на свету, 0.0 — в тени. clip —
@@ -164,23 +165,6 @@ fn moistureAt(x: f32, y: f32) -> f32 {
 }
 fn coldnessAt(x: f32, y: f32) -> f32 {
   return noiseAt(x / 260.0, y / 260.0, 13266); // SEED+921
-}
-// forestMaskAt — тот же порт, что и выше, но e (elevation) тут НЕ
-// пересчитывается через heightAt (вся цепочка heightRaw/regionKind в WGSL
-// не портирована — она нужна main.ts для геометрии рельефа, шейдеру только
-// для готового цвета) — она уже пришла как in.elevation, интерполированная
-// с вершин, ровно то же число, что вернул бы heightAt(x,y) в этой точке.
-fn forestMaskAt(x: f32, y: f32, e: f32) -> f32 {
-  let n = noiseAt(x / 150.0, y / 150.0, 13256) * 0.65 + noiseAt(x / 60.0, y / 60.0, 13257) * 0.35; // SEED+911, SEED+912
-  // "patch" — зарезервированное слово WGSL (используется в mesh shading
-  // расширениях спецификации), даже не будучи тут нужным по смыслу —
-  // компилятор WGPU у автора на реальном устройстве сразу поймал ошибку
-  // компиляции шейдера (эта песочница без живого WebGPU её просто не
-  // увидела бы, см. историю коммитов). forestPatch — то же самое значение,
-  // просто другое имя.
-  let forestPatch = smoothstep(0.40, 0.62, n); // smoothstep(low,high,x) — тот же Эрмит, что и sstep() в terrain.ts
-  let treeline = 1.0 - smoothstep(0.55, 0.82, e);
-  return forestPatch * treeline;
 }
 fn shadowFactor(clip: vec4f) -> f32 {
   let ndc = clip.xyz / clip.w;
@@ -283,13 +267,18 @@ fn fs(in: VOut) -> @location(0) vec4f {
     // dryC ("сухой луг") сам по себе не читается как настоящая пустыня —
     // при moist→0 подмешиваем к нему desertC (трещины/дюны, без травы
     // вообще), к moist=0.3 полностью переходя обратно на dryC/grassC-мешь.
-    // Дальше в лесных пятнах (forestMaskAt — тот же порог/линия леса, что
-    // решает, где main.ts вообще ставит деревья) это же поле "равнины"
-    // темнеет до forestFloorC: земля под пологом леса читается лесной, не
-    // той же травой, что и открытый луг рядом.
+    // Дальше в лесных пятнах это же поле "равнины" темнеет до forestFloorC:
+    // земля под пологом леса читается лесной, не той же травой, что и
+    // открытый луг рядом. in.forestFrac — НАСТОЯЩАЯ доля древесного покрова
+    // (ESA WorldCover, см. terrain.ts:forestMaskAt) — та же величина, что
+    // main.ts читает для расстановки самих деревьев, интерполированная с
+    // вершин как обычный атрибут (см. terrainMesh.ts), а не пересчитанная
+    // тут заново синтетическим шумом, как было раньше (два независимых
+    // приближения одного и того же поля неизбежно расходились — деревья
+    // стояли не совсем там, где земля уже читалась лесной).
     let moist = moistureAt(in.worldPos.x, in.worldPos.z);
     let dryPole = mix(desertC, dryC, smoothstep(0.0, 0.3, moist));
-    let forest = forestMaskAt(in.worldPos.x, in.worldPos.z, in.elevation);
+    let forest = in.forestFrac;
     var lowland = mix(mix(dryPole, grassC, moist), forestFloorC, forest);
     // Топь — узкое кольцо НИЗКОЙ (но не пляжной — не пересекается с
     // sand-переходом ниже) высоты при высокой влажности: не "весь низкий
@@ -781,8 +770,8 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     vertex: {
       module: terrainModule,
       entryPoint: "vs",
-      // Один interleaved буфер на чанк (pos+color+normal+uv+elevation+water
-      // подряд на вершину), не шесть раздельных — раньше на ~130
+      // Один interleaved буфер на чанк (pos+color+normal+uv+elevation+water+
+      // forestFrac подряд на вершину), не семь раздельных — раньше на ~130
       // одновременно загруженных чанков (ближние+дальнее кольцо) выходило
       // до 780 отдельных GPU-буферов только на рельеф; у слабого/софтверного
       // GPU-драйвера (в т.ч. в этой песочнице, см. коммит про device.lost)
@@ -791,7 +780,7 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
       // interleaving, что уже был у декора.
       buffers: [
         {
-          arrayStride: 13 * 4,
+          arrayStride: 14 * 4,
           attributes: [
             { shaderLocation: 0, offset: 0, format: "float32x3" },
             { shaderLocation: 1, offset: 3 * 4, format: "float32x3" },
@@ -799,6 +788,7 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
             { shaderLocation: 3, offset: 9 * 4, format: "float32x2" },
             { shaderLocation: 4, offset: 11 * 4, format: "float32" },
             { shaderLocation: 5, offset: 12 * 4, format: "float32" },
+            { shaderLocation: 6, offset: 13 * 4, format: "float32" },
           ],
         },
       ],
@@ -885,7 +875,11 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     vertex: {
       module: terrainShadowModule,
       entryPoint: "vs",
-      buffers: [{ arrayStride: 13 * 4, attributes: [{ shaderLocation: 0, offset: 0, format: "float32x3" }] }],
+      // Тот же interleaved-буфер, что и у основного пайплайна (см.
+      // setTerrainChunk ниже) — stride обязан совпадать (14*4), даже
+      // читая только позицию: иначе шаг между вершинами разъедется с тем,
+      // как буфер реально упакован, и глубина возьмётся из чужого байта.
+      buffers: [{ arrayStride: 14 * 4, attributes: [{ shaderLocation: 0, offset: 0, format: "float32x3" }] }],
     },
     primitive: { topology: "triangle-list", cullMode: "back" },
     depthStencil: { format: "depth32float", depthWriteEnabled: true, depthCompare: "less" },
@@ -1114,21 +1108,22 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     const prev = terrainChunks.get(key);
     prev?.buf.destroy();
     const buf = device.createBuffer({
-      size: Math.max(mesh.vertexCount * 13 * 4, 4),
+      size: Math.max(mesh.vertexCount * 14 * 4, 4),
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
-    const interleaved = new Float32Array(mesh.vertexCount * 13);
+    const interleaved = new Float32Array(mesh.vertexCount * 14);
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
     for (let i = 0; i < mesh.vertexCount; i++) {
       const px = mesh.positions[i * 3], pz = mesh.positions[i * 3 + 2];
       if (px < minX) minX = px; if (px > maxX) maxX = px;
       if (pz < minZ) minZ = pz; if (pz > maxZ) maxZ = pz;
-      interleaved.set(mesh.positions.subarray(i * 3, i * 3 + 3), i * 13);
-      interleaved.set(mesh.colors.subarray(i * 3, i * 3 + 3), i * 13 + 3);
-      interleaved.set(mesh.normals.subarray(i * 3, i * 3 + 3), i * 13 + 6);
-      interleaved.set(mesh.uvs.subarray(i * 2, i * 2 + 2), i * 13 + 9);
-      interleaved[i * 13 + 11] = mesh.elevations[i];
-      interleaved[i * 13 + 12] = mesh.waterFlags[i];
+      interleaved.set(mesh.positions.subarray(i * 3, i * 3 + 3), i * 14);
+      interleaved.set(mesh.colors.subarray(i * 3, i * 3 + 3), i * 14 + 3);
+      interleaved.set(mesh.normals.subarray(i * 3, i * 3 + 3), i * 14 + 6);
+      interleaved.set(mesh.uvs.subarray(i * 2, i * 2 + 2), i * 14 + 9);
+      interleaved[i * 14 + 11] = mesh.elevations[i];
+      interleaved[i * 14 + 12] = mesh.waterFlags[i];
+      interleaved[i * 14 + 13] = mesh.forestFracs[i];
     }
     device.queue.writeBuffer(buf, 0, interleaved);
     terrainChunks.set(key, { buf, vertexCount: mesh.vertexCount, minX, maxX, minZ, maxZ });
