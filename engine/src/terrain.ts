@@ -103,7 +103,7 @@ async function fetchBinary(path: string, expectBytes: number): Promise<ArrayBuff
 // см. её комментарий там) — держать HEIGHTMAP_VERSION синхронно в ОБОИХ
 // местах при каждой перепечке пайплайна, иначе одна сторона обновится
 // раньше другой и 2D/3D снова разъедутся в том, где вода.
-const HEIGHTMAP_VERSION = 3;
+const HEIGHTMAP_VERSION = 5;
 export async function loadHeightmapData(): Promise<void> {
   const cellCount = HEIGHT_W * HEIGHT_H;
   const v = `?v=${HEIGHTMAP_VERSION}`;
