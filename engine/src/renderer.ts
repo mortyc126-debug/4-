@@ -195,7 +195,25 @@ fn fs(in: VOut) -> @location(0) vec4f {
   let n = normalize(in.normal);
   let ndotl = max(0.0, dot(n, sun));
   let shadow = shadowFactor(in.lightClip);
-  let diffuse = max(0.35, ndotl * shadow);
+  // Раньше ambient был плоским скаляром (max(0.35, ...)) — тень читалась
+  // просто как более тёмная версия ТОЙ ЖЕ текстуры, без единого намёка на
+  // атмосферу. Автор прямым текстом: мир должен выглядеть как у AAA-игр, а
+  // не "на отъебись" — здесь та самая разница. Полусферный ambient вместо
+  // скаляра: тон зависит от того, куда смотрит нормаль (n.y) — вверх, к
+  // "небу" (светлее, ближе к тёплой золотой дымке FOG_COLOR ниже) или вниз,
+  // к "земле" (темнее, глубже, тот же золотисто-пергаментный дух, что и
+  // тема интерфейса, GILT в index.html, просто в тени). Прямой свет солнца
+  // добавляется ПОВЕРХ этого как отдельный тёплый golden-hour тон, а не
+  // просто множитель яркости — тень и свет теперь разного ЦВЕТА, не только
+  // разной яркости одного и того же цвета. Числа держать в одном
+  // семействе тона с FOG_COLOR (main.ts) и SUN_LIGHT ниже — та же палитра,
+  // что и у DECOR_SHADER/MODEL_SHADER (modelRenderer.ts), иначе здания и
+  // деревья светились бы иначе, чем земля под ними.
+  let skyTint = vec3f(0.42, 0.37, 0.28);
+  let groundTint = vec3f(0.20, 0.16, 0.13);
+  let sunLightColor = vec3f(0.85, 0.70, 0.48);
+  let hemi = mix(groundTint, skyTint, clamp(n.y * 0.5 + 0.5, 0.0, 1.0));
+  let lighting = hemi + sunLightColor * ndotl * shadow;
 
   var albedo: vec3f;
   if (in.waterFlag > 0.5) {
@@ -262,7 +280,7 @@ fn fs(in: VOut) -> @location(0) vec4f {
     albedo = mix(albedoLand, snowC, snowT);
   }
 
-  let lit = albedo * diffuse;
+  let lit = albedo * lighting;
   let d = distance(in.worldPos, fog.eye.xyz);
   let k = d * fog.color.w; let f = clamp(1.0 - exp(-k * k), 0.0, 1.0);
   return vec4f(mix(lit, fog.color.rgb, f), 1.0);
@@ -393,15 +411,22 @@ fn fs(in: VOut) -> @location(0) vec4f {
   // ПЛОСКОСТИ, а не настоящего объёма листвы: если плоскость развёрнута
   // случайным yaw инстанса боком к солнцу, честный diffuse-пол 0.35 из
   // TERRAIN_SHADER гасил её почти до черноты — в реальности объём листвы
-  // всё равно ловил бы рассеянный свет с других сторон. Пол повыше (0.6)
-  // только для карточек — ствол (materialId=0) остаётся на обычном 0.35,
-  // у него честная объёмная геометрия (гранёный конус), настоящая
-  // светотень там уместна и без этой поправки.
-  let diffuseFloor = select(0.35, 0.6, in.materialId > 0.5);
+  // всё равно ловил бы рассеянный свет с других сторон — раньше поднимали
+  // плоский ambient-пол (0.6 вместо 0.35) для карточек. Теперь ambient не
+  // плоский скаляр, а полусферный тон (тот же приём и та же палитра, что
+  // и в TERRAIN_SHADER — держать в синхроне при правке, иначе деревья
+  // светились бы другим тоном, чем земля под ними): canopyBoost — тот же
+  // избыточный "пол" для карточек кроны/травы/куста, просто как добавка к
+  // цветному ambient, а не замена скаляра другим скаляром.
+  let canopyBoost = select(0.0, 0.22, in.materialId > 0.5);
   let ndotl = max(0.0, dot(n, sun));
   let shadow = shadowFactor(in.lightClip);
-  let diffuse = max(diffuseFloor, ndotl * shadow);
-  let lit = base.rgb * diffuse * in.shade;
+  let skyTint = vec3f(0.42, 0.37, 0.28);
+  let groundTint = vec3f(0.20, 0.16, 0.13);
+  let sunLightColor = vec3f(0.85, 0.70, 0.48);
+  let hemi = mix(groundTint, skyTint, clamp(n.y * 0.5 + 0.5, 0.0, 1.0)) + vec3f(canopyBoost);
+  let lighting = hemi + sunLightColor * ndotl * shadow;
+  let lit = base.rgb * lighting * in.shade;
   let d = distance(in.worldPos, fog.eye.xyz);
   let k = d * fog.color.w; let f = clamp(1.0 - exp(-k * k), 0.0, 1.0);
   return vec4f(mix(lit, fog.color.rgb, f), 1.0);
