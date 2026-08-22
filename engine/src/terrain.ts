@@ -64,14 +64,17 @@ export function noise(x: number, y: number, s: number): number {
 // уронил меш/декор, а не потому что это ожидаемый путь выполнения.
 let elevData: Uint16Array | null = null;
 let forestData: Uint8Array | null = null;
+let moistureData: Uint8Array | null = null;
 
 export async function loadHeightmapData(): Promise<void> {
-  const [elevBuf, forestBuf] = await Promise.all([
+  const [elevBuf, forestBuf, moistureBuf] = await Promise.all([
     fetch("/heightmap/elevation.bin").then((r) => r.arrayBuffer()),
     fetch("/heightmap/forest.bin").then((r) => r.arrayBuffer()),
+    fetch("/heightmap/moisture.bin").then((r) => r.arrayBuffer()),
   ]);
   elevData = new Uint16Array(elevBuf);
   forestData = new Uint8Array(forestBuf);
+  moistureData = new Uint8Array(moistureBuf);
 }
 
 // Билинейная выборка — тот же приём, что и раньше был у value-noise (hermite
@@ -172,17 +175,21 @@ export function isWater(x: number, y: number): boolean {
 }
 
 // ---- Макро-биом (только цвет земли в TERRAIN_SHADER — не форма рельефа) -
-// moistureAt/coldnessAt остались процедурными (не запекались из спутника —
-// у ESA WorldCover нет отдельного канала "влажность региона" или "холод",
-// только классы покрова) — они по-прежнему решают, где на РЕАЛЬНОМ рельефе
-// сухой луг переходит в пышный, а где на РЕАЛЬНЫХ горах иней ложится
-// пятнами, а не по всей высоте разом. См. renderer.ts (TERRAIN_SHADER) —
-// та же формула продублирована в WGSL, синхронизировать при правке (как и
-// раньше, эта часть пайплайна не изменилась).
+// moistureAt раньше был синтетическим шумом. В ESA WorldCover нет прямого
+// канала "влажность", но есть классы покрова, которые честно с ней
+// коррелируют (болото/луг/пашня объективно не сухая земля, кустарник/голая
+// порода — сухая) — запечено в moisture.bin тем же способом, что и лес
+// (класс -> число, лёгкий блюр при запекании для связных региональных
+// пятен, не рябь по границе каждого поля). coldnessAt остался процедурным —
+// у настоящих открытых источников, доступных отсюда, не нашлось climate-
+// слоя (пробовал WorldClim/CHELSA/Planetary Computer — все три недоступны
+// через прокси этой песочницы), а "выше — холоднее" физически верно и без
+// точных цифр, шум просто решает, какие ИЗ высоких хребтов холоднее прочих
+// (не каждая вершина одинаково заснежена, см. использование в renderer.ts).
 export function moistureAt(x: number, y: number): number {
-  const a = noise(x / 210, y / 210, SEED + 901);
-  const b = noise(x / 90, y / 90, SEED + 902);
-  return Math.max(0, Math.min(1, a * 0.7 + b * 0.3));
+  if (!moistureData) return 0.5;
+  const [px, py] = toPixel(x, y);
+  return bilinear(moistureData, px, py, 1 / 255);
 }
 
 export function coldnessAt(x: number, y: number): number {
