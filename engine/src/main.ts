@@ -10,7 +10,7 @@
 import { createWorld, addEntity, addComponent, removeEntity, query } from "bitecs";
 import { createRenderer, type MarkerEntity, type DecorEntity } from "./renderer";
 import { buildTerrainPatch } from "./terrainMesh";
-import { heightAt, HMAX, hash2, isWater, SEED, registerFlattenSite, WORLD_HALF, forestMaskAt } from "./terrain";
+import { heightAt, HMAX, hash2, noise, isWater, SEED, registerFlattenSite, WORLD_HALF, forestMaskAt, NATURAL_ELEVATION_CAP } from "./terrain";
 import { PINE, LEAF, GRASS_TONES, BUSH_TONES, ROCK_TONES } from "./decorMesh";
 import { mul, persp, look, modelMatrix, transformPoint, sub, cross, norm, type Vec3, type Mat4 } from "./mat4";
 import { attachOrbitControls, type OrbitCamera } from "./camera";
@@ -404,7 +404,11 @@ async function main() {
   const TREE_CHANCE_MIN = 0.05; // вне лесного пятна — редкие одиночные деревья, не голое поле совсем
   const TREE_CHANCE_MAX = 0.9;  // в сердце лесного пятна — почти каждый кандидат
   const ROCK_CHANCE_MIN = 0.1;  // низина/луг — камень редкость, не через одного
-  const ROCK_CHANCE_MAX = 0.65; // склон/предгорье — камней заметно больше
+  // Было 0.65 — автор с живого сайта: "много камней на горах". Camнь на
+  // склоне должен читаться как деталь рельефа, не как сплошная каменная
+  // осыпь на каждом втором кандидате — почти вдвое реже на самых крутых
+  // участках.
+  const ROCK_CHANCE_MAX = 0.4;
   const GRASS_CELL = 2; // трава — своя, более мелкая подсетка (гуще)
   const GRASS_CHANCE = 0.7;
   const BUSH_CELL = 3; // кусты — средний ярус между травой и деревьями, своя подсетка
@@ -478,8 +482,24 @@ async function main() {
         // меняются, меняется только то, где именно внутри клетки они могут
         // оказаться.
         const jx = 0.175 + hash2(gx, gz, SEED + 778) * 0.65, jz = 0.175 + hash2(gx, gz, SEED + 779) * 0.65;
-        const wx = cx * CHUNK_SIZE + i * DECOR_CELL + jx * DECOR_CELL;
-        const wz = cz * CHUNK_SIZE + j * DECOR_CELL + jz * DECOR_CELL;
+        const baseWx = cx * CHUNK_SIZE + i * DECOR_CELL + jx * DECOR_CELL;
+        const baseWz = cz * CHUNK_SIZE + j * DECOR_CELL + jz * DECOR_CELL;
+        // Домен-варп — та же техника, что и у самого рельефа (heightRaw:
+        // X=x+wx... в terrain.ts). Без него декор на строгой подсетке
+        // DECOR_CELL=4 визуально читается как решётка: где бы игрок ни
+        // посмотрел, соседние деревья всегда примерно на одном и том же
+        // расстоянии друг от друга — глаз улавливает период сетки, даже
+        // когда джиттер внутри клетки честно случаен (жалоба автора:
+        // "даже если они находятся на расстоянии каком-то определённом, то
+        // они повсюду на таком расстоянии"). hash2 тут не годится — он
+        // случаен только по ЦЕЛЫМ gx,gz, сдвинул бы решётку на новую
+        // решётку той же природы; noise() непрерывен и сдвигает каждую
+        // точку карты немного по-своему. Считаем варп от ДОисходных
+        // (baseWx,baseWz), не последовательно от уже сдвинутой — иначе
+        // сдвиг по Z зависел бы от уже применённого сдвига по X без нужды.
+        const warp = 2.0;
+        const wx = baseWx + (noise(baseWx / 8.5, baseWz / 8.5, SEED + 790) * 2 - 1) * warp;
+        const wz = baseWz + (noise(baseWx / 8.5, baseWz / 8.5, SEED + 791) * 2 - 1) * warp;
         if (nearWater(wx, wz, 1.5)) continue; // деревья/камни — самый широкий силуэт
         if (blockedByStructure(wx, wz, 0.54, 0.68)) continue;
         const yaw = hash2(gx, gz, SEED + 781) * Math.PI * 2;
@@ -488,11 +508,16 @@ async function main() {
         // Автор: «никаких деревьев, травы, камней и прочего на горах [у
         // границы мира] нет». Трава/кусты уже отсекались по e>0.75 (голые
         // скалы), а деревья/камни — нет, обычные горы этого не требовали.
-        // e>1.0 достижимо ТОЛЬКО в стене по краю мира (см. edgeWallHeight в
-        // terrain.ts, обычный рельеф жёстко потолком в 1.0) — не нужен
-        // отдельный порог по расстоянию, этот же признак уже точно
-        // совпадает со стеной, какой бы формы она ни была.
-        if (e > 1.0) continue;
+        // Раньше сравнивали с 1.0 (старый жёсткий потолок обычного рельефа)
+        // — теперь у обычных гор нет жёсткого потолка (см. softCapElevation
+        // в terrain.ts, борьба с "все вершины одинаковой высоты"), их
+        // натуральная высота честно доходит почти до NATURAL_ELEVATION_CAP.
+        // Порог 1.0 срезал бы декор с настоящих высоких вершин, которых
+        // раньше физически не бывало выше 1.0 — теперь бывают.
+        // NATURAL_ELEVATION_CAP — тот же самый признак "это стена", что и
+        // раньше, просто пересчитанный под новый диапазон естественной
+        // высоты (см. terrain.ts).
+        if (e > NATURAL_ELEVATION_CAP) continue;
         const wy = e * HMAX;
         // Дерево или камень для ЭТОГО конкретного кандидата решает не одна
         // фиксированная доля на всю карту, а forestMaskAt (пятно леса,
