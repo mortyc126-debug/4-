@@ -89,6 +89,19 @@ struct Light { vp: mat4x4f };
 @group(0) @binding(10) var shadowTex: texture_depth_2d;
 @group(0) @binding(11) var texSnow: texture_2d<f32>;
 @group(0) @binding(12) var texForestFloor: texture_2d<f32>;
+// desert/marsh/tundraMoss — вторая партия текстур по промптам автора этой
+// сессии (см. комментарий выше TERRAIN_SHADER, moistureAt/coldnessAt):
+// раньше засушливая низина, заболоченный берег и холодный склон ниже
+// снеговой линии рисовались той же травой/сушняком/голым камнем, что и
+// везде — biome-поля уже были посчитаны, не хватало именно текстур под них.
+@group(0) @binding(13) var texDesert: texture_2d<f32>;
+@group(0) @binding(14) var texMarsh: texture_2d<f32>;
+@group(0) @binding(15) var texTundraMoss: texture_2d<f32>;
+// Вода была чисто процедурной (рябь синусоидами + плоский цвет, без единой
+// текстуры) — texWaterDetail добавляет настоящую поверхностную деталь
+// (см. использование в fs() воды ниже), не заменяя рябь/Френель, а
+// домешиваясь поверх них.
+@group(0) @binding(16) var texWaterDetail: texture_2d<f32>;
 
 struct VOut {
   @builtin(position) pos: vec4f, @location(0) waterColor: vec3f, @location(1) worldPos: vec3f,
@@ -229,7 +242,15 @@ fn fs(in: VOut) -> @location(0) vec4f {
                + sin(in.worldPos.x * 0.5 - in.worldPos.z * 0.7 + time * 0.6) * 0.03;
     let viewDir = normalize(fog.eye.xyz - in.worldPos);
     let grazing = pow(1.0 - clamp(dot(n, viewDir), 0.0, 1.0), 4.0);
-    albedo = mix(in.waterColor * (1.0 + ripple), fog.color.rgb * 1.3, grazing * 0.5);
+    let base = mix(in.waterColor * (1.0 + ripple), fog.color.rgb * 1.3, grazing * 0.5);
+    // Лёгкая настоящая деталь поверх (не взамен) процедурной ряби/Френеля —
+    // своя UV-сетка (не in.uv, у неё период GROUND_TILE земли, слишком
+    // крупный для воды) с медленным сдвигом по времени, только по X —
+    // течение в одну сторону читается честнее, чем дрейф по диагонали без
+    // всякого направления. Низкий вес (0.16) — деталь, не замена цвета.
+    let waterUV = in.worldPos.xz * 0.12 + vec2f(time * 0.015, 0.0);
+    let detailC = textureSampleLevel(texWaterDetail, samp, waterUV, 0.0).rgb;
+    albedo = mix(base, base * (0.7 + detailC * 0.6), 0.16);
   } else {
     let t = clamp((in.elevation - 0.235) / (1.0 - 0.235), 0.0, 1.0);
     // textureSample (неявный LOD через производные) запрещён WGSL внутри
@@ -248,18 +269,31 @@ fn fs(in: VOut) -> @location(0) vec4f {
     let rockC = textureSampleLevel(texRock, samp, in.uv, 0.0).rgb;
     let snowC = textureSampleLevel(texSnow, samp, in.uv, 0.0).rgb;
     let forestFloorC = textureSampleLevel(texForestFloor, samp, in.uv, 0.0).rgb;
+    let desertC = textureSampleLevel(texDesert, samp, in.uv, 0.0).rgb;
+    let marshC = textureSampleLevel(texMarsh, samp, in.uv, 0.0).rgb;
+    let tundraMossC = textureSampleLevel(texTundraMoss, samp, in.uv, 0.0).rgb;
     // "Цвет равнины" в ЭТОЙ точке — не всегда grass: сухая степь (dryC) и
     // пышный луг (grassC) смешиваются по moistureAt (см. комментарий выше
     // TERRAIN_SHADER) — та самая замена одной ступеньки по высоте на
-    // читаемое региональное пятно. Дальше в лесных пятнах (forestMaskAt —
-    // тот же порог/линия леса, что решает, где main.ts вообще ставит
-    // деревья) это же поле "равнины" темнеет до forestFloorC: земля под
-    // пологом леса читается лесной, не той же травой, что и открытый луг
-    // рядом — то самое "лес тут, поле там" не только силуэтами деревьев
-    // сверху, но и цветом земли под ними.
+    // читаемое региональное пятно. desertC — третий, ещё более сухой полюс:
+    // dryC ("сухой луг") сам по себе не читается как настоящая пустыня —
+    // при moist→0 подмешиваем к нему desertC (трещины/дюны, без травы
+    // вообще), к moist=0.3 полностью переходя обратно на dryC/grassC-мешь.
+    // Дальше в лесных пятнах (forestMaskAt — тот же порог/линия леса, что
+    // решает, где main.ts вообще ставит деревья) это же поле "равнины"
+    // темнеет до forestFloorC: земля под пологом леса читается лесной, не
+    // той же травой, что и открытый луг рядом.
     let moist = moistureAt(in.worldPos.x, in.worldPos.z);
+    let dryPole = mix(desertC, dryC, smoothstep(0.0, 0.3, moist));
     let forest = forestMaskAt(in.worldPos.x, in.worldPos.z, in.elevation);
-    let lowland = mix(mix(dryC, grassC, moist), forestFloorC, forest);
+    var lowland = mix(mix(dryPole, grassC, moist), forestFloorC, forest);
+    // Топь — узкое кольцо НИЗКОЙ (но не пляжной — не пересекается с
+    // sand-переходом ниже) высоты при высокой влажности: не "весь низкий
+    // берег топкий", а именно сырые низины у воды в сыром регионе. Бугор
+    // (не порог) по t — сначала растёт от 0.02, потом гаснет к 0.24, чтобы
+    // не тянуться в предгорья.
+    let wetT = smoothstep(0.02, 0.12, t) * (1.0 - smoothstep(0.12, 0.24, t)) * smoothstep(0.55, 0.85, moist);
+    lowland = mix(lowland, marshC, wetT);
     var albedoLand: vec3f;
     if (t < 0.06) {
       albedoLand = mix(sandC, lowland, t / 0.06);
@@ -270,14 +304,21 @@ fn fs(in: VOut) -> @location(0) vec4f {
     } else {
       albedoLand = mix(screeC, rockC, min(1.0, (t - 0.74) / 0.26));
     }
-    // Иней на самых высоких пиках — но не на каждом одинаково: coldnessAt
-    // отдельное поле от высоты самой горы, часть хребтов остаётся голым
-    // камнем, другая часть — заснежена, как на настоящей карте кампании,
-    // а не "снег строго после такой-то отметки везде". Настоящая текстура
-    // (texSnow) вместо прежнего плоского белого тона.
+    // Мох/лишайник на холодных склонах НИЖЕ снеговой линии — coldnessAt то
+    // же поле, что и у снега ниже (не высота горы решает, а региональный
+    // "климат": один голый каменистый склон, соседний — мшистый). Кэп 0.7 —
+    // не полностью замещает scree/rock текстуру, только тонирует пятнами,
+    // сама скальная порода остаётся видна.
     let cold = coldnessAt(in.worldPos.x, in.worldPos.z);
-    let snowT = smoothstep(0.90, 1.0, t) * smoothstep(0.35, 0.75, cold);
-    albedo = mix(albedoLand, snowC, snowT);
+    let mossT = smoothstep(0.55, 0.72, t) * smoothstep(0.3, 0.65, cold) * 0.7;
+    let withMoss = mix(albedoLand, tundraMossC, mossT);
+    // Иней на самых высоких пиках — но не на каждом одинаково: та же
+    // coldnessAt, часть хребтов остаётся голым камнем, другая часть —
+    // заснежена, как на настоящей карте кампании, а не "снег строго после
+    // такой-то отметки везде". Настоящая текстура (texSnow) вместо прежнего
+    // плоского белого тона.
+    let snowT = smoothstep(0.9, 1.0, t) * smoothstep(0.35, 0.75, cold);
+    albedo = mix(withMoss, snowC, snowT);
   }
 
   let lit = albedo * lighting;
@@ -490,6 +531,83 @@ fn fs(in: VOut) {
 }
 `;
 
+// ---- небо: раньше канва просто чистилась в плоский FOG_COLOR — ни горизонта,
+// ни солнца, ни облаков, только сплошной цвет фона. Полноценный купол неба
+// (сфера/кубическая карта) не нужен — дешевле full-screen треугольник (3
+// вершины без вершинного буфера, классический приём) с лучом обзора,
+// восстановленным ПРЯМО ПО ПИКСЕЛЮ в фрагментном шейдере через тот же базис
+// камеры (xAxis/yAxis/zAxis + tanHalf/aspect), что уже считает pixelRay() в
+// main.ts для выбора сущности под пальцем — те же формулы, ту же картину,
+// что игрок и так видит корректно (клик по объекту уже проверен этим
+// базисом), поэтому доверяю ему и тут без отдельной 3D-геометрии купола.
+// Рисуется ПЕРВЫМ в основном проходе (см. frame() ниже), с выключенной
+// записью глубины и depthCompare "always" — земля/декор/здания, отрисованные
+// следом, перекрывают его как обычно через свой depth-тест.
+//
+// Солнце — не отдельный спрайт-биллборд (тот требовал бы собственной
+// геометрии четырёхугольника, разворачиваемой к камере каждый кадр), а
+// аналитический диск/гало ПРЯМО в этом же фрагментном шейдере: угол между
+// лучом обзора и фиксированным направлением на солнце (то самое SUN_DIR, что
+// уже освещает рельеф/декор/здания — держать в одном семействе, иначе
+// светящаяся точка в небе не совпадала бы с направлением теней на земле).
+// Резкий smoothstep — маленький яркий диск, широкий pow — мягкое гало вокруг.
+//
+// Облака — тайловый слой (textures/sky/clouds.png, с альфой) поверх базового
+// неба, спроецированный той же equirectangular UV, что и само небо, с
+// медленным сдвигом по времени (только по долготе — единое направление
+// дрейфа, не хаотичный снос) и затуханием у горизонта (dir.y около 0) —
+// иначе плоская проекция тянула бы текстуру в нечитаемые полосы на грани
+// экрана купола.
+const SKY_SHADER = /* wgsl */ `
+struct SkyCam { xAxis: vec4f, yAxis: vec4f, zAxis: vec4f, params: vec4f };
+@group(0) @binding(0) var<uniform> cam: SkyCam;
+@group(0) @binding(1) var samp: sampler;
+@group(0) @binding(2) var texSky: texture_2d<f32>;
+@group(0) @binding(3) var texClouds: texture_2d<f32>;
+
+struct VOut { @builtin(position) pos: vec4f, @location(0) ndc: vec2f };
+
+@vertex
+fn vs(@builtin(vertex_index) vi: u32) -> VOut {
+  var corners = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
+  var out: VOut;
+  // z=0.9999 (не ровно 1.0) — небольшой запас от самой границы clip-объёма
+  // NDC z∈[0,1] на случай погрешности округления на границе на слабом/
+  // софтверном драйвере; depthCompare:"always" всё равно не сравнивает эту
+  // глубину ни с чем, запас нужен только чтобы примитив не срезало клиппингом.
+  out.pos = vec4f(corners[vi], 0.9999, 1.0);
+  out.ndc = corners[vi];
+  return out;
+}
+
+@fragment
+fn fs(in: VOut) -> @location(0) vec4f {
+  let tanHalf = cam.params.x;
+  let aspect = cam.params.y;
+  let time = cam.params.z;
+  let dir = normalize(in.ndc.x * aspect * tanHalf * cam.xAxis.xyz + in.ndc.y * tanHalf * cam.yAxis.xyz - cam.zAxis.xyz);
+  let u = atan2(dir.x, dir.z) / 6.28318531 + 0.5;
+  let v = clamp(0.5 - asin(clamp(dir.y, -1.0, 1.0)) / 3.14159265, 0.0, 1.0);
+  var color = textureSampleLevel(texSky, samp, vec2f(u, v), 0.0).rgb;
+
+  // Тот же SUN_DIR, что и в TERRAIN_SHADER/DECOR_SHADER/MODEL_SHADER —
+  // держать в синхроне при правке общего направления света.
+  let sunDir = normalize(vec3f(0.62, 0.38, 0.30));
+  let sunDot = dot(dir, sunDir);
+  let sunColor = vec3f(1.0, 0.92, 0.75);
+  let sunDisc = smoothstep(0.9985, 0.9997, sunDot);
+  let sunGlow = pow(max(0.0, sunDot), 220.0) * 0.6;
+  color = mix(color, sunColor, sunDisc) + sunColor * sunGlow;
+
+  let cloudUV = vec2f(u * 3.0 + time * 0.006, v * 1.5);
+  let cloudTex = textureSampleLevel(texClouds, samp, cloudUV, 0.0);
+  let cloudAlpha = cloudTex.a * smoothstep(0.05, 0.35, dir.y);
+  color = mix(color, cloudTex.rgb, cloudAlpha);
+
+  return vec4f(color, 1.0);
+}
+`;
+
 export interface MarkerEntity {
   x: number;
   y: number; // высота (мир, метры) — уже посчитанная (рельеф под меткой + запас)
@@ -544,6 +662,10 @@ export interface Renderer {
   // остальное вне SHADOW_EXTENT от неё тени всё равно бы не бросило в
   // кадр. Достаточно дёшево, чтобы звать каждый кадр, как setVP/setFog.
   setSunTarget(x: number, z: number): void;
+  // Базис камеры для фонового неба (см. SKY_SHADER) — те же xAxis/yAxis/
+  // zAxis/tanHalf/aspect, что main.ts:pixelRay() уже считает для клика по
+  // сущности, плюс время (секунды) для дрейфа облаков.
+  setSkyCamera(xAxis: Vec3, yAxis: Vec3, zAxis: Vec3, tanHalf: number, aspect: number, timeSec: number): void;
   // Даёт настоящим .glb-моделям (main.ts/modelRenderer.ts) доступ к той же
   // теневой карте, что уже используют рельеф/декор — модели тени не
   // бросают (отдельный, более тяжёлый кусок работы, осознанно не сделан в
@@ -635,7 +757,7 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   // комментарий выше TERRAIN_SHADER): раньше снег был плоским процедурным
   // тоном (mix к белому), лесная подстилка не существовала вовсе (густой
   // лес стоял на обычной grass/dry_meadow, как и открытое поле).
-  const [texSand, texGrass, texDry, texScree, texRock, texSnow, texForestFloor] = await Promise.all([
+  const [texSand, texGrass, texDry, texScree, texRock, texSnow, texForestFloor, texDesert, texMarsh, texTundraMoss, texWaterDetail] = await Promise.all([
     loadTexture(device, "/textures/ground/sand.png"),
     loadTexture(device, "/textures/ground/grass.png"),
     loadTexture(device, "/textures/ground/dry_meadow.png"),
@@ -643,6 +765,10 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     loadTexture(device, "/textures/ground/rock.png"),
     loadTexture(device, "/textures/ground/snow.png"),
     loadTexture(device, "/textures/ground/forest_floor.png"),
+    loadTexture(device, "/textures/ground/desert.png"),
+    loadTexture(device, "/textures/ground/marsh.png"),
+    loadTexture(device, "/textures/ground/tundra_moss.png"),
+    loadTexture(device, "/textures/water/detail.png"),
   ]);
   const groundSampler = device.createSampler({ addressModeU: "repeat", addressModeV: "repeat", magFilter: "linear", minFilter: "linear" });
   const terrainModule = device.createShaderModule({ code: TERRAIN_SHADER });
@@ -693,8 +819,56 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
       { binding: 10, resource: shadowView },
       { binding: 11, resource: texSnow.createView() },
       { binding: 12, resource: texForestFloor.createView() },
+      { binding: 13, resource: texDesert.createView() },
+      { binding: 14, resource: texMarsh.createView() },
+      { binding: 15, resource: texTundraMoss.createView() },
+      { binding: 16, resource: texWaterDetail.createView() },
     ],
   });
+
+  // ---- небо (см. комментарий у SKY_SHADER выше) — full-screen треугольник,
+  // рисуется первым в основном проходе (см. frame() ниже), своя маленькая
+  // uniform-структура SkyCam (базис камеры + tanHalf/aspect/время), без
+  // вершинного буфера вообще (3 вершины из vertex_index).
+  const [texSky, texClouds] = await Promise.all([
+    loadTexture(device, "/textures/sky/sky.png"),
+    loadTexture(device, "/textures/sky/clouds.png"),
+  ]);
+  const skySampler = device.createSampler({ addressModeU: "repeat", addressModeV: "clamp-to-edge", magFilter: "linear", minFilter: "linear" });
+  const skyCamBuf = device.createBuffer({ size: 16 * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const skyModule = device.createShaderModule({ code: SKY_SHADER });
+  const skyPipeline = device.createRenderPipeline({
+    layout: "auto",
+    vertex: { module: skyModule, entryPoint: "vs" },
+    fragment: { module: skyModule, entryPoint: "fs", targets: [{ format }] },
+    primitive: { topology: "triangle-list", cullMode: "none" },
+    // depthWriteEnabled:false + "always" — небо рисуется первым, но не
+    // может выиграть depth-тест ни у чего, что нарисуется следом (земля/
+    // декор/здания честно перекрывают его через свой обычный тест).
+    depthStencil: { format: "depth24plus", depthWriteEnabled: false, depthCompare: "always" },
+  });
+  const skyBindGroup = device.createBindGroup({
+    layout: skyPipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: skyCamBuf } },
+      { binding: 1, resource: skySampler },
+      { binding: 2, resource: texSky.createView() },
+      { binding: 3, resource: texClouds.createView() },
+    ],
+  });
+  // xAxis/yAxis/zAxis/tanHalf/aspect — тот же базис, что main.ts:pixelRay()
+  // уже считает для рейкаста по клику (см. комментарий у SKY_SHADER) —
+  // вызывающая сторона (main.ts:draw()) передаёт готовые векторы, тут
+  // только упаковка в uniform-буфер.
+  function setSkyCamera(xAxis: Vec3, yAxis: Vec3, zAxis: Vec3, tanHalf: number, aspect: number, timeSec: number) {
+    const data = new Float32Array([
+      xAxis[0], xAxis[1], xAxis[2], 0,
+      yAxis[0], yAxis[1], yAxis[2], 0,
+      zAxis[0], zAxis[1], zAxis[2], 0,
+      tanHalf, aspect, timeSec, 0,
+    ]);
+    device.queue.writeBuffer(skyCamBuf, 0, data);
+  }
   // Depth-only проход для теневой карты (см. TERRAIN_SHADOW_SHADER выше) —
   // тот же вершинный буфер чанка (interleaved, позиция в первых 3 float),
   // но со своим пайплайном/bind group: НЕ переиспользуем terrainPipeline
@@ -1077,6 +1251,13 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
       },
     });
 
+    // Небо — первым, до земли: перекрывается обычным depth-тестом всего,
+    // что рисуется дальше (см. depthCompare:"always" у skyPipeline — само
+    // небо ни у чего не выигрывает).
+    pass.setPipeline(skyPipeline);
+    pass.setBindGroup(0, skyBindGroup);
+    pass.draw(3);
+
     if (terrainChunks.size > 0) {
       pass.setPipeline(terrainPipeline);
       pass.setBindGroup(0, terrainBindGroup);
@@ -1121,5 +1302,5 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     return { lightBuf, shadowView, shadowSampler };
   }
 
-  return { setTerrainChunk, removeTerrainChunk, setMarkers, setDecor, setVP, setFog, setSunTarget, getShadowResources, frame };
+  return { setTerrainChunk, removeTerrainChunk, setMarkers, setDecor, setVP, setFog, setSunTarget, setSkyCamera, getShadowResources, frame };
 }

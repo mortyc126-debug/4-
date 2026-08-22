@@ -1642,6 +1642,16 @@ async function main() {
     renderer.setVP(vp);
     renderer.setFog(eye, FOG_COLOR, FOG_K, tMs / 1000);
     renderer.setSunTarget(cam.target[0], cam.target[2]);
+    // Тот же базис камеры, что и pixelRay() ниже (см. её комментарий) —
+    // небо (renderer.ts, SKY_SHADER) реконструирует луч обзора по пикселю
+    // теми же формулами, что уже безопасно используются для клика по
+    // сущности.
+    {
+      const zAxis = norm(sub(eye, cam.target));
+      const xAxis = norm(cross([0, 1, 0], zAxis));
+      const yAxis = cross(zAxis, xAxis);
+      renderer.setSkyCamera(xAxis, yAxis, zAxis, Math.tan(CAM_FOVY / 2), aspect, tMs / 1000);
+    }
     modelPipeline.setFog(eye, FOG_COLOR, FOG_K);
     // Выбранный поход движется — в отличие от showSelection() для
     // статичных сущностей (город/лагерь/точка), тут нельзя один раз
