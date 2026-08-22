@@ -66,11 +66,30 @@ let elevData: Uint16Array | null = null;
 let forestData: Uint8Array | null = null;
 let moistureData: Uint8Array | null = null;
 
+// fetch() НЕ отклоняет промис на HTTP-ошибке (404 и т.п.) — только на
+// сетевом сбое. Без явной проверки response.ok неудачный деплой (файл не
+// доехал/переехал) тихо отдал бы страницу-404 ВМЕСТО бинарных данных —
+// new Uint16Array() на ней не бросит исключение, просто даст мусорный
+// массив неправильного размера, и весь рельеф дальше молча разъедется в
+// NaN/пустоту без единого сообщения об ошибке игроку. main() уже ловит
+// исключения из этой функции (main().catch(...) в самом низу файла,
+// setErrorStatus) — здесь достаточно честно бросить, а не проглотить.
+async function fetchBinary(path: string, expectBytes: number): Promise<ArrayBuffer> {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
+  const buf = await r.arrayBuffer();
+  if (buf.byteLength !== expectBytes) {
+    throw new Error(`${path}: неверный размер (${buf.byteLength} байт, ожидалось ${expectBytes})`);
+  }
+  return buf;
+}
+
 export async function loadHeightmapData(): Promise<void> {
+  const cellCount = HEIGHT_W * HEIGHT_H;
   const [elevBuf, forestBuf, moistureBuf] = await Promise.all([
-    fetch("/heightmap/elevation.bin").then((r) => r.arrayBuffer()),
-    fetch("/heightmap/forest.bin").then((r) => r.arrayBuffer()),
-    fetch("/heightmap/moisture.bin").then((r) => r.arrayBuffer()),
+    fetchBinary("/heightmap/elevation.bin", cellCount * 2), // Uint16
+    fetchBinary("/heightmap/forest.bin", cellCount),        // Uint8
+    fetchBinary("/heightmap/moisture.bin", cellCount),      // Uint8
   ]);
   elevData = new Uint16Array(elevBuf);
   forestData = new Uint8Array(forestBuf);

@@ -9652,7 +9652,9 @@ function jumpToMarchFor(marchId){
   };
   if(!tryStart()){
     let tries=0;
-    const iv=setInterval(()=>{ tries++; if(tryStart()||tries>50) clearInterval(iv); },100);
+    // tries>450 (~45с), не 50 (~5с) — движок теперь ждёт загрузку настоящего
+    // рельефа (~8.6МБ) перед готовностью, см. тот же пересчёт у mpFocusWorld3D.
+    const iv=setInterval(()=>{ tries++; if(tryStart()||tries>450) clearInterval(iv); },100);
   }
 }
 function hallInfoHtml(p){
@@ -12288,17 +12290,22 @@ function mpFocusWorld3D(){
   const w=world3dWin();
   if(w && apply(w)) return;
   let tries=0;
+  // Было tries>50 (~5с) — хватало, пока движок поднимался из чистого
+  // procedural noise() почти мгновенно. Теперь до готовности (window.cam)
+  // движок сперва честно ждёт загрузку настоящего рельефа (~8.6МБ, см.
+  // engine/src/terrain.ts:loadHeightmapData) — на слабой мобильной связи
+  // это заметно дольше 5с сама по себе, ещё не считая моделей/текстур.
+  // WebGPU-недоступность теперь отсекается ДО этой закачки (см. коммент у
+  // navigator.gpu в main.ts) и уводит на forceCityView() своим путём — этот
+  // таймер здесь только страховка на случай, если движок всё же где-то
+  // застрял по-настоящему (не сеть, а сломанная логика) — не обязан больше
+  // покрывать саму загрузку рельефа наравне с ней. tries>450 (~45с) — щедрый
+  // запас под честно медленную сеть, не бесконечность.
   const iv=setInterval(()=>{
     tries++;
     const w2=world3dWin();
-    // succeeded — apply() уже сама сняла накидку (см. выше), тут только
-    // остановить таймер. tries>50 — движок так и не поднялся за ~5с
-    // (WebGPU недоступен и т.п.): снимаем накидку всё равно сами, а не
-    // оставляем пользователя перед вечным спиннером — честнее показать
-    // что есть (тот самый частично готовый экран), чем застрять на
-    // "Загрузка мира…" навсегда.
     const succeeded=w2 && apply(w2);
-    if(succeeded || tries>50){ clearInterval(iv); if(!succeeded) mpHideLoading(); }
+    if(succeeded || tries>450){ clearInterval(iv); if(!succeeded) mpHideLoading(); }
   },100);
 }
 // Автор попросил полностью убрать плашку зума +/- и кнопку "домой"
@@ -13558,7 +13565,8 @@ function mpGoToLoc(x,y){
   closeMenuModal();
   if(!apply()){
     let tries=0;
-    const iv=setInterval(()=>{ tries++; if(apply()||tries>50) clearInterval(iv); },100);
+    // tries>450 (~45с) — см. тот же пересчёт под загрузку настоящего рельефа у mpFocusWorld3D.
+    const iv=setInterval(()=>{ tries++; if(apply()||tries>450) clearInterval(iv); },100);
   }
 }
 
