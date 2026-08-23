@@ -10,7 +10,7 @@
 import { createWorld, addEntity, addComponent, removeEntity, query } from "bitecs";
 import { createRenderer, type MarkerEntity, type DecorEntity } from "./renderer";
 import { buildTerrainPatch } from "./terrainMesh";
-import { heightAt, HMAX, hash2, noise, isWater, SEED, registerFlattenSite, WORLD_HALF_X, WORLD_HALF_Z, forestMaskAt, loadHeightmapData } from "./terrain";
+import { heightAt, HMAX, hash2, noise, isWater, SEED, registerFlattenSite, WORLD_HALF_X, WORLD_HALF_Z, forestMaskAt, loadHeightmapData, HEIGHTMAP_VERSION } from "./terrain";
 import { PINE, LEAF, GRASS_TONES, BUSH_TONES, ROCK_TONES } from "./decorMesh";
 import { mul, persp, look, modelMatrix, transformPoint, sub, cross, norm, type Vec3, type Mat4 } from "./mat4";
 import { attachOrbitControls, type OrbitCamera } from "./camera";
@@ -93,6 +93,14 @@ async function main() {
   // раз, до первой сущности/чанка (но уже ПОСЛЕ проверки WebGPU выше).
   await loadHeightmapData();
   lines.push("рельеф: настоящие данные высот загружены");
+  // Всегда видимая метка версии (#hmVersion, index.html) — не под ?debug=1,
+  // как основная сводка выше: несколько раундов сессии автор продолжал
+  // видеть разорванные реки уже ПОСЛЕ подтверждённого деплоя нужного
+  // коммита, и не было способа со стороны экрана отличить "у меня и правда
+  // ещё старые данные" от "картинка новая, просто баг в другом месте". Один
+  // маленький номер в углу закрывает вопрос одним скриншотом.
+  const hmVersionEl = document.getElementById("hmVersion");
+  if (hmVersionEl) hmVersionEl.textContent = `h${HEIGHTMAP_VERSION}`;
 
   // Чанк 16×16 — то же пространство координат, что и STRUCT_CHUNK в
   // index.html (см. ensureChunkContent/W.mapChunks): и рельеф (ниже), и
