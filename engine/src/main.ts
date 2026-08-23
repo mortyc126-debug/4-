@@ -1233,39 +1233,38 @@ async function main() {
     (window as any).__selectedLabel = null;
     selectedEl.style.display = "none";
   }
-  // ───────────────────────── Тач-пикинг: полностью переписан ─────────────────────────
-  // Старая версия проецировала МИРОВЫЕ точки в ЭКРАННЫЕ (transformPoint через
-  // currentVP) и сравнивала плоские пиксельные расстояния. У этого подхода
-  // был скрытый численный баг: радиус хитбокса сущности оценивался, пробуя
-  // спроецировать точку "край модели" (wx+scale) и меряя её экранное
-  // расстояние от центра. Если эта пробная точка попадала БЛИЗКО к плоскости
-  // камеры (clip.w около нуля, но выше порога отсечения 0.001), перспективное
-  // деление (x/w) могло взорвать её экранные координаты до тысяч пикселей —
-  // и тогда "радиус" сущности мог перекрыть весь экран целиком, из-за чего
-  // тап ЛЮБОЙ точки канвы засчитывался этой сущности, даже впустую по земле
-  // далеко от неё (живой репорт: тап по пустоши в центре экрана открыл
-  // "Лесопилку" совсем в другом месте). Это не была случайность — эффект
-  // зависит только от угла камеры в момент тапа, поэтому воспроизводился
-  // стабильно на одном и том же экране.
+  // ───────────────────────── Тач-пикинг: перепись №2 ─────────────────────────
+  // Версия "честный 3D-пикинг" (луч + пересечение со СФЕРОЙ каждой сущности
+  // в мировых координатах, побеждает наименьшее t вдоль луча — см. git-
+  // историю этого файла) лечила численный баг прошлой версии (взрыв радиуса
+  // при переопроекции точки-края у самой плоскости камеры), но принесла
+  // СВОЙ, концептуальный: "ближайшее пересечение ВДОЛЬ ЛУЧА" — это не то же
+  // самое, что "ближайшая К ПАЛЬЦУ ИКОНКА НА ЭКРАНЕ". У города scale=10
+  // (радиус хитбокса-сферы — 10 мировых юнитов) при плотной застройке легко
+  // перекрывает сферу соседнего лагеря/точки ресурсов (scale=5) — луч,
+  // нацеленный визуально точно в маленькую сферу, мог войти в ОГРОМНУЮ сферу
+  // соседа раньше по t и забрать тап себе. Ровно это и был живой репорт:
+  // "кликаю на один объект — открывается рядом стоящий". Чем плотнее
+  // застройка (с настоящей партией — сколько угодно), тем чаще это
+  // случалось — не редкий край, а системный сбой самого подхода.
   //
-  // Новый подход — честный 3D-пикинг, БЕЗ повторной проекции экранных
-  // координат вообще: один луч через тапнутый пиксель (тот же базис камеры,
-  // что и раньше в screenToGround), и пересечение луча со СФЕРОЙ каждой
-  // сущности/похода В МИРОВЫХ координатах (классическая формула
-  // луч-сфера — квадратное уравнение, никакого деления на w, численно
-  // устойчиво при любом угле камеры). Пороговый радиус сферы переводится из
-  // "минимум N пикселей на экране" в мировые единицы через фокусное
-  // расстояние камеры (см. FOCAL_PX) — тот же зрительный результат
-  // (далёкие мелкие объекты остаются тактильно кликабельными), что и раньше,
-  // но без хрупкой повторной проекции пробных точек.
+  // Верная модель для тапа по иконкам на карте — не 3D-рейкаст вообще, а
+  // "какая иконка ближе всего к пальцу НА ЭКРАНЕ" (тот же приём, что и в
+  // большинстве стратегий с картой сверху, включая старый прототип этой
+  // игры) — но без бага САМОЙ ПЕРВОЙ версии этого приёма: там экранный
+  // радиус хитбокса оценивался повторной проекцией пробной ТОЧКИ КРАЯ модели
+  // (взрывался при clip.w≈0), тут радиус в пикселях считается АНАЛИТИЧЕСКИ
+  // через фокусное расстояние камеры (focalY*scale/depth — тот же вывод, что
+  // уже проверен в isModelOnScreen выше, там же подробный комментарий по
+  // формуле) — делить там не на что, взрываться нечему.
   //
-  // Окклюзия рельефом: раньше сущности/походы вообще не проверялись на
-  // перекрытие горой/холмом — сфера "видна" сквозь любой рельеф. Теперь
-  // рельеф — ТАКОЙ ЖЕ участник конкурса по параметру t (расстояние вдоль
-  // луча до пересечения), что и сущности/походы: побеждает наименьшее t
-  // среди всех кандидатов, значит ближайшее пересечение по лучу зрения
-  // всегда выигрывает — то же самое "что ближе к камере, то и видно",
-  // но теперь честно распространяется и на землю.
+  // Окклюзия рельефом (иконка позади горы не должна выигрывать тап) —
+  // сохранена, но теперь отдельным шагом ПОСЛЕ выбора ближайшей на экране
+  // иконки, не частью самого конкурса по t: пускаем тот же луч через
+  // тапнутый пиксель и сравниваем расстояние до земли с расстоянием до
+  // найденной иконки; если земля ближе (с запасом OCCLUSION_MARGIN, чтобы
+  // модель, честно стоящую на пологом склоне, не "занулял" рельеф прямо под
+  // её же ногами) — считаем иконку закрытой и отдаём тап земле.
   function pixelRay(px: number, py: number): { origin: Vec3; dir: Vec3 } {
     const aspect = canvas.width / Math.max(1, canvas.height);
     const tanHalf = Math.tan(CAM_FOVY / 2);
@@ -1283,20 +1282,6 @@ async function main() {
       ndcX * aspect * tanHalf * xAxis[2] + ndcY * tanHalf * yAxis[2] - zAxis[2],
     ]);
     return { origin: currentEye, dir };
-  }
-  // Ближайшее пересечение луча (origin+dir*t, dir единичной длины) со сферой
-  // (center, radius). null — мимо, либо сфера целиком позади камеры.
-  function raySphereT(origin: Vec3, dir: Vec3, center: Vec3, radius: number): number | null {
-    const ocx = origin[0] - center[0], ocy = origin[1] - center[1], ocz = origin[2] - center[2];
-    const b = ocx * dir[0] + ocy * dir[1] + ocz * dir[2];
-    const c = ocx * ocx + ocy * ocy + ocz * ocz - radius * radius;
-    const h = b * b - c;
-    if (h < 0) return null; // луч мимо сферы
-    const sh = Math.sqrt(h);
-    let t = -b - sh;
-    if (t < 0) t = -b + sh; // камера внутри сферы — берём точку выхода
-    if (t < 0) return null; // сфера целиком позади камеры
-    return t;
   }
   // Рельеф — процедурная heightfield-функция, не буфер треугольников под
   // рукой в это время, поэтому пересечение ищем марш-шагом вдоль луча до
@@ -1356,42 +1341,83 @@ async function main() {
       /* кросс-origin или не встроено */
     }
   }
-  // Раньше тут был минимальный ЭКРАННЫЙ радиус хитбокса (46px, переводился в
-  // мировые единицы через дистанцию камеры) — задумывался как страховка для
-  // тактильного тапа по мелкой/далёкой модели. На практике он растёт линейно
-  // с расстоянием БЕЗ верхнего предела: на обычном для нового (намного
-  // большего) мира отдалении хитбокс раздувался в несколько мировых
-  // клеток — автор сообщил именно это: тап в 6 клетках от замка/рудника всё
-  // равно выбирал их, а не то, что под пальцем. Убрано целиком — радиус
-  // хитбокса теперь равен именно масштабу модели (scale), без запаса и без
-  // зависимости от дистанции камеры: как видно на экране, так и кликается.
-  const MARCH_HIT_WORLD_RADIUS = 3;
+  // Прежняя (первая) версия минимального радиуса хитбокса (46px, переводился
+  // в мировые единицы через дистанцию камеры) росла линейно с расстоянием
+  // БЕЗ верхнего предела — на большом мире раздувалась в несколько мировых
+  // клеток (репорт автора: тап в 6 клетках от замка всё равно выбирал его).
+  // Убрана была целиком тогда, но сейчас минимальная мишень нужна снова —
+  // TAP_MIN_RADIUS_PX ниже, только это ФИКСИРОВАННЫЙ потолок в пикселях
+  // (страховка для мелкого/далёкого объекта), не растущий с расстоянием —
+  // тот же класс защиты, без того бага.
+  const TAP_MIN_RADIUS_PX = 26;
+  const MARCH_HIT_WORLD_RADIUS = 3; // условный "радиус" маркера похода — тот же смысл, что и scale у сущности, для перевода в пиксели
+  const OCCLUSION_MARGIN = 5; // мировых юнитов — см. комментарий у "Окклюзия рельефом" выше
   type TapHit =
     | { kind: "entity"; eid: number; t: number }
     | { kind: "march"; march: LiveMarchPos; t: number }
     | { kind: "ground"; x: number; z: number; t: number };
+  // sx/sy — экранные пиксели в ТОМ ЖЕ пространстве, что и px/py аргументов
+  // findTapTarget (device-пиксели канвы, canvas.width/height — см. вызов
+  // ниже, controls.onTap уже переводит clientX/Y в эти координаты), не
+  // canvas.clientWidth/Height (CSS-пиксели), которыми пользуются подписи/
+  // isModelOnScreen — разные потребители, разное пространство, смешивать
+  // нельзя.
+  function projectToScreen(world: Vec3): { sx: number; sy: number; w: number } | null {
+    const clip = transformPoint(currentVP, world);
+    if (clip.w <= 0.001) return null; // за спиной камеры
+    return {
+      sx: (clip.x / clip.w * 0.5 + 0.5) * canvas.width,
+      sy: (1 - (clip.y / clip.w * 0.5 + 0.5)) * canvas.height,
+      w: clip.w,
+    };
+  }
   function findTapTarget(px: number, py: number): TapHit | null {
-    const { origin, dir } = pixelRay(px, py);
-    let best: TapHit | null = null;
-    let bestT = Infinity;
+    const focalY = 0.5 * canvas.height / Math.tan(CAM_FOVY / 2);
+    let best: { kind: "entity" | "march"; eid?: number; march?: LiveMarchPos; distToCam: number } | null = null;
+    let bestDist2 = Infinity;
     for (const eid of found) {
       const wx = Position.x[eid], wz = Position.y[eid];
       const scale = modelScaleOf.get(eid) ?? 5;
-      const center: Vec3 = [wx, heightAt(wx, wz) * HMAX + scale * 0.5, wz];
-      const t = raySphereT(origin, dir, center, scale);
-      if (t !== null && t < bestT) { bestT = t; best = { kind: "entity", eid, t }; }
+      const groundY = groundYOf.get(eid) ?? heightAt(wx, wz) * HMAX;
+      const world: Vec3 = [wx, groundY + scale * 0.5, wz];
+      const proj = projectToScreen(world);
+      if (!proj) continue;
+      // Аналитический экранный радиус — тот же вывод (focalY*scale/depth),
+      // что уже проверен в isModelOnScreen выше, плюс фиксированный минимум
+      // на мелкие/далёкие модели (см. TAP_MIN_RADIUS_PX).
+      const radiusPx = Math.max(TAP_MIN_RADIUS_PX, (focalY * scale) / proj.w);
+      const dx = px - proj.sx, dy = py - proj.sy;
+      const dist2 = dx * dx + dy * dy;
+      if (dist2 > radiusPx * radiusPx || dist2 >= bestDist2) continue;
+      bestDist2 = dist2;
+      const distToCam = Math.hypot(wx - currentEye[0], world[1] - currentEye[1], wz - currentEye[2]);
+      best = { kind: "entity", eid, distToCam };
     }
     for (const m of lastMarches) {
-      const center: Vec3 = [m.x, heightAt(m.x, m.y) * HMAX + 2.2, m.y];
-      const t = raySphereT(origin, dir, center, MARCH_HIT_WORLD_RADIUS);
-      if (t !== null && t < bestT) { bestT = t; best = { kind: "march", march: m, t }; }
+      const world: Vec3 = [m.x, heightAt(m.x, m.y) * HMAX + 2.2, m.y];
+      const proj = projectToScreen(world);
+      if (!proj) continue;
+      const radiusPx = Math.max(TAP_MIN_RADIUS_PX, (focalY * MARCH_HIT_WORLD_RADIUS) / proj.w);
+      const dx = px - proj.sx, dy = py - proj.sy;
+      const dist2 = dx * dx + dy * dy;
+      if (dist2 > radiusPx * radiusPx || dist2 >= bestDist2) continue;
+      bestDist2 = dist2;
+      const distToCam = Math.hypot(m.x - currentEye[0], world[1] - currentEye[1], m.y - currentEye[2]);
+      best = { kind: "march", march: m, distToCam };
     }
+    const { origin, dir } = pixelRay(px, py);
     const ground = groundRayT(origin, dir);
-    if (ground !== null && ground.t < bestT) {
-      best = { kind: "ground", x: ground.x, z: ground.z, t: ground.t };
-      bestT = ground.t;
+    if (best) {
+      // Окклюзия рельефом (см. комментарий выше) — если земля вдоль ЭТОГО ЖЕ
+      // луча стоит явно ближе камеры, чем найденная иконка, гора/холм
+      // закрывает её собой, и тап должен уйти земле, а не сквозь неё.
+      const occluded = ground !== null && ground.t + OCCLUSION_MARGIN < best.distToCam;
+      if (!occluded) {
+        return best.kind === "entity" ? { kind: "entity", eid: best.eid!, t: best.distToCam } : { kind: "march", march: best.march!, t: best.distToCam };
+      }
     }
-    return best;
+    if (ground !== null) return { kind: "ground", x: ground.x, z: ground.z, t: ground.t };
+    return null;
   }
   // Тап определяет camera.ts (короткое почти-неподвижное касание, тот же
   // приём, что и tryTap()/lift() в прошлом прототипе) — не родной "click":
