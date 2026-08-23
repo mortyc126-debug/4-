@@ -1113,6 +1113,15 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     // Переиспользуемый CPU-side буфер инстансов (см. writeDecorInstances) —
     // растёт вместе с instCapacity, не выделяется заново под ту же ёмкость.
     scratch: Float32Array | null;
+    // shadowInst* — отдельный, МЕНЬШИЙ инстанс-буфер для теневого прохода
+    // (см. rebuildDecorShadowSubset ниже): основной instBuf несёт ВЕСЬ
+    // загруженный декор вокруг камеры (радиус выгрузки near-чанков, обычно
+    // заметно шире окна тени SHADOW_EXTENT), а тень реально нужна только
+    // траве/кустам/деревьям ВНУТРИ этого узкого окна вокруг цели солнца —
+    // без отдельного буфера теневой проход гонял бы вершинный шейдер по
+    // декору, который заведомо не попадает в карту теней вообще.
+    shadowInstBuf: GPUBuffer | null; shadowInstCapacity: number; shadowInstanceCount: number;
+    shadowScratch: Float32Array | null;
   }
   // Текстуры декора (см. textures/decor/*, сгенерированы нейросетью по
   // промптам этой сессии) — уникальных файлов меньше, чем видов (bark.png
@@ -1228,7 +1237,10 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
         { binding: 2, resource: decorTextures[spec.canopy].createView() },
       ],
     });
-    decorKinds.set(kind, { mesh, localBuf: uploadDecorMesh(mesh), instBuf: null, instCapacity: 0, instanceCount: 0, bindGroup, shadowBindGroup, scratch: null });
+    decorKinds.set(kind, {
+      mesh, localBuf: uploadDecorMesh(mesh), instBuf: null, instCapacity: 0, instanceCount: 0, bindGroup, shadowBindGroup, scratch: null,
+      shadowInstBuf: null, shadowInstCapacity: 0, shadowInstanceCount: 0, shadowScratch: null,
+    });
   }
 
   // ---- глубина ----
@@ -1306,6 +1318,45 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
       data[o + 6] = e.color[2];
     });
     device.queue.writeBuffer(instBuf, 0, data, 0, instanceCount * INST_STRIDE_FLOATS);
+  }
+
+  // Фильтрует УЖЕ ЗАПИСАННЫЙ state.scratch (x,z — первые три флоата
+  // каждого инстанса, см. writeDecorInstances ниже) в отдельный, меньший
+  // буфер — только то, что реально попадает в окно теневой камеры
+  // (targetX/Z ± SHADOW_EXTENT, тот же квадрат, что и ortho() в
+  // setSunTarget выше). Зовётся из frame() ниже РОВНО тогда же, когда сам
+  // теневой проход решает перерисоваться (shadowDirty) — не на каждый
+  // writeDecorInstances, иначе фильтровали бы декор, для которого тень
+  // ещё даже не запрошена в этом кадре.
+  function rebuildDecorShadowSubset(state: DecorKindState, targetX: number, targetZ: number): void {
+    const src = state.scratch;
+    if (!src || state.instanceCount === 0) { state.shadowInstanceCount = 0; return; }
+    const minX = targetX - SHADOW_EXTENT, maxX = targetX + SHADOW_EXTENT;
+    const minZ = targetZ - SHADOW_EXTENT, maxZ = targetZ + SHADOW_EXTENT;
+    // Верхняя оценка ёмкости — весь исходный набор (запас, не точный
+    // подсчёт заранее: считать дважды дороже, чем взять с запасом один раз).
+    if (state.instanceCount > state.shadowInstCapacity) {
+      state.shadowInstBuf?.destroy();
+      state.shadowInstCapacity = Math.max(state.instanceCount, 8);
+      state.shadowInstBuf = device.createBuffer({
+        size: state.shadowInstCapacity * DECOR_INST_STRIDE_FLOATS * 4,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      });
+      state.shadowScratch = new Float32Array(state.shadowInstCapacity * DECOR_INST_STRIDE_FLOATS);
+    }
+    const dst = state.shadowScratch!;
+    let n = 0;
+    for (let i = 0; i < state.instanceCount; i++) {
+      const o = i * DECOR_INST_STRIDE_FLOATS;
+      const x = src[o], z = src[o + 2];
+      if (x < minX || x > maxX || z < minZ || z > maxZ) continue;
+      dst.set(src.subarray(o, o + DECOR_INST_STRIDE_FLOATS), n * DECOR_INST_STRIDE_FLOATS);
+      n++;
+    }
+    state.shadowInstanceCount = n;
+    if (n > 0 && state.shadowInstBuf) {
+      device.queue.writeBuffer(state.shadowInstBuf, 0, dst, 0, n * DECOR_INST_STRIDE_FLOATS);
+    }
   }
 
   // Раньше выделял свежий Float32Array НА КАЖДЫЙ вызов — setDecor (см. ниже)
@@ -1412,16 +1463,27 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
         shadowPass.setVertexBuffer(0, mergedTiers.near.buf);
         shadowPass.draw(mergedTiers.near.vertexCount);
       }
+      // Декор, в отличие от near-рельефа выше, грузится радиусом ВЫГРУЗКИ
+      // ближних чанков (main.ts, UNLOAD_RADIUS×CHUNK_SIZE) — заметно шире
+      // самого окна тени (SHADOW_EXTENT). rebuildDecorShadowSubset (см. её
+      // комментарий выше) отфильтровывает из уже загруженного instBuf
+      // только то, что реально попадает в это окно — трава/куст/дерево за
+      // его пределами раньше всё равно гоняли вершинный шейдер теневого
+      // прохода впустую, тень с них физически не видна.
       let anyDecorShadow = false;
-      for (const state of decorKinds.values()) if (state.instanceCount > 0) { anyDecorShadow = true; break; }
+      for (const state of decorKinds.values()) {
+        if (state.instanceCount === 0) { state.shadowInstanceCount = 0; continue; }
+        rebuildDecorShadowSubset(state, lastShadowX, lastShadowZ);
+        if (state.shadowInstanceCount > 0) anyDecorShadow = true;
+      }
       if (anyDecorShadow) {
         shadowPass.setPipeline(decorShadowPipeline);
         for (const state of decorKinds.values()) {
-          if (state.instanceCount === 0 || !state.instBuf) continue;
+          if (state.shadowInstanceCount === 0 || !state.shadowInstBuf) continue;
           shadowPass.setBindGroup(0, state.shadowBindGroup);
           shadowPass.setVertexBuffer(0, state.localBuf);
-          shadowPass.setVertexBuffer(1, state.instBuf);
-          shadowPass.draw(state.mesh.vertexCount, state.instanceCount);
+          shadowPass.setVertexBuffer(1, state.shadowInstBuf);
+          shadowPass.draw(state.mesh.vertexCount, state.shadowInstanceCount);
         }
       }
       shadowPass.end();
