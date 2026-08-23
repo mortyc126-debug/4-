@@ -13,7 +13,7 @@ import { buildTerrainPatch } from "./terrainMesh";
 import { heightAt, HMAX, hash2, noise, isWater, SEED, registerFlattenSite, WORLD_HALF_X, WORLD_HALF_Z, forestMaskAt, loadHeightmapData, HEIGHTMAP_VERSION } from "./terrain";
 import { PINE, LEAF, GRASS_TONES, BUSH_TONES, ROCK_TONES } from "./decorMesh";
 import { mul, persp, look, modelMatrix, transformPoint, sub, cross, norm, type Vec3, type Mat4 } from "./mat4";
-import { attachOrbitControls, type OrbitCamera } from "./camera";
+import { attachOrbitControls, type OrbitCamera, MAX_DIST } from "./camera";
 import { loadGLB } from "./glb";
 import { uploadGLB, createModelPipeline, type GpuModel, type ModelInstance } from "./modelRenderer";
 import { loadRealEntities, getOwnCityPos, type RealEntity } from "./realData";
@@ -1288,6 +1288,25 @@ async function main() {
   // heightAt(), затем бисекция на найденном отрезке для точности — тот же
   // общий приём, что и везде в этом проекте для heightfield-рейкастов.
   const CAM_FOVY = 0.72;
+  // Дальняя плоскость персп.-проекции — автор с устройства: "мерцает,
+  // будто шейдеры дерутся" при приближении/отдалении. Один из настоящих
+  // источников (не единственный, см. isModelOnScreen выше — но этот,
+  // в отличие от того, не флюктуация, а честный жёсткий обрыв): загрузка
+  // сущностей/рельефа (ENTITY_RADIUS ниже) считается от ЦЕЛИ камеры, а
+  // дальняя плоскость до сих пор была фиксированным числом (300),
+  // измеряемым от ГЛАЗА камеры — а глаз может стоять на MAX_DIST (camera.ts,
+  // до 140 юнитов) в СТОРОНУ от цели. На сильном отдалении и невыгодном угле
+  // сущность на самом краю ENTITY_RADIUS могла оказаться на глаз-дистанции
+  // ДО (ENTITY_RADIUS+MAX_DIST) — честно "загруженная", прошедшая отсечение
+  // по экрану (isModelOnScreen — та проверяет только x/y на канве, не
+  // глубину!), но GPU молча срезал её собственной жёсткой far-плоскостью:
+  // один механизм говорит "рисуй", другой аппаратно обрывает — ровно тот
+  // "конфликт систем видимости", о котором сообщил автор. CAM_FAR теперь
+  // выведена из тех же чисел, что определяют загрузку (ENTITY_RADIUS,
+  // MAX_DIST), плюс запас — вместо самостоятельного магического числа,
+  // рискующего снова разойтись с ними при следующей правке радиусов.
+  const CAM_FAR_MARGIN = 60;
+  const CAM_FAR = ENTITY_RADIUS + MAX_DIST + CAM_FAR_MARGIN;
   // Запас над рельефом для eye (см. draw()) — не 0: даже вплотную к
   // поверхности ближняя плоскость (persp(...,0.5,...) — near=0.5) успевает
   // резать землю на неровностях в паре мировых единиц перед камерой.
@@ -1773,11 +1792,34 @@ async function main() {
   // только если спроецированный круг задевает видимый прямоугольник канвы.
   // groundYOf — см. её комментарий у объявления (кэш высоты земли, чтобы
   // не гонять heightAt() по всем найденным сущностям ещё и здесь).
+  // NEAR_SAFE_DIST — автор с устройства: "странно отрисовываются объекты,
+  // когда приближаюсь и отдаляюсь" — то самое численное разъезжание,
+  // которое уже один раз ловили в этом же файле, только для тапа (см.
+  // историю pixelRay/findTapTarget: "если пробная точка попадала БЛИЗКО к
+  // плоскости камеры, перспективное деление могло взорвать экранные
+  // координаты"). Здесь ровно та же болезнь: sx/sy ниже делят на clip.w, а
+  // у здания, оказавшегося близко к камере (и особенно СБОКУ, не прямо по
+  // курсу — малая глубина вдоль взгляда при заметном боковом смещении),
+  // clip.w может стать маленьким, и результат деления начинает дёргаться
+  // от исчезающе малого сдвига камеры между кадрами — здание то попадает в
+  // отсечение, то нет, кадр от кадра, что и читается как "странно
+  // отрисовывается". Чиним тем же способом, что и там: не доверяем
+  // делению вблизи камеры вовсе — если объект ближе NEAR_SAFE_DIST от
+  // глаза (честная евклидова дистанция, без деления, численно устойчива
+  // всегда), считаем его видимым безусловно, не пытаясь спроецировать.
+  // Экономия на отсечении всё равно не про такие близкие объекты — их в
+  // кадре одновременно немного, играть с их отрисовкой рискованно, а не
+  // рисовать в упор стоящее здание — куда более заметный дефект, чем
+  // лишний draw call на пару объектов рядом с камерой.
+  const NEAR_SAFE_DIST = 60;
   function isModelOnScreen(eid: number, vp: Mat4, cw: number, ch: number, focalY: number): boolean {
     const wx = Position.x[eid], wz = Position.y[eid];
     const scale = modelScaleOf.get(eid) ?? 5;
     const groundY = groundYOf.get(eid) ?? 0;
-    const clip = transformPoint(vp, [wx, groundY + scale * 0.6, wz]);
+    const anchorY = groundY + scale * 0.6;
+    const edx = wx - currentEye[0], edy = anchorY - currentEye[1], edz = wz - currentEye[2];
+    if (edx * edx + edy * edy + edz * edz < NEAR_SAFE_DIST * NEAR_SAFE_DIST) return true;
+    const clip = transformPoint(vp, [wx, anchorY, wz]);
     if (clip.w <= 0.001) return false; // за спиной камеры
     const sx = (clip.x / clip.w * 0.5 + 0.5) * cw;
     const sy = (1 - (clip.y / clip.w * 0.5 + 0.5)) * ch;
@@ -1845,7 +1887,7 @@ async function main() {
     const eyeFloor = heightAt(eye[0], eye[2]) * HMAX + EYE_GROUND_CLEARANCE;
     if (eye[1] < eyeFloor) eye[1] = eyeFloor;
     const aspect = canvas.width / Math.max(1, canvas.height);
-    const vp = mul(persp(CAM_FOVY, aspect, 0.5, 300), look(eye, cam.target, [0, 1, 0]));
+    const vp = mul(persp(CAM_FOVY, aspect, 0.5, CAM_FAR), look(eye, cam.target, [0, 1, 0]));
     currentVP = vp;
     currentEye = eye;
     renderer.setVP(vp);
