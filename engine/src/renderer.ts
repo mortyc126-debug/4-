@@ -947,11 +947,26 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     if (key === "world-backdrop") return "backdrop";
     return key.startsWith("far:") ? "far" : "near";
   }
-  interface MergedTier { buf: GPUBuffer | null; capacityFloats: number; vertexCount: number; dirty: boolean; lastRebuildMs: number }
+  // scratch — CPU-side Float32Array, ПЕРЕИСПОЛЬЗУЕМЫЙ между пересборками
+  // (растёт вместе с capacityFloats, как и buf, но никогда не выделяется
+  // заново под ту же ёмкость) — раньше rebuildMergedTier() выделял свежий
+  // `new Float32Array(floatsNeeded)` при КАЖДОЙ пересборке; для дальнего
+  // кольца это могло быть ~11МБ на одну пересборку, не чаще раза в 120мс
+  // (см. MERGE_THROTTLE_MS ниже), но при непрерывном движении камеры —
+  // именно так часто. Повторные крупные выделения — прямой путь к паузам
+  // сборщика мусора на мобильных браузерах, которые на глаз читаются не
+  // как ровное падение FPS, а как рывки/подвисания через более-менее
+  // равные промежутки — ровно то, что автор описал ПОСЛЕ уже введённого
+  // троттлинга ("лаги слабее, но не исчезли"): троттлинг снизил ЧАСТОТУ
+  // пересборок, но каждая отдельная пересборка всё ещё выделяла память
+  // заново. Теперь выделяется один раз на новый максимум ёмкости и просто
+  // перезаписывается на каждой следующей пересборке — ни одного лишнего
+  // выделения в устоявшемся режиме (ёмкость растёт, но не уменьшается).
+  interface MergedTier { buf: GPUBuffer | null; scratch: Float32Array | null; capacityFloats: number; vertexCount: number; dirty: boolean; lastRebuildMs: number }
   const mergedTiers: Record<TerrainTier, MergedTier> = {
-    near: { buf: null, capacityFloats: 0, vertexCount: 0, dirty: false, lastRebuildMs: -Infinity },
-    far: { buf: null, capacityFloats: 0, vertexCount: 0, dirty: false, lastRebuildMs: -Infinity },
-    backdrop: { buf: null, capacityFloats: 0, vertexCount: 0, dirty: false, lastRebuildMs: -Infinity },
+    near: { buf: null, scratch: null, capacityFloats: 0, vertexCount: 0, dirty: false, lastRebuildMs: -Infinity },
+    far: { buf: null, scratch: null, capacityFloats: 0, vertexCount: 0, dirty: false, lastRebuildMs: -Infinity },
+    backdrop: { buf: null, scratch: null, capacityFloats: 0, vertexCount: 0, dirty: false, lastRebuildMs: -Infinity },
   };
   // Не чаще раза в этот промежуток — при непрерывном перелёте (главным
   // образом дальнее кольцо, см. main.ts FAR_*) дырявый чанк на границе
@@ -980,16 +995,22 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
       merged.buf?.destroy();
       merged.capacityFloats = Math.max(floatsNeeded, 4);
       merged.buf = device.createBuffer({ size: merged.capacityFloats * 4, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+      merged.scratch = new Float32Array(merged.capacityFloats); // см. её комментарий выше — растёт вместе с buf, не выделяется заново под ту же ёмкость
     }
     if (totalVerts > 0) {
-      const combined = new Float32Array(floatsNeeded);
+      const combined = merged.scratch!;
       let offset = 0;
       for (const [key, chunk] of terrainChunks) {
         if (tierOf(key) !== tier) continue;
         combined.set(chunk.data, offset);
         offset += chunk.data.length;
       }
-      device.queue.writeBuffer(merged.buf, 0, combined);
+      // Явная длина (floatsNeeded, не combined.length) — scratch мог
+      // остаться от прошлой, более крупной пересборки того же слоя
+      // (ёмкость только растёт), хвост за floatsNeeded — не наш мусор,
+      // писать его на GPU незачем (draw() ниже и так не читает дальше
+      // vertexCount, но лишние байты в writeBuffer — лишнее время).
+      device.queue.writeBuffer(merged.buf, 0, combined, 0, floatsNeeded);
     }
     merged.vertexCount = totalVerts;
     merged.dirty = false;
@@ -1032,6 +1053,7 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     ],
   });
   let instBuf: GPUBuffer | null = null;
+  let instScratch: Float32Array | null = null; // переиспользуемый — см. её же приём у mergedTiers/decorKinds
   let instCapacity = 0;
   let instanceCount = 0;
 
@@ -1065,6 +1087,9 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   interface DecorKindState {
     mesh: DecorMesh; localBuf: GPUBuffer; instBuf: GPUBuffer | null; instCapacity: number; instanceCount: number;
     bindGroup: GPUBindGroup; shadowBindGroup: GPUBindGroup;
+    // Переиспользуемый CPU-side буфер инстансов (см. writeDecorInstances) —
+    // растёт вместе с instCapacity, не выделяется заново под ту же ёмкость.
+    scratch: Float32Array | null;
   }
   // Текстуры декора (см. textures/decor/*, сгенерированы нейросетью по
   // промптам этой сессии) — уникальных файлов меньше, чем видов (bark.png
@@ -1180,7 +1205,7 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
         { binding: 2, resource: decorTextures[spec.canopy].createView() },
       ],
     });
-    decorKinds.set(kind, { mesh, localBuf: uploadDecorMesh(mesh), instBuf: null, instCapacity: 0, instanceCount: 0, bindGroup, shadowBindGroup });
+    decorKinds.set(kind, { mesh, localBuf: uploadDecorMesh(mesh), instBuf: null, instCapacity: 0, instanceCount: 0, bindGroup, shadowBindGroup, scratch: null });
   }
 
   // ---- глубина ----
@@ -1229,7 +1254,17 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
 
   function setMarkers(entities: MarkerEntity[]) {
     instanceCount = entities.length;
-    const data = new Float32Array(instanceCount * INST_STRIDE_FLOATS);
+    if (instanceCount > instCapacity) {
+      instBuf?.destroy();
+      instCapacity = Math.max(instanceCount, 8);
+      instBuf = device.createBuffer({
+        size: instCapacity * INST_STRIDE_FLOATS * 4,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      });
+      instScratch = new Float32Array(instCapacity * INST_STRIDE_FLOATS);
+    }
+    if (instanceCount === 0 || !instBuf) return;
+    const data = instScratch!;
     entities.forEach((e, i) => {
       const o = i * INST_STRIDE_FLOATS;
       data[o] = e.x;
@@ -1240,28 +1275,19 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
       data[o + 5] = e.color[1];
       data[o + 6] = e.color[2];
     });
-    if (instanceCount > instCapacity) {
-      instBuf?.destroy();
-      instCapacity = Math.max(instanceCount, 8);
-      instBuf = device.createBuffer({
-        size: instCapacity * INST_STRIDE_FLOATS * 4,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-      });
-    }
-    if (instBuf && data.byteLength > 0) device.queue.writeBuffer(instBuf, 0, data);
+    device.queue.writeBuffer(instBuf, 0, data, 0, instanceCount * INST_STRIDE_FLOATS);
   }
 
+  // Раньше выделял свежий Float32Array НА КАЖДЫЙ вызов — setDecor (см. ниже)
+  // зовётся из main.ts (refreshDecor) при каждом изменении набора ближних
+  // чанков, то есть регулярно при движении камеры, не изредка. Повторные
+  // крупные выделения — та же причина рывков/подвисаний на мобильных
+  // браузерах (сборщик мусора), что чинили у террейна выше (mergedTiers) —
+  // автор с устройства: "лаги стали слабее, но не исчезли" ровно после
+  // того фикса, декор — второй, не менее вероятный источник того же рода
+  // рывков. state.scratch переиспользуется тем же приёмом.
   function writeDecorInstances(entities: DecorEntity[], state: DecorKindState) {
     const count = entities.length;
-    const data = new Float32Array(count * DECOR_INST_STRIDE_FLOATS);
-    entities.forEach((e, i) => {
-      const o = i * DECOR_INST_STRIDE_FLOATS;
-      data[o] = e.x; data[o + 1] = e.y; data[o + 2] = e.z;
-      data[o + 3] = e.scale[0]; data[o + 4] = e.scale[1]; data[o + 5] = e.scale[2];
-      data[o + 6] = e.yaw;
-      data[o + 7] = e.color[0]; data[o + 8] = e.color[1]; data[o + 9] = e.color[2];
-    });
-    state.instanceCount = count;
     if (count > state.instCapacity) {
       state.instBuf?.destroy();
       state.instCapacity = Math.max(count, 8);
@@ -1269,13 +1295,34 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
         size: state.instCapacity * DECOR_INST_STRIDE_FLOATS * 4,
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
       });
+      state.scratch = new Float32Array(state.instCapacity * DECOR_INST_STRIDE_FLOATS);
     }
-    if (state.instBuf && data.byteLength > 0) device.queue.writeBuffer(state.instBuf, 0, data);
+    state.instanceCount = count;
+    if (count === 0 || !state.instBuf) return;
+    const data = state.scratch!;
+    entities.forEach((e, i) => {
+      const o = i * DECOR_INST_STRIDE_FLOATS;
+      data[o] = e.x; data[o + 1] = e.y; data[o + 2] = e.z;
+      data[o + 3] = e.scale[0]; data[o + 4] = e.scale[1]; data[o + 5] = e.scale[2];
+      data[o + 6] = e.yaw;
+      data[o + 7] = e.color[0]; data[o + 8] = e.color[1]; data[o + 9] = e.color[2];
+    });
+    device.queue.writeBuffer(state.instBuf, 0, data, 0, count * DECOR_INST_STRIDE_FLOATS);
   }
 
   function setDecor(entities: DecorEntity[]) {
+    // Раньше — по одному ПОЛНОМУ entities.filter(e=>e.kind===kind) на
+    // каждый из ~9 видов декора (ель/сосна/дуб/сухостой/куст/трава/камень/
+    // ...) — O(9n) проходов по всему списку вместо одного. Одна группировка
+    // по виду за один проход, дальше каждый вид пишет уже готовый кусок.
+    const byKind = new Map<DecorEntity["kind"], DecorEntity[]>();
+    for (const e of entities) {
+      let bucket = byKind.get(e.kind);
+      if (!bucket) { bucket = []; byKind.set(e.kind, bucket); }
+      bucket.push(e);
+    }
     for (const [kind, state] of decorKinds) {
-      writeDecorInstances(entities.filter((e) => e.kind === kind), state);
+      writeDecorInstances(byKind.get(kind) ?? [], state);
     }
   }
 
