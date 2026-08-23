@@ -6113,7 +6113,7 @@ function menuBadges(){
     if(!mpState.joined || !mpState.player) return { mail:0, gen:0, inv:0, army:0 };
     const st=mpState.player.state;
     return {
-      mail: mpState.incoming.length,
+      mail: mpUnreadMailCount(),
       gen:  (st.gen&&st.gen.pts)||0,
       inv:  0,
       army: 0,
@@ -13659,6 +13659,24 @@ function mpMailMarkRead(id){
   if(mpMailReadIds.has(id)) return;
   mpMailReadIds.add(id);
   try{ localStorage.setItem(MP_MAIL_READ_KEY, JSON.stringify([...mpMailReadIds])); }catch(e){}
+}
+// Сумма непрочитанных писем общего мира по всем источникам сразу — те же
+// категории, что реально показывает сама вкладка "Почта" (см.
+// mpMailReportEntries/mpMailPersonalEntries/mpMailSystemEntries выше по
+// файлу): report (mail/scoutMail/raidMail/nodeBattleMail/gatherMail),
+// personal (noteMail + pmMail входящие), system (siegeMail). "Отправленные"
+// (pmMail role:"sender") сознательно не считаются — это наши же исходящие
+// письма, уведомлять о них нечего (см. menuBadges() — раньше там вместо
+// почты ошибочно читался mpState.incoming, счётчик ЧУЖИХ походов на нас, а
+// не непрочитанной почты, поэтому значок никогда не загорался ни от ответов
+// по сбору, ни от чего-либо ещё в почте).
+function mpUnreadMailCount(){
+  const unread=m=>!mpMailReadIds.has(m.id);
+  return mpState.mail.filter(unread).length + mpState.scoutMail.filter(unread).length +
+    mpState.raidMail.filter(unread).length + mpState.nodeBattleMail.filter(unread).length +
+    mpState.gatherMail.filter(unread).length + mpState.noteMail.filter(unread).length +
+    mpState.siegeMail.filter(unread).length +
+    mpState.pmMail.filter(m=>m.data.role==="recipient"&&unread(m)).length;
 }
 
 // mailAgo() (одиночка) принимает эпоху в мс (W.mail хранит m.t числом);
