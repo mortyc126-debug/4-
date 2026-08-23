@@ -748,12 +748,35 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   // чанков в тени (см. frame()) — теперь тень рисует только слитный near-
   // буфер целиком, без отсечения (см. её комментарий там), и это состояние
   // больше никем не читается — x/z нужны только тут же, для eye/view ниже.
+  //
+  // shadowDirty — setSunTarget() зовётся main.ts:draw() КАЖДЫЙ кадр
+  // (60/с), и раньше это означало полный теневой ПРОХОД (весь near-буфер
+  // рельефа + весь декор) КАЖДЫЙ кадр безусловно — даже когда камера
+  // вообще не двигалась (пока не тронул экран, автооблёт крутит только
+  // yaw вокруг НЕПОДВИЖНОЙ cam.target — сюда тень заглядывает по target,
+  // не по yaw) и геометрия под тенью не менялась ни на пиксель. Теневая
+  // карта в такие кадры получалась БИТ В БИТ той же, что и в прошлом —
+  // чистый повторный расход GPU. Теперь настоящий теневой ПРОХОД (см.
+  // frame() ниже) выполняется только когда реально есть что менять:
+  // цель сдвинулась заметнее SHADOW_TARGET_EPS, или геометрия под тенью
+  // изменилась (near-чанк рельефа/декор — см. setTerrainChunk/
+  // removeTerrainChunk/setDecor ниже, они сами поднимают этот флаг).
+  // lightVP/lightBuf пересчитываются РОВНО в тех же случаях, что и сам
+  // проход — иначе основной проход сэмплировал бы тень новой матрицей по
+  // ещё старой текстуре (рассинхрон, видимый как смещённые тени).
+  let shadowDirty = true;
+  let lastShadowX = Infinity, lastShadowZ = Infinity;
+  const SHADOW_TARGET_EPS = 1.5; // мировых юнита — примерно "заметно для тени при SHADOW_EXTENT=60"
   function setSunTarget(x: number, z: number) {
+    const dx = x - lastShadowX, dz = z - lastShadowZ;
+    if (!shadowDirty && dx * dx + dz * dz < SHADOW_TARGET_EPS * SHADOW_TARGET_EPS) return;
+    lastShadowX = x; lastShadowZ = z;
     const eye: Vec3 = [x + SUN_DIR[0] * SHADOW_DIST, SUN_DIR[1] * SHADOW_DIST, z + SUN_DIR[2] * SHADOW_DIST];
     const view = look(eye, [x, 0, z], [0, 1, 0]);
     const proj = ortho(-SHADOW_EXTENT, SHADOW_EXTENT, -SHADOW_EXTENT, SHADOW_EXTENT, SHADOW_NEAR, SHADOW_FAR);
     lightVP = mul(proj, view);
     device.queue.writeBuffer(lightBuf, 0, lightVP);
+    shadowDirty = true;
   }
 
   // ---- рельеф ----
@@ -1243,13 +1266,20 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
       interleaved[i * 15 + 14] = mesh.moistureFracs[i];
     }
     terrainChunks.set(key, { data: interleaved, vertexCount: mesh.vertexCount, minX, maxX, minZ, maxZ });
-    mergedTiers[tierOf(key)].dirty = true;
+    const tier = tierOf(key);
+    mergedTiers[tier].dirty = true;
+    // Тень рисует только near (см. её комментарий у frame() ниже) — только
+    // изменение near-тира обязано пересобрать теневой проход; far/backdrop
+    // тень не бросают вовсе, их стриминг не должен зря его дёргать.
+    if (tier === "near") shadowDirty = true;
   }
 
   function removeTerrainChunk(key: string) {
     if (!terrainChunks.has(key)) return;
     terrainChunks.delete(key);
-    mergedTiers[tierOf(key)].dirty = true;
+    const tier = tierOf(key);
+    mergedTiers[tier].dirty = true;
+    if (tier === "near") shadowDirty = true;
   }
 
   function setMarkers(entities: MarkerEntity[]) {
@@ -1324,6 +1354,7 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     for (const [kind, state] of decorKinds) {
       writeDecorInstances(byKind.get(kind) ?? [], state);
     }
+    shadowDirty = true; // декор тоже бросает тень (decorShadowPipeline, см. frame()) — тронули состав, тень надо пересобрать
   }
 
   function setVP(vp: Float32Array) {
@@ -1361,7 +1392,16 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     // ВСЕГДА проходил AABB-проверку (его bbox — весь мир, тривиально
     // перекрывает любое окно внутри) и рисовался в тень целиком каждый
     // кадр — чистый расход впустую, теперь исключён явно.
-    {
+    //
+    // shadowDirty (см. её комментарий у setSunTarget выше) — тот же весь
+    // проход (near-буфер + весь декор) раньше выполнялся КАЖДЫЙ кадр
+    // безусловно, даже когда камера стоит на месте (автооблёт крутит
+    // только yaw, cam.target неподвижен) и геометрия под тенью не менялась
+    // ни на пиксель — теневая карта получалась бит в бит той же, что и в
+    // прошлый кадр. Теперь проход пропускается целиком, пока флаг не
+    // поднят — setSunTarget/setTerrainChunk(near)/setDecor поднимают его
+    // сами, когда реально есть что перерисовывать.
+    if (shadowDirty) {
       const shadowPass = encoder.beginRenderPass({
         colorAttachments: [],
         depthStencilAttachment: { view: shadowView, depthClearValue: 1.0, depthLoadOp: "clear", depthStoreOp: "store" },
@@ -1385,6 +1425,13 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
         }
       }
       shadowPass.end();
+      // Сбрасываем флаг, только если near-тир СЕЙЧАС точно свежий — если
+      // rebuildMergedTier чуть выше сам пропустил пересборку из-за своего
+      // троттла (MERGE_THROTTLE_MS), мы только что нарисовали тень по ещё
+      // старому буферу; оставляем shadowDirty поднятым, чтобы в один из
+      // ближайших кадров, когда near-тир наконец пересоберётся, тень
+      // подтянулась следом, а не осталась немного отстающей навсегда.
+      if (!mergedTiers.near.dirty) shadowDirty = false;
     }
 
     const view = ctx.getCurrentTexture().createView();
