@@ -1935,6 +1935,9 @@ async function main() {
       renderer.setSkyCamera(xAxis, yAxis, zAxis, Math.tan(CAM_FOVY / 2), aspect, tMs / 1000);
     }
     modelPipeline.setFog(eye, FOG_COLOR, FOG_K);
+    // Раз за кадр, не по writeBuffer'у на каждую видимую модель — см.
+    // комментарий у vpBuf/setVP в modelRenderer.ts.
+    modelPipeline.setVP(vp);
     // Выбранный поход движется — в отличие от showSelection() для
     // статичных сущностей (город/лагерь/точка), тут нельзя один раз
     // посчитать highlightMarker при тапе, он бы тут же отстал от
@@ -1961,7 +1964,7 @@ async function main() {
       for (const eid of found) {
         if (!isModelOnScreen(eid, vp, cw, ch, focalY)) continue;
         const inst = instances.get(eid);
-        if (inst) { modelPipeline.draw(pass, inst, vp); modelDrawCount++; }
+        if (inst) { modelPipeline.draw(pass, inst); modelDrawCount++; }
       }
     });
     (window as any).__modelDrawCount = modelDrawCount;
