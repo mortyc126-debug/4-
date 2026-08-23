@@ -86,31 +86,31 @@ async function fetchBinary(path: string, expectBytes: number): Promise<ArrayBuff
 
 // render.yaml кэширует /heightmap/* на неделю (Cache-Control: max-age=
 // 604800) — правильно для игрока, который заходит повторно В ТЕЧЕНИЕ этой
-// недели: не качать заново 8.6МБ каждый раз. Но имя файла постоянное
-// (elevation.bin, не хэш содержимого, как у собранного JS-бандла) — когда
-// пайплайн перезапекает данные (см. историю: фикс рек), у игрока, уже
-// заходившего в Мир на этой неделе, браузер молча отдаёт СТАРУЮ версию из
-// кэша, вообще не обращаясь к сети — 200 из диска, не 304 после проверки.
-// Реальный репорт с устройства: "русла есть, но без воды" — ровно то, что
-// давал старый баг (см. коммит про heightAtNatural), хотя фикс уже был
-// задеплоен: тестировали на том же телефоне/браузере, что грузил старые
-// данные раньше в этой же сессии. Версия в query-строке решает раз и
-// навсегда — при следующей правке пайплайна нужно только увеличить
-// HEIGHTMAP_VERSION здесь: новый URL = гарантированный промах кэша, без
-// ручной очистки у игрока, а между правками кэш по-прежнему работает.
+// недели: не качать заново 8.6МБ каждый раз. Версия сначала жила в query-
+// строке (?v=N) — не сработало: живой Render-сервис оказался настроен НЕ
+// через этот render.yaml (см. её же комментарий у buildCommand — реальный
+// деплой идёт "Empty build command; skipping build", то есть render.yaml
+// тут вообще не читается) — значит и секция headers могла не применяться,
+// а какой-то промежуточный кэш/CDN на пути мог игнорировать query-строку
+// и отдавать файл по одному только пути. Автор с устройства продолжал
+// получать старые русла даже после ?v=5 и подтверждённого деплоя нужного
+// коммита. Теперь версия — часть САМОГО ИМЕНИ файла (elevation-v6.bin, не
+// elevation.bin?v=6) — тот же приём, что и у хэшированных имён собранного
+// JS-бандла: URL, которого не существовало ДО этого пуша, физически не
+// может лежать ни в одном кэше ни на одном слое, никакая настройка
+// Cache-Control тут ничего не решает. При следующей перепечке пайплайна:
+// новый файл heightmap/elevation-vN.bin, поднять HEIGHTMAP_VERSION здесь
+// (старый файл можно оставить лежать или удалить — не критично).
 //
-// index.html теперь читает ТОТ ЖЕ elevation.bin своей копией (isRealWater,
-// см. её комментарий там) — держать HEIGHTMAP_VERSION синхронно в ОБОИХ
-// местах при каждой перепечке пайплайна, иначе одна сторона обновится
-// раньше другой и 2D/3D снова разъедутся в том, где вода.
-const HEIGHTMAP_VERSION = 5;
+// index.html читает ТОТ ЖЕ файл своей копией (isRealWater, см. её
+// комментарий там) — держать HEIGHTMAP_VERSION синхронно в ОБОИХ местах.
+const HEIGHTMAP_VERSION = 6;
 export async function loadHeightmapData(): Promise<void> {
   const cellCount = HEIGHT_W * HEIGHT_H;
-  const v = `?v=${HEIGHTMAP_VERSION}`;
   const [elevBuf, forestBuf, moistureBuf] = await Promise.all([
-    fetchBinary("/heightmap/elevation.bin" + v, cellCount * 2), // Uint16
-    fetchBinary("/heightmap/forest.bin" + v, cellCount),        // Uint8
-    fetchBinary("/heightmap/moisture.bin" + v, cellCount),      // Uint8
+    fetchBinary(`/heightmap/elevation-v${HEIGHTMAP_VERSION}.bin`, cellCount * 2), // Uint16
+    fetchBinary("/heightmap/forest.bin", cellCount),        // Uint8
+    fetchBinary("/heightmap/moisture.bin", cellCount),      // Uint8
   ]);
   elevData = new Uint16Array(elevBuf);
   forestData = new Uint8Array(forestBuf);
