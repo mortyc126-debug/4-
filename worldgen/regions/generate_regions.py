@@ -59,14 +59,23 @@ HEIGHTMAP_VERSION = 6
 N_REGIONS = 16
 SEED = 7                            # фиксирован — детерминированный результат между запусками
 LLOYD_ITERS = 10                    # релаксация зёрен по площади (шаг 2 из шапки файла)
-DOWNSAMPLE = 2                      # даунсемпл для Дейкстры (2400x1200 -> 1200x600) — MCP
-                                     # на полном разрешении не нужен: граница всё равно
-                                     # апсемплится назад nearest-neighbor, а речные русла (см.
-                                     # ниже "all()") при блочном "все под-пиксели суша" не теряются
-MOUNTAIN_COST_K = 9.0               # штраф за высоту: cost = 1 + K * (высота_над_морем)^2
+DOWNSAMPLE = 1                      # 1 = полное разрешение (2400x1200). Раньше был 2 (для скорости),
+                                     # но апсемпл nearest-neighbor давал заметную "лестницу" на
+                                     # границе при увеличении — на полном разрешении MCP по 16
+                                     # зёрнам укладывается в ~35-40с (проверено), а граница идёт
+                                     # ровно по пиксельным контурам реки/гряды, не через клетку 2x2.
+MOUNTAIN_COST_K = 7.0                # штраф за высоту: часть cost = K * (высота_над_морем)^2
+RUGGED_COST_K = 6.0                  # штраф за ИЗРЕЗАННОСТЬ рельефа (модуль градиента высоты) —
+                                     # отдельно от абсолютной высоты: резкий обрыв/гряда на
+                                     # среднем плато штрафуется так же, как настоящий пик, поэтому
+                                     # граница цепляется именно за гребень, а не просто "повыше"
 WATER_COST = 55.0                   # штраф за брод через реку/узкий залив (не абсолютный барьер —
                                      # только очень невыгодный: если региону иначе не дотянуться,
                                      # он всё равно прорастёт, просто по самому короткому броду)
+CAPITAL_COST_PERCENTILE = 60        # крепость региона ставим не в "среднюю точку" (та может
+                                     # попасть на гребень или в русло), а в ближайшую к центру
+                                     # клетку, чья cost не выше этого перцентиля по региону —
+                                     # т.е. в низину/плато рядом с центром, как и положено столице
 
 PALETTE = [
     (230, 57, 70), (69, 123, 157), (233, 196, 38), (42, 157, 143),
@@ -173,19 +182,46 @@ def equal_area_region_map(land, seeds):
     return region_map
 
 
+def terrain_cost(height, land):
+    """Стоимость прохода клетки — то, из-за чего граница вообще сама
+    находит реки и гряды (см. total_war_region_map). Два штрафа поверх
+    земли, независимых друг от друга:
+      - абсолютная высота (MOUNTAIN_COST_K) — высокое плато само по себе
+        уже дороже равнины;
+      - ИЗРЕЗАННОСТЬ (RUGGED_COST_K, модуль градиента высоты) — резкий
+        обрыв/гребень штрафуется отдельно от того, на какой они высоте:
+        без этого острая гряда посреди среднего по высоте плато никак не
+        выделялась бы как барьер, хотя армии там объективно тяжелее, чем
+        на пологом склоне той же средней высоты.
+    Вода (river/sea, height < SEA) — не 0/бесконечность, а дорогой брод
+    (WATER_COST): реально непроходимых клеток нет, просто крайне невыгодные.
+    """
+    gy, gx = np.gradient(height)
+    rugged = np.hypot(gx, gy)
+    rugged_norm = np.clip(rugged / (np.percentile(rugged[land], 95) + 1e-9), 0, 1)
+
+    t = np.clip((height - SEA) / (height.max() - SEA + 1e-9), 0, 1)
+    cost = 1.0 + MOUNTAIN_COST_K * (t ** 2) + RUGGED_COST_K * rugged_norm
+    return np.where(land, cost, WATER_COST).astype(np.float64)
+
+
 def total_war_region_map(height, land, seeds):
     """Шаг 3 из шапки файла — то, что реально просил автор: границы по
-    стоимости прохода, не по прямой площади."""
+    стоимости прохода, не по прямой площади. Возвращает и саму карту
+    региона, и cost-поле (нужно дальше для выбора места под крепость —
+    см. pick_capital_sites)."""
     Hs, Ws = WORLD_H // DOWNSAMPLE, WORLD_W // DOWNSAMPLE
-    # блочный даунсемпл: клетка "суша" только если ВСЕ под-пиксели суша —
-    # тонкие речные русла (см. bake-пайплайн рельефа, D8 flow accumulation)
-    # остаются барьером на грубой сетке, а не растворяются в округлении.
-    land_s = land.reshape(Hs, DOWNSAMPLE, Ws, DOWNSAMPLE).all(axis=(1, 3))
-    height_s = height.reshape(Hs, DOWNSAMPLE, Ws, DOWNSAMPLE).mean(axis=(1, 3))
+    if DOWNSAMPLE > 1:
+        # блочный даунсемпл: клетка "суша" только если ВСЕ под-пиксели
+        # суша — тонкие речные русла (см. bake-пайплайн рельефа, D8 flow
+        # accumulation) остаются барьером на грубой сетке, а не
+        # растворяются в округлении.
+        land_s = land.reshape(Hs, DOWNSAMPLE, Ws, DOWNSAMPLE).all(axis=(1, 3))
+        height_s = height.reshape(Hs, DOWNSAMPLE, Ws, DOWNSAMPLE).mean(axis=(1, 3))
+    else:
+        land_s, height_s = land, height
 
-    t = np.clip((height_s - SEA) / (height_s.max() - SEA + 1e-9), 0, 1)
-    cost = 1.0 + MOUNTAIN_COST_K * (t ** 2)
-    cost = np.where(land_s, cost, WATER_COST).astype(np.float64)
+    cost_s = terrain_cost(height_s, land_s)
 
     seeds_s = np.array([[int(round(y / DOWNSAMPLE)), int(round(x / DOWNSAMPLE))] for x, y in seeds])
     seeds_s[:, 0] = np.clip(seeds_s[:, 0], 0, Hs - 1)
@@ -194,19 +230,47 @@ def total_war_region_map(height, land, seeds):
     t0 = time.time()
     cost_fields = np.zeros((N_REGIONS, Hs, Ws), dtype=np.float64)
     for i in range(N_REGIONS):
-        mcp = MCP_Geometric(cost, fully_connected=True)
+        mcp = MCP_Geometric(cost_s, fully_connected=True)
         costs, _ = mcp.find_costs([tuple(seeds_s[i])])
         cost_fields[i] = costs
-    print(f"  MCP Дейкстра по {N_REGIONS} зёрнам: {time.time() - t0:.1f}с")
+        print(f"  зерно {i + 1}/{N_REGIONS}, {time.time() - t0:.1f}с")
+    print(f"  MCP Дейкстра по {N_REGIONS} зёрнам: {time.time() - t0:.1f}с всего")
 
     region_s = np.argmin(cost_fields, axis=0).astype(np.int32)
     region_s[~land_s] = -1
-    region_map = np.repeat(np.repeat(region_s, DOWNSAMPLE, axis=0), DOWNSAMPLE, axis=1)[:WORLD_H, :WORLD_W]
-    region_map[~land] = -1
-    return region_map
+    if DOWNSAMPLE > 1:
+        region_map = np.repeat(np.repeat(region_s, DOWNSAMPLE, axis=0), DOWNSAMPLE, axis=1)[:WORLD_H, :WORLD_W]
+        region_map[~land] = -1
+        cost_full = terrain_cost(height, land)
+    else:
+        region_map, cost_full = region_s, cost_s
+    return region_map, cost_full
 
 
-def render_regions(base_rgb, region_map, caption):
+def pick_capital_sites(region_map, cost):
+    """Место под крепость — не центр масс региона (тот может выпасть на
+    гребень или в русло), а ближайшая к центру клетка с приемлемой
+    (не худшей CAPITAL_COST_PERCENTILE% по региону) стоимостью прохода —
+    т.е. настоящая низина/плато рядом с серединой, как и должна стоять
+    столица."""
+    sites = {}
+    for i in range(N_REGIONS):
+        ys, xs = np.where(region_map == i)
+        if len(xs) == 0:
+            sites[i] = None
+            continue
+        cx, cy = xs.mean(), ys.mean()
+        region_cost = cost[ys, xs]
+        thresh = np.percentile(region_cost, CAPITAL_COST_PERCENTILE)
+        ok = region_cost <= thresh
+        cxs, cys = xs[ok], ys[ok]
+        d2 = (cxs - cx) ** 2 + (cys - cy) ** 2
+        j = np.argmin(d2)
+        sites[i] = (float(cxs[j]), float(cys[j]))
+    return sites
+
+
+def render_regions(base_rgb, region_map, caption, capitals=None):
     overlay = base_rgb.copy()
     alpha = 0.32
     region_rgb = np.zeros((WORLD_H, WORLD_W, 3))
@@ -238,7 +302,10 @@ def render_regions(base_rgb, region_map, caption):
         ys, xs = np.where(region_map == i)
         if len(xs) == 0:
             continue
-        cx, cy = xs.mean(), ys.mean()
+        # метка — по месту крепости (низина/плато у центра, см.
+        # pick_capital_sites), а не по голому центру масс формы: тот у
+        # вытянутого вдоль хребта региона мог упасть прямо на гребень.
+        cx, cy = capitals[i] if capitals and capitals.get(i) else (xs.mean(), ys.mean())
         r = 26
         draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(255, 255, 255, 235), outline=(20, 20, 20, 255), width=3)
         txt = str(i + 1)
@@ -269,7 +336,10 @@ def main():
     region_equal = equal_area_region_map(land, seeds)
 
     print("Считаю границы по стоимости прохода (Total War)...")
-    region_tw = total_war_region_map(height, land, seeds)
+    region_tw, cost_full = total_war_region_map(height, land, seeds)
+
+    print("Подбираю место под крепость в каждом регионе...")
+    capitals = pick_capital_sites(region_tw, cost_full)
 
     print("Рендерю превью...")
     img_equal = render_regions(
@@ -279,7 +349,9 @@ def main():
 
     img_tw = render_regions(
         base_rgb, region_tw,
-        f"{N_REGIONS} регионов, границы по стоимости прохода — режутся реками и горными грядами")
+        f"{N_REGIONS} регионов, границы по стоимости прохода (полное разрешение) — "
+        f"метка = подобранное место под крепость, не центр региона",
+        capitals=capitals)
     img_tw.save(OUT_DIR / "preview_total_war.png")
 
     # "Запечённые" данные — тем же типом, что и heightmap/*.bin (см. шапку
@@ -290,12 +362,13 @@ def main():
     baked.tofile(OUT_DIR / "regions-v1.bin")
 
     meta = {
-        "version": 1,
+        "version": 2,
         "world_w": WORLD_W, "world_h": WORLD_H,
         "n_regions": N_REGIONS,
         "generation": {
             "seed": SEED, "lloyd_iters": LLOYD_ITERS, "downsample": DOWNSAMPLE,
-            "mountain_cost_k": MOUNTAIN_COST_K, "water_cost": WATER_COST,
+            "mountain_cost_k": MOUNTAIN_COST_K, "rugged_cost_k": RUGGED_COST_K,
+            "water_cost": WATER_COST, "capital_cost_percentile": CAPITAL_COST_PERCENTILE,
         },
         "regions": [],
     }
@@ -303,10 +376,12 @@ def main():
         ys, xs = np.where(region_tw == i)
         cells = int(len(xs))
         cx_px, cy_px = (float(xs.mean()), float(ys.mean())) if cells else (None, None)
+        cap = capitals.get(i)
         meta["regions"].append({
             "id": i + 1,
             "cells": cells,
             "centroid_world": [cx_px - WORLD_W / 2, cy_px - WORLD_H / 2] if cells else None,
+            "capital_world": [cap[0] - WORLD_W / 2, cap[1] - WORLD_H / 2] if cap else None,
             "seed_world": [float(seeds[i][0] - WORLD_W / 2), float(seeds[i][1] - WORLD_H / 2)],
         })
     (OUT_DIR / "regions_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
