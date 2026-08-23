@@ -13,7 +13,7 @@ import { buildTerrainPatch } from "./terrainMesh";
 import { heightAt, HMAX, hash2, noise, isWater, SEED, registerFlattenSite, WORLD_HALF_X, WORLD_HALF_Z, forestMaskAt, loadHeightmapData, HEIGHTMAP_VERSION } from "./terrain";
 import { PINE, LEAF, GRASS_TONES, BUSH_TONES, ROCK_TONES } from "./decorMesh";
 import { mul, persp, look, modelMatrix, transformPoint, sub, cross, norm, type Vec3, type Mat4 } from "./mat4";
-import { attachOrbitControls, type OrbitCamera } from "./camera";
+import { attachOrbitControls, type OrbitCamera, MAX_DIST } from "./camera";
 import { loadGLB } from "./glb";
 import { uploadGLB, createModelPipeline, type GpuModel, type ModelInstance } from "./modelRenderer";
 import { loadRealEntities, getOwnCityPos, type RealEntity } from "./realData";
@@ -1288,6 +1288,25 @@ async function main() {
   // heightAt(), затем бисекция на найденном отрезке для точности — тот же
   // общий приём, что и везде в этом проекте для heightfield-рейкастов.
   const CAM_FOVY = 0.72;
+  // Дальняя плоскость персп.-проекции — автор с устройства: "мерцает,
+  // будто шейдеры дерутся" при приближении/отдалении. Один из настоящих
+  // источников (не единственный, см. isModelOnScreen выше — но этот,
+  // в отличие от того, не флюктуация, а честный жёсткий обрыв): загрузка
+  // сущностей/рельефа (ENTITY_RADIUS ниже) считается от ЦЕЛИ камеры, а
+  // дальняя плоскость до сих пор была фиксированным числом (300),
+  // измеряемым от ГЛАЗА камеры — а глаз может стоять на MAX_DIST (camera.ts,
+  // до 140 юнитов) в СТОРОНУ от цели. На сильном отдалении и невыгодном угле
+  // сущность на самом краю ENTITY_RADIUS могла оказаться на глаз-дистанции
+  // ДО (ENTITY_RADIUS+MAX_DIST) — честно "загруженная", прошедшая отсечение
+  // по экрану (isModelOnScreen — та проверяет только x/y на канве, не
+  // глубину!), но GPU молча срезал её собственной жёсткой far-плоскостью:
+  // один механизм говорит "рисуй", другой аппаратно обрывает — ровно тот
+  // "конфликт систем видимости", о котором сообщил автор. CAM_FAR теперь
+  // выведена из тех же чисел, что определяют загрузку (ENTITY_RADIUS,
+  // MAX_DIST), плюс запас — вместо самостоятельного магического числа,
+  // рискующего снова разойтись с ними при следующей правке радиусов.
+  const CAM_FAR_MARGIN = 60;
+  const CAM_FAR = ENTITY_RADIUS + MAX_DIST + CAM_FAR_MARGIN;
   // Запас над рельефом для eye (см. draw()) — не 0: даже вплотную к
   // поверхности ближняя плоскость (persp(...,0.5,...) — near=0.5) успевает
   // резать землю на неровностях в паре мировых единиц перед камерой.
@@ -1868,7 +1887,7 @@ async function main() {
     const eyeFloor = heightAt(eye[0], eye[2]) * HMAX + EYE_GROUND_CLEARANCE;
     if (eye[1] < eyeFloor) eye[1] = eyeFloor;
     const aspect = canvas.width / Math.max(1, canvas.height);
-    const vp = mul(persp(CAM_FOVY, aspect, 0.5, 300), look(eye, cam.target, [0, 1, 0]));
+    const vp = mul(persp(CAM_FOVY, aspect, 0.5, CAM_FAR), look(eye, cam.target, [0, 1, 0]));
     currentVP = vp;
     currentEye = eye;
     renderer.setVP(vp);
