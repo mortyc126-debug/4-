@@ -104,7 +104,11 @@ async function fetchBinary(path: string, expectBytes: number): Promise<ArrayBuff
 //
 // index.html читает ТОТ ЖЕ файл своей копией (isRealWater, см. её
 // комментарий там) — держать HEIGHTMAP_VERSION синхронно в ОБОИХ местах.
-const HEIGHTMAP_VERSION = 6;
+// Экспортирован — main.ts кладёт его в #hmVersion (см. index.html), чтобы
+// с ЛЮБОГО устройства одним скриншотом было видно, какая версия рельефа
+// реально загрузилась, без ?debug=1/консоли (terrain.ts сам DOM не трогает
+// — см. шапку файла, "чистая математика").
+export const HEIGHTMAP_VERSION = 6;
 export async function loadHeightmapData(): Promise<void> {
   const cellCount = HEIGHT_W * HEIGHT_H;
   const [elevBuf, forestBuf, moistureBuf] = await Promise.all([

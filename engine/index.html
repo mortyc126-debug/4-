@@ -76,6 +76,16 @@
     .blabel .btitle{font-size:10px}
     .blabel .bbar{width:42px}
   }
+  /* Метка версии запечённого рельефа — ВСЕГДА видна (не под ?debug=1, как
+     #status выше), потому что именно её отсутствие или расхождение и было
+     нужно проверить: несколько раундов сессии игрок продолжал видеть
+     старые (разорванные) реки уже ПОСЛЕ подтверждённого деплоя нужного
+     коммита — не было способа со стороны экрана отличить "у меня и правда
+     ещё старые данные" от "картинка новая, просто баг другой". Один
+     маленький, малозаметный номер в углу закрывает вопрос одним
+     скриншотом, без ?debug=1, консоли или доступа к телефону. */
+  #hmVersion{position:fixed;right:6px;bottom:4px;color:rgba(230,194,115,.55);
+    font:10px monospace;pointer-events:none;z-index:20;text-shadow:0 1px 2px rgba(0,0,0,.8)}
 </style>
 </head>
 <body>
@@ -88,6 +98,7 @@
 </div>
 <div id="selected"></div>
 <div id="labels"></div>
+<div id="hmVersion"></div>
 <script type="module" src="/src/main.ts"></script>
 </body>
 </html>
