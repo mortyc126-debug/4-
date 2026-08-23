@@ -947,17 +947,32 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     if (key === "world-backdrop") return "backdrop";
     return key.startsWith("far:") ? "far" : "near";
   }
-  interface MergedTier { buf: GPUBuffer | null; capacityFloats: number; vertexCount: number; dirty: boolean }
+  interface MergedTier { buf: GPUBuffer | null; capacityFloats: number; vertexCount: number; dirty: boolean; lastRebuildMs: number }
   const mergedTiers: Record<TerrainTier, MergedTier> = {
-    near: { buf: null, capacityFloats: 0, vertexCount: 0, dirty: false },
-    far: { buf: null, capacityFloats: 0, vertexCount: 0, dirty: false },
-    backdrop: { buf: null, capacityFloats: 0, vertexCount: 0, dirty: false },
+    near: { buf: null, capacityFloats: 0, vertexCount: 0, dirty: false, lastRebuildMs: -Infinity },
+    far: { buf: null, capacityFloats: 0, vertexCount: 0, dirty: false, lastRebuildMs: -Infinity },
+    backdrop: { buf: null, capacityFloats: 0, vertexCount: 0, dirty: false, lastRebuildMs: -Infinity },
   };
+  // Не чаще раза в этот промежуток — при непрерывном перелёте (главным
+  // образом дальнее кольцо, см. main.ts FAR_*) дырявый чанк на границе
+  // радиуса подгрузки/выгрузки может помечать слой "грязным" почти каждый
+  // кадр; полная пересборка копирует ВСЕ вершины слоя заново (см. коммент
+  // у rebuildMergedTier), не только изменившийся чанк — без троттлинга это
+  // ощутимая CPU-работа каждый кадр именно тогда, когда игрок активно
+  // двигает камеру (реальный репорт с устройства: "грузит больше, чем
+  // показывает" — снятый на глаз симптом ровно этой пересборки, гоняемой
+  // чаще, чем нужно). 120мс — не мгновенно, но и не заметно на глаз (вновь
+  // подгруженный чанк проявится максимум на 1-2 кадра позже, не как
+  // "подвисание"), первая пересборка слоя (buf ещё нет) всегда происходит
+  // сразу, без троттла — иначе игрок сперва увидел бы пустой кусок мира.
+  const MERGE_THROTTLE_MS = 120;
   // Пересобирает GPUBuffer одного слоя из ВСЕХ его текущих чанков (см.
   // комментарий выше) — вызывается максимум раз за кадр, из frame(), не из
   // setTerrainChunk/removeTerrainChunk напрямую (там только merged.dirty=true).
-  function rebuildMergedTier(tier: TerrainTier): void {
+  function rebuildMergedTier(tier: TerrainTier, nowMs: number): void {
     const merged = mergedTiers[tier];
+    if (merged.buf && nowMs - merged.lastRebuildMs < MERGE_THROTTLE_MS) return; // остаётся dirty — довыполнится, как только троттл отпустит
+    merged.lastRebuildMs = nowMs;
     let totalVerts = 0;
     for (const [key, chunk] of terrainChunks) if (tierOf(key) === tier) totalVerts += chunk.vertexCount;
     const floatsNeeded = totalVerts * 15;
@@ -1275,13 +1290,14 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
 
   function frame(clearColor: GPUColorDict, drawExtra?: (pass: GPURenderPassEncoder) => void) {
     ensureDepth();
-    // Пересборка "грязных" слоёв — максимум раз за кадр (см. комментарий
-    // у mergedTiers выше), даже если setTerrainChunk/removeTerrainChunk
-    // звали несколько раз с прошлого кадра (обычное дело при потоковой
-    // подгрузке — см. drainPendingNear/Far в main.ts).
-    if (mergedTiers.near.dirty) rebuildMergedTier("near");
-    if (mergedTiers.far.dirty) rebuildMergedTier("far");
-    if (mergedTiers.backdrop.dirty) rebuildMergedTier("backdrop");
+    // Пересборка "грязных" слоёв — максимум раз за MERGE_THROTTLE_MS (см.
+    // её комментарий у mergedTiers выше), даже если setTerrainChunk/
+    // removeTerrainChunk звали несколько раз с прошлого кадра (обычное
+    // дело при потоковой подгрузке — см. drainPendingNear/Far в main.ts).
+    const nowMs = performance.now();
+    if (mergedTiers.near.dirty) rebuildMergedTier("near", nowMs);
+    if (mergedTiers.far.dirty) rebuildMergedTier("far", nowMs);
+    if (mergedTiers.backdrop.dirty) rebuildMergedTier("backdrop", nowMs);
     const encoder = device.createCommandEncoder();
 
     // ---- теневой проход: depth-only в shadowTex, отдельный render pass ДО
