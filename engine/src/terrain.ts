@@ -210,8 +210,19 @@ const flattenBuckets = new Map<string, FlattenSite[]>();
 function flattenBucketKey(x: number, z: number): string {
   return Math.floor(x / FLATTEN_BUCKET) + "," + Math.floor(z / FLATTEN_BUCKET);
 }
+// Небольшой запас над SEA для targetH — heightAtNatural усредняет соседей
+// в ±0.7 юнита (см. её комментарий), и у самого берега (анкер сущности —
+// сухая земля, но в 0.7 юнита уже вода) это усреднение может утянуть
+// targetH НИЖЕ уровня моря, хотя сама точка анкера над водой. Без запаса
+// такая площадка рисовалась бы частично утопленной в воду прямо под
+// зданием, которое по всем остальным признакам стоит на суше — тот же
+// класс бага, что уже чинили у русел под моделями (см. комментарий у
+// heightAt ниже), просто с другой стороны: не вода топится площадкой, а
+// площадка топится водой.
+const FLATTEN_SEA_MARGIN = 0.01;
 export function registerFlattenSite(x: number, z: number, radius: number): void {
-  const site: FlattenSite = { x, z, targetH: heightAtNatural(x, z), radius };
+  const targetH = Math.max(heightAtNatural(x, z), SEA + FLATTEN_SEA_MARGIN);
+  const site: FlattenSite = { x, z, targetH, radius };
   const key = flattenBucketKey(x, z);
   const bucket = flattenBuckets.get(key);
   if (bucket) bucket.push(site);
@@ -236,9 +247,22 @@ export function heightAt(x: number, y: number): number {
   // радиуса не участвуют), суша вокруг не отличит разницы.
   if (natural < SEA) return natural;
   if (flattenBuckets.size === 0) return natural;
+  // Раньше тут побеждал ОДИН сайт с максимальным перекрытием ("best"), а не
+  // взвешенная сумма всех — на границе, где перевешивает противоположный
+  // сайт (например, два соседних здания на склоне с разной естественной
+  // высотой у своих анкеров), вес "лучшего" сайта переключается МГНОВЕННО
+  // с одного на другой: сама t(d) в каждой точке гладкая, но САМ ВЫБОР
+  // "какой сайт сейчас лучший" — нет, из-за чего на стыке двух площадок
+  // разной высоты был реальный порог/уступ, даже с виду смягчённая
+  // площадка одного здания резко переходила в площадку соседнего. Теперь —
+  // взвешенная сумма ПО ВСЕМ перекрывающим сайтам сразу: у каждого свой вес
+  // t(d) (та же формула, что и раньше — плоское ядро до 55% радиуса, дальше
+  // smoothstep-растворение), никакого дискретного "какой ближе" — только
+  // непрерывно меняющиеся веса, поэтому и переход между площадками соседних
+  // зданий получается плавным, а не переключением по кнопке.
   const bcx = Math.floor(x / FLATTEN_BUCKET), bcz = Math.floor(y / FLATTEN_BUCKET);
-  let best: FlattenSite | null = null;
-  let bestT = 0; // доля "внутри площадки" (1 = центр, 0 = граница радиуса) — берём сайт с максимальным перекрытием, а не первый попавшийся
+  let sumT = 0; // суммарный вес всех перекрывающих сайтов (может быть >1 в глубине зоны сразу нескольких площадок)
+  let sumWH = 0; // сумма t_i × targetH_i
   for (let dz = -1; dz <= 1; dz++) {
     for (let dx = -1; dx <= 1; dx++) {
       const bucket = flattenBuckets.get(bcx + dx + "," + (bcz + dz));
@@ -251,11 +275,14 @@ export function heightAt(x: number, y: number): number {
         // был бы заметный "порог".
         const inner = site.radius * 0.55;
         const t = d <= inner ? 1 : 1 - ((d - inner) / (site.radius - inner)) ** 2 * (3 - 2 * ((d - inner) / (site.radius - inner)));
-        if (t > bestT) { bestT = t; best = site; }
+        sumT += t;
+        sumWH += t * site.targetH;
       }
     }
   }
-  return best ? natural * (1 - bestT) + best.targetH * bestT : natural;
+  if (sumT <= 0) return natural;
+  if (sumT >= 1) return sumWH / sumT; // глубоко внутри перекрытия нескольких площадок — натуральный рельеф веса не получает вовсе
+  return natural * (1 - sumT) + sumWH;
 }
 
 export function isWater(x: number, y: number): boolean {

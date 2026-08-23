@@ -1604,7 +1604,17 @@ async function main() {
   // не пересоздаём на каждый кадр, только двигаем/показываем/прячем то, что
   // уже есть.
   const labelsRoot = document.getElementById("labels") as HTMLDivElement;
-  interface LabelParts { root: HTMLDivElement; nm: HTMLElement; lv: HTMLElement }
+  // lastNm/lastLv/lastMine — то, что реально записано в DOM ПРОШЛЫЙ раз,
+  // чтобы не трогать textContent/classList заново на кадрах, где имя/
+  // уровень/владелец не изменились (см. их использование в
+  // updateAmbientLabels ниже) — тот же диф-приём, что уже насквозь
+  // используется в index.html (mpRerender: stripTimers/lastMenuBody и
+  // т.п.) для тех же соображений, только тут кадровый цикл движка, а не
+  // секундный опрос: без дифа textContent/classList.toggle дёргались бы
+  // 60 раз в секунду на КАЖДУЮ видимую метку, даже когда там ничего не
+  // изменилось — style.transform ниже двигается каждый кадр честно (сама
+  // позиция), а вот текст/класс почти всегда одни и те же между кадрами.
+  interface LabelParts { root: HTMLDivElement; nm: HTMLElement; lv: HTMLElement; lastNm: string; lastLv: string; lastMine: boolean }
   const labelEl = new Map<number, LabelParts>();
   // Отсев по расстоянию до цели камеры ДО проекции — сущностей может быть
   // тысяча с лишним (см. стресс-тест на 1433), а разборчиво видна на экране
@@ -1622,7 +1632,11 @@ async function main() {
       const wx = Position.x[eid], wz = Position.y[eid];
       const dx = wx - cam.target[0], dz = wz - cam.target[2];
       if (dx * dx + dz * dz > LABEL_MAX_DIST2) continue;
-      const groundY = heightAt(wx, wz) * HMAX;
+      // groundYOf — тот же кэш, что и у isModelOnScreen выше (см. её
+      // комментарий у объявления groundYOf): высота земли под сущностью не
+      // меняется между пересборками чанка, не нужно гонять heightAt() ещё
+      // раз здесь на каждую видимую метку каждый кадр.
+      const groundY = groundYOf.get(eid) ?? heightAt(wx, wz) * HMAX;
       const scale = modelScaleOf.get(eid) ?? 5;
       const topY = groundY + scale * 0.6 + 1.1;
       const clip = transformPoint(currentVP, [wx, topY, wz]);
@@ -1642,12 +1656,17 @@ async function main() {
         root.appendChild(nm);
         root.appendChild(lv);
         labelsRoot.appendChild(root);
-        parts = { root, nm, lv };
+        parts = { root, nm, lv, lastNm: "", lastLv: "", lastMine: false };
         labelEl.set(eid, parts);
       }
-      parts.nm.textContent = nmOf.get(eid) ?? "?";
-      parts.nm.classList.toggle("mine", !!ownOf.get(eid));
-      parts.lv.textContent = lvOf.get(eid) ?? "";
+      // Диф перед записью (см. комментарий у LabelParts выше) — имя/
+      // уровень/владелец меняются на порядки реже, чем кадр.
+      const nmVal = nmOf.get(eid) ?? "?";
+      if (parts.lastNm !== nmVal) { parts.nm.textContent = nmVal; parts.lastNm = nmVal; }
+      const mineVal = !!ownOf.get(eid);
+      if (parts.lastMine !== mineVal) { parts.nm.classList.toggle("mine", mineVal); parts.lastMine = mineVal; }
+      const lvVal = lvOf.get(eid) ?? "";
+      if (parts.lastLv !== lvVal) { parts.lv.textContent = lvVal; parts.lastLv = lvVal; }
       parts.root.style.transform = `translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) translate(-50%,-100%)`;
     }
     for (const [eid, parts] of labelEl) {

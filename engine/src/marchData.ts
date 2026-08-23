@@ -110,13 +110,22 @@ export function loadLiveMarches(): LiveMarchPos[] | null {
   const W = readLiveWorldMarches();
   if (!W || !W.marches) return null;
   const ownId = W.players[0] ? W.players[0].id : -1;
+  // Раньше — W.players.find(...) ВНУТРИ цикла по маршам: O(маршей×игроков)
+  // КАЖДЫЙ вызов (а вызывается loadLiveMarches КАЖДЫЙ кадр, см. main.ts
+  // draw()→marchMarkers() — не по таймеру, в отличие от loadRealEntities).
+  // В живом мире с сотнями активных маршей и игроков это заметная, чисто
+  // алгоритмическая цена, не зависящая от того, куда смотрит камера —
+  // строим карту один раз на вызов (O(игроков)), дальше поиск владельца
+  // O(1) на марш вместо O(игроков).
+  const playersById = new Map<number, { id: number; nick?: string; name?: string }>();
+  for (const p of W.players) playersById.set(p.id, p);
   const out: LiveMarchPos[] = [];
   for (const m of W.marches) {
     const p =
       m.state === "gather" || m.state === "siege"
         ? { x: m.tx, y: m.ty }
         : pathPointAt(m, Math.max(0, Math.min(1, (W.t - m.t0) / Math.max(1, m.t1 - m.t0))));
-    const owner = W.players.find((q) => q.id === m.pid);
+    const owner = playersById.get(m.pid);
     const b = m.state === "siege" && m.data && m.data.battle ? m.data.battle : null;
     const battle: LiveBattleInfo | null = b
       ? {
