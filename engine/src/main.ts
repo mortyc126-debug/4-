@@ -228,6 +228,13 @@ async function main() {
   const Kind = { value: [] as number[] }; // 0=city 1=camp 2=node
   const modelPathOf = new Map<number, string>();
   const modelScaleOf = new Map<number, number>();
+  // Мировая высота земли под моделью — считается один раз при спавне/смене
+  // модели (см. места, где строится modelMatrix ниже) и кэшируется тут же,
+  // а не пересчитывается через heightAt() заново в draw() каждый кадр (см.
+  // isModelOnScreen ниже, ей нужна эта высота для отсечения по экрану) —
+  // здание не движется само по себе, высота земли под ним не меняется
+  // между пересборками чанка.
+  const groundYOf = new Map<number, number>();
   // nm/lv раздельно — используются и панелью выбора (клик, склеены через
   // " · "), и постоянными ambient-подписями над моделями (см. draw() ниже,
   // отдельными строками — тот же состав, что и labelContent() в
@@ -971,6 +978,7 @@ async function main() {
   for (const eid of found) {
     const wx = Position.x[eid], wz = Position.y[eid];
     const groundY = heightAt(wx, wz) * HMAX;
+    groundYOf.set(eid, groundY);
     const mat = modelMatrix(wx, groundY, wz, 0, modelScaleOf.get(eid) ?? 5);
     const path = modelPathOf.get(eid)!;
     try {
@@ -1436,6 +1444,7 @@ async function main() {
           modelScaleOf.set(existingEid, e.scale);
           const wx = Position.x[existingEid], wz = Position.y[existingEid];
           const groundY = heightAt(wx, wz) * HMAX;
+          groundYOf.set(existingEid, groundY);
           const mat = modelMatrix(wx, groundY, wz, 0, e.scale);
           pendingLoads.push(
             getModel(e.model)
@@ -1448,6 +1457,7 @@ async function main() {
       // новая сущность — появилась с прошлого опроса
       const eid = spawnEntity(e);
       const groundY = heightAt(e.x, e.y) * HMAX;
+      groundYOf.set(eid, groundY);
       const mat = modelMatrix(e.x, groundY, e.y, 0, e.scale);
       pendingLoads.push(
         getModel(e.model)
@@ -1469,6 +1479,7 @@ async function main() {
       instances.delete(eid);
       modelPathOf.delete(eid);
       modelScaleOf.delete(eid);
+      groundYOf.delete(eid);
       nmOf.delete(eid);
       lvOf.delete(eid);
       ownOf.delete(eid);
@@ -1673,6 +1684,42 @@ async function main() {
     }
   }
 
+  // ---- отсечение моделей по экрану (frustum cull) — раньше renderer.frame
+  // (см. draw() ниже) рисовал КАЖДУЮ сущность из found без разбора: все
+  // города/лагеря/точки в радиусе ENTITY_RADIUS (сейчас 192 клетки —
+  // с настоящей партией это может быть сотни и больше строений), даже те,
+  // что позади камеры или далеко в стороне от текущего взгляда. Каждая —
+  // это setBindGroup+3×setVertexBuffer+setIndexBuffer+drawIndexed ПЛЮС ещё
+  // один writeBuffer с VP (см. modelRenderer.ts draw()) — и всё это КАЖДЫЙ
+  // кадр, даже для того, что заведомо не попадёт в кадр. Именно это и есть
+  // главный источник "лагает при перемещении": чем плотнее застроена
+  // область вокруг камеры, тем длиннее этот список независимо от того,
+  // куда смотрит игрок. Автор сам предложил ровно этот приём отдельным
+  // сообщением: "движок... пытается угадать действие игрока, куда
+  // направлен его взгляд, и отрисовать именно это направление" — простое
+  // отсечение по экрану и есть эта идея: проецируем анкерную точку модели
+  // той же currentVP/transformPoint, что и ambient-подписи выше
+  // (updateAmbientLabels), переводим примерный мировой радиус модели
+  // (scale) в экранные пиксели через фокусное расстояние камеры и рисуем,
+  // только если спроецированный круг задевает видимый прямоугольник канвы.
+  // groundYOf — см. её комментарий у объявления (кэш высоты земли, чтобы
+  // не гонять heightAt() по всем найденным сущностям ещё и здесь).
+  function isModelOnScreen(eid: number, vp: Mat4, cw: number, ch: number, focalY: number): boolean {
+    const wx = Position.x[eid], wz = Position.y[eid];
+    const scale = modelScaleOf.get(eid) ?? 5;
+    const groundY = groundYOf.get(eid) ?? 0;
+    const clip = transformPoint(vp, [wx, groundY + scale * 0.6, wz]);
+    if (clip.w <= 0.001) return false; // за спиной камеры
+    const sx = (clip.x / clip.w * 0.5 + 0.5) * cw;
+    const sy = (1 - (clip.y / clip.w * 0.5 + 0.5)) * ch;
+    // Экранный радиус модели ~ focalY*scale/depth (тот же вывод, что даёт
+    // персп.-проекция вертикального смещения scale на той же глубине) плюс
+    // небольшой запас, чтобы здание не выскакивало/пропадало заметно на
+    // самом краю канвы при малейшем повороте камеры.
+    const marginPx = (focalY * scale) / clip.w + 24;
+    return sx > -marginPx && sx < cw + marginPx && sy > -marginPx && sy < ch + marginPx;
+  }
+
   function draw(tMs: number) {
     // Пока открыт "Город", 3D целиком скрыт — рисовать нечего и некуда.
     // Раньше цикл продолжал крутиться и молотить в схлопнутую канву: лишний
@@ -1763,12 +1810,19 @@ async function main() {
     if (highlightMarker) markers.push(highlightMarker);
     renderer.setMarkers(markers);
     (window as any).__marchCount = markers.length - (highlightMarker ? 1 : 0);
+    // cw/ch/focalY — см. isModelOnScreen выше (frustum cull моделей),
+    // считаются раз на кадр, не на каждую сущность.
+    const cw = canvas.clientWidth, ch = canvas.clientHeight;
+    const focalY = 0.5 * ch / Math.tan(CAM_FOVY / 2);
+    let modelDrawCount = 0;
     renderer.frame({ r: FOG_COLOR[0], g: FOG_COLOR[1], b: FOG_COLOR[2], a: 1 }, (pass) => {
       for (const eid of found) {
+        if (!isModelOnScreen(eid, vp, cw, ch, focalY)) continue;
         const inst = instances.get(eid);
-        if (inst) modelPipeline.draw(pass, inst, vp);
+        if (inst) { modelPipeline.draw(pass, inst, vp); modelDrawCount++; }
       }
     });
+    (window as any).__modelDrawCount = modelDrawCount;
     updateAmbientLabels();
     updateBattleLabels();
     requestAnimationFrame(draw);
