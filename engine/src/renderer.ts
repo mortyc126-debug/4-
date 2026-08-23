@@ -665,10 +665,9 @@ export interface Renderer {
   setFog(eye: [number, number, number], color: [number, number, number], density: number, timeSec: number): void;
   // Куда сейчас смотрит игрок (cam.target из main.ts, не позиция глаза
   // камеры) — ортографическая теневая камера следует за этой точкой (см.
-  // SHADOW_EXTENT выше): пересчитывает light-VP и решает, какие чанки
-  // рельефа вообще стоит рисовать в теневой проход (см. frame() ниже),
-  // остальное вне SHADOW_EXTENT от неё тени всё равно бы не бросило в
-  // кадр. Достаточно дёшево, чтобы звать каждый кадр, как setVP/setFog.
+  // SHADOW_EXTENT выше): пересчитывает light-VP, под которую и подгоняно
+  // окно теневой камеры. Достаточно дёшево, чтобы звать каждый кадр, как
+  // setVP/setFog.
   setSunTarget(x: number, z: number): void;
   // Базис камеры для фонового неба (см. SKY_SHADER) — те же xAxis/yAxis/
   // zAxis/tanHalf/aspect, что main.ts:pixelRay() уже считает для клика по
@@ -745,9 +744,11 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   // НЕТ более близкого к свету объекта — точка освещена.
   const shadowSampler = device.createSampler({ compare: "less", magFilter: "linear", minFilter: "linear" });
   let lightVP: Mat4 = ortho(-1, 1, -1, 1, 0.1, 1);
-  let sunTargetX = 0, sunTargetZ = 0;
+  // sunTargetX/Z раньше хранились как модульное состояние для AABB-отсечения
+  // чанков в тени (см. frame()) — теперь тень рисует только слитный near-
+  // буфер целиком, без отсечения (см. её комментарий там), и это состояние
+  // больше никем не читается — x/z нужны только тут же, для eye/view ниже.
   function setSunTarget(x: number, z: number) {
-    sunTargetX = x; sunTargetZ = z;
     const eye: Vec3 = [x + SUN_DIR[0] * SHADOW_DIST, SUN_DIR[1] * SHADOW_DIST, z + SUN_DIR[2] * SHADOW_DIST];
     const view = look(eye, [x, 0, z], [0, 1, 0]);
     const proj = ortho(-SHADOW_EXTENT, SHADOW_EXTENT, -SHADOW_EXTENT, SHADOW_EXTENT, SHADOW_NEAR, SHADOW_FAR);
@@ -905,18 +906,79 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     layout: terrainShadowPipeline.getBindGroupLayout(0),
     entries: [{ binding: 0, resource: { buffer: lightBuf } }],
   });
-  // Map кусков рельефа по ключу чанка вместо одной пары буферов на всю
-  // сцену — потоковая подгрузка/выгрузка вокруг камеры (см. main.ts): при
-  // бесконечном мире держать вершины всей когда-либо увиденной территории
-  // в одном буфере не получится. minX/maxX/minZ/maxZ — AABB чанка в мировых
-  // координатах (заполняется в setTerrainChunk ниже) — используются только
-  // для того, чтобы теневой проход мог пропускать чанки заведомо вне
-  // SHADOW_EXTENT от текущей цели камеры (см. frame()), а не гонять через
-  // depth-only пайплайн вообще все загруженные чанки, включая дальнее
-  // грубое кольцо (см. main.ts FAR_*), которое почти никогда не пересекает
-  // тень настолько тесную, как окно ближнего рельефа.
-  interface TerrainChunk { buf: GPUBuffer; vertexCount: number; minX: number; maxX: number; minZ: number; maxZ: number }
-  const terrainChunks = new Map<string, TerrainChunk>();
+  // Раньше у КАЖДОГО чанка был свой GPUBuffer, и frame() рисовал их по
+  // одному draw()-у на чанк — при одновременно ~150-300 загруженных чанках
+  // (ближние+дальние+задник, см. main.ts) это давало 150-300 отдельных
+  // вызовов отрисовки за проход, ДВАЖДY за кадр (обычный проход + тень).
+  // Автор с реального устройства: садится FPS. На мобильных GPU именно
+  // ЧИСЛО вызовов отрисовки (не число треугольников) обычно и есть главный
+  // тормоз — переключение состояния/буфера перед каждым draw() стоит
+  // ощутимо дороже, чем отрисовать те же вершины одним заходом.
+  //
+  // Теперь чанки хранятся как CPU-side interleaved-массивы (без своего
+  // GPUBuffer у каждого), сгруппированные по ключу в ОДИН из трёх "слоёв"
+  // (tierOf ниже — по тому же соглашению об именах ключей, что уже
+  // использует main.ts: "far:..." — дальнее кольцо, "world-backdrop" —
+  // задник на весь мир, всё остальное — ближние чанки). У каждого слоя
+  // один GPUBuffer, пересобираемый (см. rebuildMergedTier) из ВСЕХ его
+  // чанков разом — но не на каждый setTerrainChunk/removeTerrainChunk, а
+  // максимум РАЗ ЗА КАДР (dirty-флаг, реальная пересборка — в начале
+  // frame()): пока камера стримит несколько чанков подряд в один и тот же
+  // кадр (обычное дело — see drainPendingNear/Far budget в main.ts), это
+  // одна пересборка на кадр, а не одна на чанк. Итог: 150-300 draw()
+  // в обычном проходе становятся 3 (near/far/backdrop), тень — вообще 1
+  // (см. ниже, почему far/backdrop туда не идут).
+  //
+  // Компромисс, честно: полная пересборка слоя копирует ВСЕ его вершины
+  // заново (не только изменившийся чанк) — при непрерывном быстром перелёте
+  // (дальний слой обновляется каждый кадр) это заметная CPU-работа каждый
+  // кадр, не только при пересечении границы чанка. Не обменивается на
+  // время выполнения где-то ещё — просто ставка на то, что "игрок стоит и
+  // смотрит по сторонам" (когда экономия на draw-call'ах решает всё)
+  // гораздо чаще, чем "непрерывный быстрый перелёт" (когда сборка чуть
+  // дороже) — если после проверки на устройстве окажется наоборот, стоит
+  // сделать инкрементальную пересборку (хранить смещение каждого чанка в
+  // общем буфере, переписывать только изменившийся кусок), но это заметно
+  // сложнее и не нужно чинить то, что ещё не доказано, что сломано.
+  interface TerrainChunkData { data: Float32Array; vertexCount: number; minX: number; maxX: number; minZ: number; maxZ: number }
+  const terrainChunks = new Map<string, TerrainChunkData>();
+  type TerrainTier = "near" | "far" | "backdrop";
+  function tierOf(key: string): TerrainTier {
+    if (key === "world-backdrop") return "backdrop";
+    return key.startsWith("far:") ? "far" : "near";
+  }
+  interface MergedTier { buf: GPUBuffer | null; capacityFloats: number; vertexCount: number; dirty: boolean }
+  const mergedTiers: Record<TerrainTier, MergedTier> = {
+    near: { buf: null, capacityFloats: 0, vertexCount: 0, dirty: false },
+    far: { buf: null, capacityFloats: 0, vertexCount: 0, dirty: false },
+    backdrop: { buf: null, capacityFloats: 0, vertexCount: 0, dirty: false },
+  };
+  // Пересобирает GPUBuffer одного слоя из ВСЕХ его текущих чанков (см.
+  // комментарий выше) — вызывается максимум раз за кадр, из frame(), не из
+  // setTerrainChunk/removeTerrainChunk напрямую (там только merged.dirty=true).
+  function rebuildMergedTier(tier: TerrainTier): void {
+    const merged = mergedTiers[tier];
+    let totalVerts = 0;
+    for (const [key, chunk] of terrainChunks) if (tierOf(key) === tier) totalVerts += chunk.vertexCount;
+    const floatsNeeded = totalVerts * 15;
+    if (!merged.buf || merged.capacityFloats < floatsNeeded) {
+      merged.buf?.destroy();
+      merged.capacityFloats = Math.max(floatsNeeded, 4);
+      merged.buf = device.createBuffer({ size: merged.capacityFloats * 4, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+    }
+    if (totalVerts > 0) {
+      const combined = new Float32Array(floatsNeeded);
+      let offset = 0;
+      for (const [key, chunk] of terrainChunks) {
+        if (tierOf(key) !== tier) continue;
+        combined.set(chunk.data, offset);
+        offset += chunk.data.length;
+      }
+      device.queue.writeBuffer(merged.buf, 0, combined);
+    }
+    merged.vertexCount = totalVerts;
+    merged.dirty = false;
+  }
 
   // ---- маркеры (инстансинг) ----
   const markerModule = device.createShaderModule({ code: MARKER_SHADER });
@@ -1122,12 +1184,9 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   }
 
   function setTerrainChunk(key: string, mesh: MeshData) {
-    const prev = terrainChunks.get(key);
-    prev?.buf.destroy();
-    const buf = device.createBuffer({
-      size: Math.max(mesh.vertexCount * 15 * 4, 4),
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    });
+    // Больше не создаёт свой GPUBuffer — только CPU-side interleaved-массив
+    // (тот же формат, что и раньше) плюс AABB; сам GPUBuffer слоя пересобирает
+    // rebuildMergedTier() в начале ближайшего frame() (см. её комментарий).
     const interleaved = new Float32Array(mesh.vertexCount * 15);
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
     for (let i = 0; i < mesh.vertexCount; i++) {
@@ -1143,15 +1202,14 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
       interleaved[i * 15 + 13] = mesh.forestFracs[i];
       interleaved[i * 15 + 14] = mesh.moistureFracs[i];
     }
-    device.queue.writeBuffer(buf, 0, interleaved);
-    terrainChunks.set(key, { buf, vertexCount: mesh.vertexCount, minX, maxX, minZ, maxZ });
+    terrainChunks.set(key, { data: interleaved, vertexCount: mesh.vertexCount, minX, maxX, minZ, maxZ });
+    mergedTiers[tierOf(key)].dirty = true;
   }
 
   function removeTerrainChunk(key: string) {
-    const chunk = terrainChunks.get(key);
-    if (!chunk) return;
-    chunk.buf.destroy();
+    if (!terrainChunks.has(key)) return;
     terrainChunks.delete(key);
+    mergedTiers[tierOf(key)].dirty = true;
   }
 
   function setMarkers(entities: MarkerEntity[]) {
@@ -1217,30 +1275,39 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
 
   function frame(clearColor: GPUColorDict, drawExtra?: (pass: GPURenderPassEncoder) => void) {
     ensureDepth();
+    // Пересборка "грязных" слоёв — максимум раз за кадр (см. комментарий
+    // у mergedTiers выше), даже если setTerrainChunk/removeTerrainChunk
+    // звали несколько раз с прошлого кадра (обычное дело при потоковой
+    // подгрузке — см. drainPendingNear/Far в main.ts).
+    if (mergedTiers.near.dirty) rebuildMergedTier("near");
+    if (mergedTiers.far.dirty) rebuildMergedTier("far");
+    if (mergedTiers.backdrop.dirty) rebuildMergedTier("backdrop");
     const encoder = device.createCommandEncoder();
 
     // ---- теневой проход: depth-only в shadowTex, отдельный render pass ДО
     // основного (общий encoder — одна отправка на GPU, не два submit()).
-    // Терраин-чанки культятся по AABB (см. TerrainChunk выше) против
-    // SHADOW_EXTENT вокруг цели камеры — дальнее грубое кольцо рельефа
-    // (main.ts, FAR_*) почти всегда снаружи этого окна и не тратит впустую
-    // draw call на тень, которую всё равно никто не увидит.
+    // Раньше терраин-чанки культились по AABB против SHADOW_EXTENT (60,
+    // окно 120×120 вокруг цели камеры) — дальнее кольцо/задник почти всегда
+    // снаружи и пропускались. Теперь слои объединены в общие буферы (см.
+    // mergedTiers выше) — культить ПОЧАСТИЧНО такой буфер посреди draw()
+    // нельзя, а тень рисуем только у near (ближний слой ~96×96, LOAD_RADIUS
+    // ×CHUNK_SIZE в main.ts — почти совпадает с окном тени, терять там
+    // почти нечего) — far/backdrop в тень вообще не идут: тень от рельефа
+    // за пределами ближнего кольца и раньше почти никогда не долетала до
+    // SHADOW_EXTENT, а backdrop (весь мир, ~120k вершин) раньше почему-то
+    // ВСЕГДА проходил AABB-проверку (его bbox — весь мир, тривиально
+    // перекрывает любое окно внутри) и рисовался в тень целиком каждый
+    // кадр — чистый расход впустую, теперь исключён явно.
     {
       const shadowPass = encoder.beginRenderPass({
         colorAttachments: [],
         depthStencilAttachment: { view: shadowView, depthClearValue: 1.0, depthLoadOp: "clear", depthStoreOp: "store" },
       });
-      const sMinX = sunTargetX - SHADOW_EXTENT, sMaxX = sunTargetX + SHADOW_EXTENT;
-      const sMinZ = sunTargetZ - SHADOW_EXTENT, sMaxZ = sunTargetZ + SHADOW_EXTENT;
-      if (terrainChunks.size > 0) {
+      if (mergedTiers.near.vertexCount > 0 && mergedTiers.near.buf) {
         shadowPass.setPipeline(terrainShadowPipeline);
         shadowPass.setBindGroup(0, terrainShadowBindGroup);
-        for (const chunk of terrainChunks.values()) {
-          if (chunk.vertexCount === 0) continue;
-          if (chunk.maxX < sMinX || chunk.minX > sMaxX || chunk.maxZ < sMinZ || chunk.minZ > sMaxZ) continue;
-          shadowPass.setVertexBuffer(0, chunk.buf);
-          shadowPass.draw(chunk.vertexCount);
-        }
+        shadowPass.setVertexBuffer(0, mergedTiers.near.buf);
+        shadowPass.draw(mergedTiers.near.vertexCount);
       }
       let anyDecorShadow = false;
       for (const state of decorKinds.values()) if (state.instanceCount > 0) { anyDecorShadow = true; break; }
@@ -1278,10 +1345,12 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     if (terrainChunks.size > 0) {
       pass.setPipeline(terrainPipeline);
       pass.setBindGroup(0, terrainBindGroup);
-      for (const chunk of terrainChunks.values()) {
-        if (chunk.vertexCount === 0) continue;
-        pass.setVertexBuffer(0, chunk.buf);
-        pass.draw(chunk.vertexCount);
+      // Три draw()-а (near/far/backdrop) вместо одного на каждый из
+      // 150-300 одновременно загруженных чанков — см. mergedTiers выше.
+      for (const tier of [mergedTiers.near, mergedTiers.far, mergedTiers.backdrop]) {
+        if (tier.vertexCount === 0 || !tier.buf) continue;
+        pass.setVertexBuffer(0, tier.buf);
+        pass.draw(tier.vertexCount);
       }
     }
 
