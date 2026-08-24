@@ -245,6 +245,24 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat,
     return { model, modelBuf, bindGroup };
   }
 
+  // Освобождает GPU-буфер инстанса. Обязательно звать, когда сущность
+  // исчезла с карты или сменила модель (см. syncLiveEntities в main.ts):
+  // раньше ссылку на инстанс просто выбрасывали из Map, а сам буфер
+  // оставался жить до сборки мусора. Полагаться на сборщик для ПАМЯТИ
+  // ВИДЕОКАРТЫ нельзя: он ничего не знает про её объём и запускается по
+  // своим соображениям, а в живом мире сущности приходят и уходят каждые
+  // три секунды (лагерь разгромлен, точка истощилась, город вырос и сменил
+  // модель) — за долгую сессию это сотни осиротевших буферов. Именно так и
+  // выглядит подступающее исчерпание видеопамяти, от которого этот файл уже
+  // защищается перезагрузкой страницы (см. device.lost в main.ts:
+  // "белый экран спустя время, без перезагрузки").
+  // bindGroup отдельного destroy() не имеет — она держится ссылками на свои
+  // ресурсы и уходит сама, как только уходит инстанс.
+  function destroyInstance(instance: ModelInstance | undefined) {
+    if (!instance) return;
+    try { instance.modelBuf.destroy(); } catch (_) { /* устройство уже потеряно — освобождать нечего */ }
+  }
+
   function draw(pass: GPURenderPassEncoder, instance: ModelInstance) {
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, instance.bindGroup);
@@ -255,7 +273,7 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat,
     pass.drawIndexed(instance.model.vao.indexCount);
   }
 
-  return { createInstance, draw, setFog, setVP };
+  return { createInstance, destroyInstance, draw, setFog, setVP };
 }
 
 export interface ModelInstance {

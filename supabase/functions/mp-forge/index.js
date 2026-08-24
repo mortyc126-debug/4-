@@ -49,6 +49,67 @@ function handleOptions(req) {
   return null;
 }
 
+// =============================================================================
+// savePlayerState — запись состояния игрока с проверкой, что его никто не
+// перезаписал, пока мы считали.
+// =============================================================================
+// Каждая функция здесь работает по схеме "прочитал строку игрока -> изменил
+// объект state в памяти -> записал его ЦЕЛИКОМ обратно". Пока запросы к
+// одному игроку идут строго по очереди, это верно. Но они идут не по
+// очереди: клиент опрашивает mp-join каждые пять секунд (а тот пишет строку
+// игрока — начисляет добычу), и тик мира (mp-tick) пишет её же, разрешая
+// события. Если игрок нажал "Строить" в тот же миг, порядок получался
+// такой:
+//     действие  читает state (постройки нет, ресурсы целы)
+//     mp-join   читает state (то же самое)
+//     действие  пишет  state (ресурсы списаны, стройка в очереди)
+//     mp-join   пишет  state — СВОЙ, прочитанный ДО действия
+// и стройка вместе со списанием исчезала бесследно. Обратный порядок так же
+// легко давал зеркальный исход — ресурсы списаны, а стройки нет. Ни ошибки,
+// ни следа в логах: последняя запись просто затирала чужую.
+//
+// Лечится проверкой версии при записи. updated_at и так есть у строки и и
+// так пишется при каждом изменении — используем его как метку версии:
+// обновляем строку ТОЛЬКО если updated_at всё ещё тот, что мы прочитали.
+// Не совпал — значит кто-то записал раньше нас, и наш объект state построен
+// на устаревших данных; сообщаем об этом вызывающему, а не затираем.
+// Отдельная колонка-счётчик не нужна: миграцию пришлось бы накатывать
+// руками через дашборд (см. supabase/README.md), а updated_at уже на месте.
+//
+// Новая метка строго больше прочитанной (Math.max с +1 мс) — время на
+// сервере может идти назад при коррекции часов, а метка версии обязана
+// только расти, иначе устаревшее значение однажды совпало бы снова.
+//
+// Возвращает { ok:true } | { conflict:true } | { error }.
+async function savePlayerState(admin, row, state) {
+  const prev = row.updated_at;
+  if (!prev) {
+    // Строка прочитана без updated_at (старый вызывающий код) — сверять не с
+    // чем; пишем как раньше, чтобы ничего не сломать, но и не притворяемся,
+    // что проверили.
+    const { error } = await admin.from("players")
+      .update({ state, updated_at: new Date().toISOString() }).eq("id", row.id);
+    return error ? { error } : { ok: true };
+  }
+  const nextIso = new Date(Math.max(Date.now(), Date.parse(prev) + 1)).toISOString();
+  const { data, error } = await admin.from("players")
+    .update({ state, updated_at: nextIso })
+    .eq("id", row.id).eq("updated_at", prev).select("id,updated_at");
+  if (error) return { error };
+  if (!data || !data.length) return { conflict: true };
+  // Своя же метка — на случай второй записи той же строки в этом запросе.
+  row.updated_at = data[0].updated_at;
+  return { ok: true };
+}
+
+// Ответ на проигранную гонку. 409 + retry:true — клиент (mpCall в
+// index.html) повторяет такой запрос сам, молча: состояние он перечитает
+// заново, так что повтор посчитается уже по свежим данным. Игрок ничего не
+// замечает, а данные не теряются.
+function conflictResponse() {
+  return jsonResponse({ err: "Состояние изменилось, повторяю…", retry: true }, 409);
+}
+
 const RES = ["food", "wood", "stone", "gold"];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const canPay = (res, c) => RES.every((r) => !c[r] || res[r] >= c[r]);
@@ -157,9 +218,9 @@ Deno.serve(async (req) => {
     const t = 2400; // 40 минут за партию
     p.craft = { kind: "material", mat, n, t0: now, t1: now + t };
 
-    const { error: updErr } = await admin
-      .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
-    if (updErr) return jsonResponse({ err: updErr.message }, 500);
+    const saved = await savePlayerState(admin, row, p);
+    if (saved.conflict) return conflictResponse();          // см. savePlayerState
+    if (saved.error) return jsonResponse({ err: saved.error.message }, 500);
 
     const fireAt = new Date((now + t) * 1000).toISOString();
     const { error: evErr } = await admin.from("events").insert({
