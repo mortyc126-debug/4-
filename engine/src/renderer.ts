@@ -20,6 +20,7 @@
 import type { MeshData } from "./terrainMesh";
 import { buildSpruceMesh, buildPineMesh, buildBroadleafMesh, buildBirchMesh, buildDeadTreeMesh, buildBushMesh, buildGrassMesh, buildRockMesh, type DecorMesh } from "./decorMesh";
 import { loadTexture } from "./textures";
+import { TierSlots } from "./terrainSlots";
 import { ortho, look, mul, type Vec3, type Mat4 } from "./mat4";
 
 // Направление НА солнце — должно дословно совпадать с "sun" внутри
@@ -895,14 +896,18 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   // уже считает для рейкаста по клику (см. комментарий у SKY_SHADER) —
   // вызывающая сторона (main.ts:draw()) передаёт готовые векторы, тут
   // только упаковка в uniform-буфер.
+  // Буфер переиспользуется: функция зовётся каждый кадр, а свежий
+  // Float32Array на каждый кадр — лишний мусор для сборщика (тот же довод,
+  // что и у scratch-массивов декора выше). Содержимое копируется в
+  // GPU-буфер тут же, наружу массив не отдаётся.
+  const skyCamScratch = new Float32Array(16);
   function setSkyCamera(xAxis: Vec3, yAxis: Vec3, zAxis: Vec3, tanHalf: number, aspect: number, timeSec: number) {
-    const data = new Float32Array([
-      xAxis[0], xAxis[1], xAxis[2], 0,
-      yAxis[0], yAxis[1], yAxis[2], 0,
-      zAxis[0], zAxis[1], zAxis[2], 0,
-      tanHalf, aspect, timeSec, 0,
-    ]);
-    device.queue.writeBuffer(skyCamBuf, 0, data);
+    const d = skyCamScratch;
+    d[0] = xAxis[0]; d[1] = xAxis[1]; d[2] = xAxis[2]; d[3] = 0;
+    d[4] = yAxis[0]; d[5] = yAxis[1]; d[6] = yAxis[2]; d[7] = 0;
+    d[8] = zAxis[0]; d[9] = zAxis[1]; d[10] = zAxis[2]; d[11] = 0;
+    d[12] = tanHalf; d[13] = aspect; d[14] = timeSec; d[15] = 0;
+    device.queue.writeBuffer(skyCamBuf, 0, d);
   }
   // Depth-only проход для теневой карты (см. TERRAIN_SHADOW_SHADER выше) —
   // тот же вершинный буфер чанка (interleaved, позиция в первых 3 float),
@@ -943,101 +948,60 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   // (tierOf ниже — по тому же соглашению об именах ключей, что уже
   // использует main.ts: "far:..." — дальнее кольцо, "world-backdrop" —
   // задник на весь мир, всё остальное — ближние чанки). У каждого слоя
-  // один GPUBuffer, пересобираемый (см. rebuildMergedTier) из ВСЕХ его
-  // чанков разом — но не на каждый setTerrainChunk/removeTerrainChunk, а
-  // максимум РАЗ ЗА КАДР (dirty-флаг, реальная пересборка — в начале
-  // frame()): пока камера стримит несколько чанков подряд в один и тот же
-  // кадр (обычное дело — see drainPendingNear/Far budget в main.ts), это
-  // одна пересборка на кадр, а не одна на чанк. Итог: 150-300 draw()
-  // в обычном проходе становятся 3 (near/far/backdrop), тень — вообще 1
-  // (см. ниже, почему far/backdrop туда не идут).
+  // один GPUBuffer на слой. Итог: 150-300 draw() в обычном проходе
+  // становятся 3 (near/far/backdrop), тень — вообще 1 (см. ниже, почему
+  // far/backdrop туда не идут).
   //
-  // Компромисс, честно: полная пересборка слоя копирует ВСЕ его вершины
-  // заново (не только изменившийся чанк) — при непрерывном быстром перелёте
-  // (дальний слой обновляется каждый кадр) это заметная CPU-работа каждый
-  // кадр, не только при пересечении границы чанка. Не обменивается на
-  // время выполнения где-то ещё — просто ставка на то, что "игрок стоит и
-  // смотрит по сторонам" (когда экономия на draw-call'ах решает всё)
-  // гораздо чаще, чем "непрерывный быстрый перелёт" (когда сборка чуть
-  // дороже) — если после проверки на устройстве окажется наоборот, стоит
-  // сделать инкрементальную пересборку (хранить смещение каждого чанка в
-  // общем буфере, переписывать только изменившийся кусок), но это заметно
-  // сложнее и не нужно чинить то, что ещё не доказано, что сломано.
-  interface TerrainChunkData { data: Float32Array; vertexCount: number; minX: number; maxX: number; minZ: number; maxZ: number }
-  const terrainChunks = new Map<string, TerrainChunkData>();
+  // Здесь стоял честно записанный компромисс: слой пересобирался ЦЕЛИКОМ
+  // (все его вершины заново, не только изменившийся чанк), со ставкой на
+  // то, что «игрок стоит и смотрит по сторонам» бывает чаще, чем
+  // «непрерывный перелёт», и с оговоркой — если на устройстве окажется
+  // наоборот, стоит переписывать только изменившийся кусок.
+  // На устройстве оказалось наоборот: автор сообщил про «лёгкие
+  // подлагивания… именно при перемещении камеры». Цена подтвердилась
+  // счётом: ближний слой — 49 чанков по 1536 вершин по 15 float, это ~4.3МБ
+  // копирования и загрузки на GPU за одну пересборку, столько же у
+  // дальнего, и так каждые 120мс всё время движения. Компромисс снят —
+  // слой хранится слотами, см. MergedTier ниже.
+  // Какие ключи чанков сейчас загружены. Сами вершины и их раскладку по
+  // буферу держит TierSlots (см. terrainSlots.ts) — второе хранилище было
+  // бы просто ещё одним местом, которое надо не забыть обновить.
+  // Прежняя запись хранила заодно габариты чанка (minX/maxX/minZ/maxZ) —
+  // остаток от времён, когда каждый чанк рисовался своим draw() и отсекался
+  // по ним; с объединением слоёв отсекать поштучно стало нечего, и с тех
+  // пор габариты считались на каждой вершине каждого чанка, но не читались
+  // ни разу.
+  const terrainChunks = new Set<string>();
   type TerrainTier = "near" | "far" | "backdrop";
   function tierOf(key: string): TerrainTier {
     if (key === "world-backdrop") return "backdrop";
     return key.startsWith("far:") ? "far" : "near";
   }
-  // scratch — CPU-side Float32Array, ПЕРЕИСПОЛЬЗУЕМЫЙ между пересборками
-  // (растёт вместе с capacityFloats, как и buf, но никогда не выделяется
-  // заново под ту же ёмкость) — раньше rebuildMergedTier() выделял свежий
-  // `new Float32Array(floatsNeeded)` при КАЖДОЙ пересборке; для дальнего
-  // кольца это могло быть ~11МБ на одну пересборку, не чаще раза в 120мс
-  // (см. MERGE_THROTTLE_MS ниже), но при непрерывном движении камеры —
-  // именно так часто. Повторные крупные выделения — прямой путь к паузам
-  // сборщика мусора на мобильных браузерах, которые на глаз читаются не
-  // как ровное падение FPS, а как рывки/подвисания через более-менее
-  // равные промежутки — ровно то, что автор описал ПОСЛЕ уже введённого
-  // троттлинга ("лаги слабее, но не исчезли"): троттлинг снизил ЧАСТОТУ
-  // пересборок, но каждая отдельная пересборка всё ещё выделяла память
-  // заново. Теперь выделяется один раз на новый максимум ёмкости и просто
-  // перезаписывается на каждой следующей пересборке — ни одного лишнего
-  // выделения в устоявшемся режиме (ёмкость растёт, но не уменьшается).
-  interface MergedTier { buf: GPUBuffer | null; scratch: Float32Array | null; capacityFloats: number; vertexCount: number; dirty: boolean; lastRebuildMs: number }
-  const mergedTiers: Record<TerrainTier, MergedTier> = {
-    near: { buf: null, scratch: null, capacityFloats: 0, vertexCount: 0, dirty: false, lastRebuildMs: -Infinity },
-    far: { buf: null, scratch: null, capacityFloats: 0, vertexCount: 0, dirty: false, lastRebuildMs: -Infinity },
-    backdrop: { buf: null, scratch: null, capacityFloats: 0, vertexCount: 0, dirty: false, lastRebuildMs: -Infinity },
+  // Промежуточный CPU-буфер под пересборку (scratch) отсюда ушёл вместе с
+  // самой пересборкой: копировать слой целиком больше некуда и незачем, а
+  // чанк пишется на GPU прямо из своего же массива. Заодно ушли и
+  // повторные крупные выделения памяти — прежняя причина пауз сборщика
+  // мусора, которые на глаз читались не как ровное падение частоты кадров,
+  // а как рывки через примерно равные промежутки.
+  //
+  // Раскладка чанков по слоту — в terrainSlots.ts (см. её заголовок): она
+  // не знает про GPU вовсе, а мы подставляем ей две операции над WebGPU.
+  // Так эту арифметику можно проверить тестом отдельно от видеокарты,
+  // которой в тестовой среде нет.
+  const tierBufs: Record<TerrainTier, GPUBuffer | null> = { near: null, far: null, backdrop: null };
+  const makeTierSlots = (tier: TerrainTier) => new TierSlots({
+    createBuffer(byteSize) {
+      tierBufs[tier]?.destroy();
+      tierBufs[tier] = device.createBuffer({ size: byteSize, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+    },
+    write(byteOffset, data) {
+      const buf = tierBufs[tier];
+      if (buf) device.queue.writeBuffer(buf, byteOffset, data, 0, data.length);
+    },
+  });
+  const mergedTiers: Record<TerrainTier, TierSlots> = {
+    near: makeTierSlots("near"), far: makeTierSlots("far"), backdrop: makeTierSlots("backdrop"),
   };
-  // Не чаще раза в этот промежуток — при непрерывном перелёте (главным
-  // образом дальнее кольцо, см. main.ts FAR_*) дырявый чанк на границе
-  // радиуса подгрузки/выгрузки может помечать слой "грязным" почти каждый
-  // кадр; полная пересборка копирует ВСЕ вершины слоя заново (см. коммент
-  // у rebuildMergedTier), не только изменившийся чанк — без троттлинга это
-  // ощутимая CPU-работа каждый кадр именно тогда, когда игрок активно
-  // двигает камеру (реальный репорт с устройства: "грузит больше, чем
-  // показывает" — снятый на глаз симптом ровно этой пересборки, гоняемой
-  // чаще, чем нужно). 120мс — не мгновенно, но и не заметно на глаз (вновь
-  // подгруженный чанк проявится максимум на 1-2 кадра позже, не как
-  // "подвисание"), первая пересборка слоя (buf ещё нет) всегда происходит
-  // сразу, без троттла — иначе игрок сперва увидел бы пустой кусок мира.
-  const MERGE_THROTTLE_MS = 120;
-  // Пересобирает GPUBuffer одного слоя из ВСЕХ его текущих чанков (см.
-  // комментарий выше) — вызывается максимум раз за кадр, из frame(), не из
-  // setTerrainChunk/removeTerrainChunk напрямую (там только merged.dirty=true).
-  function rebuildMergedTier(tier: TerrainTier, nowMs: number): void {
-    const merged = mergedTiers[tier];
-    if (merged.buf && nowMs - merged.lastRebuildMs < MERGE_THROTTLE_MS) return; // остаётся dirty — довыполнится, как только троттл отпустит
-    merged.lastRebuildMs = nowMs;
-    let totalVerts = 0;
-    for (const [key, chunk] of terrainChunks) if (tierOf(key) === tier) totalVerts += chunk.vertexCount;
-    const floatsNeeded = totalVerts * 15;
-    if (!merged.buf || merged.capacityFloats < floatsNeeded) {
-      merged.buf?.destroy();
-      merged.capacityFloats = Math.max(floatsNeeded, 4);
-      merged.buf = device.createBuffer({ size: merged.capacityFloats * 4, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
-      merged.scratch = new Float32Array(merged.capacityFloats); // см. её комментарий выше — растёт вместе с buf, не выделяется заново под ту же ёмкость
-    }
-    if (totalVerts > 0) {
-      const combined = merged.scratch!;
-      let offset = 0;
-      for (const [key, chunk] of terrainChunks) {
-        if (tierOf(key) !== tier) continue;
-        combined.set(chunk.data, offset);
-        offset += chunk.data.length;
-      }
-      // Явная длина (floatsNeeded, не combined.length) — scratch мог
-      // остаться от прошлой, более крупной пересборки того же слоя
-      // (ёмкость только растёт), хвост за floatsNeeded — не наш мусор,
-      // писать его на GPU незачем (draw() ниже и так не читает дальше
-      // vertexCount, но лишние байты в writeBuffer — лишнее время).
-      device.queue.writeBuffer(merged.buf, 0, combined, 0, floatsNeeded);
-    }
-    merged.vertexCount = totalVerts;
-    merged.dirty = false;
-  }
 
   // ---- маркеры (инстансинг) ----
   const markerModule = device.createShaderModule({ code: MARKER_SHADER });
@@ -1259,15 +1223,17 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   }
 
   function setTerrainChunk(key: string, mesh: MeshData) {
-    // Больше не создаёт свой GPUBuffer — только CPU-side interleaved-массив
-    // (тот же формат, что и раньше) плюс AABB; сам GPUBuffer слоя пересобирает
-    // rebuildMergedTier() в начале ближайшего frame() (см. её комментарий).
+    // CPU-side interleaved-массив (тот же формат, что и раньше) плюс AABB, а
+    // затем — запись ровно в слот этого чанка внутри буфера слоя (см.
+    // MergedTier выше). Раньше здесь только поднимался флаг «слой грязный»,
+    // а в начале кадра ВЕСЬ слой собирался заново из всех своих чанков и
+    // целиком уходил на GPU. Для ближнего слоя это 49 чанков по 1536 вершин
+    // = ~4.3МБ копирования и загрузки, и столько же у дальнего — каждые
+    // 120мс всё время, пока камера движется. Ровно про это автор и сказал:
+    // «лёгкие подлагивания… именно при перемещении камеры». Теперь на шаг
+    // камеры уходит только то, что реально изменилось: ~90КБ на чанк.
     const interleaved = new Float32Array(mesh.vertexCount * 15);
-    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
     for (let i = 0; i < mesh.vertexCount; i++) {
-      const px = mesh.positions[i * 3], pz = mesh.positions[i * 3 + 2];
-      if (px < minX) minX = px; if (px > maxX) maxX = px;
-      if (pz < minZ) minZ = pz; if (pz > maxZ) maxZ = pz;
       interleaved.set(mesh.positions.subarray(i * 3, i * 3 + 3), i * 15);
       interleaved.set(mesh.colors.subarray(i * 3, i * 3 + 3), i * 15 + 3);
       interleaved.set(mesh.normals.subarray(i * 3, i * 3 + 3), i * 15 + 6);
@@ -1277,9 +1243,9 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
       interleaved[i * 15 + 13] = mesh.forestFracs[i];
       interleaved[i * 15 + 14] = mesh.moistureFracs[i];
     }
-    terrainChunks.set(key, { data: interleaved, vertexCount: mesh.vertexCount, minX, maxX, minZ, maxZ });
+    terrainChunks.add(key);
     const tier = tierOf(key);
-    mergedTiers[tier].dirty = true;
+    mergedTiers[tier].put(key, interleaved, mesh.vertexCount);
     // Тень рисует только near (см. её комментарий у frame() ниже) — только
     // изменение near-тира обязано пересобрать теневой проход; far/backdrop
     // тень не бросают вовсе, их стриминг не должен зря его дёргать.
@@ -1290,7 +1256,7 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     if (!terrainChunks.has(key)) return;
     terrainChunks.delete(key);
     const tier = tierOf(key);
-    mergedTiers[tier].dirty = true;
+    mergedTiers[tier].remove(key);
     if (tier === "near") shadowDirty = true;
   }
 
@@ -1412,21 +1378,22 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     device.queue.writeBuffer(uniformBuf, 0, vp);
   }
 
+  const fogScratch = new Float32Array(8);   // см. skyCamScratch — тот же довод
   function setFog(eye: [number, number, number], color: [number, number, number], density: number, timeSec: number) {
-    const data = new Float32Array([eye[0], eye[1], eye[2], timeSec, color[0], color[1], color[2], density]);
-    device.queue.writeBuffer(fogBuf, 0, data);
+    const d = fogScratch;
+    d[0] = eye[0]; d[1] = eye[1]; d[2] = eye[2]; d[3] = timeSec;
+    d[4] = color[0]; d[5] = color[1]; d[6] = color[2]; d[7] = density;
+    device.queue.writeBuffer(fogBuf, 0, d);
   }
 
   function frame(clearColor: GPUColorDict, drawExtra?: (pass: GPURenderPassEncoder) => void) {
     ensureDepth();
-    // Пересборка "грязных" слоёв — максимум раз за MERGE_THROTTLE_MS (см.
-    // её комментарий у mergedTiers выше), даже если setTerrainChunk/
-    // removeTerrainChunk звали несколько раз с прошлого кадра (обычное
-    // дело при потоковой подгрузке — см. drainPendingNear/Far в main.ts).
-    const nowMs = performance.now();
-    if (mergedTiers.near.dirty) rebuildMergedTier("near", nowMs);
-    if (mergedTiers.far.dirty) rebuildMergedTier("far", nowMs);
-    if (mergedTiers.backdrop.dirty) rebuildMergedTier("backdrop", nowMs);
+    // Пересобирать слои в начале кадра больше не нужно: подгрузка и
+    // выгрузка чанка сразу пишут свой слот (см. setTerrainChunk/
+    // removeTerrainChunk), буфер слоя всегда актуален. Вместе с этим ушёл и
+    // троттлинг на 120мс, который раньше сдерживал полную пересборку —
+    // сдерживать больше нечего, а новый чанк появляется в кадре сразу, а не
+    // через сотню миллисекунд.
     const encoder = device.createCommandEncoder();
 
     // ---- теневой проход: depth-only в shadowTex, отдельный render pass ДО
@@ -1457,10 +1424,10 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
         colorAttachments: [],
         depthStencilAttachment: { view: shadowView, depthClearValue: 1.0, depthLoadOp: "clear", depthStoreOp: "store" },
       });
-      if (mergedTiers.near.vertexCount > 0 && mergedTiers.near.buf) {
+      if (mergedTiers.near.vertexCount > 0 && tierBufs.near) {
         shadowPass.setPipeline(terrainShadowPipeline);
         shadowPass.setBindGroup(0, terrainShadowBindGroup);
-        shadowPass.setVertexBuffer(0, mergedTiers.near.buf);
+        shadowPass.setVertexBuffer(0, tierBufs.near);
         shadowPass.draw(mergedTiers.near.vertexCount);
       }
       // Декор, в отличие от near-рельефа выше, грузится радиусом ВЫГРУЗКИ
@@ -1487,13 +1454,11 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
         }
       }
       shadowPass.end();
-      // Сбрасываем флаг, только если near-тир СЕЙЧАС точно свежий — если
-      // rebuildMergedTier чуть выше сам пропустил пересборку из-за своего
-      // троттла (MERGE_THROTTLE_MS), мы только что нарисовали тень по ещё
-      // старому буферу; оставляем shadowDirty поднятым, чтобы в один из
-      // ближайших кадров, когда near-тир наконец пересоберётся, тень
-      // подтянулась следом, а не осталась немного отстающей навсегда.
-      if (!mergedTiers.near.dirty) shadowDirty = false;
+      // Раньше флаг снимался с оглядкой на троттл пересборки слоя: тень
+      // могла быть нарисована по ещё старому буферу. Слой теперь всегда
+      // свежий на момент кадра (см. setTerrainChunk) — тень нарисована по
+      // тому, что есть, и флаг снимается безусловно.
+      shadowDirty = false;
     }
 
     const view = ctx.getCurrentTexture().createView();
@@ -1519,10 +1484,11 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
       pass.setBindGroup(0, terrainBindGroup);
       // Три draw()-а (near/far/backdrop) вместо одного на каждый из
       // 150-300 одновременно загруженных чанков — см. mergedTiers выше.
-      for (const tier of [mergedTiers.near, mergedTiers.far, mergedTiers.backdrop]) {
-        if (tier.vertexCount === 0 || !tier.buf) continue;
-        pass.setVertexBuffer(0, tier.buf);
-        pass.draw(tier.vertexCount);
+      for (const name of ["near", "far", "backdrop"] as const) {
+        const slots = mergedTiers[name], buf = tierBufs[name];
+        if (slots.vertexCount === 0 || !buf) continue;
+        pass.setVertexBuffer(0, buf);
+        pass.draw(slots.vertexCount);
       }
     }
 

@@ -207,7 +207,9 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat,
   // дублируется в per-instance буфере каждого замка/лагеря/точки.
   const fogBuf = device.createBuffer({ size: 8 * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   function setFog(eye: [number, number, number], color: [number, number, number], density: number) {
-    const data = new Float32Array([eye[0], eye[1], eye[2], 0, color[0], color[1], color[2], density]);
+    const data = fogScratch;   // переиспользуется — зовётся каждый кадр, см. renderer.ts
+    data[0] = eye[0]; data[1] = eye[1]; data[2] = eye[2]; data[3] = 0;
+    data[4] = color[0]; data[5] = color[1]; data[6] = color[2]; data[7] = density;
     device.queue.writeBuffer(fogBuf, 0, data);
   }
   // vpBuf — тот же приём, что и у fogBuf выше (см. её комментарий и
@@ -215,6 +217,7 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat,
   // пишется РАЗ ЗА КАДР через setVP(), а не по одному writeBuffer на
   // каждую видимую модель в draw() ниже.
   const vpBuf = device.createBuffer({ size: 16 * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const fogScratch = new Float32Array(8);
   function setVP(vp: Mat4) {
     device.queue.writeBuffer(vpBuf, 0, vp);
   }
@@ -263,8 +266,14 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat,
     try { instance.modelBuf.destroy(); } catch (_) { /* устройство уже потеряно — освобождать нечего */ }
   }
 
-  function draw(pass: GPURenderPassEncoder, instance: ModelInstance) {
+  // Пайплайн у всех моделей ОДИН и тот же — ставить его заново перед каждой
+  // из них незачем: в кадре с плотной застройкой это несколько десятков
+  // лишних смен состояния прохода. Ставим один раз на всю пачку (beginModels
+  // ниже), а draw() занимается только своей моделью.
+  function beginModels(pass: GPURenderPassEncoder) {
     pass.setPipeline(pipeline);
+  }
+  function draw(pass: GPURenderPassEncoder, instance: ModelInstance) {
     pass.setBindGroup(0, instance.bindGroup);
     pass.setVertexBuffer(0, instance.model.vao.posBuf);
     pass.setVertexBuffer(1, instance.model.vao.nrmBuf);
@@ -273,7 +282,7 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat,
     pass.drawIndexed(instance.model.vao.indexCount);
   }
 
-  return { createInstance, destroyInstance, draw, setFog, setVP };
+  return { createInstance, destroyInstance, beginModels, draw, setFog, setVP };
 }
 
 export interface ModelInstance {
