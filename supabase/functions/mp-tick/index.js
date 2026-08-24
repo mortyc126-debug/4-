@@ -154,6 +154,10 @@ Deno.serve(async (req) => {
     const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
+    // Разовая уборка старых наложений — до выборки событий ниже, иначе на
+    // пустом тике (нет событий -> ранний return) она никогда бы не завелась.
+    await ensureOverlapCleanupScheduled(admin);
+
     const { data: due, error: dueErr } = await admin
       .from("events").select("*")
       .eq("processed", false)
@@ -203,6 +207,7 @@ Deno.serve(async (req) => {
         else if (ev.type === "node_respawn") await applyNodeRespawn(admin, ev);
         else if (ev.type === "camp_respawn") await applyCampRespawn(admin, ev);
         else if (ev.type === "ambient_seed") await applyAmbientSeed(admin, ev);
+        else if (ev.type === "overlap_cleanup") await applyOverlapCleanup(admin, ev);
         // else: неизвестный/ещё не перенесённый тип — оставляем как есть,
         // не помечаем processed, чтобы не потерять событие молча; заберётся
         // следующим тиком после того, как для него появится case (claimed_at
@@ -738,6 +743,125 @@ async function applyAmbientSeed(admin, ev) {
     });
   }
 }
+// =============================================================================
+// РАЗОВАЯ ЧИСТКА УЖЕ СУЩЕСТВУЮЩИХ НАЛОЖЕНИЙ (type:"overlap_cleanup").
+//
+// Автор: «миграции не произошло, старые точки как стояли наложенные друг на
+// друга, так и стоят». Всё верно, и вот почему клиентская миграция тут ни при
+// чём: thinMapDensity10 в index.html ходит по W.map — это ОДИНОЧНАЯ игра. В
+// общем мире точки и лагеря живут строками map_cells в базе, их не видит
+// никакая клиентская миграция. А правка размещения (MIN_STRUCT_GAP=30 и маска
+// настоящей воды) запрещает только НОВЫЕ наложения — то, что уже лежит в
+// таблице, она не трогает по определению.
+//
+// Поэтому чистка живёт здесь, серверным событием, по образцу ambient_seed.
+// Заводится один раз миграцией 0006 и себя НЕ перепланирует (в отличие от
+// ambient_seed) — это разовая уборка, а не цепочка.
+//
+// Что удаляется:
+//   1. клетки в НАСТОЯЩЕЙ воде (по запечённой маске выше — той же, что теперь
+//      判 судит размещение);
+//   2. клетки ближе MIN_STRUCT_GAP к ЗАМКУ — у столицы приоритет, она никогда
+//      не удаляется (это состояние игрока, из зерна не восстанавливается);
+//   3. из пары клеток ближе MIN_STRUCT_GAP друг к другу — одна: точка сбора
+//      ценнее лагеря (тот же приоритет, что и у клиентской чистки), при равном
+//      типе удаляется вторая по порядку.
+//
+// Чего чистка НЕ трогает никогда:
+//   - игроков (таблица players вообще не изменяется);
+//   - клетку, в которую прямо сейчас идёт чей-то поход (marches по tx/ty) —
+//     иначе отряд прибыл бы в пустоту. Такие клетки просто остаются как есть,
+//     следующая уборка (если её завести повторно) их подберёт.
+// Заводится САМА, без ручного SQL: миграция 0006 остаётся как способ
+// запустить уборку повторно, но обычному пользователю достаточно задеплоить
+// эту функцию. Флаг живёт в памяти экземпляра — проверка делается один раз на
+// холодный старт (экземпляры живут долго), то есть это единицы лишних запросов
+// в сутки, а не запрос на каждый тик.
+let cleanupEnsured = false;
+async function ensureOverlapCleanupScheduled(admin) {
+  if (cleanupEnsured) return;
+  cleanupEnsured = true;
+  try {
+    const { data: worlds } = await admin.from("worlds").select("id");
+    for (const w of (worlds || [])) {
+      const { data: seen } = await admin.from("events").select("id")
+        .eq("world_id", w.id).eq("type", "overlap_cleanup").limit(1);
+      if (seen && seen.length) continue;
+      await admin.from("events").insert({
+        world_id: w.id, fire_at: new Date().toISOString(), type: "overlap_cleanup", data: {},
+      });
+      console.log("overlap_cleanup: уборка запланирована для мира", w.id);
+    }
+  } catch (e) {
+    // Не критично: уборка — разовая гигиена, а не то, без чего тик не работает.
+    console.error("overlap_cleanup: не удалось запланировать:", String(e && e.message || e));
+  }
+}
+const CLEANUP_BATCH_LOG = 40; // сколько удалённых координат печатать в лог, чтобы не залить его целиком
+async function applyOverlapCleanup(admin, ev) {
+  const worldId = ev.world_id;
+  const [cellsRes, playersRes, marchesRes] = await Promise.all([
+    admin.from("map_cells").select("x,y,t").eq("world_id", worldId),
+    admin.from("players").select("x,y").eq("world_id", worldId),
+    admin.from("marches").select("tx,ty,state").eq("world_id", worldId),
+  ]);
+  if (cellsRes.error) throw cellsRes.error;
+  if (playersRes.error) throw playersRes.error;
+  const cells = cellsRes.data || [];
+  const players = playersRes.data || [];
+  // Цели идущих походов — их клетки неприкосновенны (см. комментарий выше).
+  const targeted = new Set();
+  for (const m of (marchesRes.data || [])) {
+    if (m.state !== "back") targeted.add(m.tx + "," + m.ty);
+  }
+  const key = (c) => c.x + "," + c.y;
+  const drop = new Set();
+  const dropIf = (c) => { if (!targeted.has(key(c))) drop.add(key(c)); };
+
+  // 1) вода
+  for (const c of cells) if (isRealWater(c.x, c.y)) dropIf(c);
+  // 2) вплотную к замку
+  for (const c of cells) {
+    if (drop.has(key(c))) continue;
+    for (const p of players) {
+      if (Math.hypot(p.x - c.x, p.y - c.y) < MIN_STRUCT_GAP) { dropIf(c); break; }
+    }
+  }
+  // 3) пары между собой; точка (node) ценнее лагеря/форта
+  const rank = (c) => (c.t === "node" ? 0 : 1);
+  const sorted = cells.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+  for (let i = 0; i < sorted.length; i++) {
+    if (drop.has(key(sorted[i]))) continue;
+    for (let j = i + 1; j < sorted.length; j++) {
+      if (drop.has(key(sorted[j]))) continue;
+      if (sorted[j].x - sorted[i].x >= MIN_STRUCT_GAP) break; // отсортировано по x — дальше только дальше
+      if (Math.hypot(sorted[i].x - sorted[j].x, sorted[i].y - sorted[j].y) >= MIN_STRUCT_GAP) continue;
+      // Удаляем менее ценную из пары. Если та под защитой похода — пробуем вторую.
+      const a = sorted[i], b = sorted[j];
+      const loser = rank(a) <= rank(b) ? b : a;
+      const other = loser === a ? b : a;
+      if (!targeted.has(key(loser))) drop.add(key(loser));
+      else if (!targeted.has(key(other))) drop.add(key(other));
+      if (drop.has(key(a))) break; // сам i выбыл — дальше сравнивать его не с кем
+    }
+  }
+
+  // Удаление по одной строке: пар координат немного (десятки), а PostgREST не
+  // умеет IN по составному ключу — честнее явный цикл, чем самодельный or-фильтр.
+  let removed = 0;
+  const sample = [];
+  for (const k of drop) {
+    const [x, y] = k.split(",").map(Number);
+    const { error } = await admin.from("map_cells").delete()
+      .eq("world_id", worldId).eq("x", x).eq("y", y);
+    if (error) { console.error("overlap_cleanup: не удалось удалить", k, error.message); continue; }
+    removed++;
+    if (sample.length < CLEANUP_BATCH_LOG) sample.push(k);
+  }
+  console.log(`overlap_cleanup: было клеток ${cells.length}, удалено ${removed}, ` +
+    `под защитой походов ${targeted.size}; примеры удалённых: ${sample.join(" ")}`);
+}
+
 const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];
 // load — index.html:2583-2588 TROOP_TYPES (там же атк/защ/хп/скорость/магия,
 // но load не переносился в этот файл раньше — combat-математике он не
