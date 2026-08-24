@@ -709,6 +709,25 @@ function rwHeightAt(x, y) {
   return c * 0.55 + s * 0.45;
 }
 function isRealWater(x, y) { return rwHeightAt(x + 0.5, y + 0.5) < RW_SEA; }
+// Крутизна рельефа под точкой/лагерем — раньше здесь проверялась только
+// вода, крутизна соседнего рельефа — никак (тот же пробел, что и в
+// index.html до этого коммита, см. её комментарий у isTooSteep: "не должны
+// появляться на неровных поверхностях"). STEEP_SAMPLE_R/STEEP_MAX_RISE —
+// те же значения, что и в index.html (держать в синхроне вручную, как и
+// остальной этот блок рельефа — см. заголовок файла про самодостаточные
+// копии). Процедурный rwHeightAt — единственный источник рельефа здесь (в
+// отличие от клиента mp-join не подгружает 5.76МБ настоящих данных высот),
+// тот же уровень честного упрощения, что уже был у isRealWater.
+const STEEP_SAMPLE_R = 3, STEEP_MAX_RISE = 0.11;
+function isTooSteep(x, y) {
+  const cx = x + 0.5, cy = y + 0.5;
+  const c = rwHeightAt(cx, cy);
+  const d1 = Math.abs(rwHeightAt(cx + STEEP_SAMPLE_R, cy) - c);
+  const d2 = Math.abs(rwHeightAt(cx - STEEP_SAMPLE_R, cy) - c);
+  const d3 = Math.abs(rwHeightAt(cx, cy + STEEP_SAMPLE_R) - c);
+  const d4 = Math.abs(rwHeightAt(cx, cy - STEEP_SAMPLE_R) - c);
+  return Math.max(d1, d2, d3, d4) > STEEP_MAX_RISE;
+}
 
 // Простой поиск свободного места на условной решётке мира — не копия
 // findFreeCellInChunk/MIN_STRUCT_GAP из index.html (та логика заточена под
@@ -747,22 +766,53 @@ const NODE_SEED_COUNT = 5, NODE_SEED_MIN_R = 8, NODE_SEED_MAX_R = 25;
 // SEED_WATER_TRIES — Фаза 12: точка/лагерь пересеивается в воду до 8 раз
 // (тот же приём, что и у pickSpawn выше), последняя попытка кладётся как
 // есть без проверки — честный редкий отказ вместо риска зациклиться в
-// сильно "морском" кольце.
+// сильно "морском" кольце. Теперь тем же счётчиком попыток пересеивается и
+// от крутого рельефа, и от соседних точек/лагерей (см. ниже) — раньше
+// проверялась только вода, а точки/лагеря общего мира могли лечь на склон
+// горы или буквально друг в друга (см. комментарий у MIN_STRUCT_GAP ниже).
 const SEED_WATER_TRIES = 8;
-function seedPointAvoidingWater(cx, cy, minR, maxR) {
+// Зазор между точками/лагерями общего мира — мягче, чем MIN_STRUCT_GAP=20 в
+// index.html (там плотная одиночная карта с полным перебором чанка; тут
+// сеть — каждая проверка это отдельный запрос к БД, дороже держать строгим).
+// Раньше зазора не было ВООБЩЕ: upsert с ignoreDuplicates спасал только от
+// ТОЧНОГО совпадения координат — два узла в 1-2 клетках друг от друга
+// прекрасно уживались (в 3D выглядело бы как модели, вросшие друг в друга).
+const MIN_STRUCT_GAP = 6;
+// Соседние клетки читаются ОДИН раз на вызов seedNodesAround/seedCampsAround
+// (не на каждую точку) — pad с запасом покрывает оба кольца (узлы и
+// лагеря делят один и тот же радиус 8..25), avoid пополняется на лету
+// уже размещёнными в ЭТОМ вызове точками, чтобы монеты в одной пачке тоже
+// не легли друг на друга.
+async function fetchNearbyCells(admin, worldId, cx, cy, pad) {
+  const { data, error } = await admin.from("map_cells").select("x,y")
+    .eq("world_id", worldId)
+    .gte("x", cx - pad).lte("x", cx + pad)
+    .gte("y", cy - pad).lte("y", cy + pad);
+  if (error) throw error;
+  return data || [];
+}
+function tooCloseToAny(cells, x, y, gap) {
+  for (const c of cells) if (Math.hypot(c.x - x, c.y - y) < gap) return true;
+  return false;
+}
+function seedPoint(cx, cy, minR, maxR, avoid) {
   let x, y;
   for (let t = 0; t < SEED_WATER_TRIES; t++) {
     const ang = Math.random() * Math.PI * 2;
     const r = minR + Math.random() * (maxR - minR);
     x = Math.round(cx + Math.cos(ang) * r); y = Math.round(cy + Math.sin(ang) * r);
-    if (!isRealWater(x, y)) return { x, y };
+    if (isRealWater(x, y)) continue;
+    if (isTooSteep(x, y)) continue;
+    if (tooCloseToAny(avoid, x, y, MIN_STRUCT_GAP)) continue;
+    return { x, y };
   }
-  return { x, y };
+  return { x, y }; // честный редкий отказ — тот же принцип, что и раньше у воды
 }
-async function seedNodesAround(admin, worldId, cx, cy) {
+async function seedNodesAround(admin, worldId, cx, cy, avoid) {
   const rows = [];
   for (let i = 0; i < NODE_SEED_COUNT; i++) {
-    const { x, y } = seedPointAvoidingWater(cx, cy, NODE_SEED_MIN_R, NODE_SEED_MAX_R);
+    const { x, y } = seedPoint(cx, cy, NODE_SEED_MIN_R, NODE_SEED_MAX_R, avoid);
+    avoid.push({ x, y }); // следующая точка этой же пачки уже не ляжет вплотную
     const lv = 1 + Math.floor(Math.random() * 3); // 1..3 — новичкам не нужны жилы 5 уровня под боком
     const { res, amount } = pickNodeResAndAmount(lv); // index.html:3111/3344 (EV.nodeback/ensureChunkContent) — те же формулы
     rows.push({ world_id: worldId, x, y, t: "node", data: { res, lv, amount, max: amount } });
@@ -782,10 +832,11 @@ async function seedNodesAround(admin, worldId, cx, cy) {
 // заточена под уже освоенную карту, а не под спавн, поэтому тот же честный
 // разброс "случайный уровень в разумных пределах", что и у узлов.
 const CAMP_SEED_COUNT = 3, CAMP_SEED_MIN_R = 8, CAMP_SEED_MAX_R = 25;
-async function seedCampsAround(admin, worldId, cx, cy) {
+async function seedCampsAround(admin, worldId, cx, cy, avoid) {
   const rows = [];
   for (let i = 0; i < CAMP_SEED_COUNT; i++) {
-    const { x, y } = seedPointAvoidingWater(cx, cy, CAMP_SEED_MIN_R, CAMP_SEED_MAX_R);
+    const { x, y } = seedPoint(cx, cy, CAMP_SEED_MIN_R, CAMP_SEED_MAX_R, avoid);
+    avoid.push({ x, y });
     const lv = 1 + Math.floor(Math.random() * 5); // 1..5 — уровни 15+ (форт) новичку рядом не нужны
     rows.push({ world_id: worldId, x, y, t: "camp", data: { lv } });
   }
@@ -918,8 +969,14 @@ Deno.serve(async (req) => {
     // повторный join/опрос (см. seedNodesAround выше). Ошибка сева узлов не
     // должна ронять сам вход игрока — он уже создан, точки сбора можно
     // досеять и позже, поэтому не return jsonResponse на исключении.
-    try { await seedNodesAround(admin, world.id, x, y); } catch (_) { /* см. комментарий */ }
-    try { await seedCampsAround(admin, world.id, x, y); } catch (_) { /* см. тот же комментарий */ }
+    // avoid — уже существующие в округе точки/лагеря (запрошены ОДИН раз на
+    // оба кольца, см. fetchNearbyCells) плюс всё, что размещает сам этот
+    // вызов — seedNodesAround/seedCampsAround делят один и тот же массив,
+    // поэтому узлы и лагеря не садятся друг в друга даже между собой.
+    let avoid = [];
+    try { avoid = await fetchNearbyCells(admin, world.id, x, y, Math.max(NODE_SEED_MAX_R, CAMP_SEED_MAX_R) + MIN_STRUCT_GAP); } catch (_) { /* без соседей — сеем как есть, тот же честный отказ */ }
+    try { await seedNodesAround(admin, world.id, x, y, avoid); } catch (_) { /* см. комментарий */ }
+    try { await seedCampsAround(admin, world.id, x, y, avoid); } catch (_) { /* см. тот же комментарий */ }
 
     return jsonResponse({ ok: true, world_id: world.id, player: ins.data });
   } catch (e) {
