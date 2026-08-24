@@ -451,25 +451,122 @@ function pickNodeResAndAmount(lv) {
   const amount = Math.round(isAmber ? 240 * Math.pow(1.9, lv - 1) : 6000 * Math.pow(2.6, lv - 1));
   return { res, amount };
 }
+// ---- Рельеф (дословная копия из mp-join/index.js, самодостаточная — см.
+// пояснение о Dashboard-редакторе выше) — раньше здесь этого блока не было
+// вовсе: respawnOffset/applyAmbientSeed ниже сеяли точки/лагеря совсем
+// вслепую (комментарий на этом месте раньше честно предупреждал: "тоже не
+// проверяет воду"). Автор явно попросил, чтобы точки ресурсов не появлялись
+// ни на неровных поверхностях, ни друг в друге, ни в реках — держать это
+// только на клиенте/в mp-join было половинчато: respawn истощённой точки и
+// фоновый ambient-подсев работают именно отсюда, mp-tick.
+function hash2(x, y, s) { let h = x * 374761393 + y * 668265263 + s * 1274126177;
+  h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; }
+function noise(x, y, s) {
+  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  const a = hash2(xi, yi, s), b = hash2(xi + 1, yi, s), c = hash2(xi, yi + 1, s), d = hash2(xi + 1, yi + 1, s);
+  return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
+}
+function ridge(x, y, s) { return 1 - Math.abs(2 * noise(x, y, s) - 1); }
+const RW_SEED = 12345, RW_SEA = 0.235;
+function rwSstep(a, b, x) { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); }
+function rwRegionKind(x, y) {
+  return { mount: rwSstep(0.40, 0.72, noise(x / 40, y / 40, RW_SEED + 55)),
+           plat: rwSstep(0.62, 0.84, noise(x / 34, y / 34, RW_SEED + 88)),
+           rough: noise(x / 26, y / 26, RW_SEED + 123) };
+}
+function rwHeightRaw(x, y) {
+  const wx = (noise(x / 34, y / 34, RW_SEED + 101) * 2 - 1) * 13;
+  const wy = (noise(x / 34, y / 34, RW_SEED + 102) * 2 - 1) * 13;
+  const X = x + wx, Y = y + wy;
+  const R = rwRegionKind(x, y);
+  const cont = noise(X / 62, Y / 62, RW_SEED + 201);
+  let e = 0.16 + cont * 0.50;
+  const amp = 0.16 + 0.84 * R.mount + 0.35 * R.rough;
+  e += (noise(X / 27, Y / 27, RW_SEED) * 0.20 + noise(X / 13, Y / 13, RW_SEED + 9) * 0.10
+    + noise(X / 6, Y / 6, RW_SEED + 21) * 0.045) * amp;
+  e += ridge(X / 17, Y / 17, RW_SEED + 37) * 0.33 * R.mount;
+  e += R.mount * 0.10 - (1 - R.mount) * 0.05;
+  if (R.plat > 0.02) {
+    const terr = Math.round(e * 6.0) / 6.0;
+    e = e * (1 - R.plat * 0.80) + terr * (R.plat * 0.80);
+  }
+  if (e >= 0.42) {
+    const k = rwSstep(0.42, 0.68, e);
+    e += (noise(x / 2.4, y / 2.4, RW_SEED + 180) - 0.5) * 0.075 * k
+      + (noise(x / 5.5, y / 5.5, RW_SEED + 181) - 0.5) * 0.055 * k;
+  }
+  return Math.max(0.02, Math.min(1, e));
+}
+function rwHeightAt(x, y) {
+  const c = rwHeightRaw(x, y);
+  const s = (rwHeightRaw(x + 0.7, y) + rwHeightRaw(x - 0.7, y) + rwHeightRaw(x, y + 0.7) + rwHeightRaw(x, y - 0.7)) * 0.25;
+  return c * 0.55 + s * 0.45;
+}
+function isRealWater(x, y) { return rwHeightAt(x + 0.5, y + 0.5) < RW_SEA; }
+// Те же значения, что и в index.html/mp-join — держать в синхроне вручную.
+const STEEP_SAMPLE_R = 3, STEEP_MAX_RISE = 0.11;
+function isTooSteep(x, y) {
+  const cx = x + 0.5, cy = y + 0.5;
+  const c = rwHeightAt(cx, cy);
+  const d1 = Math.abs(rwHeightAt(cx + STEEP_SAMPLE_R, cy) - c);
+  const d2 = Math.abs(rwHeightAt(cx - STEEP_SAMPLE_R, cy) - c);
+  const d3 = Math.abs(rwHeightAt(cx, cy + STEEP_SAMPLE_R) - c);
+  const d4 = Math.abs(rwHeightAt(cx, cy - STEEP_SAMPLE_R) - c);
+  return Math.max(d1, d2, d3, d4) > STEEP_MAX_RISE;
+}
+// Зазор от уже существующих точек/лагерей — тот же принцип и то же число,
+// что и в mp-join (MIN_STRUCT_GAP там же), помягче полноценного
+// findFreeCellInChunk в index.html: сеть дороже, чем чистый JS-перебор.
+const MIN_STRUCT_GAP = 6, SEED_TRIES = 8;
+async function fetchNearbyCells(admin, worldId, cx, cy, pad) {
+  const { data, error } = await admin.from("map_cells").select("x,y")
+    .eq("world_id", worldId)
+    .gte("x", cx - pad).lte("x", cx + pad)
+    .gte("y", cy - pad).lte("y", cy + pad);
+  if (error) throw error;
+  return data || [];
+}
+function tooCloseToAny(cells, x, y, gap) {
+  for (const c of cells) if (Math.hypot(c.x - x, c.y - y) < gap) return true;
+  return false;
+}
+// Общий подбор места для ОДНОЙ точки/лагеря вокруг (cx,cy) — не вода, не
+// крутой склон, не впритык к соседям. Соседи запрашиваются один раз на
+// вызов (не на каждую попытку внутри цикла) — восемь честных попыток, потом
+// тот же редкий отказ "берём как есть", что и раньше был только у воды.
+async function pickWildSpot(admin, worldId, cx, cy, minR, maxR) {
+  const pad = maxR + MIN_STRUCT_GAP;
+  let nearby = [];
+  try { nearby = await fetchNearbyCells(admin, worldId, cx, cy, pad); } catch (_) { /* без соседей — сеем как есть */ }
+  let x, y;
+  for (let t = 0; t < SEED_TRIES; t++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = minR + Math.random() * (maxR - minR);
+    x = Math.round(cx + Math.cos(ang) * r); y = Math.round(cy + Math.sin(ang) * r);
+    if (isRealWater(x, y)) continue;
+    if (isTooSteep(x, y)) continue;
+    if (tooCloseToAny(nearby, x, y, MIN_STRUCT_GAP)) continue;
+    return { x, y };
+  }
+  return { x, y };
+}
+
 // Фаза 8, кусочек 3 — респаун истощённой точки/разгромленного лагеря.
 // Те же задержки, что CFG.NODE_RESPAWN/CFG.RESPAWN_CAMP в index.html:
-// 1717-1718 (45мин/1ч). Новое место — небольшое смещение от старого
-// (не полноценный findFreeCellInChunk с перебором чанка, как в index.html
-// — тот же честный уровень упрощения, что и у seedNodesAround/
-// seedCampsAround в mp-join): upsert с ignoreDuplicates молча пропускает
-// редкую коллизию координат, следующий respawn всё равно рано или поздно
-// найдёт свободное место где-то ещё.
+// 1717-1718 (45мин/1ч). Новое место — небольшое смещение от старого, теперь
+// через тот же pickWildSpot, что и everything else ниже (не полноценный
+// findFreeCellInChunk с перебором чанка, как в index.html — тот же честный
+// уровень упрощения, что и у seedNodesAround/seedCampsAround в mp-join):
+// upsert с ignoreDuplicates молча пропускает редкую коллизию координат,
+// следующий respawn всё равно рано или поздно найдёт свободное место
+// где-то ещё.
 const NODE_RESPAWN_SEC = 3600, CAMP_RESPAWN_SEC = 2700;
 const RESPAWN_MIN_R = 3, RESPAWN_MAX_R = 12;
-function respawnOffset(ox, oy) {
-  const ang = Math.random() * Math.PI * 2;
-  const r = RESPAWN_MIN_R + Math.random() * (RESPAWN_MAX_R - RESPAWN_MIN_R);
-  return { x: Math.round(ox + Math.cos(ang) * r), y: Math.round(oy + Math.sin(ang) * r) };
-}
 async function applyNodeRespawn(admin, ev) {
   const ox = ev.data && ev.data.x, oy = ev.data && ev.data.y;
   if (ox == null || oy == null) return;
-  const { x, y } = respawnOffset(ox, oy);
+  const { x, y } = await pickWildSpot(admin, ev.world_id, ox, oy, RESPAWN_MIN_R, RESPAWN_MAX_R);
   const lv = 1 + Math.floor(Math.random() * 3); // тот же диапазон, что seedNodesAround в mp-join
   const { res, amount } = pickNodeResAndAmount(lv);
   const { error } = await admin.from("map_cells").upsert(
@@ -481,7 +578,7 @@ async function applyNodeRespawn(admin, ev) {
 async function applyCampRespawn(admin, ev) {
   const ox = ev.data && ev.data.x, oy = ev.data && ev.data.y;
   if (ox == null || oy == null) return;
-  const { x, y } = respawnOffset(ox, oy);
+  const { x, y } = await pickWildSpot(admin, ev.world_id, ox, oy, RESPAWN_MIN_R, RESPAWN_MAX_R);
   const lv = 1 + Math.floor(Math.random() * 5); // тот же диапазон, что seedCampsAround в mp-join
   const { error } = await admin.from("map_cells").upsert(
     { world_id: ev.world_id, x, y, t: "camp", data: { lv } },
@@ -493,8 +590,9 @@ async function applyCampRespawn(admin, ev) {
 // Фаза 15 — фоновый respawn НЕ по истощению: автор попросил ту же механику,
 // что и в RoK, "украденную и адаптированную" — карта сама подсевает новые
 // точки/лагеря по расписанию, не дожидаясь, пока кто-то выберет старые до
-// дна (respawnOffset выше срабатывает только ПОСЛЕ чьей-то добычи — далеко
-// от городов, куда ещё никто не дошёл, точек как не было, так и нет).
+// дна (applyNodeRespawn/applyCampRespawn выше срабатывают только ПОСЛЕ
+// чьей-то добычи — далеко от городов, куда ещё никто не дошёл, точек как
+// не было, так и нет).
 //
 // Самоподдерживающаяся цепочка событий (тот же приём, что и node_respawn/
 // camp_respawn) — КАЖДЫЙ отработавший ambient_seed сам заводит следующий
@@ -517,11 +615,12 @@ async function applyCampRespawn(admin, ev) {
 // цепочка сама себя планирует не чаще) — по стоимости не отличается от
 // любого другого события в этой же таблице.
 //
-// Честное упрощение (тот же уровень, что и у respawnOffset выше — тот
-// тоже не проверяет воду): без isRealWater — полный перенос рельефной
-// воды сюда значил бы дублировать hash2/noise/ridge/rwHeightAt из mp-join
-// (~80 строк) ради ambient-точек, у которых и так есть запасной путь —
-// следующее звено цепочки просто попробует другое случайное место.
+// Раньше здесь стояло честное упрощение "без isRealWater — не проверяем
+// воду ради ambient-точек" — теперь тот же рельефный блок уже есть в этом
+// файле (см. pickWildSpot выше, используется и respawn'ом), так что и
+// фоновый подсев проверяет воду/крутизну/соседей тем же способом, без
+// исключений: карта общего мира не должна тихо накапливать точки в реках
+// именно в фоновом канале, который работает постоянно, весь запас игры.
 const AMBIENT_SEED_INTERVAL_SEC = 600; // 10 минут — не тема "раз в секунду", это фоновый прирост контента, не отклик на действие игрока
 const AMBIENT_NODE_MIN_R = 30, AMBIENT_NODE_MAX_R = 90; // шире собственного кольца новичка (8-25) — свободная территория МЕЖДУ городами, не чей-то персональный задний двор
 const AMBIENT_NODE_PER_PLAYER = 3, AMBIENT_NODE_FLOOR = 20; // потолок узлов = max(20, игроков×3)
@@ -546,8 +645,7 @@ async function applyAmbientSeed(admin, ev) {
           const rows = [];
           for (let i = 0; i < AMBIENT_NODE_BATCH; i++) {
             const c = players[Math.floor(Math.random() * players.length)];
-            const ang = Math.random() * Math.PI * 2, r = AMBIENT_NODE_MIN_R + Math.random() * (AMBIENT_NODE_MAX_R - AMBIENT_NODE_MIN_R);
-            const x = Math.round(c.x + Math.cos(ang) * r), y = Math.round(c.y + Math.sin(ang) * r);
+            const { x, y } = await pickWildSpot(admin, worldId, c.x, c.y, AMBIENT_NODE_MIN_R, AMBIENT_NODE_MAX_R);
             const lv = 1 + Math.floor(Math.random() * 3);
             const { res, amount } = pickNodeResAndAmount(lv);
             rows.push({ world_id: worldId, x, y, t: "node", data: { res, lv, amount, max: amount } });
@@ -558,8 +656,7 @@ async function applyAmbientSeed(admin, ev) {
           const rows = [];
           for (let i = 0; i < AMBIENT_CAMP_BATCH; i++) {
             const c = players[Math.floor(Math.random() * players.length)];
-            const ang = Math.random() * Math.PI * 2, r = AMBIENT_NODE_MIN_R + Math.random() * (AMBIENT_NODE_MAX_R - AMBIENT_NODE_MIN_R);
-            const x = Math.round(c.x + Math.cos(ang) * r), y = Math.round(c.y + Math.sin(ang) * r);
+            const { x, y } = await pickWildSpot(admin, worldId, c.x, c.y, AMBIENT_NODE_MIN_R, AMBIENT_NODE_MAX_R);
             const lv = 1 + Math.floor(Math.random() * 5);
             rows.push({ world_id: worldId, x, y, t: "camp", data: { lv } });
           }

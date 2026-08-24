@@ -3567,12 +3567,42 @@ function rwBilinear(px,py){
 }
 // Клетка (x,y) — центр клетки (+0.5), та же точка, что 3D берёт под объект
 // (см. buildRealCandidate/heightAt в engine/src/terrain.ts и main.ts).
-function isRealWater(x,y){
+// Вынесено отдельной функцией (раньше жило только внутри isRealWater) —
+// та же ветка "реальные данные догрузились/ещё нет", теперь переиспользуется
+// и isTooSteep ниже: высота нужна не только чтобы понять "вода или нет", но
+// и чтобы оценить перепад с соседними клетками.
+function rwHeightAny(x,y){
   const cx=x+0.5, cy=y+0.5;
   if(realElevData && cx>=-RW_WORLD_HALF_X && cx<RW_WORLD_HALF_X && cy>=-RW_WORLD_HALF_Z && cy<RW_WORLD_HALF_Z){
-    return rwBilinear(cx+RW_WORLD_HALF_X, cy+RW_WORLD_HALF_Z) < RW_SEA;
+    return rwBilinear(cx+RW_WORLD_HALF_X, cy+RW_WORLD_HALF_Z);
   }
-  return rwHeightAt(cx,cy) < RW_SEA;
+  return rwHeightAt(cx,cy);
+}
+function isRealWater(x,y){
+  return rwHeightAny(x,y) < RW_SEA;
+}
+// Крутизна рельефа под точкой/лагерем/фортом — раньше findFreeCellInChunk
+// ниже проверял ТОЛЬКО воду, крутизну соседнего рельефа не смотрел вообще:
+// постройка могла лечь прямо на отвесный склон горы, просто не под водой
+// (прямой запрос автора: "не должны появляться на неровных поверхностях").
+// registerFlattenSite (engine/src/terrain.ts) решает смежную, но другую
+// задачу — уже ПОСЛЕ того, как место выбрано, даёт зданию ровную площадку
+// под ногами, чтобы визуально не "тонуло"/не "парило"; сама эта площадка на
+// отвесной стене выглядела бы вырезанным в скале уступом, а не естественным
+// местом постройки — здесь же решаем ДО выбора места, тем же принципом, что
+// и вода: не подходит — ищем другую клетку. STEEP_SAMPLE_R — примерно
+// половина типичного радиуса площадки (5..6.5 у лагеря/форта/точки, см.
+// engine/src/realData.ts scale). Порог STEEP_MAX_RISE подобран на глаз (как
+// когда-то MIN_STRUCT_GAP) — крутите при живой проверке, если результат не
+// понравится.
+const STEEP_SAMPLE_R=3, STEEP_MAX_RISE=0.11;
+function isTooSteep(x,y){
+  const c=rwHeightAny(x,y);
+  const d1=Math.abs(rwHeightAny(x+STEEP_SAMPLE_R,y)-c);
+  const d2=Math.abs(rwHeightAny(x-STEEP_SAMPLE_R,y)-c);
+  const d3=Math.abs(rwHeightAny(x,y+STEEP_SAMPLE_R)-c);
+  const d4=Math.abs(rwHeightAny(x,y-STEEP_SAMPLE_R)-c);
+  return Math.max(d1,d2,d3,d4)>STEEP_MAX_RISE;
 }
 
 
@@ -3939,6 +3969,7 @@ function findFreeCellInChunk(cx,cy,salt){
     const x=x0+Math.floor(hx*STRUCT_CHUNK), y=y0+Math.floor(hy*STRUCT_CHUNK);
     if(W.map[key(x,y)]) continue;
     if(isRealWater(x,y)) continue;
+    if(isTooSteep(x,y)) continue;
     if(!farEnough(x,y)) continue;
     return {x,y};
   }
@@ -4177,7 +4208,7 @@ function genWorld(seed){
 
   // Свежий мир уже построен через ensureChunkContent (зазор + вода +
   // "монетка" на чанк) — всем миграциям ниже тут нечего делать.
-  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.densityMigrated5=true; W.densityMigrated6=true; W.densityMigrated7=true; W.densityMigrated8=true; W.infiniteWorldMigrated=true; W.levelMigrated=true; W.marchRescueMigrated=true; W.marchSpeedMigrated=true;
+  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.densityMigrated5=true; W.densityMigrated6=true; W.densityMigrated7=true; W.densityMigrated8=true; W.densityMigrated9=true; W.infiniteWorldMigrated=true; W.levelMigrated=true; W.marchRescueMigrated=true; W.marchSpeedMigrated=true;
   logg("Мир создан. Зерно "+seed+". Городов: "+W.players.length+".", "good");
   return W;
 }
@@ -4384,6 +4415,22 @@ function thinMapDensity8(){
   for(const o of drop) delete W.map[key(o.x,o.y)];
   W.densityMigrated8=true;
   if(drop.size) logg("Точки/лагеря раздвинуты ещё раз: убрано "+drop.size+".","good");
+}
+// Девятая волна: isTooSteep (см. её комментарий у isRealWater выше) появилась
+// позже findFreeCellInChunk — старые сохранения могут нести точки/лагеря,
+// засеянные ДО этой проверки, прямо на крутом склоне. Та же безопасная
+// механика удаления, что и у остальных волн (город не трогаем никогда).
+function thinMapDensity9(){
+  if(W.densityMigrated9) return;
+  const drop=[];
+  for(const k in W.map){
+    const o=W.map[k];
+    if(o.t==="city") continue;
+    if(isTooSteep(o.x,o.y)) drop.push(o);
+  }
+  for(const o of drop) delete W.map[key(o.x,o.y)];
+  W.densityMigrated9=true;
+  if(drop.length) logg("Убрано "+drop.length+" точек/лагерей со слишком крутого рельефа.","good");
 }
 // Шестая волна: старые сохранения несут в себе уровни, посчитанные ещё по
 // originDist от фиксированной точки {50,50} — за пределами исходного
@@ -7146,6 +7193,7 @@ async function load(){
     thinMapDensity6();
     thinMapDensity7();
     thinMapDensity8();
+    thinMapDensity9();
     migrateInfiniteWorld();
     migrateStructLevels();
     // Старые походы в старом сохранении не несут m.path (маршрут в обход
