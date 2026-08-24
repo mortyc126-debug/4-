@@ -78,6 +78,19 @@ function handleOptions(req) {
 }
 
 const TKEYS = ["inf", "arc", "cav", "sie"];
+// ---- Подготовка сбора: те же таблицы и формулы, что в mp-gather ------------
+// Перетащить отряд НА точку и чтобы он там собирал — прямая просьба автора
+// («нужно, чтобы отряд и собирал, а то как-то неполноценно»). Расчёт «сколько
+// увезём и сколько копать» живёт в mp-gather при отправке; здесь его точная
+// копия — по тому же правилу самодостаточных функций, что и всё остальное в
+// этой папке (Dashboard-редактор не подтягивает относительные импорты).
+// Держать в синхроне с mp-gather при правке формул.
+const TROOP_LOAD = { inf: 6, arc: 8, cav: 5, sie: 30 };      // index.html TROOP_TYPES[*].load
+const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];
+const GATHER_BASE_RATE = { food: 3000, wood: 3000, stone: 2250, gold: 1000, amber: 45 };
+// Нежить возит на 20% меньше осадными — её честный размен (index.html troopMod).
+const RACE_LOAD_MOD = { undead: { sie: 0.80 } };
+const troopLoadMod = (race, t) => (RACE_LOAD_MOD[race] && RACE_LOAD_MOD[race][t]) || 1;
 const TROOP_SPEED = { inf: 1.00, arc: 1.10, cav: 1.70, sie: 0.60 };
 const RACE_SPEED_MOD = { undead: { sie: 1.20 } }; // index.html RACE_TROOP_MOD — только нежить меняет скорость (осада)
 const troopSpeedMod = (race, t) => (RACE_SPEED_MOD[race] && RACE_SPEED_MOD[race][t]) || 1;
@@ -494,10 +507,27 @@ Deno.serve(async (req) => {
     if (mErr) return jsonResponse({ err: mErr.message }, 500);
     if (!m) return jsonResponse({ err: "Поход не найден" }, 400);
     if (m.mode === "scout") return jsonResponse({ err: "Лазутчика не перенаправить" }, 400);
-    // Осада не трогается: отряд уже в бою, и вытащить его перетаскиванием
-    // значило бы уходить от боя без потерь (для этого есть отступление —
-    // mp-recall, оно проходит через честное завершение боя).
-    if (m.state === "siege") return jsonResponse({ err: "Отряд уже в бою" }, 400);
+    // Отряд утащили ИЗ БОЯ — это отступление, а не «телепорт из-под удара».
+    // Прямое решение автора: «когда я уведу отряд, пусть засчитывает как
+    // отступление». Логику завершения боя тут НЕ дублируем (hospitalSplit/
+    // addXp/добыча/почта — десятки строк в finalizePvpBattle/
+    // finalizeRaidBattle, разъедется при первой же правке): ставим тот же
+    // флаг retreatRequested, что и кнопка отступления в mp-recall, и толкаем
+    // тикер. applyBattleRound в mp-tick увидит флаг на ближайшем же вызове и
+    // честно завершит бой уже проверенным кодом — отступающий забирает ровно
+    // то, что уцелело к этому моменту, ни одного лишнего раунда.
+    // Место, куда тащили, при этом не теряется: кладём его в data.redirect_to,
+    // и когда бой завершится и отряд соберётся домой, applyMarchHome отправит
+    // его не в замок, а туда (см. там же).
+    if (m.state === "siege") {
+      if (!(m.data && m.data.battle)) return jsonResponse({ err: "Бой уже завершается — подождите" }, 400);
+      const battle = { ...m.data.battle, retreatRequested: true };
+      const { error: updS } = await admin.from("marches")
+        .update({ data: { ...m.data, battle, redirect_to: { x: nx, y: ny } } }).eq("id", m.id);
+      if (updS) return jsonResponse({ err: updS.message }, 500);
+      await triggerTick(SUPABASE_URL);
+      return jsonResponse({ ok: true, retreating: true });
+    }
 
     const nowSec = Date.now() / 1000;
     const home = { x: attRow.x, y: attRow.y };
@@ -549,6 +579,11 @@ Deno.serve(async (req) => {
     // Задача подстраивается под цель (просьба автора — «как в RoK»):
     // город → штурм, лагерь/форт → рейд, точка → сбор, пустое место → просто
     // идти туда (mode:"move", applyMarchArrive в mp-tick развернёт домой).
+    // Расу берём и из state, и из колонки: mp-join дублирует её в state
+    // (см. newPlayerState), но у записи, созданной до этого, поля в state нет
+    // — а bonuses() читает p.race первой же строкой и упал бы на всём
+    // перенаправлении. Дешёвая страховка вместо тихого 500.
+    const B = bonuses({ ...(attRow.state || {}), race: (attRow.state && attRow.state.race) || attRow.race });
     const [cellRes, cityRes] = await Promise.all([
       admin.from("map_cells").select("t,data").eq("world_id", world.id).eq("x", nx).eq("y", ny).maybeSingle(),
       admin.from("players").select("id").eq("world_id", world.id).eq("x", nx).eq("y", ny).maybeSingle(),
@@ -559,15 +594,46 @@ Deno.serve(async (req) => {
     else if (cell && (cell.t === "camp" || cell.t === "fort")) mode = "raid";
     else if (cell && cell.t === "node") mode = "gather";
     if (mode === "gather") {
-      // Сбор требует подготовки (сколько увезём, сколько копать) — её делает
-      // mp-gather при отправке, и повторять её здесь значило бы дублировать
-      // десятки строк расчёта. Перетащить отряд НА точку можно, но собирать
-      // он не начнёт: дойдёт и вернётся, как с пустого места. Отдельная
-      // честная оговорка, а не тихая поломка.
-      mode = "move";
+      // Готовим сбор ровно так же, как mp-gather при обычной отправке: сколько
+      // отряд увезёт (грузоподъёмность по составу и расе + B.load), сколько на
+      // точке осталось, и сколько секунд копать при нынешней скорости добычи.
+      // Объём резервируется за отрядом сразу (amount уменьшается) — тот же
+      // порядок, что и при отправке, иначе на одну точку можно было бы
+      // перетащить два отряда и оба «увезли бы всё».
+      const attP = attRow.state || {};
+      const cellData = (cell && cell.data) || {};
+      const cellAmount = Math.max(0, Number(cellData.amount) || 0);
+      const hallLv = Array.isArray(attP.b && attP.b.hall)
+        ? Math.max(0, ...attP.b.hall) : ((attP.b && attP.b.hall) || 1);
+      let loadCap = 0;
+      TKEYS.forEach((t) => {
+        for (let i = 1; i <= 5; i++) {
+          const n = (m.units[t] && m.units[t][i]) || 0;
+          loadCap += n * TROOP_LOAD[t] * TIER_MULT[i - 1] * troopLoadMod(attRow.race, t);
+        }
+      });
+      loadCap = Math.round(loadCap * (1 + (B.load || 0)));
+      const take = Math.min(loadCap, cellAmount);
+      if (take > 0) {
+        const res = cellData.res || "food";
+        const isAmber = res === "amber";
+        let rate = GATHER_BASE_RATE[res] * (60 + hallLv * 22) / 82 * (1 + (B.gather || 0));
+        rate *= isAmber ? (1 + (B.gatherAmber || 0))
+          : (res === "food" || res === "wood") ? (1 + (B.gatherFW || 0)) : (1 + (B.gatherSG || 0));
+        const gatherSecs = rate > 0 ? (take / rate) * 3600 : 0;
+        await admin.from("map_cells").update({ data: { ...cellData, amount: Math.max(0, cellAmount - take) } })
+          .eq("world_id", world.id).eq("x", nx).eq("y", ny);
+        newData.res = res; newData.take = take; newData.gather_secs = gatherSecs;
+        newData.cell_x = nx; newData.cell_y = ny;
+        newData.carry = isAmber ? { amber: take } : { [res]: take };
+        newData.gather_report = null;   // донесение появится, когда отряд закончит копать (applyGathered)
+      } else {
+        // Точка пуста или отряду нечем везти — доходит и возвращается, как с
+        // пустого места. Тихо не ломаемся и не «собираем ноль».
+        mode = "move";
+      }
     }
 
-    const B = bonuses(attRow.state || {}, attRow.race);
     const dist = Math.hypot(nx - cur.x, ny - cur.y);
     const spd = marchSpeed(m.units, attRow.race, B.march);
     const travel = Math.max(15, (dist / spd) * 60);
