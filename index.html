@@ -7252,9 +7252,19 @@ const $=s=>document.querySelector(s);
 // без веб-компонентов и без сторонних скриптов, дописывающих свои узлы
 // внутрь наших контейнеров.
 function morphAttrs(a,b){
+  // У картинок с обработчиком onerror (у нас это `this.style.display='none'`
+  // — спрятать не загрузившийся файл) инлайновый стиль ставит НЕ разметка, а
+  // сам обработчик уже во время работы. Разметка про него ничего не знает и
+  // при сверке снесла бы его — а onerror второй раз не сработает (картинка
+  // не перезагружается, узел тот же), и вместо аккуратной пустоты вылез бы
+  // значок битого файла. Поэтому у таких узлов style не снимаем: если
+  // разметка хочет свой стиль, она его задаст, и он применится обычным
+  // порядком ниже.
+  const keepStyle=a.hasAttribute("onerror");
   const oldAttrs=a.attributes;
   for(let i=oldAttrs.length-1;i>=0;i--){
     const n=oldAttrs[i].name;
+    if(n==="style" && keepStyle) continue;
     if(!b.hasAttribute(n)) a.removeAttribute(n);
   }
   const newAttrs=b.attributes;
