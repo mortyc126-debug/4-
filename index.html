@@ -2328,7 +2328,18 @@ const BUILDING_TABLE={
   forge:FORGE_TABLE, market:TRADING_TABLE, alliance:ALLIANCE_TABLE, portal:PORTAL_TABLE,
 };
 const CFG = {
-  MAP: 100,                 // размер стороны карты
+  // Было 100. Стартовая зона (мир бесконечен, это только квадрат, в котором
+  // расставлены игрок и 12 ботов — см. genWorld) расширена, чтобы в неё
+  // влезли 13 замков с общим минимумом в 30 клеток: на 100x100 они физически
+  // не помещаются (проверено симуляцией: 142 провала размещения из 520, в
+  // худших прогонах замки вставали в 1.4 клетки друг от друга — то самое
+  // наложение). Размер подобран симуляцией по ТОЧНОЙ формуле originDist
+  // (делится на CFG.MAP/2): 180 ещё даёт 15 провалов из 780, 220 — ноль;
+  // 240 взято с запасом.
+  // На существующие сохранения не влияет: CFG.MAP читается только при
+  // СОЗДАНИИ мира (genWorld/findSpot) — originDist больше нигде не
+  // используется, уровни точек и лагерей от него не зависят.
+  MAP: 240,                 // размер стартовой зоны (не граница мира — её нет)
   BOTS: 12,                 // количество ботов
   TIME_COMPRESS: 1,         // во сколько раз быстрее RoK (1 — как в RoK, без сжатия)
   BOT_THINK: 20*60,         // раз в сколько секунд бот пересматривает планы
@@ -3945,14 +3956,24 @@ const BOT_NICKS = {
 // напрямую по W.players — в этой локальной one-player-vs-bots партии их
 // всегда мало (игрок + до CFG.BOTS ботов), полный перебор дешёв и не имеет
 // слепых зон на границах чанков.
-const CITY_STRUCT_GAP=12;
+// Минимум 30 клеток от замка — прямая просьба автора: «между ними расстояние
+// должно быть минимум в 30 клеток и это реально минимум». Было 12, и этого
+// заметно не хватало: модель города в 3D вдвое крупнее точки/лагеря (scale
+// 10 против 5-6.5, см. engine/src/realData.ts), поэтому даже соблюдённые 12
+// клеток выглядели как наложение. Теперь совпадает с MIN_STRUCT_GAP ниже —
+// один общий минимум для всех пар объектов, без исключений.
+const CITY_STRUCT_GAP=30;
 // Было 6, потом 9 — по прямому запросу пользователя ("в масштабе карты и 9
 // мало") поднято до 20: заметный, недвусмысленный промежуток между точками,
 // а не просто "центры не совпадают". Значение больше не заведомо меньше
 // половины чанка (16/2=8) — окрестность соседних чанков в
 // findFreeCellInChunk теперь считается ОТ ЭТОЙ константы (см. там), иначе
 // сам зазор бы тихо не соблюдался на границах чанков.
-const MIN_STRUCT_GAP=20, STRUCT_TRIES=150, STRUCT_CHUNK=16, STRUCT_CHUNK_CHANCE=0.5;
+// Было 20 -> 30 по прямой просьбе автора (тот же общий минимум, что и
+// CITY_STRUCT_GAP выше). Значение по-прежнему больше половины STRUCT_CHUNK=16,
+// поэтому окрестность соседних чанков в findFreeCellInChunk считается ОТ него
+// (ceil(30/16)=2 чанка в каждую сторону) — см. комментарий там.
+const MIN_STRUCT_GAP=30, STRUCT_TRIES=150, STRUCT_CHUNK=16, STRUCT_CHUNK_CHANCE=0.5;
 const STRUCT_SALT_NODE=501, STRUCT_SALT_CAMP=502;
 function structChunkOk(x,y,salt,chance){
   const cx=Math.floor(x/STRUCT_CHUNK), cy=Math.floor(y/STRUCT_CHUNK);
@@ -4182,7 +4203,10 @@ function genWorld(seed){
   // из-за чего с добавленным ниже зазором между лагерями/точками город иногда
   // просто не находил бы себе места вовсе.
   const spots=[];
-  const minGap=9;
+  // Замки правителей держат тот же общий минимум, что и всё остальное
+  // (прямая просьба автора: точки, лагеря И замки — минимум 30 клеток).
+  // Было 9 — при модели города масштаба 10 в 3D это выглядело наложением.
+  const minGap=CITY_STRUCT_GAP;
   function findSpot(minD,maxD){
     for(let tries=0;tries<4000;tries++){
       const x=ri(3,CFG.MAP-4), y=ri(3,CFG.MAP-4);
@@ -4192,9 +4216,20 @@ function genWorld(seed){
       if(spots.some(s=>Math.hypot(s.x-x,s.y-y)<minGap)) continue;
       spots.push({x,y}); return {x,y};
     }
-    // 4000 честных попыток исчерпаны (совсем зажатый регион) — берём что
-    // есть, но воду всё равно не нарушаем: без города игра не работает,
-    // а без воды — работает, эти два требования не равнозначны.
+    // 4000 честных попыток исчерпаны (совсем зажатый регион) — отпускаем
+    // ТОЛЬКО пояс расстояния от истока (minD/maxD, это лишь пожелание к
+    // расселению), но воду и зазор между замками держим: без города игра не
+    // работает, а вот город в воде или внахлёст на соседа — именно те два
+    // дефекта, ради которых всё это и правится. Раньше здесь отпускался и
+    // зазор тоже, из-за чего в тесном прогоне замки всё равно вставали
+    // вплотную, сколько бы места ни было в стартовой зоне.
+    for(let tries=0;tries<4000;tries++){
+      const x=ri(3,CFG.MAP-4),y=ri(3,CFG.MAP-4);
+      if(isRealWater(x,y)) continue;
+      if(spots.some(s=>Math.hypot(s.x-x,s.y-y)<minGap)) continue;
+      spots.push({x,y}); return {x,y};
+    }
+    // И только если даже это не вышло — последний рубеж: хотя бы не в воде.
     for(let tries=0;tries<2000;tries++){
       const x=ri(3,CFG.MAP-4),y=ri(3,CFG.MAP-4);
       if(isRealWater(x,y)) continue;
@@ -4258,7 +4293,7 @@ function genWorld(seed){
 
   // Свежий мир уже построен через ensureChunkContent (зазор + вода +
   // "монетка" на чанк) — всем миграциям ниже тут нечего делать.
-  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.densityMigrated5=true; W.densityMigrated6=true; W.densityMigrated7=true; W.densityMigrated8=true; W.densityMigrated9=true; W.infiniteWorldMigrated=true; W.levelMigrated=true; W.marchRescueMigrated=true; W.marchSpeedMigrated=true; W.marchWaterPathMigrated=true;
+  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.densityMigrated5=true; W.densityMigrated6=true; W.densityMigrated7=true; W.densityMigrated8=true; W.densityMigrated9=true; W.densityMigrated10=true; W.infiniteWorldMigrated=true; W.levelMigrated=true; W.marchRescueMigrated=true; W.marchSpeedMigrated=true; W.marchWaterPathMigrated=true;
   logg("Мир создан. Зерно "+seed+". Городов: "+W.players.length+".", "good");
   return W;
 }
@@ -4465,6 +4500,38 @@ function thinMapDensity8(){
   for(const o of drop) delete W.map[key(o.x,o.y)];
   W.densityMigrated8=true;
   if(drop.size) logg("Точки/лагеря раздвинуты ещё раз: убрано "+drop.size+".","good");
+}
+// Десятая волна: общий минимум поднят до 30 клеток и распространён на ЗАМКИ
+// (CITY_STRUCT_GAP тоже 30) — старые сохранения несут расстановку по прежним
+// 20/12, где точки и лагеря стоят вплотную к городам и друг к другу. Чистим
+// тем же правилом, что теперь действует при генерации. Города не трогаем
+// никогда (это состояние игроков), лишним считается объект дикой карты.
+function thinMapDensity10(){
+  if(W.densityMigrated10) return;
+  const items=[];
+  for(const k in W.map){ const o=W.map[k]; if(o.t==="node"||o.t==="camp"||o.t==="fort") items.push(o); }
+  const drop=new Set();
+  // сперва всё, что ближе минимума к любому замку — у города приоритет
+  for(const o of items){
+    for(const p of W.players){
+      if(Math.hypot(p.x-o.x,p.y-o.y)<CITY_STRUCT_GAP){ drop.add(o); break; }
+    }
+  }
+  // затем пары дикой карты между собой (точка ценнее лагеря — оставляем точку)
+  items.sort((a,b)=>a.x-b.x||a.y-b.y);
+  const rank=o=>o.t==="node"?0:1;
+  for(let i=0;i<items.length;i++){
+    if(drop.has(items[i])) continue;
+    for(let j=i+1;j<items.length;j++){
+      if(drop.has(items[j])) continue;
+      if(items[j].x-items[i].x>=MIN_STRUCT_GAP) break;
+      if(Math.hypot(items[i].x-items[j].x,items[i].y-items[j].y)>=MIN_STRUCT_GAP) continue;
+      drop.add(rank(items[i])<rank(items[j]) ? items[j] : items[i]);
+    }
+  }
+  for(const o of drop) mapDelete(o.x,o.y);
+  W.densityMigrated10=true;
+  if(drop.size) logg("Точки и лагеря раздвинуты до 30 клеток: убрано "+drop.size+".","good");
 }
 // Девятая волна: isTooSteep (см. её комментарий у isRealWater выше) появилась
 // позже findFreeCellInChunk — старые сохранения могут нести точки/лагеря,
@@ -7312,6 +7379,7 @@ async function load(){
     thinMapDensity7();
     thinMapDensity8();
     thinMapDensity9();
+    thinMapDensity10();
     migrateInfiniteWorld();
     migrateStructLevels();
     // Старые походы в старом сохранении не несут m.path (маршрут в обход
