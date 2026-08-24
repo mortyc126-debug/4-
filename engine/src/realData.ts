@@ -117,18 +117,36 @@ export function loadRealEntities(centerX?: number, centerZ?: number, radius?: nu
     for (const k in W.map) keys.push(k);
   }
   const r2 = radius !== undefined ? radius * radius : Infinity;
+  // Отбор по расстоянию — при ЛЮБОМ заданном радиусе, а не только когда
+  // нашёлся чанковый индекс. Раньше проверка стояла под `if (scoped)`, и это
+  // молча отключало её для всего общего мира: mpWorldSnapshot (index.html)
+  // нарочно не строит mapChunks (см. её "честные упрощения"), значит
+  // scoped===false — и радиус, который main.ts передаёт (ENTITY_RADIUS),
+  // просто не применялся. Каждый игрок грузил и держал в сцене .glb-модели
+  // ВСЕХ городов, лагерей и точек мира сразу, как бы далеко они ни были, —
+  // чем больше становится общий мир, тем тяжелее вход в него у всех.
+  // Чанковый индекс — оптимизация того, КАКИЕ ключи вообще обходить; сам
+  // отбор по радиусу от него не зависит и нужен всегда.
+  const useRadius = radius !== undefined && centerX !== undefined && centerZ !== undefined;
+  // Владельцы городов — по карте, а не W.players.find() внутри цикла:
+  // тот был O(городов × игроков) на каждый трёхсекундный опрос (та же
+  // чисто алгоритмическая цена, что уже снята в marchData.ts, см. её
+  // комментарий у playersById).
+  const playersById = new Map<number, LiveWorld["players"][number]>();
+  for (const p of W.players) playersById.set(p.id, p);
+  const ownId = W.players[0] ? W.players[0].id : -1;
   for (const key of keys) {
     const o = W.map[key];
     if (!o) continue;
-    if (scoped) {
+    if (useRadius) {
       const dx = o.x - centerX!, dz = o.y - centerZ!;
       if (dx * dx + dz * dz > r2) continue;
     }
     if (o.t === "city") {
-      const pl = W.players.find((p) => p.id === o.pid);
+      const pl = playersById.get(o.pid);
       const race = pl ? pl.race : "human";
       const epoch = pl ? Math.max(1, Math.min(5, epochOf(pl.b.hall))) : 1;
-      const own = W.players[0] && pl && pl.id === W.players[0].id;
+      const own = !!pl && pl.id === ownId;
       const nm = pl ? pl.nick ?? "?" : "?";
       const lv = pl ? "Ратуша " + pl.b.hall : "";
       out.push({ key, x: o.x + 0.5, y: o.y + 0.5, gx: o.x, gy: o.y, kind: 0, model: `/models/castles/${race}-${epoch}.glb`, scale: 10, own, nm, lv });

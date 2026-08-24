@@ -7837,7 +7837,10 @@ function cityCellImg(c){
 function renderCityMap(){
   const p=me();
   let h="<div id='citymap-wrap'><img class='base' src='map.jpg'>";
-  CITY_CELLS.forEach(c=>{
+  // ci — индекс от самого forEach. Раньше тут стоял CITY_CELLS.indexOf(c),
+  // то есть линейный поиск по тому же массиву, который мы прямо сейчас и
+  // обходим, — на каждую ячейку, на каждой перерисовке карты города.
+  CITY_CELLS.forEach((c,ci)=>{
     const lv=cityCellLevel(p,c);
     if(c.bk===null){ // Портал — задел на будущее
       h+="<div class='cbuild locked' style='left:"+c.x+"%;top:"+c.y+"%;width:"+c.w+"%;height:"+c.h+"%'>"+
@@ -7845,7 +7848,7 @@ function renderCityMap(){
       return;
     }
     const built=lv>0, locked=c.bk!=="hall" && !built && (c.pl!=null && !plotUnlocked(c.bk,c.pl,p.b.hall));
-    h+="<div class='cbuild"+(built?" built":"")+(locked?" locked":"")+"' data-cell='"+CITY_CELLS.indexOf(c)+"' "+
+    h+="<div class='cbuild"+(built?" built":"")+(locked?" locked":"")+"' data-cell='"+ci+"' "+
        "style='left:"+c.x+"%;top:"+c.y+"%;width:"+c.w+"%;height:"+c.h+"%'>"+
        "<div class='shape' style='"+cityShapeCss(c)+"'></div>"+
        (built?(c.bk!=="wall"?"<img class='bimg' src='"+cityCellImg(c)+"'>":"")+"<span class='lvl'>"+lv+"</span>":"")+

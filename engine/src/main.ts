@@ -1518,7 +1518,14 @@ async function main() {
           const mat = modelMatrix(wx, groundY, wz, 0, e.scale);
           pendingLoads.push(
             getModel(e.model)
-              .then((gm) => void instances.set(existingEid, modelPipeline.createInstance(gm, mat)))
+              .then((gm) => {
+                // Старый инстанс сначала освободить, потом заменить: без
+                // этого его GPU-буфер оставался висеть (см. destroyInstance
+                // в modelRenderer.ts). Город растёт в эпохе — модель
+                // меняется, и так на каждый рост у каждого города мира.
+                modelPipeline.destroyInstance(instances.get(existingEid));
+                instances.set(existingEid, modelPipeline.createInstance(gm, mat));
+              })
               .catch(() => {})
           );
         }
@@ -1531,7 +1538,15 @@ async function main() {
       const mat = modelMatrix(e.x, groundY, e.y, 0, e.scale);
       pendingLoads.push(
         getModel(e.model)
-          .then((gm) => void instances.set(eid, modelPipeline.createInstance(gm, mat)))
+          .then((gm) => {
+            // Сущность новая, инстанса у неё быть не должно — но модель
+            // грузится асинхронно, и на этот же eid к моменту ответа мог
+            // успеть встать другой инстанс (bitECS переиспользует
+            // освободившиеся id). Освобождаем прежний, если он там есть,
+            // а не затираем ссылку молча — см. destroyInstance.
+            modelPipeline.destroyInstance(instances.get(eid));
+            instances.set(eid, modelPipeline.createInstance(gm, mat));
+          })
           .catch(() => {})
       );
       decorDirtyChunks.add(chunkKey(Math.floor(e.x / CHUNK_SIZE), Math.floor(e.y / CHUNK_SIZE)));
@@ -1546,6 +1561,7 @@ async function main() {
       if (seenKeys.has(key)) continue;
       decorDirtyChunks.add(chunkKey(Math.floor(Position.x[eid] / CHUNK_SIZE), Math.floor(Position.y[eid] / CHUNK_SIZE)));
       removeEntity(world, eid);
+      modelPipeline.destroyInstance(instances.get(eid));   // см. destroyInstance в modelRenderer.ts
       instances.delete(eid);
       modelPathOf.delete(eid);
       modelScaleOf.delete(eid);
