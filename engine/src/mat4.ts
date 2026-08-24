@@ -71,6 +71,21 @@ export function modelMatrix(tx: number, ty: number, tz: number, yaw: number, sca
 // клика/тапа по сущности (см. main.ts): дешёвый point-projection тест
 // вместо честного рейкаста по мешу, тот же приём, что и projectToScreen в
 // живом obyom-3d-infinite.html.
+// Тот же расчёт, что и transformPoint ниже, но БЕЗ выделения объекта: пишет
+// в переданный. Нужен там, где вызов идёт на каждую сущность в каждом кадре
+// (отсечение моделей по экрану, проекция подписей в main.ts): с сотнями
+// сущностей это сотни короткоживущих объектов шестьдесят раз в секунду —
+// на телефоне ровно та мелкая, но регулярная работа сборщика мусора,
+// которая читается не как падение частоты кадров, а как лёгкие рывки.
+export interface ClipPoint { x: number; y: number; z: number; w: number }
+export function makeClipPoint(): ClipPoint { return { x: 0, y: 0, z: 0, w: 0 }; }
+export function transformPointInto(m: Mat4, x: number, y: number, z: number, out: ClipPoint): ClipPoint {
+  out.x = m[0] * x + m[4] * y + m[8] * z + m[12];
+  out.y = m[1] * x + m[5] * y + m[9] * z + m[13];
+  out.z = m[2] * x + m[6] * y + m[10] * z + m[14];
+  out.w = m[3] * x + m[7] * y + m[11] * z + m[15];
+  return out;
+}
 export function transformPoint(m: Mat4, p: Vec3): { x: number; y: number; z: number; w: number } {
   const [x, y, z] = p;
   return {

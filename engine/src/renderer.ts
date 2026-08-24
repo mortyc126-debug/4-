@@ -896,14 +896,18 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   // уже считает для рейкаста по клику (см. комментарий у SKY_SHADER) —
   // вызывающая сторона (main.ts:draw()) передаёт готовые векторы, тут
   // только упаковка в uniform-буфер.
+  // Буфер переиспользуется: функция зовётся каждый кадр, а свежий
+  // Float32Array на каждый кадр — лишний мусор для сборщика (тот же довод,
+  // что и у scratch-массивов декора выше). Содержимое копируется в
+  // GPU-буфер тут же, наружу массив не отдаётся.
+  const skyCamScratch = new Float32Array(16);
   function setSkyCamera(xAxis: Vec3, yAxis: Vec3, zAxis: Vec3, tanHalf: number, aspect: number, timeSec: number) {
-    const data = new Float32Array([
-      xAxis[0], xAxis[1], xAxis[2], 0,
-      yAxis[0], yAxis[1], yAxis[2], 0,
-      zAxis[0], zAxis[1], zAxis[2], 0,
-      tanHalf, aspect, timeSec, 0,
-    ]);
-    device.queue.writeBuffer(skyCamBuf, 0, data);
+    const d = skyCamScratch;
+    d[0] = xAxis[0]; d[1] = xAxis[1]; d[2] = xAxis[2]; d[3] = 0;
+    d[4] = yAxis[0]; d[5] = yAxis[1]; d[6] = yAxis[2]; d[7] = 0;
+    d[8] = zAxis[0]; d[9] = zAxis[1]; d[10] = zAxis[2]; d[11] = 0;
+    d[12] = tanHalf; d[13] = aspect; d[14] = timeSec; d[15] = 0;
+    device.queue.writeBuffer(skyCamBuf, 0, d);
   }
   // Depth-only проход для теневой карты (см. TERRAIN_SHADOW_SHADER выше) —
   // тот же вершинный буфер чанка (interleaved, позиция в первых 3 float),
@@ -1374,9 +1378,12 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     device.queue.writeBuffer(uniformBuf, 0, vp);
   }
 
+  const fogScratch = new Float32Array(8);   // см. skyCamScratch — тот же довод
   function setFog(eye: [number, number, number], color: [number, number, number], density: number, timeSec: number) {
-    const data = new Float32Array([eye[0], eye[1], eye[2], timeSec, color[0], color[1], color[2], density]);
-    device.queue.writeBuffer(fogBuf, 0, data);
+    const d = fogScratch;
+    d[0] = eye[0]; d[1] = eye[1]; d[2] = eye[2]; d[3] = timeSec;
+    d[4] = color[0]; d[5] = color[1]; d[6] = color[2]; d[7] = density;
+    device.queue.writeBuffer(fogBuf, 0, d);
   }
 
   function frame(clearColor: GPUColorDict, drawExtra?: (pass: GPURenderPassEncoder) => void) {

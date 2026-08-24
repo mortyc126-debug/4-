@@ -12,7 +12,7 @@ import { createRenderer, type MarkerEntity, type DecorEntity } from "./renderer"
 import { buildTerrainPatch } from "./terrainMesh";
 import { heightAt, HMAX, hash2, noise, isWater, SEED, registerFlattenSite, WORLD_HALF_X, WORLD_HALF_Z, forestMaskAt, loadHeightmapData, HEIGHTMAP_VERSION } from "./terrain";
 import { PINE, LEAF, GRASS_TONES, BUSH_TONES, ROCK_TONES } from "./decorMesh";
-import { mul, persp, look, modelMatrix, transformPoint, sub, cross, norm, type Vec3, type Mat4 } from "./mat4";
+import { mul, persp, look, modelMatrix, transformPoint, transformPointInto, makeClipPoint, sub, cross, norm, type Vec3, type Mat4 } from "./mat4";
 import { attachOrbitControls, type OrbitCamera, MAX_DIST } from "./camera";
 import { loadGLB } from "./glb";
 import { uploadGLB, createModelPipeline, type GpuModel, type ModelInstance } from "./modelRenderer";
@@ -731,7 +731,22 @@ async function main() {
   // расстояний), а реальную стройку (buildTerrainPatch/декор) забирает
   // drainPendingNear ниже с бюджетом времени на кадр — тот же итоговый
   // набор чанков, просто размазанный по нескольким кадрам вместо одного.
-  const CHUNK_BUDGET_MS = 6; // на кадр (near+far вместе, см. draw()) — не съедает весь кадр целиком
+  // Бюджет на стройку чанков в кадре. Было 6мс — при бюджете кадра 16.7мс
+  // (60 к/с) это больше трети кадра, отдаваемых стройке КАЖДЫЙ кадр, пока
+  // идёт стриминг. Замер: ближний чанк — 0.48мс, дальний — 1.09мс на
+  // десктопе (на телефоне в разы больше), то есть за 6мс успевало
+  // построиться с десяток чанков разом — гораздо больше, чем нужно, чтобы
+  // не отстать от камеры. Это и была вторая половина «лёгких подлагиваний
+  // при перемещении камеры»: не всплеск, а ровный отъём трети каждого
+  // кадра. 3мс хватает с запасом: пересечение границы чанка ставит в
+  // очередь около семи ближних чанков, это два-три кадра — на краю радиуса
+  // подгрузки (48 клеток от камеры), где разницы всё равно не видно.
+  const CHUNK_BUDGET_MS = 3;
+  // Сколько по факту стоит построить один чанк — скользящая оценка по
+  // последним постройкам, а не догадка: на слабом устройстве она в разы
+  // больше, и бюджет должен это учитывать сам.
+  let nearBuildEstMs = 0.5, farBuildEstMs = 1.0;
+  const blendEst = (est: number, sample: number) => est * 0.8 + sample * 0.2;
   const loadedChunks = new Set<string>();
   const queuedNearKeys = new Set<string>(); // зарезервированы под стройку, ещё не построены
   let pendingNear: Array<{ cx: number; cz: number; key: string }> = [];
@@ -793,12 +808,23 @@ async function main() {
   }
   // Строит чанки из очереди, пока не выйдет бюджет времени (deadline,
   // performance.now()) — вызывается из draw() каждый кадр, см. там же.
-  function drainPendingNear(deadline: number): void {
+  // Возвращает, сколько чанков реально построила — по этому drainPendingFar
+  // ниже решает, можно ли ему взять кадр себе.
+  function drainPendingNear(deadline: number): number {
     let decorChanged = false;
-    while (pendingNear.length && performance.now() < deadline) {
+    let built = 0;
+    while (pendingNear.length) {
+      // Раньше условие было простое: «время ещё есть». Но проверка стоит
+      // ПЕРЕД постройкой, а сама постройка неделима — значит кадр
+      // регулярно перебирал бюджет на целый чанк сверху. Теперь спрашиваем
+      // иначе: влезет ли ЕЩЁ ОДИН чанк по его же измеренной цене.
+      // Первый чанк за кадр строим всегда: на устройстве, где один чанк
+      // дороже всего бюджета, иначе стриминг встал бы навсегда.
+      if (built > 0 && performance.now() + nearBuildEstMs > deadline) break;
       const { cx, cz, key } = pendingNear.shift()!;
       if (!queuedNearKeys.has(key)) continue; // отменено (см. updateTerrainChunks) — пропускаем
       queuedNearKeys.delete(key);
+      const started = performance.now();
       const x0 = cx * CHUNK_SIZE, z0 = cz * CHUNK_SIZE;
       const chunkMesh = buildTerrainPatch(x0, z0, x0 + CHUNK_SIZE, z0 + CHUNK_SIZE, 1);
       renderer.setTerrainChunk(key, chunkMesh);
@@ -806,11 +832,14 @@ async function main() {
       notifyParentChunk(cx, cz);
       decorByChunk.set(key, genDecorForChunk(cx, cz));
       decorChanged = true;
+      nearBuildEstMs = blendEst(nearBuildEstMs, performance.now() - started);
+      built++;
     }
     if (decorChanged) {
       (window as any).__terrainChunkCount = loadedChunks.size;
       refreshDecor();
     }
+    return built;
   }
 
   // Пересборка меша УЖЕ загруженного ближнего чанка — нужна, когда новая
@@ -935,15 +964,25 @@ async function main() {
     }
     (window as any).__farChunkCount = loadedFarChunks.size;
   }
-  function drainPendingFar(deadline: number): void {
-    while (pendingFar.length && performance.now() < deadline) {
+  // allowForceOne — ближний слой в этом кадре ничего не строил, значит
+  // дальнему можно взять один чанк даже впритык к бюджету. Если ближний
+  // кадр уже занял, дальний ждёт: он на 192 клетках от камеры, лишний кадр
+  // ожидания там не виден вовсе, а вот отнятый у ближнего слоя кадр —
+  // виден сразу.
+  function drainPendingFar(deadline: number, allowForceOne: boolean): void {
+    let built = 0;
+    while (pendingFar.length) {
+      if (!(built === 0 && allowForceOne) && performance.now() + farBuildEstMs > deadline) break;
       const { cx, cz, rkey } = pendingFar.shift()!;
       if (!queuedFarKeys.has(rkey)) continue;
       queuedFarKeys.delete(rkey);
+      const started = performance.now();
       const x0 = cx * FAR_CHUNK_SIZE, z0 = cz * FAR_CHUNK_SIZE;
       const mesh = buildTerrainPatch(x0, z0, x0 + FAR_CHUNK_SIZE, z0 + FAR_CHUNK_SIZE, FAR_STEP, FAR_SINK);
       renderer.setTerrainChunk(rkey, mesh);
       loadedFarChunks.add(rkey);
+      farBuildEstMs = blendEst(farBuildEstMs, performance.now() - started);
+      built++;
       // Дальнее кольцо — только видимость, не задел под дикий контент:
       // не зовём notifyParentChunk отсюда (в отличие от ближних чанков
       // выше) — иначе радиус в 256+ клеток мгновенно засыпал бы игрока
@@ -1048,9 +1087,11 @@ async function main() {
   // одном только рельефе, замерено вне браузера — см. историю коммита).
   updateTerrainChunks(cam.target[0], cam.target[2], true);
   updateFarTerrain(cam.target[0], cam.target[2], true);
+  // Стартовый прогрев — до первого кадра, тут кадров ещё нет и беречь
+  // нечего, поэтому дальнему кольцу разрешено строить наравне с ближним.
   const primeDeadline = performance.now() + 40;
   drainPendingNear(primeDeadline);
-  drainPendingFar(primeDeadline);
+  drainPendingFar(primeDeadline, true);
 
   // ---- мировой "задник" — единственный статичный меш на ВЕСЬ мир
   // (от -WORLD_HALF_X/-WORLD_HALF_Z до +WORLD_HALF_X/+WORLD_HALF_Z),
@@ -1667,6 +1708,7 @@ async function main() {
   // позиция), а вот текст/класс почти всегда одни и те же между кадрами.
   interface LabelParts { root: HTMLDivElement; nm: HTMLElement; lv: HTMLElement; lastNm: string; lastLv: string; lastMine: boolean }
   const labelEl = new Map<number, LabelParts>();
+  const labelClip = makeClipPoint();   // переиспользуется, см. cullClip
   // Отсев по расстоянию до цели камеры ДО проекции — сущностей может быть
   // тысяча с лишним (см. стресс-тест на 1433), а разборчиво видна на экране
   // всегда лишь горстка рядом с камерой. Первая попытка (радиус 90) была
@@ -1690,7 +1732,7 @@ async function main() {
       const groundY = groundYOf.get(eid) ?? heightAt(wx, wz) * HMAX;
       const scale = modelScaleOf.get(eid) ?? 5;
       const topY = groundY + scale * 0.6 + 1.1;
-      const clip = transformPoint(currentVP, [wx, topY, wz]);
+      const clip = transformPointInto(currentVP, wx, topY, wz, labelClip);   // см. cullClip выше
       if (clip.w <= 0.001) continue; // за спиной камеры
       const sx = (clip.x / clip.w * 0.5 + 0.5) * cw;
       const sy = (1 - (clip.y / clip.w * 0.5 + 0.5)) * ch;
@@ -1873,6 +1915,7 @@ async function main() {
   // число зданий в кадре ограниченным НЕЗАВИСИМО от того, куда направлена
   // камера, а не только "не позади и не сбоку".
   const MODEL_DRAW_MAX_DIST = 130;
+  const cullClip = makeClipPoint();   // переиспользуется, см. transformPointInto ниже
   function isModelOnScreen(eid: number, vp: Mat4, cw: number, ch: number, focalY: number): boolean {
     const wx = Position.x[eid], wz = Position.y[eid];
     const scale = modelScaleOf.get(eid) ?? 5;
@@ -1882,7 +1925,12 @@ async function main() {
     const eyeDist2 = edx * edx + edy * edy + edz * edz;
     if (eyeDist2 < NEAR_SAFE_DIST * NEAR_SAFE_DIST) return true;
     if (eyeDist2 > MODEL_DRAW_MAX_DIST * MODEL_DRAW_MAX_DIST) return false;
-    const clip = transformPoint(vp, [wx, anchorY, wz]);
+    // transformPointInto, а не transformPoint: это самый горячий вызов
+    // проекции во всём движке — на каждую сущность в каждом кадре. Прежний
+    // вариант выделял под результат новый объект И массив [x,y,z] под
+    // аргумент; с сотнями сущностей это сотни короткоживущих объектов
+    // шестьдесят раз в секунду.
+    const clip = transformPointInto(vp, wx, anchorY, wz, cullClip);
     if (clip.w <= 0.001) return false; // за спиной камеры
     const sx = (clip.x / clip.w * 0.5 + 0.5) * cw;
     const sy = (1 - (clip.y / clip.w * 0.5 + 0.5)) * ch;
@@ -1990,8 +2038,8 @@ async function main() {
     // время из бюджета), т.к. он ближе к камере и заметнее дальнего кольца.
     const chunkStart = performance.now();
     const chunkDeadline = chunkStart + CHUNK_BUDGET_MS;
-    drainPendingNear(chunkDeadline);
-    drainPendingFar(chunkDeadline);
+    const nearBuilt = drainPendingNear(chunkDeadline);
+    drainPendingFar(chunkDeadline, nearBuilt === 0);
     if (DEBUG_STATUS) perf.chunks = performance.now() - chunkStart;
     const eye: Vec3 = [
       cam.target[0] + Math.sin(cam.yaw) * Math.cos(cam.pitch) * cam.dist,
