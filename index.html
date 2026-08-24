@@ -13228,13 +13228,28 @@ function mpMenuBodyHtml(t){
   if(t==="mp") return foMultiplayer(true,"mp");
   return foMultiplayer(!SP_UNLOCKED);
 }
-// Пакетная перерисовка. Каждая mpRefreshXxx() ниже сама зовёт mpRerender()
-// по приходу своих данных — а зовут их пачкой (см. mpRefreshAll), и без
-// этого затвора один опрос давал бы до пятнадцати полных перерисовок
-// подряд, из которых полезна ровно последняя. mpRenderHold>0 — «идёт пачка,
-// копи и не рисуй»; mpRenderRelease() в конце пачки рисует один раз, если
-// за время пачки хоть кто-то просил.
+// Две разные причины перерисовать — и глушить можно только одну из них.
+//
+// mpRerenderData() — «пришли новые данные». Каждая mpRefreshXxx() зовёт её
+// по приходу своей выборки, а зовут их пачкой (см. mpRefreshAll): без
+// затвора один опрос давал бы до пятнадцати полных перерисовок подряд, из
+// которых полезна ровно последняя. Вот ЭТО и копит mpRenderHold, а
+// mpRenderRelease() в конце пачки рисует один раз.
+//
+// mpRerender() — «просто нарисуй сейчас». Секундный такт из frame(), любое
+// действие игрока, открытие вкладки. Затвор её НЕ касается, и это важно:
+// раньше касался, и пока пачка выборок висела в сети (а на мобильной связи
+// это секунды), секундный такт молча проглатывался. Со стороны это ровно
+// то, о чём сообщил автор про таймер стройки: «время застывает и потом
+// скачет, снимая сразу несколько секунд» — застывало на время сетевой
+// пачки, а скакало, когда она возвращалась и такт снова оживал. Отсчёт
+// времени в интерфейсе вообще не должен зависеть от того, ответил ли
+// сервер: он считается из t1 и часов браузера, сеть тут ни при чём.
 let mpRenderHold=0, mpRenderPending=false;
+function mpRerenderData(){
+  if(mpRenderHold>0){ mpRenderPending=true; return; }
+  mpRerender();
+}
 function mpRenderRelease(){
   if(mpRenderHold>0) mpRenderHold--;
   if(mpRenderHold===0 && mpRenderPending){ mpRenderPending=false; mpRerender(); }
@@ -13256,7 +13271,6 @@ function mpRerender(){
   catch(e){ console.error("mpRerender:", e); }
 }
 function mpRerenderNow(){
-  if(mpRenderHold>0){ mpRenderPending=true; return; }
   // Фаза 17, кусочек 2 — при .mp-gated ЛЮБАЯ вкладка меню (не только "mp")
   // может показывать foMultiplayer() (см. gatedTab в openMenuModal()) —
   // держим её свежей на опросе точно так же. Добавлен и диф по содержимому
@@ -13437,7 +13451,7 @@ async function mpRefreshPlayer(){
   if(!mpState.player) return;
   try{
     const j=await mpCall("mp-join",{});
-    if(j && j.player){ mpSetPlayer(j.player); mpRerender(); }
+    if(j && j.player){ mpSetPlayer(j.player); mpRerenderData(); }
   }catch(_){ /* сеть моргнула — оставляем прежнее состояние, следующий опрос через 5с попробует снова */ }
 }
 // Фаза 3 — общая видимость: остальные игроки того же мира читаются напрямую
@@ -13460,7 +13474,7 @@ async function mpRefreshNeighbors(){
   // одиночки, а там кнопка "Атака" скрывается под щитом (см. renderCartouche).
   const { data, error } = await sb.from("players").select("id,nick,race,x,y,is_bot,hall:state->b->>hall,shield_until")
     .eq("world_id", mpState.player.world_id).neq("id", mpState.player.id).order("id");
-  if(!error && data){ mpState.neighbors=data; mpRerender(); }
+  if(!error && data){ mpState.neighbors=data; mpRerenderData(); }
 }
 // Фаза 4 — свежие боевые отчёты (mail, RLS mail_select_own из миграции
 // 0001 уже ограничивает выборку своими же письмами, читаем напрямую).
@@ -13468,7 +13482,7 @@ async function mpRefreshMail(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
     .eq("kind","battle").order("created_at",{ascending:false}).limit(10);
-  if(!error && data){ mpState.mail=data; mpRerender(); }
+  if(!error && data){ mpState.mail=data; mpRerenderData(); }
 }
 // Фаза 4, восьмой кусочек — донесения разведки (mail, kind:"scout"), тем
 // же путём, что и боевые письма (mail_select_own уже ограничивает выборку
@@ -13477,7 +13491,7 @@ async function mpRefreshScoutMail(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
     .eq("kind","scout").order("created_at",{ascending:false}).limit(10);
-  if(!error && data){ mpState.scoutMail=data; mpRerender(); }
+  if(!error && data){ mpState.scoutMail=data; mpRerenderData(); }
 }
 // Донесения о сборе (mail, kind:"gather") — та же схема выборки, что и у
 // scoutMail выше, только свой kind (см. applyGathered в mp-tick).
@@ -13485,7 +13499,7 @@ async function mpRefreshGatherMail(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
     .eq("kind","gather").order("created_at",{ascending:false}).limit(10);
-  if(!error && data){ mpState.gatherMail=data; mpRerender(); }
+  if(!error && data){ mpState.gatherMail=data; mpRerenderData(); }
 }
 // Личные уведомления (mail, kind:"note") — сейчас единственный источник:
 // "Генерал повышен" (см. genLevelMailRow в mp-tick, зеркало pushMail
@@ -13497,7 +13511,7 @@ async function mpRefreshNoteMail(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
     .eq("kind","note").order("created_at",{ascending:false}).limit(10);
-  if(!error && data){ mpState.noteMail=data; mpRerender(); }
+  if(!error && data){ mpState.noteMail=data; mpRerenderData(); }
 }
 // Личные письма игрок→игрок (mail, kind:"pm", см. mp-sendmail) — ОДИН
 // fetch на обе роли сразу (role:"recipient"/role:"sender" в одной и той же
@@ -13508,7 +13522,7 @@ async function mpRefreshPmMail(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
     .eq("kind","pm").order("created_at",{ascending:false}).limit(30);
-  if(!error && data){ mpState.pmMail=data; mpRerender(); }
+  if(!error && data){ mpState.pmMail=data; mpRerenderData(); }
 }
 // Отправка личного письма (mp-sendmail) — читает поля формы прямо на клик
 // (см. заголовок mpComposeErr/mpComposeSending). После успеха очищает поля
@@ -13917,7 +13931,7 @@ async function mpRefreshMarches(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("marches").select("*")
     .eq("player_id",mpState.player.id).in("mode",["attack","gather","raid"]).order("t1");
-  if(!error && data){ mpState.marches=data; mpMaybeToggleBattleFastPoll(); mpRerender(); }
+  if(!error && data){ mpState.marches=data; mpMaybeToggleBattleFastPoll(); mpRerenderData(); }
 }
 // Фаза 8, кусочек 1 — точки сбора рядом (map_cells, t:"node"). RLS
 // map_cells_select_all из миграции 0001 уже разрешает читать всю карту
@@ -13929,7 +13943,7 @@ async function mpRefreshNodes(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("map_cells").select("x,y,data")
     .eq("world_id",mpState.player.world_id).eq("t","node").limit(400);
-  if(!error && data){ mpState.nodes=data; mpRerender(); }
+  if(!error && data){ mpState.nodes=data; mpRerenderData(); }
 }
 // Фаза 8, кусочек 2 — лагеря варваров рядом (map_cells, t:"camp"|"fort").
 // Тот же приём, что и mpRefreshNodes.
@@ -13937,7 +13951,7 @@ async function mpRefreshCamps(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("map_cells").select("x,y,t,data")
     .eq("world_id",mpState.player.world_id).in("t",["camp","fort"]).limit(400);
-  if(!error && data){ mpState.camps=data; mpRerender(); }
+  if(!error && data){ mpState.camps=data; mpRerenderData(); }
 }
 // Донесения о разгроме/поражении у лагеря (mail, kind:"raid") — тем же
 // путём, что и боевые/разведывательные письма (mail_select_own).
@@ -13945,7 +13959,7 @@ async function mpRefreshRaidMail(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
     .eq("kind","raid").order("created_at",{ascending:false}).limit(10);
-  if(!error && data){ mpState.raidMail=data; mpRerender(); }
+  if(!error && data){ mpState.raidMail=data; mpRerenderData(); }
 }
 // Фаза 24 — извещения о завязке/отступлении боя (kind:"siege_event",
 // см. applyMarchArrive/applyRaidArrive/applyPvpBattleRound/
@@ -13954,7 +13968,7 @@ async function mpRefreshSiegeMail(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
     .eq("kind","siege_event").order("created_at",{ascending:false}).limit(10);
-  if(!error && data){ mpState.siegeMail=data; mpRerender(); }
+  if(!error && data){ mpState.siegeMail=data; mpRerenderData(); }
 }
 // Фаза 25 — исход боя за точку ресурсов (kind:"node_battle",
 // см. finalizeNodeBattle в mp-tick) — своя рубрика, не смешана с "Бой"
@@ -13963,7 +13977,7 @@ async function mpRefreshNodeBattleMail(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
     .eq("kind","node_battle").order("created_at",{ascending:false}).limit(10);
-  if(!error && data){ mpState.nodeBattleMail=data; mpRerender(); }
+  if(!error && data){ mpState.nodeBattleMail=data; mpRerenderData(); }
 }
 // Фаза 27 — глобальная видимость боёв: автор явно попросил "чтобы марши...
 // для одного игрока... происходили и для другого одновременно" ("полная
@@ -13981,7 +13995,7 @@ async function mpRefreshWorldBattles(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("marches").select("id,player_id,mode,tx,ty,units,data")
     .eq("world_id",mpState.player.world_id).eq("state","siege").limit(200);
-  if(!error && data){ mpState.worldBattles=data; mpRerender(); }
+  if(!error && data){ mpState.worldBattles=data; mpRerenderData(); }
 }
 // Входящие атаки — раньше защитник вообще не мог узнать, что на него идёт
 // поход, пока бой не разрешится сам (см. историю коммитов). data->>defender_id
@@ -14003,7 +14017,7 @@ async function mpRefreshIncoming(){
   // см. mpBattleBarsHtml) теперь тоже читается.
   const { data, error } = await sb.from("marches").select("id,player_id,t0,t1,tx,ty,units,state,data")
     .eq("data->>defender_id", String(mpState.player.id)).in("state",["go","siege"]).order("t1");
-  if(!error && data){ mpState.incoming=data; mpMaybeToggleBattleFastPoll(); mpRerender(); }
+  if(!error && data){ mpState.incoming=data; mpMaybeToggleBattleFastPoll(); mpRerenderData(); }
 }
 // Превью добычи/час для панели — Фаза 6: теперь зовёт НАСТОЯЩИЙ клиентский
 // production(p) (тот самый, единый файл, никакой копии) через тот же приём
@@ -14184,13 +14198,35 @@ function mpMailMarkRead(id){
 // почты ошибочно читался mpState.incoming, счётчик ЧУЖИХ походов на нас, а
 // не непрочитанной почты, поэтому значок никогда не загорался ни от ответов
 // по сбору, ни от чего-либо ещё в почте).
-function mpUnreadMailCount(){
+// Непрочитанное — РАЗБИВКОЙ ПО РУБРИКАМ, а не одним числом. Автор: «метка
+// горит на иконке письма, я захожу и мне нужно по каждой вкладке пройтись,
+// чтобы обнаружить новое письмо» — метка на гамбургере говорила "что-то
+// есть", но не говорила ГДЕ, и вкладки приходилось перебирать вручную.
+// Считаем прямо по сырым спискам mpState.*, а не по готовым записям
+// (mpMailReportEntries и т.п.): те собирают объекты писем, а для счётчика
+// нужен только id, и считается он на каждой перерисовке.
+// Разбиение рубрик — ровно то же, что у самих вкладок (см.
+// MP_MAIL_ENTRY_FNS): report = бои/разведка/набеги/точки/сборы,
+// personal = повышения генерала + входящие письма, system = движение войск.
+// "Отправленные" метки не получают намеренно: письмо написал сам игрок,
+// «непрочитанным» оно быть не может. "Альянс" пока пуст по определению,
+// "Новое письмо" — форма, а не список.
+function mpUnreadByCat(){
   const unread=m=>!mpMailReadIds.has(m.id);
-  return mpState.mail.filter(unread).length + mpState.scoutMail.filter(unread).length +
-    mpState.raidMail.filter(unread).length + mpState.nodeBattleMail.filter(unread).length +
-    mpState.gatherMail.filter(unread).length + mpState.noteMail.filter(unread).length +
-    mpState.siegeMail.filter(unread).length +
-    mpState.pmMail.filter(m=>m.data.role==="recipient"&&unread(m)).length;
+  const n=a=>a.filter(unread).length;
+  return {
+    report: n(mpState.mail)+n(mpState.scoutMail)+n(mpState.raidMail)+
+            n(mpState.nodeBattleMail)+n(mpState.gatherMail),
+    personal: n(mpState.noteMail)+
+            mpState.pmMail.filter(m=>m.data&&m.data.role==="recipient"&&unread(m)).length,
+    system: n(mpState.siegeMail),
+  };
+}
+// Общее число для значка на гамбургере — СУММА тех же рубрик, а не
+// отдельный свой подсчёт: иначе значок и вкладки однажды разошлись бы.
+function mpUnreadMailCount(){
+  const c=mpUnreadByCat();
+  return c.report+c.personal+c.system;
 }
 
 // mailAgo() (одиночка) принимает эпоху в мс (W.mail хранит m.t числом);
@@ -14624,8 +14660,14 @@ function mpMailScreenHtml(){
     "<img class='mail-corner tr' src='images/ui/mail-corner.png' alt=''>"+
     "<img class='mail-corner bl' src='images/ui/mail-corner.png' alt=''>"+
     "<img class='mail-corner br' src='images/ui/mail-corner.png' alt=''>";
+  // Метка непрочитанного на самой вкладке — тот же .n, что и у одиночной
+  // почты (см. её mail-tabs выше и CSS .mail-tabs button .n): видно сразу,
+  // в какой рубрике новое, без обхода всех подряд.
+  const unreadCat=mpUnreadByCat();
   h+="<div class='mail-tabs mail-tabs-mp'>"+MP_MAIL_TABS.map(([cat,label])=>{
-    return "<button data-mp='mpmailtab' data-cat='"+cat+"' class='"+(mpMailCat===cat&&!openEntry?"on":"")+"'>"+label+"</button>";
+    const n=unreadCat[cat]||0;
+    return "<button data-mp='mpmailtab' data-cat='"+cat+"' class='"+(mpMailCat===cat&&!openEntry?"on":"")+"'>"+
+      label+(n?"<span class='n'>"+(n>99?"99+":n)+"</span>":"")+"</button>";
   }).join("")+"</div>";
   h+="<img class='mail-divider' src='images/ui/mail-divider.png' alt=''>";
   if(openEntry){
