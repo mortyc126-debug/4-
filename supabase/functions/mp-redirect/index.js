@@ -537,8 +537,8 @@ Deno.serve(async (req) => {
     // между концами текущего отрезка. Своего пути сервер не хранит (его
     // строит клиент, см. mpBuildWorldSnapshot) — для ТАЙМИНГА этого достаточно.
     let cur;
-    if (m.state === "gather") {
-      cur = { x: m.tx, y: m.ty };            // стоит на точке
+    if (m.state === "gather" || m.state === "hold") {
+      cur = { x: m.tx, y: m.ty };            // стоит на точке / на позиции
     } else {
       const from = m.state === "back" ? { x: m.tx, y: m.ty } : home;
       const to = m.state === "back" ? home : { x: m.tx, y: m.ty };

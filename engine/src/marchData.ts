@@ -122,7 +122,10 @@ export function loadLiveMarches(): LiveMarchPos[] | null {
   const out: LiveMarchPos[] = [];
   for (const m of W.marches) {
     const p =
-      m.state === "gather" || m.state === "siege"
+      // "hold" — отряд стоит на позиции, куда его привели перетаскиванием
+      // (см. mode:"move" в index.html/mp-tick): он никуда не движется, так что
+      // и интерполировать нечего — рисуем прямо в цели, как gather/siege.
+      m.state === "gather" || m.state === "siege" || m.state === "hold"
         ? { x: m.tx, y: m.ty }
         : pathPointAt(m, Math.max(0, Math.min(1, (W.t - m.t0) / Math.max(1, m.t1 - m.t0))));
     const owner = playersById.get(m.pid);
