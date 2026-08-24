@@ -4208,7 +4208,7 @@ function genWorld(seed){
 
   // Свежий мир уже построен через ensureChunkContent (зазор + вода +
   // "монетка" на чанк) — всем миграциям ниже тут нечего делать.
-  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.densityMigrated5=true; W.densityMigrated6=true; W.densityMigrated7=true; W.densityMigrated8=true; W.densityMigrated9=true; W.infiniteWorldMigrated=true; W.levelMigrated=true; W.marchRescueMigrated=true; W.marchSpeedMigrated=true;
+  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.densityMigrated5=true; W.densityMigrated6=true; W.densityMigrated7=true; W.densityMigrated8=true; W.densityMigrated9=true; W.infiniteWorldMigrated=true; W.levelMigrated=true; W.marchRescueMigrated=true; W.marchSpeedMigrated=true; W.marchWaterPathMigrated=true;
   logg("Мир создан. Зерно "+seed+". Городов: "+W.players.length+".", "good");
   return W;
 }
@@ -7269,6 +7269,33 @@ async function load(){
       W.marchRescueMigrated=true;
     }
     migrateMarchSpeed();
+    // Походы, уже НАХОДИВШИЕСЯ В ПУТИ на момент починки waterPath() (баг с
+    // озёрами — WPATH_MAX_ITER, и с реками — WPATH_SAMPLE_DENSITY, см. их
+    // комментарии) несут в себе m.path, посчитанный ЕЩЁ СТАРОЙ, дырявой
+    // версией функции — просто задеплоить фикс мало: он чинит только ПУТЬ
+    // НОВЫХ маршей, m.path у уже идущих отрядов давно лежит посчитанным и
+    // сохранённым в W, waterPath() для них больше не вызывается вплоть до
+    // прибытия (marchPos()/pathPointAt() просто интерполируют по готовому
+    // массиву точек). Автор с реального устройства: "марш как шёл по воде,
+    // так и идёт" — это тот самый случай, а не проблема кэша браузера.
+    // Тот же приём, что и в блоке выше (восстановление отсутствующего
+    // m.path) — только БЕЗ условия "если path уже есть", пересчитываем
+    // ВСЕГДА для всех march в пути. t0/t1 не трогаем (в отличие от
+    // migrateMarchSpeed) — тут дело не в скорости/времени прибытия, только
+    // в геометрии самой линии, прогресс f=(now-t0)/(t1-t0) остаётся тем же,
+    // просто ляжет на исправленный путь.
+    if(!W.marchWaterPathMigrated){
+      let fixed=0;
+      W.marches.forEach(m=>{
+        if(m.state!=="go"&&m.state!=="back") return; // gather/siege — марш уже стоит на месте, путь не рисуется
+        const p=W.players.find(q=>q.id===m.pid); if(!p) return;
+        const path = m.state==="back" ? waterPath(m.tx,m.ty,p.x,p.y) : waterPath(m.x0,m.y0,m.tx,m.ty);
+        setMarchPath(m,path);
+        fixed++;
+      });
+      W.marchWaterPathMigrated=true;
+      if(fixed) logg("Путь "+fixed+" идущих отрядов пересчитан в обход воды заново.","good");
+    }
     // Вытаскиваем отряды, потерявшие своё событие, — ДО догона времени, чтобы
     // возвращение домой началось с этого момента, а не откладывалось на потом.
     // Именно сюда попадают походы, застрявшие из-за прежнего падения на дробном
