@@ -4498,7 +4498,32 @@ function nodeDepth(n,arr,cache){
   return d;
 }
 const ROW_SIZES=[4,3,4,2];    // рядами по 2-4 для красоты, а не одной длинной стеной
+// Раскладка дерева исследований по рядам зависит РОВНО от трёх вещей: самого
+// дерева (статика, задана в файле), расы игрока и выбранного полководца —
+// см. nodeVisibleFor (единственное, что смотрит на игрока) и nodeDepth
+// (смотрит только на связи requires внутри дерева). От уровня исследований,
+// ратуши, ресурсов — не зависит вовсе.
+// Считалась она при этом заново на КАЖДЫЙ узел: экран Академии зовёт
+// computeRows один раз для себя, а потом для каждого из ~сорока узлов зовёт
+// researchLocked -> rowGate -> computeRows ЕЩЁ раз. Сорок с лишним полных
+// пересборок (фильтр по всем узлам, рекурсивный обход глубин с find по
+// массиву внутри, группировка, сортировка) — и всё это каждую секунду,
+// пока вкладка открыта, ради одного и того же ответа.
+// Кэш по ключу «ветка + раса + полководец»: пока игрок не сменил народ или
+// полководца (а сменить их нельзя вовсе), раскладка считается один раз.
+const rowsCache=new Map();
 function computeRows(arr,p){
+  const ck=(arr===ACADEMY_TREE.eco?"eco":arr===ACADEMY_TREE.mil?"mil":"?")+"|"+p.race+"|"+(p.gen&&p.gen.id||0);
+  if(ck.charAt(0)!=="?"){
+    const hit=rowsCache.get(ck);
+    if(hit) return hit;
+    const out=computeRowsRaw(arr,p);
+    rowsCache.set(ck,out);
+    return out;
+  }
+  return computeRowsRaw(arr,p);
+}
+function computeRowsRaw(arr,p){
   const visible=arr.filter(n=>nodeVisibleFor(n,p));
   const cache=new Map();
   const byDepth={};
@@ -4708,6 +4733,18 @@ function gain(p,c){ syncRes(p);
 const POWER_WEIGHT = {};
 const BUILDING_POWER_BASE=11240, BUILDING_POWER_K=0.00876;
 const buildingPower = (bk,lv) => {
+  // lv может прийти undefined — состояние игрока общего мира не содержит
+  // ключей зданий, которые он ещё ни разу не строил (Горн, Портал, Рынок,
+  // Центр Альянса заводятся в state только при первой стройке, см.
+  // newPlayerState в supabase/functions/mp-join). Голая проверка lv<=0 такое
+  // НЕ ловит: undefined<=0 это false, а не true — и дальше tblRow() падал на
+  // чтении .power у несуществующей строки таблицы. Падало это внутри
+  // power()/mpPower(), то есть в отрисовке шапки и профиля: openMenuModal()
+  // обрывался ДО записи в #menu-modal-body, и на экране оставалась ПРЕЖНЯЯ
+  // вкладка — тот самый "нажал Почту, открылось Войско" и "вкладка не
+  // открывается вовсе". Приводим к числу в одной точке, а не по одному
+  // ||0 у каждого из полутора десятков вызывающих мест.
+  lv=+lv||0;
   if(lv<=0) return 0;
   const tbl = BUILDING_TABLE[bk];
   if(tbl) return tblRow(tbl,lv).power;
@@ -7151,6 +7188,79 @@ async function load(){
    мягкая размывка вместо пиксельных квадратов, и это дёшево.
    ========================================================================= */
 const $=s=>document.querySelector(s);
+// =============================================================================
+// setHtml — точечная правка DOM вместо innerHTML.
+// =============================================================================
+// Корень жалобы автора "во вкладках бесконечная подгрузка статичной
+// страницы": КАЖДЫЙ периодический рендер (раз в секунду из frame()/
+// mpRerender()) переписывал innerHTML целого контейнера. innerHTML сносит
+// поддерево ЦЕЛИКОМ и строит новое — со всеми <img> внутри. А внутри там,
+// например, <img class='base' src='city-map.png'> — картинка на 3.1 МБ:
+// браузер каждую секунду заново создаёт элемент, заново поднимает
+// декодированный битмап, заново раскладывает страницу. Отсюда и вечная
+// "подгрузка", и моргание аватарок/иконок, и сброшенная прокрутка, и
+// потерянный фокус в полях ввода.
+//
+// Обходной приём, который жил тут раньше (stripTimers — вырезать секундные
+// цифры перед сравнением, чтобы диф "не заметил" изменения), лечил симптом
+// ценой самих таймеров: "готово через N с" внутри открытой вкладки просто
+// переставало тикать. Настоящее лечение — не сравнивать строки, а
+// ПРИМЕНЯТЬ разницу к живому DOM: у одинаковых узлов правим только то, что
+// правда отличается (обычно — один текстовый узел с секундами), а <img>,
+// прокрученные списки, открытые <details> и поля ввода вообще не трогаем.
+//
+// Почему свой на 40 строк, а не библиотека: правило проекта — никаких
+// внешних зависимостей в index.html (единственный <script src> — сам
+// supabase-js). Этого хватает: разметка тут генерируется целиком нами,
+// без веб-компонентов и без сторонних скриптов, дописывающих свои узлы
+// внутрь наших контейнеров.
+function morphAttrs(a,b){
+  const oldAttrs=a.attributes;
+  for(let i=oldAttrs.length-1;i>=0;i--){
+    const n=oldAttrs[i].name;
+    if(!b.hasAttribute(n)) a.removeAttribute(n);
+  }
+  const newAttrs=b.attributes;
+  for(let i=0;i<newAttrs.length;i++){
+    const n=newAttrs[i].name, v=newAttrs[i].value;
+    if(a.getAttribute(n)!==v) a.setAttribute(n,v);
+  }
+}
+function morphNode(parent,a,b){
+  // Разный тип/тег — заменяем целиком, чинить нечего.
+  if(a.nodeType!==b.nodeType || a.nodeName!==b.nodeName){ parent.replaceChild(b,a); return; }
+  // Текст/комментарий — правим значение, только если оно правда другое
+  // (это и есть тикающие секунды: один nodeValue вместо пересборки ветки).
+  if(a.nodeType===3 || a.nodeType===8){ if(a.nodeValue!==b.nodeValue) a.nodeValue=b.nodeValue; return; }
+  if(a.nodeType!==1) return;
+  morphAttrs(a,b);
+  // <input>/<textarea>/<select> — у них есть "грязное" значение, которого
+  // нет в разметке: то, что игрок уже набрал руками. Атрибут value мы выше
+  // синхронизировали (это разметка), а живое .value не трогаем вовсе —
+  // иначе набранное число войск затиралось бы на каждом тике.
+  const tag=a.nodeName;
+  if(tag==="INPUT"||tag==="TEXTAREA"||tag==="SELECT") return;
+  morphChildren(a,b);
+}
+function morphChildren(cur,next){
+  let a=cur.firstChild, b=next.firstChild;
+  while(a && b){
+    const an=a.nextSibling, bn=b.nextSibling;
+    morphNode(cur,a,b);
+    a=an; b=bn;
+  }
+  while(a){ const an=a.nextSibling; cur.removeChild(a); a=an; }   // лишние старые
+  while(b){ const bn=b.nextSibling; cur.appendChild(b); b=bn; }   // недостающие новые
+}
+// Единственная точка входа. Полностью заменяет `el.innerHTML = html` в
+// периодических рендерах: снаружи выглядит так же, внутри — правит
+// разницу, а не пересоздаёт поддерево.
+function setHtml(el,html){
+  if(!el) return;
+  const tpl=document.createElement("template");
+  tpl.innerHTML=html;
+  morphChildren(el,tpl.content);
+}
 // Тот же довод, что у isHidden() в engine/src/main.ts (см. её комментарий):
 // пока открыта вкладка "Город", панели поверх 3D-мира (#brigades-world/
 // #fieldarmy-world) просто не видны (#app.view-city #chart{display:none}),
@@ -7211,9 +7321,26 @@ function fmt0(n){ n=Math.round(n);              // без дробной час�
 // поднимается до уровня .crest-card, если места хватает, иначе
 // опускается ровно настолько, чтобы не задеть нижний край янтаря —
 // не больше и не меньше (Math.max с её фактическим bottom, не догадка).
-function positionPurse(){
+// Зовётся из renderTop()/mpRenderTop() — то есть РАЗ В СЕКУНДУ, всё время
+// пока игра открыта. Внутри четыре getBoundingClientRect() подряд, и стоят
+// они сразу после записи в DOM чуть выше по функции: каждый такой замер
+// заставляет браузер СИНХРОННО досчитать раскладку страницы, чтобы было что
+// измерить. Секунда за секундой, весь сеанс, ради значений, которые почти
+// никогда не меняются: плашка ресурсов переезжает только если сменилась
+// ширина герба (новый ник, мощь выросла на разряд), ширина самой плашки
+// (в запасах прибавился разряд) или ширина окна (поворот телефона).
+// Поэтому сначала — дешёвая проверка по тексту (textContent раскладку не
+// трогает вовсе), и только при реальном изменении — замеры.
+// force — вызов от ResizeObserver'ов ниже: там геометрия УЖЕ изменилась
+// по факту (догрузился шрифт и поехали метрики текста), текст при этом мог
+// остаться прежним, так что их пропускать нельзя.
+let lastPurseSig=null;
+function positionPurse(force){
   const purse=$("#purse"), crest=$("#crest"), card=$("#crest .crest-card"), amber=$("#amber-badge");
   if(!purse || !crest) return;
+  const sig=window.innerWidth+"|"+crest.textContent+"|"+purse.textContent+"|"+(amber?amber.textContent:"");
+  if(!force && sig===lastPurseSig) return;
+  lastPurseSig=sig;
   const cr=crest.getBoundingClientRect(), pr=purse.getBoundingClientRect();
   const mid=(cr.right+window.innerWidth)/2;
   purse.style.right="auto";
@@ -7228,27 +7355,17 @@ function fmtDur(s){ s=Math.max(0,Math.round(s));
   if(h) return h+" ч "+m+" мин";
   if(m) return m+" мин "+x+" с";
   return x+" с" }
-// Автор: вкладки меню "требуется много времени, чтобы загружаться... даже
-// при прокрутке" — вкладки вроде Войска/Почты содержат fmtDur() прямо в
-// разметке ("готово через 3 мин 42 с"), а эта строка меняется каждую
-// секунду по определению. Диф-кэш (lastMenuBody и т.п.) сравнивает готовый
-// HTML целиком — значит с такой строкой внутри он НИКОГДА не совпадает,
-// и вся вкладка пересобирается innerHTML'ом заново каждый тик: прокрутка
-// сбрасывается, картинки перерисовываются — то самое "грузит заново".
-// stripTimers вырезает именно эти четыре формы fmtDur() ПЕРЕД сравнением
-// (не из того, что реально уходит в DOM — только из копии для diff'а), тот
-// же принцип, что уже применяется к healCarouselOpen/trainCtx чуть ниже по
-// файлу (фингерпринт по составу, не по посчитанным цифрам) — просто
-// раньше не был доведён до самих вкладок меню. Секундные цифры внутри уже
-// открытой вкладки перестают тикать сами по себе (обновятся при следующем
-// СТРУКТУРНОМ изменении — новом письме, новом уровне и т.п., как и раньше
-// у healCarouselOpen) — тот же осознанный компромисс: автор явно попросил
-// в первую очередь убрать сбросы прокрутки/перезагрузки, а не секундную
-// точность таймеров внутри уже открытой вкладки.
-// (?![а-яёА-ЯЁ]) вместо \b на конце — \b в JS без /u определяется через \w,
-// а \w это только ASCII-буквы: кириллица для него "не буква", и \b между
-// "с" и пробелом/точкой попросту не сработал бы так, как ожидается.
-const stripTimers=h=>h.replace(/\d+ д \d+ ч(?![а-яёА-ЯЁ])|\d+ ч \d+ мин(?![а-яёА-ЯЁ])|\d+ мин \d+ с(?![а-яёА-ЯЁ])|\d+ с(?![а-яёА-ЯЁ])/g,"");
+// Здесь жил stripTimers — вырезал секундные формы fmtDur() из КОПИИ html
+// перед диф-сравнением, чтобы вкладка не пересобиралась innerHTML'ом каждый
+// тик из-за строки "готово через 3 мин 42 с", которая меняется каждую
+// секунду по определению. Он честно убирал сбросы прокрутки, но ценой самих
+// таймеров: секунды внутри уже открытой вкладки переставали тикать до
+// следующего структурного изменения.
+// Больше не нужен: перерисовка идёт через setHtml (см. её заголовок) —
+// в DOM попадает ровно разница, то есть один текстовый узел с секундами.
+// Прокрутка, картинки, набранные в полях числа и открытые списки при этом
+// не трогаются вовсе, так что глушить диф больше незачем — таймеры снова
+// тикают честно, каждую секунду, как и задумано.
 
 const TINCT={human:"#d9b14b",dwarf:"#bb5730",elf:"#4c8d5e",undead:"#7d56a4"};
 const RSHADE={food:"#83a049",wood:"#9c6b3a",stone:"#8791a0",gold:"#d6ae40"};
@@ -7334,17 +7451,17 @@ let lastCrestAvatar;
 function renderTop(){
   const p=me(); syncRes(p);
   const pr=production(p);
-  $("#purse").innerHTML = ["food","stone","wood","gold"].map(r=>{
+  setHtml($("#purse"), ["food","stone","wood","gold"].map(r=>{
     const v=pr[r];
     return "<div class='coin' title='"+RES_NAME[r]+"'>"+
       "<img class='disc' src='images/ui/res-"+r+".png' alt=''>"+
       "<span><b class='amt'>"+fmt(p.res[r])+"</b>"+
       "<s class='rate"+(v<0?" neg":"")+"'>"+(v<0?"−":"+")+fmt(Math.abs(v))+"/ч</s></span></div>";
-  }).join("");
+  }).join(""));
   $("#amber-amt").textContent=fmt(p.amber||0);
   renderBadges();
   $("#crest-name").textContent=p.nick||"Безымянный лорд";
-  $("#crest-power").innerHTML="<img class='ico' src='images/ui/icon-power.png' alt=''>"+fmt(power(p));
+  setHtml($("#crest-power"), "<img class='ico' src='images/ui/icon-power.png' alt=''>"+fmt(power(p)));
   const avSrc=playerAvatarSrc(p);
   if(avSrc!==lastCrestAvatar){
     lastCrestAvatar=avSrc;
@@ -7397,7 +7514,7 @@ function renderCartouche(){
   // ветки ничего не знают про кнопку закрытия.
   const put=h=>{
     const full=h?"<button class='cart-close' data-act='closecartouche' title='Закрыть' aria-label='Закрыть'>&times;</button>"+h:h;
-    if(full!==lastCart){ lastCart=full; el.innerHTML=full } el.style.display=full?"block":"none";
+    if(full!==lastCart){ lastCart=full; setHtml(el,full) } el.style.display=full?"block":"none";
   };
   if(selMarch!=null){
     const m=W.marches.find(x=>x.id===selMarch);
@@ -7548,7 +7665,7 @@ function renderCartoucheMp(){
   const el=$("#cartouche");
   const put=h=>{
     const full=h?"<button class='cart-close' data-act='closecartouche' title='Закрыть' aria-label='Закрыть'>&times;</button>"+h:h;
-    if(full!==lastCart){ lastCart=full; el.innerHTML=full } el.style.display=full?"block":"none";
+    if(full!==lastCart){ lastCart=full; setHtml(el,full) } el.style.display=full?"block":"none";
   };
   const snap=mpWorldSnapshot();
   if(!snap){ put(""); return; } // гонка: joined уже true, но mpState.player ещё не подгружен
@@ -7861,7 +7978,7 @@ function mpRenderBrigadesWorld(){
   if(!mpState.player) return;
   const p=mpCityShim(), st=mpState.player.state, nowSec=Date.now()/1000;
   const h=st.queues.map(q=>mpBrigadeSlotCellHtml(q,p,nowSec)).join("");
-  if(h!==lastMpBrigadesWorld){ lastMpBrigadesWorld=h; el.innerHTML=h; }
+  if(h!==lastMpBrigadesWorld){ lastMpBrigadesWorld=h; setHtml(el,h); }
 }
 // Отряды в поле общего мира — тот же #fieldarmy/.slotcell, что и в
 // одиночке (renderFieldArmy, index.html:foCity), справа от карты, зеркально
@@ -7917,7 +8034,7 @@ function mpRenderFieldArmyWorld(){
   const el=$("#fieldarmy-world"); if(!el) return;
   const nowSec=Date.now()/1000;
   const h=mpState.marches.map(m=>mpFieldArmyCellHtml(m,nowSec,"followmarch")).join("");
-  if(h!==lastMpFieldArmyWorld){ lastMpFieldArmyWorld=h; el.innerHTML=h; }
+  if(h!==lastMpFieldArmyWorld){ lastMpFieldArmyWorld=h; setHtml(el,h); }
 }
 // Та же ветвящаяся логика (участок ещё не открыт / в очереди / макс.
 // уровень / нужна ратуша / ратуше не хватает построек-требований HALL_REQ /
@@ -8653,6 +8770,30 @@ let mpTrainCtx=null, mpCarouselCtx=null;
 // переиспользуются напрямую. portal:0 — тот же приём, что и в
 // mpAcademyHtml()/mpProdPerHour() (Портал не входит в BKEYS newPlayerState,
 // без явного 0 некоторые формулы внутри bonuses() уходят в NaN).
+// Приводим состояние игрока, пришедшее с сервера (или поднятое из кэша), к
+// той же форме, которую ждёт весь клиентский код: у КАЖДОГО здания из
+// BUILDINGS должен быть уровень (число или массив участков), а не пропуск.
+// Сервер заводит в state далеко не все ключи — Горн, Портал, Рынок и Центр
+// Альянса появляются там только после первой стройки (см. newPlayerState в
+// supabase/functions/mp-join; для УЖЕ существующих игроков он их
+// самоисцеляет, а для только что зарегистрированных — нет), плюс любое
+// здание, добавленное в игру позже, отсутствует во всех сохранённых ранее
+// состояниях. Чинить это по месту (||0 у каждого чтения) — заведомо
+// проигрышная игра: один пропущенный ||0 роняет отрисовку целой вкладки.
+// Нормализуем один раз, на входе.
+function mpNormalizeState(st){
+  if(!st || !st.b) return st;
+  BKEYS.forEach(k=>{
+    if(st.b[k]!==undefined) return;
+    st.b[k]=isMulti(k)?new Array(BUILDINGS[k].plots).fill(0):0;
+  });
+  return st;
+}
+function mpSetPlayer(pl){
+  if(pl && pl.state) mpNormalizeState(pl.state);
+  mpState.player=pl;
+  return pl;
+}
 function mpFullShim(mp,st){
   return Object.assign({}, st, { race: mp.race, b: Object.assign({portal:0}, st.b) });
 }
@@ -8684,7 +8825,7 @@ function mpOpenUnitCarousel(type){
   mpCarouselCtx={type};
   const max=trainMax(pShim,type,maxT);
   mpTrainCtx={type,tier:maxT,mode:"train",max,n:max,lastLocked:!!(st.train&&st.train[type])||max<1};
-  $("#bm-body").innerHTML = mpUnitCarouselHtml();
+  setHtml($("#bm-body"), mpUnitCarouselHtml());
   $("#building-modal").classList.add("open");
   mpUpdateTrainSheet();
   requestAnimationFrame(()=>{
@@ -8796,7 +8937,7 @@ let mpHealCtx=null, mpHealCarouselOpen=false;
 function mpOpenHealCarousel(){
   mpCarouselCtx=null; mpTrainCtx=null; mpResearchCtx=null; mpForgeTab=null; mpForgeRarity=null; // та же чистка контекста, что и у одиночного openHealCarousel()
   mpHealCarouselOpen=true; mpHealCtx=null;
-  $("#bm-body").innerHTML = mpHealCarouselHtml();
+  setHtml($("#bm-body"), mpHealCarouselHtml());
   $("#building-modal").classList.add("open");
   mpUpdateHealSheet();
 }
@@ -8932,7 +9073,7 @@ function mpOpenResearchCarousel(branch,startId){
   const list=researchNodeList(branch,pShim);
   const idx=Math.max(0,list.findIndex(n=>n.id===startId));
   mpResearchCtx={branch,idx};
-  $("#bm-body").innerHTML = mpResearchCarouselHtml();
+  setHtml($("#bm-body"), mpResearchCarouselHtml());
   $("#building-modal").classList.add("open");
   requestAnimationFrame(()=>{
     const track=$("#uc-track"), card=track&&track.querySelectorAll(".uc-card")[idx];
@@ -9125,7 +9266,7 @@ function mpOpenBuildingModal(idx){
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpForgeTab=null; mpForgeRarity=null;
   mpCitySel=idx;
-  $("#bm-body").innerHTML = mpBuildingModalHtml(idx);
+  setHtml($("#bm-body"), mpBuildingModalHtml(idx));
   $("#building-modal").classList.add("open");
   mpRenderFolio();
 }
@@ -9155,7 +9296,7 @@ function mpOpenLayoutModal(li){
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpForgeTab=null; mpForgeRarity=null;
   mpLayoutSel=li;
-  $("#bm-body").innerHTML = mpBuildingModalHtmlFor(entry.b, entry.plot);
+  setHtml($("#bm-body"), mpBuildingModalHtmlFor(entry.b, entry.plot));
   $("#building-modal").classList.add("open");
   mpRenderFolio();
 }
@@ -9174,7 +9315,7 @@ function mpOpenFixedModal(bk){
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpForgeTab=null; mpForgeRarity=null;
   mpFixedSel=bk;
-  $("#bm-body").innerHTML = mpBuildingModalHtmlFor(bk, null);
+  setHtml($("#bm-body"), mpBuildingModalHtmlFor(bk, null));
   $("#building-modal").classList.add("open");
   mpRenderFolio();
 }
@@ -9295,6 +9436,19 @@ function mpWireBuildPickerScroll(resetToFirst){
   if(n<3) return;
   const cw=()=>track.clientWidth||1;
   if(resetToFirst) track.scrollLeft=cw();
+  // Раньше узел #uc-track пересоздавался при каждой перерисовке (innerHTML),
+  // и слушатель умирал вместе со старым узлом — навешивать заново было
+  // обязательно. Теперь перерисовка идёт через setHtml (точечная правка,
+  // см. её заголовок), и ТОТ ЖЕ САМЫЙ узел переживает пере-рендер: без
+  // отметки ниже каждый тик добавлял бы ЕЩЁ один обработчик на прокрутку —
+  // через минуту открытой карусели их набралось бы шесть десятков, и каждый
+  // жест прокрутки дёргал бы их все разом (ровно тот класс подтормаживания,
+  // ради которого setHtml и заводился).
+  // Отметка — СВОЙСТВО JS на самом узле, не data-атрибут: setHtml сверяет
+  // именно атрибуты (чего нет в новой разметке — то снимает), и атрибутная
+  // отметка стиралась бы на каждом же тике, снова открывая дорогу дублям.
+  if(track.__scrollWired) return;
+  track.__scrollWired=true;
   let t=null;
   track.addEventListener("scroll",()=>{
     clearTimeout(t);
@@ -9324,7 +9478,7 @@ function mpOpenBuildPicker(){
   mpPickerOpen=true;
   const html=mpBuildPickerHtml();
   lastBuildPickerHtml=html;
-  $("#bm-body").innerHTML=html;
+  setHtml($("#bm-body"), html);
   $("#building-modal").classList.add("open");
   mpWireBuildPickerScroll(true);
   mpRenderFolio();
@@ -9487,7 +9641,7 @@ function mpOpenMarchModal(mode,target){
   else if(mode==="gather") mpState.gatherTarget=target;
   else mpState.raidTarget=target;
   lastMarchSheet=mpMarchSheetHtml();
-  $("#bm-body").innerHTML=lastMarchSheet;
+  setHtml($("#bm-body"), lastMarchSheet);
   $("#building-modal").classList.add("open");
 }
 function mpMarchSheetHtml(){
@@ -9569,7 +9723,7 @@ function mpRenderFolio(){
   lastMpFolio=h;
   const el=$("#folio"); if(!el) return;
   const st=el.scrollTop;
-  el.innerHTML=h; el.scrollTop=st;
+  setHtml(el,h); el.scrollTop=st;
 }
 // Фаза 14, кусочек 3 — своя мощь для шапки общего мира: дословно та же
 // сумма, что и у одиночного power() (buildingPower по всем BKEYS + войска
@@ -9621,15 +9775,15 @@ function mpRenderTop(){
   const mp=mpState.player, st=mp.state;
   const pShim={race:mp.race, b:st.b, troops:st.troops, tech:st.tech, gen:st.gen, gear:st.gear};
   const pr=mpProdPerHour(mp);
-  $("#purse").innerHTML = ["food","stone","wood","gold"].map(r=>{
+  setHtml($("#purse"), ["food","stone","wood","gold"].map(r=>{
     const v=pr[r];
     return "<div class='coin' title='"+RES_NAME[r]+"'>"+
       "<img class='disc' src='images/ui/res-"+r+".png' alt=''>"+
       "<span><b class='amt'>"+fmt(st.res[r])+"</b>"+
       "<s class='rate"+(v<0?" neg":"")+"'>"+(v<0?"−":"+")+fmt(Math.abs(v))+"/ч</s></span></div>";
-  }).join("");
+  }).join(""));
   $("#crest-name").textContent=mp.nick||"Безымянный лорд";
-  $("#crest-power").innerHTML="<img class='ico' src='images/ui/icon-power.png' alt=''>"+fmt(mpPower(pShim));
+  setHtml($("#crest-power"), "<img class='ico' src='images/ui/icon-power.png' alt=''>"+fmt(mpPower(pShim)));
   $("#amber-amt").textContent=fmt(st.amber||0);
   const avSrc=playerAvatarSrc(pShim);
   if(avSrc!==lastMpCrestAvatar){
@@ -9676,7 +9830,7 @@ function renderBrigadesWorld(){
   const el=$("#brigades-world"); if(!el) return;
   const p=me();
   const h=p.queues.map(q=>brigadeSlotCellHtml(q,p)).join("");
-  if(h!==lastBrigadesWorld){ lastBrigadesWorld=h; el.innerHTML=h; }
+  if(h!==lastBrigadesWorld){ lastBrigadesWorld=h; setHtml(el,h); }
 }
 // act — "marchinfo" (карточка города: клик просто показывает текстовый
 // герольд, см. handleAct) или "followmarch" (панель поверх 3D-мира: клик
@@ -9707,7 +9861,7 @@ function renderFieldArmyWorld(){
   const p=me();
   const mine=W.marches.filter(m=>m.pid===p.id);
   const h=mine.map(m=>marchSlotCellHtml(m,"followmarch")).join("");
-  if(h!==lastFieldArmyWorld){ lastFieldArmyWorld=h; el.innerHTML=h; }
+  if(h!==lastFieldArmyWorld){ lastFieldArmyWorld=h; setHtml(el,h); }
 }
 // Клик по ячейке в мире: переключает на вкладку "Мир" (если ещё не там) и
 // зовёт startFollowMarch внутри iframe (та же origin-договорённость, что и
@@ -9726,12 +9880,7 @@ function jumpToMarchFor(marchId){
     }catch(e){}
     return false;
   };
-  if(!tryStart()){
-    let tries=0;
-    // tries>450 (~45с), не 50 (~5с) — движок теперь ждёт загрузку настоящего
-    // рельефа (~8.6МБ) перед готовностью, см. тот же пересчёт у mpFocusWorld3D.
-    const iv=setInterval(()=>{ tries++; if(tryStart()||tries>450) clearInterval(iv); },100);
-  }
+  whenWorld3DReady(tryStart);   // общая очередь ожидания, см. её заголовок
 }
 function hallInfoHtml(p){
   const epoch=epochOf(p.b.hall), track=RACE_EPOCHS[p.race], minus=RACES[p.race].minus;
@@ -10846,7 +10995,7 @@ function renderFolio(){
   if(html===lastFolio) return;                    // не перерисовываем зря
   lastFolio=html;
   const el=$("#folio"), st=el.scrollTop;
-  el.innerHTML=html; el.scrollTop=st;
+  setHtml(el,html); el.scrollTop=st;
 }
 
 /* =========================================================================
@@ -11030,7 +11179,7 @@ document.querySelectorAll("#ribbons button").forEach(b=>{
 /* ---- Действия в реестре и картуше ---- */
 function refreshGenIfOpen(){
   const menu=$("#menu-modal");
-  if(menu.classList.contains("open")&&menu.dataset.tab==="gen"){ lastMenuBody=foGen(); $("#menu-modal-body").innerHTML=lastMenuBody; }
+  if(menu.classList.contains("open")&&menu.dataset.tab==="gen"){ lastMenuBody=foGen(); setHtml($("#menu-modal-body"), lastMenuBody); }
 }
 // Профиль — единственная вкладка меню, что при .mp-gated (по умолчанию,
 // без ?sp=1) тоже рендерится через mpMenuBodyHtml, а не foProfile()
@@ -11040,7 +11189,7 @@ function refreshProfileIfOpen(){
   const menu=$("#menu-modal");
   if(menu.classList.contains("open")&&menu.dataset.tab==="profile"){
     lastMenuBody = SP_UNLOCKED ? foProfile() : mpMenuBodyHtml("profile");
-    $("#menu-modal-body").innerHTML=lastMenuBody;
+    setHtml($("#menu-modal-body"), lastMenuBody);
   }
 }
 function handleAct(e){
@@ -11126,7 +11275,7 @@ function handleAct(e){
     const r=startBuild(p,b.dataset.b,plot);
     herald(r.err||"Заложено.");
     lastFolio=""; renderFolio();
-    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);    return;
+    if(buildingModalSel>=0) setHtml($("#bm-body"), buildingModalHtml(buildingModalSel));    return;
   }
   if(a==="build"){
     const plot=b.dataset.plot!=null&&b.dataset.plot!==""?+b.dataset.plot:undefined;
@@ -11152,7 +11301,7 @@ function handleAct(e){
       const max=retrainMax(p,type,tier);
       trainCtx={type,tier:tier+1,fromTier:tier,mode:"retrain",max,n:max,lastLocked:!!p.train[type]||max<1};
     }
-    $("#bm-body").innerHTML=unitCarouselHtml();
+    setHtml($("#bm-body"), unitCarouselHtml());
     updateTrainSheet();
     const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
     return;
@@ -11191,7 +11340,7 @@ function handleAct(e){
     const max=healMaxN(p,type,tier);
     healCtx={type,tier,max,n:max,lastLocked:!!p.heal||max<1};
     const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
-    $("#bm-body").innerHTML=healCarouselHtml();
+    setHtml($("#bm-body"), healCarouselHtml());
     updateHealSheet();
     const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
     return;
@@ -11279,13 +11428,13 @@ function handleAct(e){
   }
   else if(a==="academytab"){
     academyTab=b.dataset.t;
-    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);  }
+    if(buildingModalSel>=0) setHtml($("#bm-body"), buildingModalHtml(buildingModalSel));  }
   else if(a==="forgetab"){
     forgeTab=b.dataset.t;
-    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);  }
+    if(buildingModalSel>=0) setHtml($("#bm-body"), buildingModalHtml(buildingModalSel));  }
   else if(a==="forgerarity"){
     forgeRarity=+b.dataset.r;
-    if(buildingModalSel>=0) $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);  }
+    if(buildingModalSel>=0) setHtml($("#bm-body"), buildingModalHtml(buildingModalSel));  }
   else if(a==="rtreejump"){
     const n=findNode(b.dataset.id);
     if(n) openResearchCarousel(n.branch,n.id);
@@ -11294,41 +11443,41 @@ function handleAct(e){
     invTab=b.dataset.t;
     lastFolio=""; renderFolio();
     const menu=$("#menu-modal");
-    if(menu.classList.contains("open")&&menu.dataset.tab==="inv"){ lastMenuBody=foInv(); $("#menu-modal-body").innerHTML=lastMenuBody; }
+    if(menu.classList.contains("open")&&menu.dataset.tab==="inv"){ lastMenuBody=foInv(); setHtml($("#menu-modal-body"), lastMenuBody); }
   }
   else if(a==="mailtab"){
     mailCat=b.dataset.cat; mailOpenId=null;
-    lastMenuBody=foMail(); $("#menu-modal-body").innerHTML=lastMenuBody;
+    lastMenuBody=foMail(); setHtml($("#menu-modal-body"), lastMenuBody);
     return;
   }
   else if(a==="mailopen"){
     const id=+b.dataset.id, m=W.mail.find(x=>x.id===id);
     if(m) m.read=true;
     mailOpenId=id;
-    lastMenuBody=foMail(); $("#menu-modal-body").innerHTML=lastMenuBody;
+    lastMenuBody=foMail(); setHtml($("#menu-modal-body"), lastMenuBody);
     return;
   }
   else if(a==="mailback"){
     mailOpenId=null;
-    lastMenuBody=foMail(); $("#menu-modal-body").innerHTML=lastMenuBody;
+    lastMenuBody=foMail(); setHtml($("#menu-modal-body"), lastMenuBody);
     return;
   }
   else if(a==="mailreadall"){
     mailInCat(mailCat).forEach(m=>m.read=true);
-    lastMenuBody=foMail(); $("#menu-modal-body").innerHTML=lastMenuBody;
+    lastMenuBody=foMail(); setHtml($("#menu-modal-body"), lastMenuBody);
     return;
   }
   else if(a==="mailfav"){
     const m=W.mail.find(x=>x.id===+b.dataset.id);
     if(m) m.fav=!m.fav;
-    lastMenuBody=foMail(); $("#menu-modal-body").innerHTML=lastMenuBody;
+    lastMenuBody=foMail(); setHtml($("#menu-modal-body"), lastMenuBody);
     return;
   }
   else if(a==="maildel"){
     const id=+b.dataset.id;
     W.mail=W.mail.filter(x=>x.id!==id);
     mailOpenId=null;
-    lastMenuBody=foMail(); $("#menu-modal-body").innerHTML=lastMenuBody;
+    lastMenuBody=foMail(); setHtml($("#menu-modal-body"), lastMenuBody);
     return;
   }
   else if(a==="recall"){ const m=W.marches.find(x=>x.id==b.dataset.m);
@@ -11387,7 +11536,7 @@ function handleAct(e){
   if(modal.classList.contains("open")){
     const t=modal.dataset.tab;
     lastMenuBody = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): foInv();
-    $("#menu-modal-body").innerHTML = lastMenuBody;
+    setHtml($("#menu-modal-body"), lastMenuBody);
   }
 }
 $("#folio").addEventListener("click",handleAct);
@@ -11406,8 +11555,12 @@ $("#brigades-world").addEventListener("click",handleAct);
 // (см. positionPurse), поэтому если высота .purse меняется сама по себе
 // (пропала/появилась .rate при пересечении media-запроса 900px), янтарь
 // должен пересчитаться следом, а не просто герб.
-new ResizeObserver(positionPurse).observe($("#crest"));
-new ResizeObserver(positionPurse).observe($("#purse"));
+new ResizeObserver(()=>positionPurse(true)).observe($("#crest"));
+new ResizeObserver(()=>positionPurse(true)).observe($("#purse"));
+// Поворот телефона/смена размера окна: сами #crest и #purse при этом могут
+// не поменять ни одного пикселя своей ширины (наблюдатели выше промолчат),
+// а вот центр между гербом и правым краем экрана — уже другой.
+window.addEventListener("resize",()=>positionPurse(true));
 $("#cartouche").addEventListener("click",handleAct);
 // Фаза 16 — аварийный откат в город. Зовётся из движка (engine/src/main.ts,
 // см. её же комментарий у device.lost) через window.parent.forceCityView(),
@@ -11462,7 +11615,7 @@ let buildingModalSel=-1;
 function openBuildingModal(ci){
   trainCtx=null; carouselCtx=null; forgeTab=null; forgeRarity=null; researchCtx=null; healCarouselOpen=false; healCtx=null;
   buildingModalSel=ci;
-  $("#bm-body").innerHTML = buildingModalHtml(ci);
+  setHtml($("#bm-body"), buildingModalHtml(ci));
   $("#building-modal").classList.add("open");
 }
 // Фаза 17, кусочек 1 — общий #bm-close (data-act='closebuilding', обработан
@@ -11523,7 +11676,7 @@ function openUnitCarousel(type){
   buildingModalSel=-1;
   const max=trainMax(p,type,maxT);
   trainCtx={type,tier:maxT,mode:"train",max,n:max,lastLocked:!!p.train[type]||max<1};
-  $("#bm-body").innerHTML = unitCarouselHtml();
+  setHtml($("#bm-body"), unitCarouselHtml());
   $("#building-modal").classList.add("open");
   updateTrainSheet();
   requestAnimationFrame(()=>{
@@ -11667,7 +11820,7 @@ function updateHealSheet(){
 function openHealCarousel(){
   trainCtx=null; carouselCtx=null; researchCtx=null; forgeTab=null; forgeRarity=null;
   buildingModalSel=-1; healCarouselOpen=true; healCtx=null;
-  $("#bm-body").innerHTML = healCarouselHtml();
+  setHtml($("#bm-body"), healCarouselHtml());
   lastHealFingerprint = woundedList(me()).map(x=>x.type+x.tier).join(",");
   $("#building-modal").classList.add("open");
   updateHealSheet();
@@ -11683,7 +11836,7 @@ function openResearchCarousel(branch,startId){
   const list=researchNodeList(branch,p);
   const idx=Math.max(0,list.findIndex(n=>n.id===startId));
   researchCtx={branch,idx};
-  $("#bm-body").innerHTML = researchCarouselHtml();
+  setHtml($("#bm-body"), researchCarouselHtml());
   $("#building-modal").classList.add("open");
   requestAnimationFrame(()=>{
     const track=$("#uc-track"), card=track&&track.querySelectorAll(".uc-card")[idx];
@@ -11783,10 +11936,31 @@ function openMenuModal(t){
   // (дублировала "Смотр войск"/"Бой"/"Разведка", уже вынесенные в Войско/
   // Почту). Теперь идёт через тот же диспетчер, что и все остальные.
   const gatedTab = !SP_UNLOCKED && (t==="army"||t==="gen"||t==="inv"||t==="mail"||t==="profile");
-  const html = gatedTab ? mpMenuBodyHtml(t)
-    : t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): t==="mp"?mpMenuBodyHtml("mp"): foInv();
+  // Сборка содержимого — под try. Раньше исключение отсюда обрывало всю
+  // функцию ДО записи в #menu-modal-body и до .classList.add("open"): на
+  // экране молча оставалась ПРЕДЫДУЩАЯ вкладка, и это выглядело как "нажал
+  // Почту — открылось Войско" или "вкладка вообще не открывается". Пусть
+  // лучше откроется честная строка об ошибке, чем чужой экран.
+  let html;
+  try{
+    html = gatedTab ? mpMenuBodyHtml(t)
+      : t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): t==="mp"?mpMenuBodyHtml("mp"): foInv();
+  }catch(e){
+    console.error("openMenuModal("+t+"):", e);
+    html = "<div class='entry'><div class='line'><div class='fill'>"+
+           "<div class='title'>Не удалось собрать эту страницу</div>"+
+           "<div class='note'>Попробуйте закрыть и открыть её снова. Если повторится — перезагрузите страницу.</div>"+
+           "</div></div></div>";
+  }
   lastMenuBody = html;
-  $("#menu-modal-body").innerHTML = html;
+  setHtml($("#menu-modal-body"), html);
+  // setHtml (в отличие от прежнего innerHTML) не пересоздаёт контейнер, а
+  // значит и не обнуляет его прокрутку сам — при СМЕНЕ вкладки её нужно
+  // сбросить явно, иначе новая вкладка открывалась бы прокрученной на
+  // столько же, на сколько игрок успел промотать предыдущую. Прокручивается
+  // именно #menu-modal (overflow-y:auto у него, см. CSS), а не сам
+  // #menu-modal-body — он просто центрированная колонка внутри.
+  $("#menu-modal").scrollTop=0;
   $("#menu-modal").classList.add("open");
   $("#side-menu").classList.remove("open");
   renderBadges();
@@ -11837,13 +12011,13 @@ function refreshOpenModal(){
       if(newLocked!==trainCtx.lastLocked){
         trainCtx.max=newMax; trainCtx.n=Math.min(trainCtx.n,newMax); trainCtx.lastLocked=newLocked;
         const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
-        $("#bm-body").innerHTML=unitCarouselHtml();
+        setHtml($("#bm-body"), unitCarouselHtml());
         const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
       }
       updateTrainSheet();
     } else if(researchCtx){
       const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
-      $("#bm-body").innerHTML=researchCarouselHtml();
+      setHtml($("#bm-body"), researchCarouselHtml());
       const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
     } else if(healCarouselOpen){
       // Раньше тут карусель раненых пересобиралась целиком (innerHTML)
@@ -11862,25 +12036,30 @@ function refreshOpenModal(){
         if(healCtx){ healCtx.max=newMax; healCtx.n=Math.min(healCtx.n,newMax); healCtx.lastLocked=newLocked; }
         lastHealFingerprint=fp;
         const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
-        $("#bm-body").innerHTML=healCarouselHtml();
+        setHtml($("#bm-body"), healCarouselHtml());
         const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
       }
       updateHealSheet();
     } else if(buildingModalSel>=0){
-      $("#bm-body").innerHTML=buildingModalHtml(buildingModalSel);    }
+      setHtml($("#bm-body"), buildingModalHtml(buildingModalSel));    }
   }
   const menu=$("#menu-modal");
   const typingInModal = document.activeElement && $("#menu-modal-body").contains(document.activeElement) &&
     (document.activeElement.tagName==="INPUT"||document.activeElement.tagName==="TEXTAREA");
   if(menu.classList.contains("open") && !typingInModal){
     const t=menu.dataset.tab;
-    const html = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): t==="mp"?foMultiplayer(!SP_UNLOCKED): foInv();
-    // stripTimers — иначе не перерисовываем зря никогда бы не срабатывало:
-    // "готово через N с" внутри html меняется каждую секунду сама по себе
-    // (см. её комментарий) — сброс прокрутки на ровном месте.
-    if(stripTimers(html)!==stripTimers(lastMenuBody)){ // не перерисовываем зря (иначе моргает аватар)
+    // t==="mp" — через mpMenuBodyHtml("mp"), ровно как в openMenuModal().
+    // Раньше тут стоял голый foMultiplayer(!SP_UNLOCKED) — ДРУГАЯ разметка
+    // (полный нефильтрованный лист вместо отфильтрованного экрана), и через
+    // секунду после открытия вкладки её содержимое молча подменялось само
+    // собой на страницу, которую игрок не открывал.
+    const html = t==="army"?foArmy(): t==="gen"?foGen(): t==="profile"?foProfile(): t==="mail"?foMail(): t==="mp"?mpMenuBodyHtml("mp"): foInv();
+    // Сравниваем html как есть, без вырезания таймеров (см. на месте
+    // бывшего stripTimers выше): setHtml применит только реальную разницу,
+    // а это чаще всего ровно те самые тикающие секунды.
+    if(html!==lastMenuBody){
       lastMenuBody=html;
-      $("#menu-modal-body").innerHTML = html;
+      setHtml($("#menu-modal-body"), html);
     }
   }
 }
@@ -11991,7 +12170,7 @@ function handleMpAct(e){
       const max=retrainMax(pShim,type,tier);
       mpTrainCtx={type,tier:tier+1,fromTier:tier,mode:"retrain",max,n:max,lastLocked:!!(st.train&&st.train[type])||max<1};
     }
-    $("#bm-body").innerHTML=mpUnitCarouselHtml();
+    setHtml($("#bm-body"), mpUnitCarouselHtml());
     mpUpdateTrainSheet();
     const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
     return;
@@ -12009,7 +12188,7 @@ function handleMpAct(e){
     const max=healMaxN(pShim,type,tier);
     mpHealCtx={type,tier,max,n:max,lastLocked:!!st.heal||max<1};
     const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
-    $("#bm-body").innerHTML=mpHealCarouselHtml();
+    setHtml($("#bm-body"), mpHealCarouselHtml());
     mpUpdateHealSheet();
     const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
     return;
@@ -12338,9 +12517,65 @@ function mpWorldSnapshot(){
 // шанс сфокусироваться/снять накидку в ЭТОЙ загрузке страницы" — не путать
 // с "игрок уже когда-то входил" (это могло быть в прошлой вкладке/сессии).
 let mpWorld3DFocused=false;
+// =============================================================================
+// Ожидание готовности 3D-движка — ОДИН интервал на всех, а не по одному
+// на каждый вызов.
+// =============================================================================
+// mpFocusWorld3D/jumpToMarchFor/mpGoToLoc делают одно и то же: пробуют
+// что-то сделать с камерой движка, а если движок ещё не поднялся —
+// опрашивают его раз в 100мс до 450 раз (45 секунд). Раньше КАЖДЫЙ вызов
+// заводил СВОЙ такой интервал и ничего не знал о соседях: тап по трём
+// походам подряд, пока мир грузится, оставлял три параллельных опроса; тап
+// по десятку писем со ссылками на места — десяток. Каждый из них 45 секунд
+// лез в contentWindow чужого iframe десять раз в секунду, и все они
+// продолжали дёргать камеру уже ПОСЛЕ того, как игрок сам увёл её куда-то
+// ещё — камера дёргалась рывками между целями разных зависших опросов.
+// Теперь очередь одна: новая цель отменяет прежнюю (игрок передумал —
+// прошлая цель ему уже не нужна), интервал живёт ровно один и гаснет,
+// как только дело сделано.
+let world3dWaitTimer=null, world3dWaitTries=0, world3dWaitFn=null;
+function stopWorld3DWait(){
+  if(world3dWaitTimer){ clearInterval(world3dWaitTimer); world3dWaitTimer=null; }
+  world3dWaitFn=null; world3dWaitTries=0;
+}
+// fn — попытка: вернуть true, если удалось (тогда ждать больше нечего).
+// onGiveUp — что сделать, если движок так и не поднялся за отведённое время.
+function whenWorld3DReady(fn, onGiveUp){
+  stopWorld3DWait();
+  if(fn()) return;
+  world3dWaitFn=fn;
+  // 450 попыток по 100мс (~45с) — тот же щедрый запас под медленную сеть,
+  // что стоял в каждом из трёх прежних мест: движок до готовности успевает
+  // скачать настоящий рельеф (~8.6МБ, engine/src/terrain.ts).
+  world3dWaitTimer=setInterval(()=>{
+    world3dWaitTries++;
+    const done=world3dWaitFn && world3dWaitFn();
+    if(done || world3dWaitTries>450){
+      const gaveUp=!done;
+      stopWorld3DWait();
+      if(gaveUp && onGiveUp) onGiveUp();
+    }
+  },100);
+}
+// Предохранитель против вечного спиннера. Накидку #mp-loading снимает
+// ровно одно место на успешном пути (mpFocusWorld3D, по готовности камеры
+// движка) и несколько веток ошибок в mpOpen. Стоит любой из этих цепочек
+// не сработать — не дождаться движка, упасть по дороге, быть отменённой
+// новой целью камеры — и игрок остаётся перед крутящимся кольцом навсегда,
+// без единого способа что-то нажать (накидка перекрывает весь экран). Это
+// ровно та "бесконечная загрузка", на которую жаловался автор.
+// Теперь показ накидки сам взводит предохранитель: через минуту она уйдёт
+// в любом случае. Минута — заведомо больше честного ожидания (движок ждёт
+// ~8.6МБ рельефа, накидку снимает готовность камеры, у которой свой запас
+// ~45с), так что на нормальном пути предохранитель не срабатывает никогда;
+// он нужен только чтобы худшим исходом был мир без плавного въезда камеры,
+// а не намертво заблокированный экран.
+let mpLoadingFuse=null;
 function mpShowLoading(){
   const el=$("#mp-loading"); if(!el) return;
   el.style.display="flex";
+  if(mpLoadingFuse) clearTimeout(mpLoadingFuse);
+  mpLoadingFuse=setTimeout(()=>{ mpLoadingFuse=null; mpHideLoading(); },60000);
   // .play() руками, а не только атрибут autoplay — display:none обычно не
   // мешает автовоспроизведению, но перестраховка дешева: если браузер по
   // какой-то причине не запустил само (или прошлый показ поставил на паузу
@@ -12352,7 +12587,17 @@ function mpShowLoading(){
   const v=el.querySelector(".mp-loading-bg");
   if(v){ try{ v.currentTime=0; }catch(_){} const p=v.play(); if(p&&p.catch) p.catch(()=>{}); }
 }
-function mpHideLoading(){ const el=$("#mp-loading"); if(el) el.style.display="none"; }
+function mpHideLoading(){
+  if(mpLoadingFuse){ clearTimeout(mpLoadingFuse); mpLoadingFuse=null; }
+  const el=$("#mp-loading"); if(!el) return;
+  el.style.display="none";
+  // Видео фона зациклено (loop) и при display:none в большинстве браузеров
+  // ПРОДОЛЖАЕТ декодировать кадры — впустую, за экраном, до конца сессии.
+  // На телефоне это заметная доля батареи и постоянная фоновая нагрузка на
+  // тот же поток, который в это время должен рисовать мир.
+  const v=el.querySelector(".mp-loading-bg");
+  if(v){ try{ v.pause(); }catch(_){} }
+}
 function mpFocusWorld3D(){
   mpWorld3DFocused=true;
   const apply=(w)=>{
@@ -12363,26 +12608,12 @@ function mpFocusWorld3D(){
     mpHideLoading();
     return true;
   };
-  const w=world3dWin();
-  if(w && apply(w)) return;
-  let tries=0;
-  // Было tries>50 (~5с) — хватало, пока движок поднимался из чистого
-  // procedural noise() почти мгновенно. Теперь до готовности (window.cam)
-  // движок сперва честно ждёт загрузку настоящего рельефа (~8.6МБ, см.
-  // engine/src/terrain.ts:loadHeightmapData) — на слабой мобильной связи
-  // это заметно дольше 5с сама по себе, ещё не считая моделей/текстур.
-  // WebGPU-недоступность теперь отсекается ДО этой закачки (см. коммент у
-  // navigator.gpu в main.ts) и уводит на forceCityView() своим путём — этот
-  // таймер здесь только страховка на случай, если движок всё же где-то
-  // застрял по-настоящему (не сеть, а сломанная логика) — не обязан больше
-  // покрывать саму загрузку рельефа наравне с ней. tries>450 (~45с) — щедрый
-  // запас под честно медленную сеть, не бесконечность.
-  const iv=setInterval(()=>{
-    tries++;
-    const w2=world3dWin();
-    const succeeded=w2 && apply(w2);
-    if(succeeded || tries>450){ clearInterval(iv); if(!succeeded) mpHideLoading(); }
-  },100);
+  // Ожидание — через общую очередь (см. whenWorld3DReady): движок до
+  // готовности сначала честно скачивает настоящий рельеф (~8.6МБ, см.
+  // engine/src/terrain.ts:loadHeightmapData), на слабой связи это заметно
+  // дольше нескольких секунд. Если так и не дождались — снимаем накидку
+  // загрузки, чтобы игрок не остался перед вечным спиннером.
+  whenWorld3DReady(()=>{ const w2=world3dWin(); return !!(w2 && apply(w2)); }, mpHideLoading);
 }
 // Автор попросил полностью убрать плашку зума +/- и кнопку "домой"
 // (#tools) поверх 3D-мира — щипок/колесо уже зумят (см. camera.ts), а
@@ -12459,12 +12690,34 @@ function frame(){
     return;
   }
   if(dt>0){ advanceTo(W.t+dt*tempo); sinceSave+=Math.min(dt,3600); sinceUi+=dt }
-  if(sinceUi>1.0){ sinceUi=0; renderTop(); renderFolio(); renderCartouche(); refreshOpenModal(); renderFieldArmyWorld(); renderBrigadesWorld() }
-  if(sinceSave>20){ sinceSave=0; save() }
+  // try/catch вокруг ВСЕЙ секундной работы кадра — не ради красоты, а
+  // потому что requestAnimationFrame(frame) стоит ПОСЛЕ неё. Любое
+  // исключение из любого рендера (одно неожиданное число в состоянии —
+  // и tblRow/tableAt читает undefined) вылетало отсюда, до перезапуска
+  // кадра дело не доходило, и главный цикл умирал НАСОВСЕМ: время
+  // останавливалось, очереди застывали, экран замирал — со стороны
+  // неотличимо от зависшей вкладки, лечится только перезагрузкой.
+  // Тот же довод, что уже применён к событиям внутри advanceChunk (см. её
+  // комментарий про "одно сбойное событие не должно убивать весь мир") —
+  // просто доведённый до самого кадра.
+  try{
+    if(sinceUi>1.0){ sinceUi=0; renderTop(); renderFolio(); renderCartouche(); refreshOpenModal(); renderFieldArmyWorld(); renderBrigadesWorld() }
+    if(sinceSave>20){ sinceSave=0; save() }
+  }catch(e){ console.error("frame:", e); }
   requestAnimationFrame(frame);
 }
 document.addEventListener("visibilitychange",()=>{
-  if(document.hidden){ save(); return }
+  if(document.hidden){
+    // Свёрнутая вкладка не должна опрашивать сервер. Браузер сам душит
+    // таймеры в фоне, но не отменяет уже запущенные запросы — а мобильные
+    // системы вдобавок могут разморозить вкладку разом и выпустить
+    // накопившиеся тики одной пачкой: возврат в игру встречал игрока
+    // затором из ожившей очереди запросов. Тратить батарею на опрос мира,
+    // которого никто не видит, всё равно незачем — опрос поднимется
+    // обратно при возвращении (см. ниже).
+    mpStopPolling();
+    save(); return;
+  }
   // Пока вкладка была свёрнута/экран заблокирован, requestAnimationFrame не тикал —
   // досчитываем реальное время сразу, иначе очереди построек «замирают» до перезагрузки.
   // Телефон нередко держит вкладку свёрнутой сутками, а это уже секунды счёта:
@@ -12476,7 +12729,15 @@ document.addEventListener("visibilitychange",()=>{
   // вкладку в общем мире освежаем его собственным рендером.
   if(!SP_UNLOCKED){
     lastReal=Date.now();
-    if(mpState.joined && mpState.player) mpRerender();
+    // Вкладку свернули — опрос общего мира остановлен (см. ветку
+    // document.hidden выше), возвращаемся: поднимаем его снова и сразу
+    // догоняем состояние одним внеочередным опросом, не дожидаясь первого
+    // тика через пять секунд.
+    if(mpState.joined && mpState.player){
+      if(!mpPollTimer) mpStartPolling();
+      mpPollTick();
+      mpRerender();
+    }
     return;
   }
   const after=()=>{ renderTop(); renderFolio(); renderCartouche(); refreshOpenModal() };
@@ -12718,6 +12979,9 @@ async function claimChronicle(){
    ========================================================================= */
 let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[], siegeMail:[], nodeBattleMail:[], worldBattles:[], gatherMail:[], noteMail:[], pmMail:[] };
 let mpPollTimer = null;
+// Идёт ли прямо сейчас вход/авто-резюме в общий мир (см. mpOpen) — защита
+// от повторного запуска при быстрых переключениях вкладок меню.
+let mpOpenInFlight = false;
 // ===== Фаза 20, кусочек 3 — местный кэш последнего known-состояния общего
 // мира. Автор: "медленно грузит мой замок и ресурсные точки, может их
 // держать уже загруженными?". Раньше при каждом заходе город и точки сбора
@@ -12750,7 +13014,7 @@ function mpLoadCache(){
     const c=JSON.parse(raw);
     // dev — чтобы на общем браузере не показать чужой город до ответа сервера.
     if(!c || c.v!==1 || c.dev!==DEVICE_ID || !c.player || !c.player.state) return false;
-    mpState.player=c.player; mpState.race=c.player.race; mpState.joined=true;
+    mpSetPlayer(c.player); mpState.race=c.player.race; mpState.joined=true;
     mpState.neighbors=c.neighbors||[]; mpState.nodes=c.nodes||[]; mpState.camps=c.camps||[];
     mpState.marches=c.marches||[]; mpState.incoming=c.incoming||[];
     mpState.mail=c.mail||[]; mpState.scoutMail=c.scoutMail||[]; mpState.raidMail=c.raidMail||[]; mpState.siegeMail=c.siegeMail||[];
@@ -12855,7 +13119,35 @@ function mpMenuBodyHtml(t){
   if(t==="mp") return foMultiplayer(true,"mp");
   return foMultiplayer(!SP_UNLOCKED);
 }
+// Пакетная перерисовка. Каждая mpRefreshXxx() ниже сама зовёт mpRerender()
+// по приходу своих данных — а зовут их пачкой (см. mpRefreshAll), и без
+// этого затвора один опрос давал бы до пятнадцати полных перерисовок
+// подряд, из которых полезна ровно последняя. mpRenderHold>0 — «идёт пачка,
+// копи и не рисуй»; mpRenderRelease() в конце пачки рисует один раз, если
+// за время пачки хоть кто-то просил.
+let mpRenderHold=0, mpRenderPending=false;
+function mpRenderRelease(){
+  if(mpRenderHold>0) mpRenderHold--;
+  if(mpRenderHold===0 && mpRenderPending){ mpRenderPending=false; mpRerender(); }
+}
+// Обёртка вокруг настоящей отрисовки. mpRerender() зовут отовсюду: из
+// каждой выборки опроса, из каждого игрового действия, из секундного такта
+// frame(), из mpOpen(). И ни один из этих вызовов не был готов к тому, что
+// отрисовка бросит исключение — а бросить она может от одного-единственного
+// неожиданного числа в состоянии (ровно так и случилось с уровнем ещё не
+// построенного здания, см. buildingPower). Последствия были
+// несоразмерны причине: исключение из mpRerender() внутри mpOpen()
+// засчитывалось за «не удалось войти в мир», внутри опроса — обрывало весь
+// его хвост, а openMenuModal() не успевал записать вкладку и на экране
+// оставалась предыдущая. Теперь сбой отрисовки остаётся сбоем отрисовки:
+// он виден в консоли для разбора, но не рушит ни вход, ни опрос, ни
+// переключение вкладок — следующий такт (через секунду) нарисует заново.
 function mpRerender(){
+  try{ mpRerenderNow(); }
+  catch(e){ console.error("mpRerender:", e); }
+}
+function mpRerenderNow(){
+  if(mpRenderHold>0){ mpRenderPending=true; return; }
   // Фаза 17, кусочек 2 — при .mp-gated ЛЮБАЯ вкладка меню (не только "mp")
   // может показывать foMultiplayer() (см. gatedTab в openMenuModal()) —
   // держим её свежей на опросе точно так же. Добавлен и диф по содержимому
@@ -12867,13 +13159,14 @@ function mpRerender(){
   const showsMp = menuTab==="mp" || (!SP_UNLOCKED && (menuTab==="army"||menuTab==="gen"||menuTab==="inv"||menuTab==="mail"||menuTab==="profile"));
   if($("#menu-modal").classList.contains("open") && showsMp){
     const html=mpMenuBodyHtml(menuTab);
-    // stripTimers (см. её комментарий у fmtDur) — без него этот диф не
-    // срабатывал НИКОГДА: mpRerender() зовётся раз в секунду (см. frame()),
-    // а "готово через N с" в html меняется каждую секунду сама по себе —
-    // вкладка ПОЛНОСТЬЮ пересобиралась innerHTML'ом каждый тик, прокрутка
-    // сбрасывалась к началу. Автор сообщил именно это: "требуется много
-    // времени, чтобы загружаться... даже при прокрутке".
-    if(stripTimers(html)!==stripTimers(lastMenuBody)){ lastMenuBody=html; $("#menu-modal-body").innerHTML=html; }
+    // Без вырезания таймеров (см. на месте бывшего stripTimers у fmtDur):
+    // mpRerender() зовётся раз в секунду, "готово через N с" меняется каждую
+    // секунду — и это ровно то, что игрок и должен видеть тикающим. Раньше
+    // такой диф означал полную пересборку вкладки innerHTML'ом (прокрутка к
+    // началу, картинки заново — жалоба автора "требуется много времени,
+    // чтобы загружаться... даже при прокрутке"); теперь setHtml правит
+    // только изменившийся текст.
+    if(html!==lastMenuBody){ lastMenuBody=html; setHtml($("#menu-modal-body"), html); }
   }
   // Фаза 14, кусочек 2 — держим 2D-карту города (#folio) свежей на каждый
   // опрос/действие, не только пока открыта модалка "Общий мир": пользователь
@@ -12917,21 +13210,21 @@ function mpRerender(){
     // а не изобретение нового поведения.
     } else if(mpResearchCtx){
       const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
-      $("#bm-body").innerHTML=mpResearchCarouselHtml();
+      setHtml($("#bm-body"), mpResearchCarouselHtml());
       const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
     } else if(mpCitySel>=0){
-      $("#bm-body").innerHTML = mpBuildingModalHtml(mpCitySel);
+      setHtml($("#bm-body"), mpBuildingModalHtml(mpCitySel));
     } else if(mpLayoutSel>=0){
       const entry=(mpState.player.state.layout||[])[mpLayoutSel];
-      if(entry) $("#bm-body").innerHTML = mpBuildingModalHtmlFor(entry.b, entry.plot);
+      if(entry) setHtml($("#bm-body"), mpBuildingModalHtmlFor(entry.b, entry.plot));
     } else if(mpFixedSel){
-      $("#bm-body").innerHTML = mpBuildingModalHtmlFor(mpFixedSel, null);
+      setHtml($("#bm-body"), mpBuildingModalHtmlFor(mpFixedSel, null));
     } else if(mpPickerOpen){
       const html=mpBuildPickerHtml();
       if(html!==lastBuildPickerHtml){
         const track=$("#uc-track"), keepScroll=track?track.scrollLeft:0;
         lastBuildPickerHtml=html;
-        $("#bm-body").innerHTML=html;
+        setHtml($("#bm-body"), html);
         const track2=$("#uc-track"); if(track2) track2.scrollLeft=keepScroll;
         mpWireBuildPickerScroll(false);
       }
@@ -12941,7 +13234,7 @@ function mpRerender(){
     // числа войск зря.
     } else if(mpMarchCtx){
       const html=mpMarchSheetHtml();
-      if(html!==lastMarchSheet){ lastMarchSheet=html; $("#bm-body").innerHTML=html; }
+      if(html!==lastMarchSheet){ lastMarchSheet=html; setHtml($("#bm-body"), html); }
     }
   }
   // Фаза 17, кусочек 2 — #side-menu значки (см. menuBadges()) должны
@@ -12958,7 +13251,67 @@ function mpStopPolling(){
   // каждую секунду вхолостую, пока игрок вообще не в мультиплеере.
   if(mpBattleFastTimer){ clearInterval(mpBattleFastTimer); mpBattleFastTimer=null; }
 }
-async function mpPollTick(){ await mpRefreshPlayer(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); await mpRefreshNodeBattleMail(); await mpRefreshWorldBattles(); await mpRefreshGatherMail(); await mpRefreshNoteMail(); await mpRefreshPmMail(); mpSaveCache(); }
+// =============================================================================
+// Опрос общего мира. Здесь была главная причина «бесконечной подгрузки».
+// =============================================================================
+// Раньше mpPollTick() выполнял ПЯТНАДЦАТЬ сетевых запросов ПОДРЯД, каждый
+// через await: следующий стартовал только после ответа предыдущего. На
+// домашнем Wi-Fi это ~1.5с, на мобильной связи (200-300мс на запрос) —
+// 3-5 секунд на один "опрос". А сам опрос стоял на setInterval(...,5000),
+// который НЕ ждёт завершения предыдущего: как только цепочка переставала
+// укладываться в 5 секунд, начинал накапливаться хвост — второй опрос
+// стартовал поверх незакончившегося первого, третий поверх второго, и
+// дальше по нарастающей. Браузер держит 6 соединений на домен, очередь
+// росла быстрее, чем разгребалась, и ВСЁ остальное (картинки интерфейса,
+// модели мира) вставало в тот же затор — ровно то, что автор видел как
+// "бесконечную подгрузку статичной страницы" во вкладках.
+// Тот же залп из пятнадцати запросов делался ЗАНОВО при каждом открытии
+// любой вкладки меню (см. mpOpen) — пролистал пять вкладок, получил
+// семьдесят пять запросов поверх уже идущего опроса.
+//
+// Теперь: запросы идут ПАРАЛЛЕЛЬНО (все независимы друг от друга — это
+// разные таблицы, ничей результат не нужен соседу), поверх одного и того
+// же HTTP/2-соединения к Supabase; итоговая задержка — самого медленного
+// из них, а не сумма всех. Плюс затвор mpPollInFlight: пока пачка не
+// вернулась, новый опрос не стартует вовсе — накопиться хвосту физически
+// не из чего.
+//
+// Почта разложена на «медленную дорожку» (mpRefreshSlowLane): восемь
+// почтовых выборок обновляются через тик, раз в 10с, а не каждые 5с.
+// Письмо — событие редкое и не срочное (о бое игрок и так узнаёт по
+// маршам/значку), а это ровно половина всего залпа.
+let mpPollInFlight=false;
+let mpPollCounter=0;
+async function mpRefreshAll(includeSlowLane){
+  // Затвор на время пачки — иначе каждая из пятнадцати выборок дёрнет
+  // свою полную перерисовку при получении ответа (см. mpRenderHold).
+  mpRenderHold++;
+  try{
+    const jobs=[
+      mpRefreshPlayer(), mpRefreshNeighbors(), mpRefreshMarches(),
+      mpRefreshIncoming(), mpRefreshNodes(), mpRefreshCamps(), mpRefreshWorldBattles(),
+    ];
+    if(includeSlowLane) jobs.push(
+      mpRefreshMail(), mpRefreshScoutMail(), mpRefreshRaidMail(), mpRefreshSiegeMail(),
+      mpRefreshNodeBattleMail(), mpRefreshGatherMail(), mpRefreshNoteMail(), mpRefreshPmMail()
+    );
+    // allSettled, не all: одна упавшая выборка (сеть моргнула на одной из
+    // пятнадцати) не должна отменять остальные — раньше цепочка await
+    // обрывалась на первой же ошибке и хвост опроса просто не выполнялся.
+    await Promise.allSettled(jobs);
+  } finally {
+    mpRenderRelease();
+  }
+  mpSaveCache();
+  mpRerender();
+}
+async function mpPollTick(){
+  if(mpPollInFlight) return;          // предыдущий опрос ещё в пути — не наслаиваемся
+  mpPollInFlight=true;
+  try{ await mpRefreshAll((mpPollCounter++ % 2)===0); }
+  catch(_){ /* сеть моргнула — следующий тик попробует снова */ }
+  finally{ mpPollInFlight=false; }
+}
 // Баг-фикс — автор пожаловался: очередь стройки/тренировки/боя показывается
 // сразу, но САМ результат (новый уровень здания, исход боя) применял только
 // общий тикер (mp-tick), а тот раньше крутился раз в минуту — до минуты
@@ -12975,7 +13328,7 @@ async function mpRefreshPlayer(){
   if(!mpState.player) return;
   try{
     const j=await mpCall("mp-join",{});
-    if(j && j.player){ mpState.player=j.player; mpRerender(); }
+    if(j && j.player){ mpSetPlayer(j.player); mpRerender(); }
   }catch(_){ /* сеть моргнула — оставляем прежнее состояние, следующий опрос через 5с попробует снова */ }
 }
 // Фаза 3 — общая видимость: остальные игроки того же мира читаются напрямую
@@ -13083,10 +13436,41 @@ async function mpOpen(){
   // false→true — тот самый момент, когда камера впервые может смотреть в
   // устаревшую точку (см. mpFocusWorld3D()).
   const wasJoined=mpState.joined;
+  // Игрок уже в мире, данные есть, опрос идёт — открытие ЕЩЁ ОДНОЙ вкладки
+  // меню не повод заново регистрироваться в мире и заново тянуть все
+  // пятнадцать выборок. Раньше именно так и было: каждый тап по иконке
+  // гамбургера (Почта, Войско, Генерал, Инвентарь, Профиль) запускал полный
+  // залп поверх уже идущего пятисекундного опроса, и на мобильной связи
+  // пролистывание меню само себе устраивало затор в сети — вкладка
+  // "грузилась" не потому, что чего-то ждала, а потому что её собственные
+  // запросы стояли в очереди за десятками таких же ненужных.
+  // Свежесть данных при этом не страдает: опрос уже работает и обновит всё
+  // в пределах пяти секунд, а показывать вкладке есть что прямо сейчас.
+  if(mpState.joined && mpState.player && mpPollTimer){
+    if(!mpWorld3DFocused) mpFocusWorld3D();
+    mpRerender();
+    return;
+  }
+  // Повторный вход, пока предыдущий ещё в пути (быстрые тапы по вкладкам на
+  // медленной связи) — второй заход только удвоил бы работу и мог бы
+  // перетереть более свежий результат первого более старым.
+  if(mpOpenInFlight) return;
+  mpOpenInFlight=true;
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{});
-    mpState.joined=true; mpState.player=j.player; if(!mpWorld3DFocused) mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); await mpRefreshNodeBattleMail(); await mpRefreshWorldBattles(); await mpRefreshGatherMail(); await mpRefreshNoteMail(); await mpRefreshPmMail(); mpSaveCache();
+    // Ответ без player — не успех. Раньше он всё равно проставлял
+    // joined=true с player=undefined, и вкладка после этого показывала
+    // "Загрузка..." (см. защиту от гонки в foMultiplayer) НАВСЕГДА: опрос
+    // не запускался, повторный вход блокировался тем же joined=true, и
+    // выйти из этого состояния можно было только перезагрузкой страницы.
+    if(!j || !j.player) throw new Error("Сервер вернул пустой ответ на вход в мир.");
+    mpState.joined=true; mpSetPlayer(j.player); if(!mpWorld3DFocused) mpFocusWorld3D(); mpStartPolling();
+    // Полная пачка выборок — параллельно и с общим затвором (см. заголовок
+    // mpRefreshAll). Раньше здесь стояла та же цепочка из четырнадцати
+    // await подряд, что и в опросе, и она выполнялась ЗАНОВО при каждом
+    // открытии любой вкладки меню.
+    await mpRefreshAll(true);
   }catch(e){
     // Фаза 20, кусочек 3 — если состояние уже показано из кэша, а сеть
     // моргнула, НЕ сбрасываем joined: игрок остаётся при своём городе (пусть
@@ -13095,6 +13479,14 @@ async function mpOpen(){
     // относится вовсе: там игрока в мире действительно нет.
     const keepCached = mpState.joined && mpState.player && !/Нужна раса/.test(e.message||"");
     if(!keepCached) mpState.joined=false;
+    // Остаёмся при кэшированном городе — значит игрок в мире, просто вход
+    // не достучался. Опрос при этом ещё НЕ запущен (его запускает только
+    // успешная ветка выше), и без этой строки состояние застывало бы на
+    // кэше из прошлого сеанса до тех пор, пока игрок сам не откроет вкладку
+    // меню ещё раз. Опрос же переживает обрыв связи сам (каждая выборка со
+    // своим catch, см. mpRefreshAll) и подхватит мир, как только сеть
+    // вернётся.
+    if(keepCached && !mpPollTimer) mpStartPolling();
     // Фаза 13, продолжение — различаем ДВА разных "отказа" mp-join с
     // пустым телом: "Нужна раса..." (mp-join/index.js) — ожидаемый ответ
     // для СОВСЕМ НОВОГО anon-uid, не сбой — гость видит тот же красивый
@@ -13133,14 +13525,16 @@ async function mpOpen(){
       mpState.err=e.message;
     }
   }
-  finally{ mpState.loading=false; mpRerender(); }
+  finally{ mpOpenInFlight=false; mpState.loading=false; mpRerender(); }
 }
 async function mpDoJoin(){
   if(!mpState.race) return;
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const j=await mpCall("mp-join",{race:mpState.race,nick:mpState.nick||""});
-    mpState.joined=true; mpState.player=j.player; mpFocusWorld3D(); mpStartPolling(); await mpRefreshNeighbors(); await mpRefreshMail(); await mpRefreshMarches(); await mpRefreshIncoming(); await mpRefreshScoutMail(); await mpRefreshNodes(); await mpRefreshCamps(); await mpRefreshRaidMail(); await mpRefreshSiegeMail(); await mpRefreshNodeBattleMail(); await mpRefreshWorldBattles(); await mpRefreshGatherMail(); await mpRefreshNoteMail(); await mpRefreshPmMail();
+    if(!j || !j.player) throw new Error("Сервер вернул пустой ответ на вход в мир.");   // см. тот же довод в mpOpen
+    mpState.joined=true; mpSetPlayer(j.player); mpFocusWorld3D(); mpStartPolling();
+    await mpRefreshAll(true);   // см. mpRefreshAll — параллельно, а не цепочкой await
   }catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
@@ -13366,10 +13760,25 @@ function mpMaybeToggleBattleFastPoll(){
   if(active && !mpBattleFastTimer) mpBattleFastTimer=setInterval(mpBattleFastPollTick,1000);
   if(!active && mpBattleFastTimer){ clearInterval(mpBattleFastTimer); mpBattleFastTimer=null; mpContestBattles={}; }
 }
+// Затвор — тот же довод, что у mpPollInFlight (см. его заголовок), только
+// здесь он важнее: тик секундный, и если запрос не укладывается в секунду
+// (а на мобильной связи это обычное дело), без затвора запросы к marches
+// начинают наслаиваться друг на друга во время боя — ровно тогда, когда
+// интерфейс должен быть отзывчивее всего.
+let mpBattleFastInFlight=false;
 async function mpBattleFastPollTick(){
+  if(mpBattleFastInFlight) return;
   const ids=mpActiveSiegeIds();
   if(!ids.length){ mpMaybeToggleBattleFastPoll(); return; }
-  const { data, error } = await sb.from("marches").select("id,state,data").in("id",ids);
+  mpBattleFastInFlight=true;
+  let data=null, error=null;
+  // sb.from(...) обычно отдаёт ошибку полем, а не броском — но сорванный
+  // fetch (обрыв связи, уход вкладки в фон) бросает по-настоящему, и без
+  // try это был бы необработанный reject каждую секунду боя, да ещё и с
+  // невыключенным затвором.
+  try{ ({ data, error } = await sb.from("marches").select("id,state,data").in("id",ids)); }
+  catch(e){ error=e; }
+  finally{ mpBattleFastInFlight=false; }
   if(!error && data){
     const byId={}; data.forEach(row=>{ byId[row.id]=row; });
     data.forEach(row=>{
@@ -13639,11 +14048,7 @@ function mpGoToLoc(x,y){
     return true;
   };
   closeMenuModal();
-  if(!apply()){
-    let tries=0;
-    // tries>450 (~45с) — см. тот же пересчёт под загрузку настоящего рельефа у mpFocusWorld3D.
-    const iv=setInterval(()=>{ tries++; if(apply()||tries>450) clearInterval(iv); },100);
-  }
+  whenWorld3DReady(apply);      // общая очередь ожидания, см. её заголовок
 }
 
 // Прочитанность — только на этом устройстве (localStorage), сервер mail.read
@@ -14669,6 +15074,22 @@ function foMultiplayer(embedded, only){
     await mpOpen();
     mpRenderFolio();
     mpRenderTop();
+    // Накидку загрузки снимаем ЗДЕСЬ — как только готов ГОРОД, с которого
+    // игра и начинается (см. $("#app").className="view-city" выше).
+    // Раньше единственным местом, снимавшим её на успешном пути, был
+    // mpFocusWorld3D() — а он ждёт готовности КАМЕРЫ 3D-движка, то есть
+    // WebGPU, компиляции шейдеров и ~8.6МБ настоящего рельефа. Причём сам
+    // движок к этому моменту ещё даже не начинал грузиться: src у #world3d
+    // проставляется в самом конце start(), уже ПОСЛЕ await load(). Итого
+    // игрок, который стартует в городе и до 3D-мира вообще может не дойти,
+    // всё равно смотрел на крутящееся кольцо до готовности всего мира — на
+    // мобильной связи это десятки секунд, а по исчерпании запаса ожидания
+    // накидка просто гасла сама. Ровно это и выглядит как "бесконечная
+    // подгрузка": ждать было нечего, город был готов давно.
+    // mpFocusWorld3D() свою работу (навести камеру на столицу) по-прежнему
+    // делает в фоне, когда движок поднимется, — просто больше никто не
+    // держит из-за неё экран.
+    mpHideLoading();
     // Страницу "Общий мир" больше НЕ открываем поверх города при каждом
     // заходе (та самая жалоба выше) — она в одном тапе по гамбургеру.
     // Единственное исключение — если войти не удалось (сеть/ошибка): тогда
