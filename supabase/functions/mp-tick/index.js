@@ -201,6 +201,7 @@ Deno.serve(async (req) => {
         else if (ev.type === "march_home") await applyMarchHome(admin, ev);
         else if (ev.type === "heal") await applyHeal(admin, ev);
         else if (ev.type === "scout_arrive") await applyScoutArrive(admin, ev);
+        else if (ev.type === "scout_home") await applyScoutHome(admin, ev);
         else if (ev.type === "research") await applyResearch(admin, ev);
         else if (ev.type === "craft") await applyCraft(admin, ev);
         else if (ev.type === "gathered") await applyGathered(admin, ev);
@@ -347,11 +348,10 @@ async function applyScoutArrive(admin, ev) {
   const { data: m, error: mErr } = await admin.from("marches").select("*").eq("id", marchId).maybeSingle();
   if (mErr) throw mErr;
   if (!m || m.state !== "go") return; // уже разобрано/отменено
-  await admin.from("marches").delete().eq("id", m.id);
 
   const { data: attRow, error: aErr } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
   if (aErr) throw aErr;
-  if (!attRow) return; // хозяина нет — некому писать донесение
+  if (!attRow) { await admin.from("marches").delete().eq("id", m.id); return; } // хозяина нет — некому писать донесение
 
   const defenderId = m.data && m.data.defender_id;
   const { data: defRow, error: dErr } = defenderId == null
@@ -359,14 +359,9 @@ async function applyScoutArrive(admin, ev) {
     : await admin.from("players").select("*").eq("id", defenderId).maybeSingle();
   if (dErr) throw dErr;
   if (!defRow) {
-    // Цель пропала между отправкой и прибытием — зеркало "Лазутчик не нашёл
-    // города на месте" (index.html:4883), только письмо всё равно кладём
-    // (в клиенте это просто logg() без почты — но там игрок сам за столом,
-    // а здесь письмо единственный канал узнать об исходе вообще).
-    const { error: mailErr } = await admin.from("mail").insert({
-      world_id: m.world_id, player_id: attRow.id, kind: "scout", data: { found: false },
-    });
-    if (mailErr) throw mailErr;
+    // Цель пропала между отправкой и прибытием. Донесение всё равно будет —
+    // но, как и всякое другое, по возвращении лазутчика домой.
+    await turnScoutHome(admin, m, attRow, { found: false });
     return;
   }
 
@@ -409,8 +404,49 @@ async function applyScoutArrive(admin, ev) {
     data.wounded = wounded;
   }
 
+  // Сведения сняты (это и есть момент, когда лазутчик смотрит на город) —
+  // но письмо отдаст applyScoutHome, когда он дойдёт обратно.
+  await turnScoutHome(admin, m, attRow, data);
+}
+
+// Автор: «разведка — как только разведчик возвращается, уведомление о
+// разведке». Раньше лазутчик ПРОПАДАЛ с карты в момент прибытия к цели, и
+// письмо уходило тогда же — обратной дороги у разведки не было вовсе.
+// Теперь марш разворачивается домой (его видно на карте), донесение едет
+// вместе с ним в data.scout_report, а письмо кладёт applyScoutHome.
+async function turnScoutHome(admin, m, attRow, report) {
+  const nowSec = Date.now() / 1000;
+  const dist = Math.hypot(attRow.x - m.tx, attRow.y - m.ty);
+  // spd кладёт mp-scout при отправке (снимок скорости). У маршей, вылетевших
+  // ДО этой правки, поля нет — тогда берём длительность дороги туда: путь
+  // симметричный, это честнее любой выдуманной константы.
+  const spd = m.data && m.data.spd;
+  const travelBack = spd ? Math.max(15, (dist / spd) * 60)
+                         : Math.max(15, (m.t1 - m.t0) || 60);
+  const { error: updErr } = await admin.from("marches")
+    .update({ state: "back", t0: nowSec, t1: nowSec + travelBack,
+              data: { ...(m.data || {}), scout_report: report } }).eq("id", m.id);
+  if (updErr) throw updErr;
+  const { error: evErr } = await admin.from("events").insert({
+    world_id: m.world_id, fire_at: new Date((nowSec + travelBack) * 1000).toISOString(),
+    type: "scout_home", data: { march_id: m.id },
+  });
+  if (evErr) throw evErr;
+}
+
+// Лазутчик дома — вот теперь донесение. Отдельное событие, а не общий
+// march_home: у разведки нет ни войск, ни добычи, ей нужен только этот разбор.
+async function applyScoutHome(admin, ev) {
+  const marchId = ev.data && ev.data.march_id;
+  if (marchId == null) return;
+  const { data: m, error: mErr } = await admin.from("marches").select("*").eq("id", marchId).maybeSingle();
+  if (mErr) throw mErr;
+  if (!m || m.state !== "back") return; // уже разобрано/отозвано
+  await admin.from("marches").delete().eq("id", m.id);
+  const report = m.data && m.data.scout_report;
+  if (!report) return;
   const { error: mailErr } = await admin.from("mail").insert({
-    world_id: m.world_id, player_id: attRow.id, kind: "scout", data,
+    world_id: m.world_id, player_id: m.player_id, kind: "scout", data: report,
   });
   if (mailErr) throw mailErr;
 }
@@ -2265,12 +2301,9 @@ function addXp(p, xp) {
   }
   return leveledTo;
 }
-// Тем же текстом, что и pushMail(...) в одиночке (index.html:5509-5510) —
-// один общий помощник для обоих вызывающих мест ниже.
-function genLevelMailRow(worldId, playerId, lv) {
-  return { world_id: worldId, player_id: playerId, kind: "note",
-    data: { title: "Генерал повышен", body: "Ваш генерал достиг " + lv + " уровня. Доступно новое очко таланта." } };
-}
+// (genLevelMailRow удалена вместе с самими письмами о повышении генерала —
+// автор попросил их исключить; addXp выше по-прежнему считает уровень и
+// очки, просто больше никого об этом не извещает почтой.)
 function banditArmy(lv) {
   const u = { inf: {}, arc: {}, cav: {}, sie: {} };
   TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) u[t][i] = 0; });
@@ -2755,7 +2788,9 @@ async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, no
     { world_id: m.world_id, player_id: attRow.id, kind: "battle", data: { role: "attacker", opponent_id: defRow.id, opponent_nick: defRow.nick, ...summary } },
     { world_id: m.world_id, player_id: defRow.id, kind: "battle", data: { role: "defender", opponent_id: attRow.id, opponent_nick: attRow.nick, ...summary } },
   ];
-  if (genLeveledTo != null) mailRows.push(genLevelMailRow(m.world_id, attRow.id, genLeveledTo));
+  // Письмо о повышении генерала убрано по прямой просьбе автора («они
+  // лишние»). Сам addXp по-прежнему возвращает новый уровень — значение
+  // просто больше не превращается в почту.
   const { error: mailErr } = await admin.from("mail").insert(mailRows);
   if (mailErr) throw mailErr;
 
@@ -3044,6 +3079,14 @@ async function applyMarchHome(admin, ev) {
     if (m.data && m.data.has_gen && p.gen && p.gen.away === m.id) p.gen.away = null;
     await savePlayerStateOrThrow(admin, row, p);
   }
+  // Отложенное донесение о сборе (см. applyGathered) — письмо приходит ровно
+  // сейчас, когда отряд вошёл в замок.
+  if (m.data && m.data.gather_report) {
+    const { error: gatherMailErr } = await admin.from("mail").insert({
+      world_id: m.world_id, player_id: m.player_id, kind: "gather", data: m.data.gather_report,
+    });
+    if (gatherMailErr) throw gatherMailErr;
+  }
   await admin.from("marches").delete().eq("id", m.id);
 }
 
@@ -3081,8 +3124,10 @@ async function applyGathered(admin, ev) {
   const dist = (m.data && m.data.dist) || 0, spd = (m.data && m.data.spd) || 1;
   const travelBack = Math.max(15, (dist / spd) * 60);
   const carry = {}; if (m.data && m.data.res) carry[m.data.res] = m.data.take || 0;
+  let gatherReport = null;
   const { error: updM } = await admin.from("marches")
-    .update({ state: "back", t0: nowSec, t1: nowSec + travelBack, data: { ...m.data, carry } }).eq("id", m.id);
+    .update({ state: "back", t0: nowSec, t1: nowSec + travelBack,
+              data: { ...m.data, carry, gather_report: gatherReport } }).eq("id", m.id);
   if (updM) throw updM;
   // Донесение о сборе — зеркало pushMail({cat:"report",kind:"gather",...})
   // в EV.gathered одиночки (index.html) — автор сообщил: «я собрал
@@ -3091,12 +3136,14 @@ async function applyGathered(admin, ev) {
   // — целая ветка была пропущена при переносе. kind:"gather", отдельная от
   // "battle"/"scout"/... — свой fetch (mpRefreshGatherMail) и своя рубрика
   // в index.html (foMultiplayer, "Сбор").
+  // Донесение о сборе тут НЕ отправляется. Автор: «отряд со сбора вернулся —
+  // письмо получил как только они в замок зашли». Раньше письмо уходило
+  // ровно здесь — сбор на точке закончен, а отряду идти домой ещё всю
+  // дорогу; со стороны это и выглядело как «письмо приходит через время
+  // после сбора». Складываем донесение в данные марша, отдаёт его
+  // applyMarchHome по прибытии.
   if (m.data && m.data.res && (m.data.take || 0) > 0) {
-    const { error: gatherMailErr } = await admin.from("mail").insert({
-      world_id: m.world_id, player_id: m.player_id, kind: "gather",
-      data: { res: m.data.res, amount: m.data.take, x: m.tx, y: m.ty },
-    });
-    if (gatherMailErr) throw gatherMailErr;
+    gatherReport = { res: m.data.res, amount: m.data.take, x: m.tx, y: m.ty };
   }
   const { error: evErr } = await admin.from("events").insert({
     world_id: m.world_id, fire_at: new Date((nowSec + travelBack) * 1000).toISOString(),
@@ -3482,7 +3529,7 @@ async function finalizeRaidBattle(admin, m, attRow, attP, state, nowSec) {
       weather: state.weather.id, weatherName: state.weather.name, log: state.log || [],
     },
   }];
-  if (genLeveledTo != null) raidMailRows.push(genLevelMailRow(m.world_id, attRow.id, genLeveledTo));
+  // См. тот же отказ от письма о повышении генерала выше (PvP).
   const { error: mailErr } = await admin.from("mail").insert(raidMailRows);
   if (mailErr) throw mailErr;
 

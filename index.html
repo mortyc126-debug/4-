@@ -4600,7 +4600,7 @@ function migrateMarchSpeed(){
     const cur=marchPos(m);
     const dest = m.state==="back" ? {x:p.x,y:p.y} : {x:m.tx,y:m.ty};
     const path=waterPath(cur.x,cur.y,dest.x,dest.y);
-    const d=pathLength(path)*(1-portalShortcut(p));
+    const d=pathTravelCost(path)*(1-portalShortcut(p));
     const spd=marchSpeed(p,m.units);
     const travel=Math.max(10, d/spd*60);
     setMarchPath(m,path);
@@ -5821,10 +5821,68 @@ function pathLength(path){
   for(let i=1;i<path.length;i++) total+=Math.hypot(path[i].x-path[i-1].x,path[i].y-path[i-1].y);
   return total;
 }
+/* ---- Цена местности под ногами -------------------------------------------
+   Просьба автора: отряд, идущий через воду, движется в 10 раз медленнее
+   обычного, преодолевая высоты — в 5 раз.
+
+   Считается это НЕ отдельным штрафом ко времени, а весом самого пути: длина
+   отрезка умножается на множитель местности, и получившаяся "стоимость"
+   заменяет геометрическую длину и во времени в пути (см. вызовы
+   pathTravelCost ниже), и в pathCum/pathLen. Второе важно не меньше первого:
+   pathPointAt(m,f) переводит ДОЛЮ ВРЕМЕНИ в положение как раз по pathCum —
+   значит отряд не просто дольше идёт, а именно ПОЛЗЁТ через брод и вверх по
+   склону, а по равнине снова идёт нормально. Тот же pathCum читает и 3D
+   (engine/src/marchData.ts — дословный порт pathPointAt), поэтому объёмная
+   карта подхватывает замедление сама, без единой правки движка.
+
+   Пороги уклона калиброваны по НАСТОЯЩИМ данным высот (elevation-v6.bin,
+   перепад на клетку по всей суше): медиана 0.0044, 75% 0.0145, 90% 0.0323,
+   95% 0.0470. SLOPE_FLAT=0.015 — до него местность считается ровной и цены
+   не прибавляет вовсе (иначе полную цену платила бы вся карта, включая
+   равнину); SLOPE_STEEP=0.045 — с него полные пять крат, это ~7% суши, то
+   есть настоящие горные склоны, а не бугры. Между ними — плавный переход
+   (smoothstep), чтобы скорость не щёлкала ступенькой на ровном месте.
+   Для сравнения: порог "слишком круто, чтобы строить" (isTooSteep) — 0.0367
+   на клетку, то есть ровно в этом же диапазоне. */
+const WATER_SPEED_MULT=10, SLOPE_SPEED_MULT=5;
+const SLOPE_FLAT=0.015, SLOPE_STEEP=0.045;
+function terrainStepMult(x0,y0,x1,y1,len){
+  // Вода перебивает уклон: по воде и так уже втрое дороже, чем самый крутой склон.
+  if(isRealWater(x0,y0)||isRealWater(x1,y1)) return WATER_SPEED_MULT;
+  const dh=Math.abs(rwHeightAny(x1,y1)-rwHeightAny(x0,y0));
+  const slope=len>0?dh/len:0;
+  const t=Math.min(1,Math.max(0,(slope-SLOPE_FLAT)/(SLOPE_STEEP-SLOPE_FLAT)));
+  return 1+(SLOPE_SPEED_MULT-1)*t*t*(3-2*t);
+}
+// Взвешенная "длина" отрезка: пробы примерно раз в клетку — этого хватает,
+// чтобы поймать и узкий брод, и короткий крутой взлёт, и не разорительно
+// (десятки-сотни проб на весь поход, считается один раз при отправке).
+function segmentTravelCost(a,b){
+  const d=Math.hypot(b.x-a.x,b.y-a.y);
+  if(d<=0) return 0;
+  const steps=Math.max(1,Math.ceil(d));
+  let total=0;
+  for(let s=0;s<steps;s++){
+    const t0=s/steps, t1=(s+1)/steps, len=d/steps;
+    total+=len*terrainStepMult(a.x+(b.x-a.x)*t0, a.y+(b.y-a.y)*t0,
+                               a.x+(b.x-a.x)*t1, a.y+(b.y-a.y)*t1, len);
+  }
+  return total;
+}
+function pathTravelCost(path){
+  let total=0;
+  for(let i=1;i<path.length;i++) total+=segmentTravelCost(path[i-1],path[i]);
+  return total;
+}
+// pathCum/pathLen теперь в ЕДИНИЦАХ СТОИМОСТИ, а не в клетках (см. разбор
+// выше). Цена считается по отрезку целиком: после simplifyWaterPath сухие
+// куски пути слиты в длинные прямые, а сам брод остаётся отдельным коротким
+// отрезком (выпрямлять через воду запрещено) — то есть дорогой участок и так
+// лежит своим звеном, и постоянная цена внутри звена картинку не портит.
 function setMarchPath(m,path){
   m.path=path;
   const cum=[0]; let total=0;
-  for(let i=1;i<path.length;i++){ total+=Math.hypot(path[i].x-path[i-1].x,path[i].y-path[i-1].y); cum.push(total); }
+  for(let i=1;i<path.length;i++){ total+=segmentTravelCost(path[i-1],path[i]); cum.push(total); }
   m.pathCum=cum; m.pathLen=total;
 }
 function pathPointAt(m,f){
@@ -5872,7 +5930,7 @@ function sendMarch(p,tx,ty,units,mode,withGen){
     p.troops[t][i]-=units[t][i];
   }});
   const path=waterPath(p.x,p.y,tx,ty);
-  const d=pathLength(path)*(1-portalShortcut(p));
+  const d=pathTravelCost(path)*(1-portalShortcut(p));
   const spd=marchSpeed(p,units);
   const travel=Math.max(20, d/spd*60);
   const m={id:W.nextId++,pid:p.id,mode,x0:p.x,y0:p.y,tx,ty,units,hasGen:takeGen,
@@ -5915,6 +5973,20 @@ const SCOUT_SPEED_MULT = 2.2;   // налегке и без обоза — за�
 // m.mode==="scout"||m.mode==="scoutmarch" по всему файлу — легко забыть
 // дописать вторую половину условия в новом месте.
 function isScoutMarch(m){ return m.mode==="scout"||m.mode==="scoutmarch"; }
+// Разворачивает лазутчика домой после того, как он снял сведения (см.
+// EV.scouted/EV.scoutedMarch). Дорога назад считается тем же способом, что и
+// туда — по взвешенной стоимости пути (вода/склоны), просто в обратную
+// сторону; письмо отдаёт EV.scouthome по прибытии.
+function turnScoutHome(m,p){
+  const path=waterPath(m.tx,m.ty,p.x,p.y);
+  const d=pathTravelCost(path)*(1-portalShortcut(p));
+  const speedMult=SCOUT_SPEED_MULT*(1+tblRow(SCOUT_TABLE,Math.max(1,p.b.scout||1)).bonus/100);
+  const travel=Math.max(15, d/(marchSpeed(p,emptyUnits())*speedMult)*60);
+  setMarchPath(m,path);
+  m.state="back"; m.t0=W.t; m.t1=W.t+travel;
+  unschedule(e=>e.data&&e.data.mid===m.id);
+  schedule(travel,"scouthome",{mid:m.id});
+}
 function sendScout(p,tx,ty){
   if((p.b.scout||0)<=0) return {err:"Нужна разведка"};
   const tgt=W.map[key(tx,ty)];
@@ -5929,7 +6001,7 @@ function sendScout(p,tx,ty){
   const maxScouts=tblRow(SCOUT_TABLE,p.b.scout).scouts;
   if(outNow>=maxScouts) return {err:"Все лазутчики уже в пути ("+maxScouts+")"};
   const path=waterPath(p.x,p.y,tx,ty);
-  const d=pathLength(path)*(1-portalShortcut(p));
+  const d=pathTravelCost(path)*(1-portalShortcut(p));
   // SCOUT_TABLE.bonus — надбавка скорости от прокачки здания, поверх
   // базового SCOUT_SPEED_MULT (тот не меняется с уровнем — налегке они и
   // так быстрее войска; bonus — это уже инвестиция в самих лазутчиков).
@@ -5971,7 +6043,7 @@ function sendScoutMarch(p,marchId){
   if(outNow>=maxScouts) return {err:"Все лазутчики уже в пути ("+maxScouts+")"};
   const tx=target.tx, ty=target.ty;
   const path=waterPath(p.x,p.y,tx,ty);
-  const d=pathLength(path)*(1-portalShortcut(p));
+  const d=pathTravelCost(path)*(1-portalShortcut(p));
   const speedMult=SCOUT_SPEED_MULT*(1+tblRow(SCOUT_TABLE,p.b.scout).bonus/100);
   const travel=Math.max(15, d/(marchSpeed(p,emptyUnits())*speedMult)*60);
   const m={id:W.nextId++,pid:p.id,mode:"scoutmarch",x0:p.x,y0:p.y,tx,ty,units:emptyUnits(),
@@ -5986,7 +6058,7 @@ function recallMarch(m){
   const p=W.players.find(q=>q.id===m.pid);
   const cur=marchPos(m);   // текущее положение на маршруте — новый путь домой считаем от него, не от цели
   const path=waterPath(cur.x,cur.y,p.x,p.y);
-  const back=Math.max(15,pathLength(path)*(1-portalShortcut(p))/marchSpeed(p,m.units)*60);
+  const back=Math.max(15,pathTravelCost(path)*(1-portalShortcut(p))/marchSpeed(p,m.units)*60);
   m.state="back"; m.t0=W.t; m.t1=W.t+back;
   setMarchPath(m,path);
   unschedule(e=>e.data&&e.data.mid===m.id);
@@ -6088,49 +6160,70 @@ const EV = {
   arrive(d){ arriveMarch(W.marches.find(m=>m.id===d.mid)) },
   // Лазутчик дошёл: снимаем показания и сразу уводим его — обратной дороги ему
   // не рисуем, он один и налегке, возвращать домой нечего.
+  // Автор: «разведка — как только разведчик возвращается, уведомление о
+  // разведке». Раньше лазутчик ПРОПАДАЛ с карты в момент прибытия к цели, и
+  // письмо уходило тогда же — при том что в тексте значилось «лазутчик
+  // вернулся». Теперь у разведки есть честный обратный путь: сведения
+  // снимаются здесь (это и есть момент, когда лазутчик смотрит на город),
+  // складываются на марш, а письмо отдаёт EV.scouthome, когда он дошёл домой.
   scouted(d){
     const m=W.marches.find(x=>x.id===d.mid); if(!m) return;
-    W.marches=W.marches.filter(x=>x.id!==m.id);
-    const p=W.players.find(q=>q.id===m.pid); if(!p) return;
+    const p=W.players.find(q=>q.id===m.pid);
+    if(!p){ W.marches=W.marches.filter(x=>x.id!==m.id); return }
     const cell=W.map[key(m.tx,m.ty)];
     const q=cell&&cell.t==="city" ? W.players.find(z=>z.id===cell.pid) : null;
-    if(!q){ if(!p.isBot) logg("Лазутчик не нашёл города на месте — возвращается ни с чем.","war"); return }
-    syncRes(q); syncWall(q);
-    if(p.isBot) return;
-    pushMail({cat:"report",kind:"scout",
-      oppNick:q.nick||"Безымянный лорд", oppRace:q.race,
-      oppCoords:{x:q.x,y:q.y}, oppAvatar:playerAvatarSrc(q),
-      hall:q.b.hall, oppPower:power(q),
-      shielded: W.t<q.shieldUntil,
-      intel:scoutSnapshot(p,q)});
-    logg("Лазутчик вернулся с донесением о городе "+(q.nick||q.name)+".","good");
+    if(q){
+      syncRes(q); syncWall(q);
+      if(!p.isBot) m.scoutReport={cat:"report",kind:"scout",
+        oppNick:q.nick||"Безымянный лорд", oppRace:q.race,
+        oppCoords:{x:q.x,y:q.y}, oppAvatar:playerAvatarSrc(q),
+        hall:q.b.hall, oppPower:power(q),
+        shielded: W.t<q.shieldUntil,
+        intel:scoutSnapshot(p,q)};
+      m.scoutWhom=q.nick||q.name;
+    } else if(!p.isBot) m.scoutMiss="Лазутчик не нашёл города на месте — возвращается ни с чем.";
+    turnScoutHome(m,p);
   },
   // Разведка отряда в поле (см. sendScoutMarch) — застать можно только пока
   // тот стоит на месте (gather/siege): за время дороги лазутчика цель вполне
   // могла закончить сбор и уйти, или её отозвал хозяин. Ничего не поделать —
   // марш куда подвижнее города, эта неопределённость даже больше, чем у
   // городской разведки, и это честно (RoK такой же).
+  // Тот же обратный путь, что и у городской разведки выше.
   scoutedMarch(d){
     const m=W.marches.find(x=>x.id===d.mid); if(!m) return;
-    W.marches=W.marches.filter(x=>x.id!==m.id);
-    const p=W.players.find(q=>q.id===m.pid); if(!p) return;
+    const p=W.players.find(q=>q.id===m.pid);
+    if(!p){ W.marches=W.marches.filter(x=>x.id!==m.id); return }
     const target=W.marches.find(x=>x.id===m.targetMarchId);
+    const owner=target?W.players.find(q=>q.id===target.pid):null;
     if(!target || (target.state!=="gather"&&target.state!=="siege")){
-      if(!p.isBot) logg("Лазутчик не застал отряд на месте — тот уже снялся.","war");
-      return;
+      if(!p.isBot) m.scoutMiss="Лазутчик не застал отряд на месте — тот уже снялся.";
+    } else if(owner && !p.isBot){
+      const cell=W.map[key(m.tx,m.ty)];
+      m.scoutReport={cat:"report",kind:"scoutmarch",
+        oppNick:owner.nick||"Безымянный лорд", oppRace:owner.race,
+        oppAvatar:playerAvatarSrc(owner),
+        coords:{x:m.tx,y:m.ty},
+        marchState:target.state,
+        res: (target.state==="gather"&&cell&&cell.t==="node") ? cell.res : null,
+        intel:scoutMarchSnapshot(p,target)};
+      m.scoutWhom="об отряде "+(owner.nick||owner.name);
     }
-    const owner=W.players.find(q=>q.id===target.pid);
-    if(!owner) return;
-    if(p.isBot) return;
-    const cell=W.map[key(m.tx,m.ty)];
-    pushMail({cat:"report",kind:"scoutmarch",
-      oppNick:owner.nick||"Безымянный лорд", oppRace:owner.race,
-      oppAvatar:playerAvatarSrc(owner),
-      coords:{x:m.tx,y:m.ty},
-      marchState:target.state,
-      res: (target.state==="gather"&&cell&&cell.t==="node") ? cell.res : null,
-      intel:scoutMarchSnapshot(p,target)});
-    logg("Лазутчик вернулся с донесением об отряде "+(owner.nick||owner.name)+".","good");
+    turnScoutHome(m,p);
+  },
+  // Лазутчик дошёл до дома — вот теперь донесение. Отдельное событие, а не
+  // общий EV.home: у разведки нет ни войск, ни добычи, ей нужен только этот
+  // разбор, и мешать её в возврат боевого отряда незачем.
+  scouthome(d){
+    const m=W.marches.find(x=>x.id===d.mid); if(!m) return;
+    W.marches=W.marches.filter(x=>x.id!==m.id);
+    const p=W.players.find(q=>q.id===m.pid);
+    if(p && !p.isBot){
+      if(m.scoutReport){
+        pushMail(m.scoutReport);
+        logg("Лазутчик вернулся с донесением"+(m.scoutWhom?(m.scoutWhom.startsWith("об ")?" ":" о городе ")+m.scoutWhom:"")+".","good");
+      } else if(m.scoutMiss) logg(m.scoutMiss,"war");
+    }
   },
   // Снос узла (если он опустел) — теперь тут, а не в момент прибытия
   // отряда (см. комментарий у arriveMarch), плюс перестраховка на случай,
@@ -6139,14 +6232,21 @@ const EV = {
     const m=W.marches.find(m=>m.id===d.mid); if(!m) return;
     const cell=W.map[key(m.tx,m.ty)];
     const p=W.players.find(q=>q.id===m.pid);
+    // Донесение о сборе НЕ отправляется здесь. Автор: «отряд со сбора
+    // вернулся — письмо получил как только они в замок зашли». Раньше письмо
+    // уходило ровно в этот момент — когда сбор на точке закончен, а отряд
+    // только разворачивается домой и идёт туда ещё целую дорогу: получалось
+    // «письмо пришло через время после сбора», без всякой связи с тем, что
+    // видно на карте. Само донесение складываем на марш и отдаём в EV.home,
+    // когда отряд действительно входит в замок.
     if(p && !p.isBot){
       // Янтарь везётся отдельным полем (см. EV.home) — отчёт о сборе у него
       // такой же, просто источник числа другой.
       if(m.carryAmber>0)
-        pushMail({cat:"report",kind:"gather",res:"amber",amount:m.carryAmber,coords:{x:m.tx,y:m.ty}});
+        m.gatherReport={res:"amber",amount:m.carryAmber,coords:{x:m.tx,y:m.ty}};
       else if(m.carry){
         const rr=Object.keys(m.carry).find(k=>m.carry[k]>0);
-        if(rr) pushMail({cat:"report",kind:"gather",res:rr,amount:m.carry[rr],coords:{x:m.tx,y:m.ty}});
+        if(rr) m.gatherReport={res:rr,amount:m.carry[rr],coords:{x:m.tx,y:m.ty}};
       }
     }
     if(cell && cell.t==="node" && cell.amount<=0){
@@ -6185,6 +6285,10 @@ const EV = {
       p.amber=(p.amber||0)+m.carryAmber;
       if(!p.isBot) logg("Отряд вернулся с янтарём: "+Math.round(m.carryAmber).toLocaleString("ru")+".","good");
     }
+    // Отложенное донесение о сборе (см. EV.gathered выше) — письмо приходит
+    // ровно сейчас, когда отряд вошёл в замок, а не когда закончил копать.
+    if(m.gatherReport && p && !p.isBot)
+      pushMail(Object.assign({cat:"report",kind:"gather"}, m.gatherReport));
     W.marches=W.marches.filter(x=>x.id!==m.id);
   },
   respawn(d){
@@ -6359,11 +6463,11 @@ function addXp(p,xp){
   p.gen.xp+=xp;
   while(p.gen.xp>=genXpNeed(p.gen.lv) && p.gen.lv<Math.min(60,epochOf(p.b.hall)*12)){
     p.gen.xp-=genXpNeed(p.gen.lv); p.gen.lv++; p.gen.pts++;
-    if(!p.isBot){
-      logg("Генерал достиг "+p.gen.lv+" уровня. Очко таланта доступно.","good");
-      pushMail({cat:"personal",kind:"note",title:"Генерал повышен",
-        body:"Ваш генерал достиг "+p.gen.lv+" уровня. Доступно новое очко таланта."});
-    }
+    // Письмо "Генерал повышен" убрано по прямой просьбе автора: «уведомления
+    // о повышении уровня генерала вообще исключи, они лишние». Строка в
+    // хронике (logg ниже) остаётся — она не копится в почте и не зажигает
+    // метку непрочитанного, а просто отмечает событие в ленте.
+    if(!p.isBot) logg("Генерал достиг "+p.gen.lv+" уровня. Очко таланта доступно.","good");
   }
   if(p.isBot) autoTalents(p);
 }
@@ -12788,8 +12892,19 @@ function mpBuildWorldSnapshot(){
     const back=m.state==="back";
     const from=back?{x:m.tx,y:m.ty}:home, to=back?home:{x:m.tx,y:m.ty};
     const path=waterPath(from.x,from.y,to.x,to.y);
+    // Тот же взвешенный pathCum, что и у одиночной игры (см. setMarchPath) —
+    // отряд в общем мире так же ползёт через брод и вверх по склону, а по
+    // равнине идёт нормально. ВРЕМЯ прибытия (t0/t1) при этом по-прежнему
+    // считает сервер по прямой (mp-attack/mp-gather/...), и это ЗДЕСЬ не
+    // чинится: у сервера нет ни настоящего пути (его строит клиент), ни
+    // полной карты высот — только маска воды с шагом 4 клетки. Взвесить там
+    // прямую было бы хуже, чем не взвешивать: прямая через реку идёт вдоль
+    // русла и набирает десятки водных клеток, тогда как настоящий путь
+    // пересекает его бродом в 3 клетки — штраф оказался бы завышен в разы.
+    // Честный порядок вещей: поход всё так же приходит РОВНО в t1, но внутри
+    // отрезка времени распределяется по местности, а не равномерно.
     const cum=[0]; let total=0;
-    for(let i=1;i<path.length;i++){ total+=Math.hypot(path[i].x-path[i-1].x,path[i].y-path[i-1].y); cum.push(total); }
+    for(let i=1;i<path.length;i++){ total+=segmentTravelCost(path[i-1],path[i]); cum.push(total); }
     return Object.assign({}, m, { path, pathCum:cum, pathLen:total });
   }
   const marches=[];
@@ -13774,7 +13889,8 @@ async function mpRefreshGatherMail(){
   if(!error && data){ mpState.gatherMail=data; mpRerenderData(); }
 }
 // Личные уведомления (mail, kind:"note") — сейчас единственный источник:
-// "Генерал повышен" (см. genLevelMailRow в mp-tick, зеркало pushMail
+// раньше "Генерал повышен" (эти письма исключены по просьбе автора —
+// см. addXp; выборка оставлена под будущие личные уведомления
 // одиночки, index.html:5509-5510). Раньше этого письма в общем мире не было
 // вовсе — генерал честно повышался (addXp на сервере), но игрок об этом
 // никогда не узнавал, в отличие от одиночки. Своя рубрика, та же схема
@@ -15361,11 +15477,11 @@ function foMultiplayer(embedded, only){
          "</div></div></div>";
     });
   }
-  // Личные уведомления (mail, kind:"note") — сейчас только "Генерал повышен"
-  // (см. genLevelMailRow в mp-tick). Раньше в общем мире такого письма не
-  // было вовсе: генерал честно повышался на сервере (addXp), но игрок об
-  // этом никогда не узнавал — в одиночке то же самое событие давало письмо
-  // (index.html, addXp: pushMail({cat:"personal",kind:"note",...})).
+  // Личные уведомления (mail, kind:"note"). Единственным их источником было
+  // "Генерал повышен" — эти письма исключены по прямой просьбе автора («они
+  // лишние», см. addXp), так что сейчас рубрика штатно пуста. Выборка
+  // оставлена как есть: она ничего не стоит на пустом ответе и сразу
+  // подхватит будущие личные уведомления, когда они появятся.
   if(show("mail") && !mailFull && mpState.noteMail.length){
     h+=rubric("Генерал","личные уведомления");
     mpState.noteMail.forEach(m=>{
