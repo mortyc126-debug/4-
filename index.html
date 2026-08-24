@@ -5874,12 +5874,65 @@ function pathTravelCost(path){
   for(let i=1;i<path.length;i++) total+=segmentTravelCost(path[i-1],path[i]);
   return total;
 }
-// pathCum/pathLen теперь в ЕДИНИЦАХ СТОИМОСТИ, а не в клетках (см. разбор
-// выше). Цена считается по отрезку целиком: после simplifyWaterPath сухие
-// куски пути слиты в длинные прямые, а сам брод остаётся отдельным коротким
-// отрезком (выпрямлять через воду запрещено) — то есть дорогой участок и так
-// лежит своим звеном, и постоянная цена внутри звена картинку не портит.
+/* ---- Разрез пути по границам местности ------------------------------------
+   Цена звена пути — одно число на всё звено, и pathPointAt внутри звена
+   двигает отряд РАВНОМЕРНО. Пока звено однородно, это верно; но стоит
+   длинному прямому куску задеть воду или склон краем — и замедление
+   размазывается по всему звену вместо самого препятствия. Автор именно об
+   этом: «чтобы скорость менялась именно в моменте, а не размазанно по всему
+   пути».
+   Лечится не дроблением всего пути (это раздуло бы m.path, а он уходит и в
+   сохранение, и в снимок общего мира каждый раз), а разрезом РОВНО ТАМ, где
+   местность меняется: путь проходится пробами раз в клетку, множитель
+   округляется до полосы (BANDS ниже), и на каждой смене полосы в путь
+   вставляется точка. Дальше каждое звено уже однородно — и постоянная цена
+   внутри него becomes честной, отряд тормозит ровно у кромки воды и ровно на
+   склоне.
+   Полосы, а не точное значение: иначе на пересечённой местности резало бы
+   почти каждую клетку. TERRAIN_SPLIT_MAX — потолок на случай совсем рваного
+   рельефа: дальше точки просто не добавляются, поведение возвращается к
+   прежнему усреднению, но путь не разрастается без предела. */
+const TERRAIN_BANDS=[1,1.5,2.5,4,5,10];
+const TERRAIN_SPLIT_MAX=250;
+function terrainBand(mult){
+  let best=TERRAIN_BANDS[0];
+  for(const b of TERRAIN_BANDS) if(Math.abs(b-mult)<Math.abs(best-mult)) best=b;
+  return best;
+}
+function splitPathByTerrain(path){
+  if(path.length<2) return path;
+  const out=[path[0]];
+  let added=0;
+  for(let i=1;i<path.length;i++){
+    const a=path[i-1], b=path[i];
+    const d=Math.hypot(b.x-a.x,b.y-a.y);
+    const steps=Math.max(1,Math.ceil(d));
+    if(d>0 && added<TERRAIN_SPLIT_MAX){
+      const len=d/steps;
+      let prevBand=null;
+      for(let k=0;k<steps;k++){
+        const t0=k/steps, t1=(k+1)/steps;
+        const band=terrainBand(terrainStepMult(
+          a.x+(b.x-a.x)*t0, a.y+(b.y-a.y)*t0,
+          a.x+(b.x-a.x)*t1, a.y+(b.y-a.y)*t1, len));
+        // Граница полосы — режем в НАЧАЛЕ шага, где она сменилась.
+        if(prevBand!==null && band!==prevBand && k>0 && added<TERRAIN_SPLIT_MAX){
+          out.push({x:a.x+(b.x-a.x)*t0, y:a.y+(b.y-a.y)*t0});
+          added++;
+        }
+        prevBand=band;
+      }
+    }
+    out.push(b);
+  }
+  return out;
+}
+// pathCum/pathLen — в ЕДИНИЦАХ СТОИМОСТИ, а не в клетках (см. разбор выше).
+// Путь предварительно разрезан по границам местности (splitPathByTerrain),
+// поэтому цена, постоянная внутри звена, теперь и правда постоянна на местности
+// этого звена — отряд замедляется у самой кромки, а не заранее и не с запозданием.
 function setMarchPath(m,path){
+  path=splitPathByTerrain(path);
   m.path=path;
   const cum=[0]; let total=0;
   for(let i=1;i<path.length;i++){ total+=segmentTravelCost(path[i-1],path[i]); cum.push(total); }
@@ -12903,9 +12956,12 @@ function mpBuildWorldSnapshot(){
     // пересекает его бродом в 3 клетки — штраф оказался бы завышен в разы.
     // Честный порядок вещей: поход всё так же приходит РОВНО в t1, но внутри
     // отрезка времени распределяется по местности, а не равномерно.
+    // Тот же разрез по границам местности, что и в setMarchPath — иначе в
+    // общем мире замедление снова размазалось бы по длинному звену.
+    const sp=splitPathByTerrain(path);
     const cum=[0]; let total=0;
-    for(let i=1;i<path.length;i++){ total+=segmentTravelCost(path[i-1],path[i]); cum.push(total); }
-    return Object.assign({}, m, { path, pathCum:cum, pathLen:total });
+    for(let i=1;i<sp.length;i++){ total+=segmentTravelCost(sp[i-1],sp[i]); cum.push(total); }
+    return Object.assign({}, m, { path:sp, pathCum:cum, pathLen:total });
   }
   const marches=[];
   const seenIds=new Set();
