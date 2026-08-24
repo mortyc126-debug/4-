@@ -790,17 +790,17 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   // тоном (mix к белому), лесная подстилка не существовала вовсе (густой
   // лес стоял на обычной grass/dry_meadow, как и открытое поле).
   const [texSand, texGrass, texDry, texScree, texRock, texSnow, texForestFloor, texDesert, texMarsh, texTundraMoss, texWaterDetail] = await Promise.all([
-    loadTexture(device, "/textures/ground/sand.png"),
-    loadTexture(device, "/textures/ground/grass.png"),
-    loadTexture(device, "/textures/ground/dry_meadow.png"),
-    loadTexture(device, "/textures/ground/scree.png"),
-    loadTexture(device, "/textures/ground/rock.png"),
-    loadTexture(device, "/textures/ground/snow.png"),
-    loadTexture(device, "/textures/ground/forest_floor.png"),
-    loadTexture(device, "/textures/ground/desert.png"),
-    loadTexture(device, "/textures/ground/marsh.png"),
-    loadTexture(device, "/textures/ground/tundra_moss.png"),
-    loadTexture(device, "/textures/water/detail.png"),
+    loadTexture(device, "/textures/ground/sand.jpg"),
+    loadTexture(device, "/textures/ground/grass.jpg"),
+    loadTexture(device, "/textures/ground/dry_meadow.jpg"),
+    loadTexture(device, "/textures/ground/scree.jpg"),
+    loadTexture(device, "/textures/ground/rock.jpg"),
+    loadTexture(device, "/textures/ground/snow.jpg"),
+    loadTexture(device, "/textures/ground/forest_floor.jpg"),
+    loadTexture(device, "/textures/ground/desert.jpg"),
+    loadTexture(device, "/textures/ground/marsh.jpg"),
+    loadTexture(device, "/textures/ground/tundra_moss.jpg"),
+    loadTexture(device, "/textures/water/detail.jpg"),
   ]);
   const groundSampler = device.createSampler({ addressModeU: "repeat", addressModeV: "repeat", magFilter: "linear", minFilter: "linear" });
   const terrainModule = device.createShaderModule({ code: TERRAIN_SHADER });
@@ -866,7 +866,7 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   // uniform-структура SkyCam (базис камеры + tanHalf/aspect/время), без
   // вершинного буфера вообще (3 вершины из vertex_index).
   const [texSky, texClouds] = await Promise.all([
-    loadTexture(device, "/textures/sky/sky.png"),
+    loadTexture(device, "/textures/sky/sky.jpg"),
     loadTexture(device, "/textures/sky/clouds.png"),
   ]);
   const skySampler = device.createSampler({ addressModeU: "repeat", addressModeV: "clamp-to-edge", magFilter: "linear", minFilter: "linear" });
@@ -1132,8 +1132,8 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   // текстура, что и у рельефа (texRock выше), незачем качать те же ~1МБ
   // с телефона дважды.
   const decorTexPaths = {
-    bark: "/textures/decor/bark.png",
-    birchBark: "/textures/decor/birch_bark.png",
+    bark: "/textures/decor/bark.jpg",
+    birchBark: "/textures/decor/birch_bark.jpg",
     conifer: "/textures/decor/conifer_a.png",
     conifer2: "/textures/decor/conifer_b.png",
     broadleaf: "/textures/decor/broadleaf.png",

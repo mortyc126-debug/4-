@@ -3114,11 +3114,11 @@ const cityShapeCss = c => c.pill ? "border-radius:50%;" :
   (v=>`clip-path:polygon(${v}% 0%,${100-v}% 0%,100% ${v}%,100% ${100-v}%,${100-v}% 100%,${v}% 100%,0% ${100-v}%,0% ${v}%);`)(c.ch||18);
 
 // Свободная застройка МП (см. CITY_GRID/PLACEABLE_BKEYS): невидимая сетка
-// поверх city-map.png, вписанная в овал стен вручную по картинке (лучевая
+// поверх city-map.jpg, вписанная в овал стен вручную по картинке (лучевая
 // трассировка границы стены из центра + ручной запас 7%, чтобы здания не
 // залезали на саму стену). w×h — размер в клетках, mask — по строкам,
 // сверху вниз, '1' = можно строить, '0' — нельзя (стена/лес/ворота).
-// left/top/w/h — прямоугольник сетки в % от city-map.png (position:absolute
+// left/top/w/h — прямоугольник сетки в % от city-map.jpg (position:absolute
 // поверх той же картинки, тем же способом, что и старые CITY_CELLS).
 const CITY_GRID = {
   w: 16, h: 24,
@@ -7232,7 +7232,7 @@ const $=s=>document.querySelector(s);
 // страницы": КАЖДЫЙ периодический рендер (раз в секунду из frame()/
 // mpRerender()) переписывал innerHTML целого контейнера. innerHTML сносит
 // поддерево ЦЕЛИКОМ и строит новое — со всеми <img> внутри. А внутри там,
-// например, <img class='base' src='city-map.png'> — картинка на 3.1 МБ:
+// например, <img class='base' src='city-map.jpg'> — фон карты города:
 // браузер каждую секунду заново создаёт элемент, заново поднимает
 // декодированный битмап, заново раскладывает страницу. Отсюда и вечная
 // "подгрузка", и моргание аватарок/иконок, и сброшенная прокрутка, и
@@ -7911,7 +7911,7 @@ function mpRenderCityMap(){
   return h;
 }
 // Свободная застройка (план "город как в RoK") — читает p.layout вместо
-// CITY_CELLS, рисует поверх city-map.png (новая картинка, см. CITY_GRID) по
+// CITY_CELLS, рисует поверх city-map.jpg (новая картинка, см. CITY_GRID) по
 // той же координатной системе, что и collisionOk на сервере (gx/gy в
 // клетках, переводится в % через CITY_GRID.left/top/width/height). С Фазы
 // 4 это и есть живая карта города общего мира — mpRenderFolio() зовёт
@@ -7924,7 +7924,7 @@ function mpRenderCityMap(){
 // зданий из BUILDINGS. hall — по центру просторной средней полосы овала.
 // wall — автор заметил, что тап уехал от настоящих ворот на картинке (тап
 // остался на старом месте, а сама надвратная башня сама по себе ниже) —
-// нашёл её точный пиксель наведением на city-map.png (крупный кроп
+// нашёл её точный пиксель наведением на city-map.jpg (крупный кроп
 // 380..560×1220..1400, ворота с двумя башенками в районе x≈437-490,
 // y≈1320-1360 из 941×1672) и подобрал gx/gy/w/h под неё заново, а не
 // прикинул на глаз, как в первый раз; gy=24 намеренно ВНЕ CITY_GRID.h=24
@@ -7943,7 +7943,7 @@ function cityGridCellToPct(gx,gy,w,h){
 function mpRenderFreeformCity(){
   const p=mpCityShim(), st=mpState.player.state;
   const layout=Array.isArray(st.layout)?st.layout:[];
-  let h="<div id='citymap-wrap'><img class='base' src='city-map.png'>";
+  let h="<div id='citymap-wrap'><img class='base' src='city-map.jpg'>";
   ["hall","wall"].forEach(bk=>{
     const lv=p.b[bk]||0, pos=CITY_FIXED_GRID_POS[bk], r=cityGridCellToPct(pos.gx,pos.gy,pos.w,pos.h);
     h+="<div class='cbuild"+(lv>0?" built":"")+(mpFixedSel===bk?" sel":"")+"' data-layoutfixed='"+bk+"' "+
