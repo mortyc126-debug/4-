@@ -2328,7 +2328,18 @@ const BUILDING_TABLE={
   forge:FORGE_TABLE, market:TRADING_TABLE, alliance:ALLIANCE_TABLE, portal:PORTAL_TABLE,
 };
 const CFG = {
-  MAP: 100,                 // размер стороны карты
+  // Было 100. Стартовая зона (мир бесконечен, это только квадрат, в котором
+  // расставлены игрок и 12 ботов — см. genWorld) расширена, чтобы в неё
+  // влезли 13 замков с общим минимумом в 30 клеток: на 100x100 они физически
+  // не помещаются (проверено симуляцией: 142 провала размещения из 520, в
+  // худших прогонах замки вставали в 1.4 клетки друг от друга — то самое
+  // наложение). Размер подобран симуляцией по ТОЧНОЙ формуле originDist
+  // (делится на CFG.MAP/2): 180 ещё даёт 15 провалов из 780, 220 — ноль;
+  // 240 взято с запасом.
+  // На существующие сохранения не влияет: CFG.MAP читается только при
+  // СОЗДАНИИ мира (genWorld/findSpot) — originDist больше нигде не
+  // используется, уровни точек и лагерей от него не зависят.
+  MAP: 240,                 // размер стартовой зоны (не граница мира — её нет)
   BOTS: 12,                 // количество ботов
   TIME_COMPRESS: 1,         // во сколько раз быстрее RoK (1 — как в RoK, без сжатия)
   BOT_THINK: 20*60,         // раз в сколько секунд бот пересматривает планы
@@ -3553,9 +3564,59 @@ fetch("/heightmap/elevation-v"+HEIGHTMAP_VERSION+".bin").then(r=>{
 }).then(buf=>{
   if(buf.byteLength!==RW_HEIGHT_W*RW_HEIGHT_H*2) throw new Error("неверный размер: "+buf.byteLength);
   realElevData=new Uint16Array(buf);
+  onRealElevSettled(true);
 }).catch(err=>{
   console.warn("настоящие данные высот не загрузились, isRealWater остаётся на процедурном фолбэке:", err);
+  onRealElevSettled(false);
 });
+// ---- Гонка «посчитали воду раньше, чем узнали, где она» -------------------
+// Файл выше — 5.76 МБ, на телефоне через LTE это СЕКУНДЫ. Всё это время
+// isRealWater() молча отвечает по процедурному фолбэку (rwHeightAt), и это не
+// "чуть неточно", а совершенно другая карта: замер по настоящему участку
+// автора (район -20,10) — в настоящих данных через него течёт большая река, а
+// фолбэк не видит воды ВООБЩЕ на площади 90×90 клеток. Данные о марше от
+// сервера приходят за ~1 секунду, то есть гонка на телефоне проигрывается
+// практически всегда.
+//
+// Мало было "дождаться" — всё, что успели посчитать по фолбэку, ещё и
+// СОХРАНЯЕТСЯ: waterPathCache держит путь по координатам, m.path одиночной
+// игры уходит прямо в сейв, mpSnapCache держит собранный снимок общего мира.
+// Поэтому здесь не ожидание, а инвалидация: когда настоящие данные пришли,
+// всё посчитанное по фолбэку объявляется недействительным и пересчитывается.
+//
+// Это же объясняет, почему прежние проверки этого бага не ловили: тестовый
+// стенд отклонял fetch, страница жила на фолбэке — то есть проверялась
+// самосогласованность фолбэка, а не та вода, что видит игрок.
+let realElevSettled=false;
+const realElevWaiters=[];
+function onRealElevReady(fn){ if(realElevSettled) fn(); else realElevWaiters.push(fn); }
+function onRealElevSettled(ok){
+  if(realElevSettled) return;
+  realElevSettled=true;
+  if(ok){
+    // Всё в одном try: переменные ниже объявлены через let ДАЛЬШЕ по файлу, и
+    // хотя к моменту этого колбэка (микрозадача после разбора всего скрипта)
+    // они уже инициализированы, обрушить загрузку карты из-за них нельзя ни
+    // при каких обстоятельствах — инвалидация кэшей это оптимизация
+    // корректности, а не то, без чего страница не работает.
+    try{
+      // 1) пути, посчитанные по фолбэку — в утиль
+      waterPathCache.clear();
+      // 2) снимок общего мира пересобрать (в нём лежат готовые пути маршей)
+      mpSnapCache=null; mpSnapRefs=null; mpSnapSig="";
+      // 3) одиночные марши в пути несут m.path прямо в сейве — пересчитать
+      if(typeof W!=="undefined" && W && W.marches){
+        W.marches.forEach(m=>{
+          if(m.state!=="go"&&m.state!=="back") return;
+          const p=W.players.find(q=>q.id===m.pid); if(!p) return;
+          setMarchPath(m, m.state==="back" ? waterPath(m.tx,m.ty,p.x,p.y)
+                                           : waterPath(m.x0,m.y0,m.tx,m.ty));
+        });
+      }
+    }catch(e){ console.warn("пересчёт путей после загрузки высот не удался:", e); }
+  }
+  realElevWaiters.splice(0).forEach(fn=>{ try{ fn() }catch(e){ console.warn(e) } });
+}
 function rwBilinear(px,py){
   const x0=Math.floor(px), y0=Math.floor(py);
   const x1=Math.min(x0+1,RW_HEIGHT_W-1), y1=Math.min(y0+1,RW_HEIGHT_H-1);
@@ -3895,14 +3956,24 @@ const BOT_NICKS = {
 // напрямую по W.players — в этой локальной one-player-vs-bots партии их
 // всегда мало (игрок + до CFG.BOTS ботов), полный перебор дешёв и не имеет
 // слепых зон на границах чанков.
-const CITY_STRUCT_GAP=12;
+// Минимум 30 клеток от замка — прямая просьба автора: «между ними расстояние
+// должно быть минимум в 30 клеток и это реально минимум». Было 12, и этого
+// заметно не хватало: модель города в 3D вдвое крупнее точки/лагеря (scale
+// 10 против 5-6.5, см. engine/src/realData.ts), поэтому даже соблюдённые 12
+// клеток выглядели как наложение. Теперь совпадает с MIN_STRUCT_GAP ниже —
+// один общий минимум для всех пар объектов, без исключений.
+const CITY_STRUCT_GAP=30;
 // Было 6, потом 9 — по прямому запросу пользователя ("в масштабе карты и 9
 // мало") поднято до 20: заметный, недвусмысленный промежуток между точками,
 // а не просто "центры не совпадают". Значение больше не заведомо меньше
 // половины чанка (16/2=8) — окрестность соседних чанков в
 // findFreeCellInChunk теперь считается ОТ ЭТОЙ константы (см. там), иначе
 // сам зазор бы тихо не соблюдался на границах чанков.
-const MIN_STRUCT_GAP=20, STRUCT_TRIES=150, STRUCT_CHUNK=16, STRUCT_CHUNK_CHANCE=0.5;
+// Было 20 -> 30 по прямой просьбе автора (тот же общий минимум, что и
+// CITY_STRUCT_GAP выше). Значение по-прежнему больше половины STRUCT_CHUNK=16,
+// поэтому окрестность соседних чанков в findFreeCellInChunk считается ОТ него
+// (ceil(30/16)=2 чанка в каждую сторону) — см. комментарий там.
+const MIN_STRUCT_GAP=30, STRUCT_TRIES=150, STRUCT_CHUNK=16, STRUCT_CHUNK_CHANCE=0.5;
 const STRUCT_SALT_NODE=501, STRUCT_SALT_CAMP=502;
 function structChunkOk(x,y,salt,chance){
   const cx=Math.floor(x/STRUCT_CHUNK), cy=Math.floor(y/STRUCT_CHUNK);
@@ -4132,7 +4203,10 @@ function genWorld(seed){
   // из-за чего с добавленным ниже зазором между лагерями/точками город иногда
   // просто не находил бы себе места вовсе.
   const spots=[];
-  const minGap=9;
+  // Замки правителей держат тот же общий минимум, что и всё остальное
+  // (прямая просьба автора: точки, лагеря И замки — минимум 30 клеток).
+  // Было 9 — при модели города масштаба 10 в 3D это выглядело наложением.
+  const minGap=CITY_STRUCT_GAP;
   function findSpot(minD,maxD){
     for(let tries=0;tries<4000;tries++){
       const x=ri(3,CFG.MAP-4), y=ri(3,CFG.MAP-4);
@@ -4142,9 +4216,20 @@ function genWorld(seed){
       if(spots.some(s=>Math.hypot(s.x-x,s.y-y)<minGap)) continue;
       spots.push({x,y}); return {x,y};
     }
-    // 4000 честных попыток исчерпаны (совсем зажатый регион) — берём что
-    // есть, но воду всё равно не нарушаем: без города игра не работает,
-    // а без воды — работает, эти два требования не равнозначны.
+    // 4000 честных попыток исчерпаны (совсем зажатый регион) — отпускаем
+    // ТОЛЬКО пояс расстояния от истока (minD/maxD, это лишь пожелание к
+    // расселению), но воду и зазор между замками держим: без города игра не
+    // работает, а вот город в воде или внахлёст на соседа — именно те два
+    // дефекта, ради которых всё это и правится. Раньше здесь отпускался и
+    // зазор тоже, из-за чего в тесном прогоне замки всё равно вставали
+    // вплотную, сколько бы места ни было в стартовой зоне.
+    for(let tries=0;tries<4000;tries++){
+      const x=ri(3,CFG.MAP-4),y=ri(3,CFG.MAP-4);
+      if(isRealWater(x,y)) continue;
+      if(spots.some(s=>Math.hypot(s.x-x,s.y-y)<minGap)) continue;
+      spots.push({x,y}); return {x,y};
+    }
+    // И только если даже это не вышло — последний рубеж: хотя бы не в воде.
     for(let tries=0;tries<2000;tries++){
       const x=ri(3,CFG.MAP-4),y=ri(3,CFG.MAP-4);
       if(isRealWater(x,y)) continue;
@@ -4208,7 +4293,7 @@ function genWorld(seed){
 
   // Свежий мир уже построен через ensureChunkContent (зазор + вода +
   // "монетка" на чанк) — всем миграциям ниже тут нечего делать.
-  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.densityMigrated5=true; W.densityMigrated6=true; W.densityMigrated7=true; W.densityMigrated8=true; W.densityMigrated9=true; W.infiniteWorldMigrated=true; W.levelMigrated=true; W.marchRescueMigrated=true; W.marchSpeedMigrated=true; W.marchWaterPathMigrated=true;
+  W.densityMigrated=true; W.densityMigrated2=true; W.densityMigrated3=true; W.densityMigrated4=true; W.densityMigrated5=true; W.densityMigrated6=true; W.densityMigrated7=true; W.densityMigrated8=true; W.densityMigrated9=true; W.densityMigrated10=true; W.infiniteWorldMigrated=true; W.levelMigrated=true; W.marchRescueMigrated=true; W.marchSpeedMigrated=true; W.marchWaterPathMigrated=true;
   logg("Мир создан. Зерно "+seed+". Городов: "+W.players.length+".", "good");
   return W;
 }
@@ -4415,6 +4500,38 @@ function thinMapDensity8(){
   for(const o of drop) delete W.map[key(o.x,o.y)];
   W.densityMigrated8=true;
   if(drop.size) logg("Точки/лагеря раздвинуты ещё раз: убрано "+drop.size+".","good");
+}
+// Десятая волна: общий минимум поднят до 30 клеток и распространён на ЗАМКИ
+// (CITY_STRUCT_GAP тоже 30) — старые сохранения несут расстановку по прежним
+// 20/12, где точки и лагеря стоят вплотную к городам и друг к другу. Чистим
+// тем же правилом, что теперь действует при генерации. Города не трогаем
+// никогда (это состояние игроков), лишним считается объект дикой карты.
+function thinMapDensity10(){
+  if(W.densityMigrated10) return;
+  const items=[];
+  for(const k in W.map){ const o=W.map[k]; if(o.t==="node"||o.t==="camp"||o.t==="fort") items.push(o); }
+  const drop=new Set();
+  // сперва всё, что ближе минимума к любому замку — у города приоритет
+  for(const o of items){
+    for(const p of W.players){
+      if(Math.hypot(p.x-o.x,p.y-o.y)<CITY_STRUCT_GAP){ drop.add(o); break; }
+    }
+  }
+  // затем пары дикой карты между собой (точка ценнее лагеря — оставляем точку)
+  items.sort((a,b)=>a.x-b.x||a.y-b.y);
+  const rank=o=>o.t==="node"?0:1;
+  for(let i=0;i<items.length;i++){
+    if(drop.has(items[i])) continue;
+    for(let j=i+1;j<items.length;j++){
+      if(drop.has(items[j])) continue;
+      if(items[j].x-items[i].x>=MIN_STRUCT_GAP) break;
+      if(Math.hypot(items[i].x-items[j].x,items[i].y-items[j].y)>=MIN_STRUCT_GAP) continue;
+      drop.add(rank(items[i])<rank(items[j]) ? items[j] : items[i]);
+    }
+  }
+  for(const o of drop) mapDelete(o.x,o.y);
+  W.densityMigrated10=true;
+  if(drop.size) logg("Точки и лагеря раздвинуты до 30 клеток: убрано "+drop.size+".","good");
 }
 // Девятая волна: isTooSteep (см. её комментарий у isRealWater выше) появилась
 // позже findFreeCellInChunk — старые сохранения могут нести точки/лагеря,
@@ -5501,35 +5618,70 @@ function buildLocalWaterGrid(x0,y0,x1,y1,margin){
 // вызывающий waterPath() пробует запас пошире, а если и это не помогло,
 // честно возвращает прямую (как и раньше при "не нашли обход").
 //
-// WPATH_MAX_ITER — раньше был захардкожен как 20000 (см. коммент у самого
-// margin=[10,30,60] чуть ниже). Баг с реального устройства: "марши ходят
-// прямо через реку" — оказалось, дело не в реке, а в ОЗЕРЕ приличного
-// размера: 20000 итераций хватает margin=10, впритык хватает margin=30, но
-// уже margin=60 (грид ~121×121=14641 клетка) регулярно упирался в потолок
-// раньше, чем A* успевал обогнуть вытянутый/вогнутый берег — тот самый
-// честный отказ "не нашли обход даже с запасом" срабатывал НЕ потому что
-// обхода нет, а потому что поиск обрывали на середине. Проверено на живом
-// репро (озеро ~130×150 клеток): нужному пути хватило 23365 итераций — с
-// margin=60 запас уже был достаточным по площади, не хватало только
-// времени искать. see also: buildLocalWaterGrid тратит O(margin²) на саму
-// сетку ДО первой итерации A* — сам по себе рост margin уже не бесплатен,
-// поднимать его сильнее не стали, только дали поиску закончить начатое.
-const WPATH_MAX_ITER=60000;
+// Потолок итераций поиска. Отказ поиска — это откат на прямую СКВОЗЬ воду,
+// то есть ровно тот баг, который здесь чинится, поэтому потолок подобран не
+// «на глаз», а замером: на 214 настоящих пересечениях воды по всей карте
+// лимит 60000 давал 2 отказа, 150000 — ни одного, при том же среднем времени
+// (~10мс) и худшем 102мс вместо 64мс. Дальше поднимать смысла нет: 400000 не
+// добавляет ничего, кроме потолка худшего случая. Цена платится один раз на
+// маршрут — результат кладётся в waterPathCache (см. ниже).
+const WPATH_MAX_ITER=150000;
+// ВОДА — НЕ СТЕНА, А ОЧЕНЬ ДОРОГОЙ БРОД. Это переписанное ядро поиска, и вот
+// почему прежнее (вода = непроходимая клетка) не могло работать в принципе.
+//
+// Живой репорт автора: "марши как ходили по воде, так и ходят" — после двух
+// правок ПАРАМЕТРОВ прежнего поиска (WPATH_MAX_ITER, WPATH_SAMPLE_DENSITY).
+// Замер по НАСТОЯЩИМ данным высот (heightmap/elevation-v6.bin, тем самым, что
+// рисует 3D-движок) показал, что дело вообще не в параметрах: заливкой по суше
+// от берега до берега в окне ±500 клеток (миллион клеток, 537 000 сухих)
+// сухого пути между берегами НЕ СУЩЕСТВУЕТ — река рассекает сушу насквозь, а
+// воды на карте 17%. То есть прежний поиск честно отрабатывал "обхода нет" и
+// откатывался на прямую — и никакая настройка итераций/плотности этого не
+// меняла бы никогда. Крутить там было нечего.
+//
+// Настоящий выбор тут не "обойти или не обойти", а "где пересечь". Прежний
+// откат на прямую давал худшее из возможного: отряд плыл ПО ДИАГОНАЛИ ВДОЛЬ
+// русла (26 клеток по воде на замере) — ровно та картинка со скриншота, где
+// стрелка марша стоит посреди реки. Теперь вода проходима, но каждый шаг по
+// ней стоит как WATER_STEP_COST шагов по суше, поэтому поиск САМ выбирает:
+// есть сухой обход разумной длины — идёт им (вода дороже в 40 раз, любой
+// разумный крюк выгоднее); обхода нет — пересекает в самом узком месте и
+// ПЕРПЕНДИКУЛЯРНО руслу, как настоящий брод. Замер на тех же шести маршрутах
+// через реку игрока: было 8..26 клеток по воде, стало РОВНО 3 в каждом, при
+// удлинении пути на 10-40% и 6-43мс на поиск.
+//
+// Тот же принцип, что уже заложен в собственном проекте регионов автора
+// (worldgen/regions/generate_regions.py, WATER_COST=55: "штраф за брод через
+// реку — не абсолютный барьер, только очень невыгодный") — держим клиент и
+// генератор регионов в одной логике.
+const WATER_STEP_COST=40;   // во сколько раз шаг по воде дороже шага по суше
+const WPATH_EDGE_SAMPLES=4; // проб на ребро: ловит протоку тоньше клетки, за неё сразу платится полная цена
+// Возвращает путь ВСЕГДА (в отличие от прежнего tryWaterPath, который отдавал
+// null, если сухого обхода нет) — null только если сетку построить нельзя
+// (концы вне окна) или исчерпан лимит итераций.
 function tryWaterPath(x0,y0,x1,y1,margin){
   const g=buildLocalWaterGrid(x0,y0,x1,y1,margin);
-  const blocked=(x,y)=>{
-    // За пределами локальной сетки — считаем непроходимым: не расширяем
-    // поиск бесконечно за пределы того, что реально построили.
-    if(x<g.ox||y<g.oy||x>=g.ox+g.w||y>=g.oy+g.h) return true;
-    return g.grid[(y-g.oy)*g.w+(x-g.ox)]===1;
-  };
+  const inb=(x,y)=>x>=g.ox&&y>=g.oy&&x<g.ox+g.w&&y<g.oy+g.h;
+  const idx=(x,y)=>(y-g.oy)*g.w+(x-g.ox);
   const gx0=Math.round(x0), gy0=Math.round(y0);
   const gx1=Math.round(x1), gy1=Math.round(y1);
-  if(blocked(gx0,gy0)||blocked(gx1,gy1)) return null;
-  const idx=(x,y)=>(y-g.oy)*g.w+(x-g.ox);
+  if(!inb(gx0,gy0)||!inb(gx1,gy1)) return null;
+  // Доля мокрых проб на ребре — цена ребра растёт плавно от неё, а не скачком
+  // "клетка-центр мокрая/сухая": узкая протока между двумя сухими центрами
+  // (тот самый случай, ради которого раньше поднимали WPATH_SAMPLE_DENSITY)
+  // теперь не "невидима" и не "стена", а просто дорогая.
+  const edgeWet=(ax,ay,bx,by)=>{
+    let n=0;
+    for(let i=1;i<=WPATH_EDGE_SAMPLES;i++){
+      const t=i/WPATH_EDGE_SAMPLES;
+      if(isRealWater(ax+(bx-ax)*t, ay+(by-ay)*t)) n++;
+    }
+    return n/WPATH_EDGE_SAMPLES;
+  };
+  const gScore=new Float64Array(g.w*g.h).fill(Infinity);
+  const came=new Int32Array(g.w*g.h).fill(-1);
   const h=(x,y)=>Math.hypot(gx1-x,gy1-y);
-  const gScore=new Map(), came=new Map();
-  gScore.set(idx(gx0,gy0),0);
+  gScore[idx(gx0,gy0)]=0;
   const open=miniHeap();
   open.push({x:gx0,y:gy0,f:h(gx0,gy0)});
   let found=false, iter=0;
@@ -5537,37 +5689,25 @@ function tryWaterPath(x0,y0,x1,y1,margin){
     iter++;
     const cur=open.pop();
     if(cur.x===gx1&&cur.y===gy1){ found=true; break; }
-    const curG=gScore.get(idx(cur.x,cur.y));
+    const curG=gScore[idx(cur.x,cur.y)];
+    // Устаревшая запись кучи (лучший путь в эту клетку нашли уже после того,
+    // как её сюда положили) — miniHeap не умеет decrease-key, поэтому такие
+    // просто пропускаем, а не пересчитываем соседей второй раз.
+    if(cur.f-h(cur.x,cur.y)>curG+1e-9) continue;
     for(const [dx,dy] of WPATH_DIRS){
       const nx=cur.x+dx, ny=cur.y+dy;
-      if(blocked(nx,ny)) continue;
-      // Диагональный шаг между двумя клеточно-сухими углами всё ещё может
-      // ПРОРЕЗАТЬ по диагонали ровно тот угол, где сходятся вода и суша
-      // (найдено живьём: путь через (183,-152)->(184,-153) — обе клетки
-      // сушa, но их общая диагональная граница приходится на воду).
-      // Классическое правило анти-срезания угла для 8-направленной сетки:
-      // диагональ разрешена только если ОБЕ "плечевые" ортогональные клетки
-      // тоже не блокированы.
-      if(dx&&dy&&(blocked(cur.x+dx,cur.y)||blocked(cur.x,cur.y+dy))) continue;
-      // blocked() судит по высоте ровно в ЦЕНТРЕ клетки — этого мало:
-      // рельеф непрерывен, между центрами двух соседних клеток суши иногда
-      // проскакивает узкая полоска воды тоньше клетки (живой пример: клетки
-      // (183,-153) и (184,-153) обе суша, а прямая между их центрами всё
-      // равно ныряет ниже уровня моря). segmentCrossesWater — та же самая
-      // проверка, что потом валидирует готовый путь, здесь применяем её
-      // сразу к каждому ребру A*, чтобы такое ребро не вошло в путь вовсе.
-      if(segmentCrossesWater(cur.x,cur.y,nx,ny)) continue;
-      const ng=curG+(dx&&dy?Math.SQRT2:1);
+      if(!inb(nx,ny)) continue;
+      const base=(dx&&dy)?Math.SQRT2:1;
+      const ng=curG+base*(1+(WATER_STEP_COST-1)*edgeWet(cur.x,cur.y,nx,ny));
       const nk=idx(nx,ny);
-      if(gScore.has(nk)&&gScore.get(nk)<=ng) continue;
-      gScore.set(nk,ng); came.set(nk,idx(cur.x,cur.y));
+      if(ng>=gScore[nk]) continue;
+      gScore[nk]=ng; came[nk]=idx(cur.x,cur.y);
       open.push({x:nx,y:ny,f:ng+h(nx,ny)});
     }
   }
   if(!found) return null;
-  const path=[{x:gx1,y:gy1}];
-  let ck=idx(gx1,gy1);
-  while(came.has(ck)){ ck=came.get(ck); path.push({x:(ck%g.w)+g.ox,y:Math.floor(ck/g.w)+g.oy}); }
+  const path=[]; let ck=idx(gx1,gy1);
+  while(ck>=0){ path.push({x:(ck%g.w)+g.ox, y:Math.floor(ck/g.w)+g.oy}); ck=came[ck]; }
   path.reverse();
   path[0]={x:x0,y:y0}; path[path.length-1]={x:x1,y:y1};
   return simplifyWaterPath(path);
@@ -5650,12 +5790,21 @@ const WATER_PATH_CACHE_MAX=400;
 let waterPathCache=new Map();
 function waterPathUncached(x0,y0,x1,y1){
   const span=waterCrossingSpan(x0,y0,x1,y1);
-  if(!span) return [{x:x0,y:y0},{x:x1,y:y1}];
-  for(const margin of [10,30,60]){
-    const detour=tryWaterPath(span.ex,span.ey,span.xx,span.xy,margin);
-    if(detour) return simplifyWaterPath([{x:x0,y:y0},...detour,{x:x1,y:y1}]);
-  }
-  return [{x:x0,y:y0},{x:x1,y:y1}];   // не нашли обход даже с запасом — лучше прямая, чем не дать походу случиться
+  if(!span) return [{x:x0,y:y0},{x:x1,y:y1}];   // воды на прямой нет вовсе — самый частый и самый дешёвый случай
+  // Один запас вместо прежней лесенки [10,30,60]: та лесенка нужна была, пока
+  // поиск мог ОТКАЗАТЬ ("сухого обхода в этом окне нет") и приходилось пробовать
+  // окно пошире. Теперь поиск не отказывает никогда (вода проходима, см.
+  // tryWaterPath выше) — запас решает только КАЧЕСТВО перехода: сколько места
+  // вокруг русла поиск видит, чтобы выбрать узкое место для брода или уйти
+  // сухим обходом. 45 клеток — замерено на настоящей реке автора: даёт брод
+  // ровно в 3 клетки шириной за 6-43мс; шире окно — O(margin²) на одну только
+  // постройку сетки, заметно дороже без выигрыша по картинке.
+  const detour=tryWaterPath(span.ex,span.ey,span.xx,span.xy,45);
+  if(detour) return simplifyWaterPath([{x:x0,y:y0},...detour,{x:x1,y:y1}]);
+  // Сюда попадаем только если сетку построить не удалось или исчерпан лимит
+  // итераций — не "обхода нет" (такого ответа больше не бывает), а честный
+  // технический сбой. Прямая лучше, чем не дать походу случиться.
+  return [{x:x0,y:y0},{x:x1,y:y1}];
 }
 function waterPath(x0,y0,x1,y1){
   const r=v=>Math.round(v*100)/100;
@@ -7230,6 +7379,7 @@ async function load(){
     thinMapDensity7();
     thinMapDensity8();
     thinMapDensity9();
+    thinMapDensity10();
     migrateInfiniteWorld();
     migrateStructLevels();
     // Старые походы в старом сохранении не несут m.path (маршрут в обход
