@@ -212,7 +212,11 @@ async function main() {
   // не игроку живой партии поверх настоящей сцены — не тот же экран, что
   // тестировался пиксель в пиксель, реальный контент виден и без неё,
   // а на живом скриншоте она перекрывала верхний левый угол.
-  if (window.parent !== window) statusEl.style.display = "none";
+  // ...кроме случая, когда сводку попросили ЯВНО (?debug=1): весь смысл
+  // этого параметра — посмотреть замеры кадра на живом устройстве, внутри
+  // настоящей игры, а игра всегда открывает движок в iframe. Прятать её
+  // здесь означало бы, что включить её в игре нельзя вовсе.
+  if (window.parent !== window && !DEBUG_STATUS) statusEl.style.display = "none";
   const seedEntities: RealEntity[] =
     real ??
     [
@@ -1899,8 +1903,42 @@ async function main() {
   // выше у трёх прошлых багов этого файла (гонка layout'а, потеря device,
   // схлопнутая канва), и лечится он тем же: кадр перезапускается при любом
   // исходе, а сбой уходит в консоль/баннер, а не в тишину.
+  // ---- замер кадра (только при ?debug=1, см. DEBUG_STATUS в начале файла)
+  // Автор про подлагивания в мире: «не могу найти их причину». Профилировать
+  // WebGPU на телефоне без devtools нечем, поэтому движок меряет себя сам и
+  // печатает в тот же #status. Считаем не среднее, а МАКСИМУМ за последние
+  // 60 кадров: рывок — это как раз редкий выброс, среднее его прячет.
+  const PERF_WINDOW = 60;
+  const perf = {
+    frame: 0, chunks: 0, render: 0, labels: 0,
+    maxFrame: 0, maxChunks: 0, maxRender: 0, maxLabels: 0,
+    n: 0, worstFrame: 0, worstChunks: 0, worstRender: 0, worstLabels: 0,
+  };
+  function perfTick() {
+    perf.maxFrame = Math.max(perf.maxFrame, perf.frame);
+    perf.maxChunks = Math.max(perf.maxChunks, perf.chunks);
+    perf.maxRender = Math.max(perf.maxRender, perf.render);
+    perf.maxLabels = Math.max(perf.maxLabels, perf.labels);
+    if (++perf.n >= PERF_WINDOW) {
+      perf.worstFrame = perf.maxFrame; perf.worstChunks = perf.maxChunks;
+      perf.worstRender = perf.maxRender; perf.worstLabels = perf.maxLabels;
+      perf.maxFrame = perf.maxChunks = perf.maxRender = perf.maxLabels = 0;
+      perf.n = 0;
+      setStatus([
+        `кадр (худший из ${PERF_WINDOW}): ${perf.worstFrame.toFixed(1)} мс`,
+        `  стройка чанков: ${perf.worstChunks.toFixed(1)} мс`,
+        `  отрисовка:      ${perf.worstRender.toFixed(1)} мс`,
+        `  подписи:        ${perf.worstLabels.toFixed(1)} мс`,
+        `чанков ${(window as any).__terrainChunkCount ?? 0} · моделей в кадре ${(window as any).__modelDrawCount ?? 0}` +
+          ` · сущностей ${(window as any).__ecsFound ?? found.length} · декора ${(window as any).__decorCount ?? 0}`,
+        `в очереди на стройку: ${pendingNear.length} ближних`,
+      ]);
+    }
+    (window as any).__perf = perf;
+  }
   let drawErrorReported = false;
   function draw(tMs: number) {
+    const t0 = DEBUG_STATUS ? performance.now() : 0;
     try {
       drawFrame(tMs);
     } catch (err) {
@@ -1912,6 +1950,7 @@ async function main() {
         showGpuBanner(`Сбой в кадре: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+    if (DEBUG_STATUS) { perf.frame = performance.now() - t0; perfTick(); }
     requestAnimationFrame(draw);
   }
   function drawFrame(tMs: number) {
@@ -1949,9 +1988,11 @@ async function main() {
     // Стройка чанков из очереди (см. pendingNear/pendingFar выше) — общий
     // бюджет на near+far вместе, near в приоритете (первым забирает своё
     // время из бюджета), т.к. он ближе к камере и заметнее дальнего кольца.
-    const chunkDeadline = performance.now() + CHUNK_BUDGET_MS;
+    const chunkStart = performance.now();
+    const chunkDeadline = chunkStart + CHUNK_BUDGET_MS;
     drainPendingNear(chunkDeadline);
     drainPendingFar(chunkDeadline);
+    if (DEBUG_STATUS) perf.chunks = performance.now() - chunkStart;
     const eye: Vec3 = [
       cam.target[0] + Math.sin(cam.yaw) * Math.cos(cam.pitch) * cam.dist,
       cam.target[1] + Math.sin(cam.pitch) * cam.dist,
@@ -2012,7 +2053,11 @@ async function main() {
     const cw = canvas.clientWidth, ch = canvas.clientHeight;
     const focalY = 0.5 * ch / Math.tan(CAM_FOVY / 2);
     let modelDrawCount = 0;
+    const renderStart = DEBUG_STATUS ? performance.now() : 0;
     renderer.frame({ r: FOG_COLOR[0], g: FOG_COLOR[1], b: FOG_COLOR[2], a: 1 }, (pass) => {
+      // Пайплайн моделей — один раз на всю пачку, а не перед каждой моделью
+      // (см. beginModels в modelRenderer.ts).
+      modelPipeline.beginModels(pass);
       for (const eid of found) {
         if (!isModelOnScreen(eid, vp, cw, ch, focalY)) continue;
         const inst = instances.get(eid);
@@ -2020,8 +2065,11 @@ async function main() {
       }
     });
     (window as any).__modelDrawCount = modelDrawCount;
+    if (DEBUG_STATUS) perf.render = performance.now() - renderStart;
+    const labelStart = DEBUG_STATUS ? performance.now() : 0;
     updateAmbientLabels();
     updateBattleLabels();
+    if (DEBUG_STATUS) perf.labels = performance.now() - labelStart;
   }
   requestAnimationFrame(draw);
 

@@ -263,8 +263,14 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat,
     try { instance.modelBuf.destroy(); } catch (_) { /* устройство уже потеряно — освобождать нечего */ }
   }
 
-  function draw(pass: GPURenderPassEncoder, instance: ModelInstance) {
+  // Пайплайн у всех моделей ОДИН и тот же — ставить его заново перед каждой
+  // из них незачем: в кадре с плотной застройкой это несколько десятков
+  // лишних смен состояния прохода. Ставим один раз на всю пачку (beginModels
+  // ниже), а draw() занимается только своей моделью.
+  function beginModels(pass: GPURenderPassEncoder) {
     pass.setPipeline(pipeline);
+  }
+  function draw(pass: GPURenderPassEncoder, instance: ModelInstance) {
     pass.setBindGroup(0, instance.bindGroup);
     pass.setVertexBuffer(0, instance.model.vao.posBuf);
     pass.setVertexBuffer(1, instance.model.vao.nrmBuf);
@@ -273,7 +279,7 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat,
     pass.drawIndexed(instance.model.vao.indexCount);
   }
 
-  return { createInstance, destroyInstance, draw, setFog, setVP };
+  return { createInstance, destroyInstance, beginModels, draw, setFog, setVP };
 }
 
 export interface ModelInstance {
