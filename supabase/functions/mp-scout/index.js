@@ -478,7 +478,12 @@ Deno.serve(async (req) => {
     const { data: march, error: mErr } = await admin.from("marches").insert({
       world_id: world.id, player_id: attRow.id, mode: "scout", state: "go",
       tx: defRow.x, ty: defRow.y, t0: nowSec, t1: nowSec + travel,
-      units: { inf: {}, arc: {}, cav: {}, sie: {} }, data: { defender_id: defRow.id },
+      units: { inf: {}, arc: {}, cav: {}, sie: {} },
+      // spd — чтобы mp-tick мог посчитать ОБРАТНУЮ дорогу тем же темпом (у
+      // разведки теперь есть возвращение, см. applyScoutArrive/applyScoutHome:
+      // донесение приходит, когда лазутчик дошёл домой, а не когда добрался
+      // до цели). Тот же приём "снимок скорости при отправке", что у сбора.
+      data: { defender_id: defRow.id, spd: baseSpeed * speedMult },
     }).select().single();
     if (mErr) return jsonResponse({ err: mErr.message }, 500);
 

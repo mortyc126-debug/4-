@@ -154,6 +154,10 @@ Deno.serve(async (req) => {
     const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
+    // Разовая уборка старых наложений — до выборки событий ниже, иначе на
+    // пустом тике (нет событий -> ранний return) она никогда бы не завелась.
+    await ensureOverlapCleanupScheduled(admin);
+
     const { data: due, error: dueErr } = await admin
       .from("events").select("*")
       .eq("processed", false)
@@ -197,12 +201,14 @@ Deno.serve(async (req) => {
         else if (ev.type === "march_home") await applyMarchHome(admin, ev);
         else if (ev.type === "heal") await applyHeal(admin, ev);
         else if (ev.type === "scout_arrive") await applyScoutArrive(admin, ev);
+        else if (ev.type === "scout_home") await applyScoutHome(admin, ev);
         else if (ev.type === "research") await applyResearch(admin, ev);
         else if (ev.type === "craft") await applyCraft(admin, ev);
         else if (ev.type === "gathered") await applyGathered(admin, ev);
         else if (ev.type === "node_respawn") await applyNodeRespawn(admin, ev);
         else if (ev.type === "camp_respawn") await applyCampRespawn(admin, ev);
         else if (ev.type === "ambient_seed") await applyAmbientSeed(admin, ev);
+        else if (ev.type === "overlap_cleanup") await applyOverlapCleanup(admin, ev);
         // else: неизвестный/ещё не перенесённый тип — оставляем как есть,
         // не помечаем processed, чтобы не потерять событие молча; заберётся
         // следующим тиком после того, как для него появится case (claimed_at
@@ -342,11 +348,10 @@ async function applyScoutArrive(admin, ev) {
   const { data: m, error: mErr } = await admin.from("marches").select("*").eq("id", marchId).maybeSingle();
   if (mErr) throw mErr;
   if (!m || m.state !== "go") return; // уже разобрано/отменено
-  await admin.from("marches").delete().eq("id", m.id);
 
   const { data: attRow, error: aErr } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
   if (aErr) throw aErr;
-  if (!attRow) return; // хозяина нет — некому писать донесение
+  if (!attRow) { await admin.from("marches").delete().eq("id", m.id); return; } // хозяина нет — некому писать донесение
 
   const defenderId = m.data && m.data.defender_id;
   const { data: defRow, error: dErr } = defenderId == null
@@ -354,14 +359,9 @@ async function applyScoutArrive(admin, ev) {
     : await admin.from("players").select("*").eq("id", defenderId).maybeSingle();
   if (dErr) throw dErr;
   if (!defRow) {
-    // Цель пропала между отправкой и прибытием — зеркало "Лазутчик не нашёл
-    // города на месте" (index.html:4883), только письмо всё равно кладём
-    // (в клиенте это просто logg() без почты — но там игрок сам за столом,
-    // а здесь письмо единственный канал узнать об исходе вообще).
-    const { error: mailErr } = await admin.from("mail").insert({
-      world_id: m.world_id, player_id: attRow.id, kind: "scout", data: { found: false },
-    });
-    if (mailErr) throw mailErr;
+    // Цель пропала между отправкой и прибытием. Донесение всё равно будет —
+    // но, как и всякое другое, по возвращении лазутчика домой.
+    await turnScoutHome(admin, m, attRow, { found: false });
     return;
   }
 
@@ -404,8 +404,49 @@ async function applyScoutArrive(admin, ev) {
     data.wounded = wounded;
   }
 
+  // Сведения сняты (это и есть момент, когда лазутчик смотрит на город) —
+  // но письмо отдаст applyScoutHome, когда он дойдёт обратно.
+  await turnScoutHome(admin, m, attRow, data);
+}
+
+// Автор: «разведка — как только разведчик возвращается, уведомление о
+// разведке». Раньше лазутчик ПРОПАДАЛ с карты в момент прибытия к цели, и
+// письмо уходило тогда же — обратной дороги у разведки не было вовсе.
+// Теперь марш разворачивается домой (его видно на карте), донесение едет
+// вместе с ним в data.scout_report, а письмо кладёт applyScoutHome.
+async function turnScoutHome(admin, m, attRow, report) {
+  const nowSec = Date.now() / 1000;
+  const dist = Math.hypot(attRow.x - m.tx, attRow.y - m.ty);
+  // spd кладёт mp-scout при отправке (снимок скорости). У маршей, вылетевших
+  // ДО этой правки, поля нет — тогда берём длительность дороги туда: путь
+  // симметричный, это честнее любой выдуманной константы.
+  const spd = m.data && m.data.spd;
+  const travelBack = spd ? Math.max(15, (dist / spd) * 60)
+                         : Math.max(15, (m.t1 - m.t0) || 60);
+  const { error: updErr } = await admin.from("marches")
+    .update({ state: "back", t0: nowSec, t1: nowSec + travelBack,
+              data: { ...(m.data || {}), scout_report: report } }).eq("id", m.id);
+  if (updErr) throw updErr;
+  const { error: evErr } = await admin.from("events").insert({
+    world_id: m.world_id, fire_at: new Date((nowSec + travelBack) * 1000).toISOString(),
+    type: "scout_home", data: { march_id: m.id },
+  });
+  if (evErr) throw evErr;
+}
+
+// Лазутчик дома — вот теперь донесение. Отдельное событие, а не общий
+// march_home: у разведки нет ни войск, ни добычи, ей нужен только этот разбор.
+async function applyScoutHome(admin, ev) {
+  const marchId = ev.data && ev.data.march_id;
+  if (marchId == null) return;
+  const { data: m, error: mErr } = await admin.from("marches").select("*").eq("id", marchId).maybeSingle();
+  if (mErr) throw mErr;
+  if (!m || m.state !== "back") return; // уже разобрано/отозвано
+  await admin.from("marches").delete().eq("id", m.id);
+  const report = m.data && m.data.scout_report;
+  if (!report) return;
   const { error: mailErr } = await admin.from("mail").insert({
-    world_id: m.world_id, player_id: attRow.id, kind: "scout", data,
+    world_id: m.world_id, player_id: m.player_id, kind: "scout", data: report,
   });
   if (mailErr) throw mailErr;
 }
@@ -738,6 +779,125 @@ async function applyAmbientSeed(admin, ev) {
     });
   }
 }
+// =============================================================================
+// РАЗОВАЯ ЧИСТКА УЖЕ СУЩЕСТВУЮЩИХ НАЛОЖЕНИЙ (type:"overlap_cleanup").
+//
+// Автор: «миграции не произошло, старые точки как стояли наложенные друг на
+// друга, так и стоят». Всё верно, и вот почему клиентская миграция тут ни при
+// чём: thinMapDensity10 в index.html ходит по W.map — это ОДИНОЧНАЯ игра. В
+// общем мире точки и лагеря живут строками map_cells в базе, их не видит
+// никакая клиентская миграция. А правка размещения (MIN_STRUCT_GAP=30 и маска
+// настоящей воды) запрещает только НОВЫЕ наложения — то, что уже лежит в
+// таблице, она не трогает по определению.
+//
+// Поэтому чистка живёт здесь, серверным событием, по образцу ambient_seed.
+// Заводится один раз миграцией 0006 и себя НЕ перепланирует (в отличие от
+// ambient_seed) — это разовая уборка, а не цепочка.
+//
+// Что удаляется:
+//   1. клетки в НАСТОЯЩЕЙ воде (по запечённой маске выше — той же, что теперь
+//      判 судит размещение);
+//   2. клетки ближе MIN_STRUCT_GAP к ЗАМКУ — у столицы приоритет, она никогда
+//      не удаляется (это состояние игрока, из зерна не восстанавливается);
+//   3. из пары клеток ближе MIN_STRUCT_GAP друг к другу — одна: точка сбора
+//      ценнее лагеря (тот же приоритет, что и у клиентской чистки), при равном
+//      типе удаляется вторая по порядку.
+//
+// Чего чистка НЕ трогает никогда:
+//   - игроков (таблица players вообще не изменяется);
+//   - клетку, в которую прямо сейчас идёт чей-то поход (marches по tx/ty) —
+//     иначе отряд прибыл бы в пустоту. Такие клетки просто остаются как есть,
+//     следующая уборка (если её завести повторно) их подберёт.
+// Заводится САМА, без ручного SQL: миграция 0006 остаётся как способ
+// запустить уборку повторно, но обычному пользователю достаточно задеплоить
+// эту функцию. Флаг живёт в памяти экземпляра — проверка делается один раз на
+// холодный старт (экземпляры живут долго), то есть это единицы лишних запросов
+// в сутки, а не запрос на каждый тик.
+let cleanupEnsured = false;
+async function ensureOverlapCleanupScheduled(admin) {
+  if (cleanupEnsured) return;
+  cleanupEnsured = true;
+  try {
+    const { data: worlds } = await admin.from("worlds").select("id");
+    for (const w of (worlds || [])) {
+      const { data: seen } = await admin.from("events").select("id")
+        .eq("world_id", w.id).eq("type", "overlap_cleanup").limit(1);
+      if (seen && seen.length) continue;
+      await admin.from("events").insert({
+        world_id: w.id, fire_at: new Date().toISOString(), type: "overlap_cleanup", data: {},
+      });
+      console.log("overlap_cleanup: уборка запланирована для мира", w.id);
+    }
+  } catch (e) {
+    // Не критично: уборка — разовая гигиена, а не то, без чего тик не работает.
+    console.error("overlap_cleanup: не удалось запланировать:", String(e && e.message || e));
+  }
+}
+const CLEANUP_BATCH_LOG = 40; // сколько удалённых координат печатать в лог, чтобы не залить его целиком
+async function applyOverlapCleanup(admin, ev) {
+  const worldId = ev.world_id;
+  const [cellsRes, playersRes, marchesRes] = await Promise.all([
+    admin.from("map_cells").select("x,y,t").eq("world_id", worldId),
+    admin.from("players").select("x,y").eq("world_id", worldId),
+    admin.from("marches").select("tx,ty,state").eq("world_id", worldId),
+  ]);
+  if (cellsRes.error) throw cellsRes.error;
+  if (playersRes.error) throw playersRes.error;
+  const cells = cellsRes.data || [];
+  const players = playersRes.data || [];
+  // Цели идущих походов — их клетки неприкосновенны (см. комментарий выше).
+  const targeted = new Set();
+  for (const m of (marchesRes.data || [])) {
+    if (m.state !== "back") targeted.add(m.tx + "," + m.ty);
+  }
+  const key = (c) => c.x + "," + c.y;
+  const drop = new Set();
+  const dropIf = (c) => { if (!targeted.has(key(c))) drop.add(key(c)); };
+
+  // 1) вода
+  for (const c of cells) if (isRealWater(c.x, c.y)) dropIf(c);
+  // 2) вплотную к замку
+  for (const c of cells) {
+    if (drop.has(key(c))) continue;
+    for (const p of players) {
+      if (Math.hypot(p.x - c.x, p.y - c.y) < MIN_STRUCT_GAP) { dropIf(c); break; }
+    }
+  }
+  // 3) пары между собой; точка (node) ценнее лагеря/форта
+  const rank = (c) => (c.t === "node" ? 0 : 1);
+  const sorted = cells.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+  for (let i = 0; i < sorted.length; i++) {
+    if (drop.has(key(sorted[i]))) continue;
+    for (let j = i + 1; j < sorted.length; j++) {
+      if (drop.has(key(sorted[j]))) continue;
+      if (sorted[j].x - sorted[i].x >= MIN_STRUCT_GAP) break; // отсортировано по x — дальше только дальше
+      if (Math.hypot(sorted[i].x - sorted[j].x, sorted[i].y - sorted[j].y) >= MIN_STRUCT_GAP) continue;
+      // Удаляем менее ценную из пары. Если та под защитой похода — пробуем вторую.
+      const a = sorted[i], b = sorted[j];
+      const loser = rank(a) <= rank(b) ? b : a;
+      const other = loser === a ? b : a;
+      if (!targeted.has(key(loser))) drop.add(key(loser));
+      else if (!targeted.has(key(other))) drop.add(key(other));
+      if (drop.has(key(a))) break; // сам i выбыл — дальше сравнивать его не с кем
+    }
+  }
+
+  // Удаление по одной строке: пар координат немного (десятки), а PostgREST не
+  // умеет IN по составному ключу — честнее явный цикл, чем самодельный or-фильтр.
+  let removed = 0;
+  const sample = [];
+  for (const k of drop) {
+    const [x, y] = k.split(",").map(Number);
+    const { error } = await admin.from("map_cells").delete()
+      .eq("world_id", worldId).eq("x", x).eq("y", y);
+    if (error) { console.error("overlap_cleanup: не удалось удалить", k, error.message); continue; }
+    removed++;
+    if (sample.length < CLEANUP_BATCH_LOG) sample.push(k);
+  }
+  console.log(`overlap_cleanup: было клеток ${cells.length}, удалено ${removed}, ` +
+    `под защитой походов ${targeted.size}; примеры удалённых: ${sample.join(" ")}`);
+}
+
 const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];
 // load — index.html:2583-2588 TROOP_TYPES (там же атк/защ/хп/скорость/магия,
 // но load не переносился в этот файл раньше — combat-математике он не
@@ -2141,12 +2301,9 @@ function addXp(p, xp) {
   }
   return leveledTo;
 }
-// Тем же текстом, что и pushMail(...) в одиночке (index.html:5509-5510) —
-// один общий помощник для обоих вызывающих мест ниже.
-function genLevelMailRow(worldId, playerId, lv) {
-  return { world_id: worldId, player_id: playerId, kind: "note",
-    data: { title: "Генерал повышен", body: "Ваш генерал достиг " + lv + " уровня. Доступно новое очко таланта." } };
-}
+// (genLevelMailRow удалена вместе с самими письмами о повышении генерала —
+// автор попросил их исключить; addXp выше по-прежнему считает уровень и
+// очки, просто больше никого об этом не извещает почтой.)
 function banditArmy(lv) {
   const u = { inf: {}, arc: {}, cav: {}, sie: {} };
   TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) u[t][i] = 0; });
@@ -2631,7 +2788,9 @@ async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, no
     { world_id: m.world_id, player_id: attRow.id, kind: "battle", data: { role: "attacker", opponent_id: defRow.id, opponent_nick: defRow.nick, ...summary } },
     { world_id: m.world_id, player_id: defRow.id, kind: "battle", data: { role: "defender", opponent_id: attRow.id, opponent_nick: attRow.nick, ...summary } },
   ];
-  if (genLeveledTo != null) mailRows.push(genLevelMailRow(m.world_id, attRow.id, genLeveledTo));
+  // Письмо о повышении генерала убрано по прямой просьбе автора («они
+  // лишние»). Сам addXp по-прежнему возвращает новый уровень — значение
+  // просто больше не превращается в почту.
   const { error: mailErr } = await admin.from("mail").insert(mailRows);
   if (mailErr) throw mailErr;
 
@@ -2920,6 +3079,14 @@ async function applyMarchHome(admin, ev) {
     if (m.data && m.data.has_gen && p.gen && p.gen.away === m.id) p.gen.away = null;
     await savePlayerStateOrThrow(admin, row, p);
   }
+  // Отложенное донесение о сборе (см. applyGathered) — письмо приходит ровно
+  // сейчас, когда отряд вошёл в замок.
+  if (m.data && m.data.gather_report) {
+    const { error: gatherMailErr } = await admin.from("mail").insert({
+      world_id: m.world_id, player_id: m.player_id, kind: "gather", data: m.data.gather_report,
+    });
+    if (gatherMailErr) throw gatherMailErr;
+  }
   await admin.from("marches").delete().eq("id", m.id);
 }
 
@@ -2957,8 +3124,10 @@ async function applyGathered(admin, ev) {
   const dist = (m.data && m.data.dist) || 0, spd = (m.data && m.data.spd) || 1;
   const travelBack = Math.max(15, (dist / spd) * 60);
   const carry = {}; if (m.data && m.data.res) carry[m.data.res] = m.data.take || 0;
+  let gatherReport = null;
   const { error: updM } = await admin.from("marches")
-    .update({ state: "back", t0: nowSec, t1: nowSec + travelBack, data: { ...m.data, carry } }).eq("id", m.id);
+    .update({ state: "back", t0: nowSec, t1: nowSec + travelBack,
+              data: { ...m.data, carry, gather_report: gatherReport } }).eq("id", m.id);
   if (updM) throw updM;
   // Донесение о сборе — зеркало pushMail({cat:"report",kind:"gather",...})
   // в EV.gathered одиночки (index.html) — автор сообщил: «я собрал
@@ -2967,12 +3136,14 @@ async function applyGathered(admin, ev) {
   // — целая ветка была пропущена при переносе. kind:"gather", отдельная от
   // "battle"/"scout"/... — свой fetch (mpRefreshGatherMail) и своя рубрика
   // в index.html (foMultiplayer, "Сбор").
+  // Донесение о сборе тут НЕ отправляется. Автор: «отряд со сбора вернулся —
+  // письмо получил как только они в замок зашли». Раньше письмо уходило
+  // ровно здесь — сбор на точке закончен, а отряду идти домой ещё всю
+  // дорогу; со стороны это и выглядело как «письмо приходит через время
+  // после сбора». Складываем донесение в данные марша, отдаёт его
+  // applyMarchHome по прибытии.
   if (m.data && m.data.res && (m.data.take || 0) > 0) {
-    const { error: gatherMailErr } = await admin.from("mail").insert({
-      world_id: m.world_id, player_id: m.player_id, kind: "gather",
-      data: { res: m.data.res, amount: m.data.take, x: m.tx, y: m.ty },
-    });
-    if (gatherMailErr) throw gatherMailErr;
+    gatherReport = { res: m.data.res, amount: m.data.take, x: m.tx, y: m.ty };
   }
   const { error: evErr } = await admin.from("events").insert({
     world_id: m.world_id, fire_at: new Date((nowSec + travelBack) * 1000).toISOString(),
@@ -3358,7 +3529,7 @@ async function finalizeRaidBattle(admin, m, attRow, attP, state, nowSec) {
       weather: state.weather.id, weatherName: state.weather.name, log: state.log || [],
     },
   }];
-  if (genLeveledTo != null) raidMailRows.push(genLevelMailRow(m.world_id, attRow.id, genLeveledTo));
+  // См. тот же отказ от письма о повышении генерала выше (PvP).
   const { error: mailErr } = await admin.from("mail").insert(raidMailRows);
   if (mailErr) throw mailErr;
 
