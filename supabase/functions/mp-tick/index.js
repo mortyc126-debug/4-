@@ -2568,6 +2568,30 @@ async function applyMarchArrive(admin, ev) {
   // лагеря (m.data.camp_lv, снят на отправке в mp-raid), не с игроком —
   // отдельная функция ниже, та же причина отдельной ветки, что у gather.
   if (m.mode === "raid") { await applyRaidArrive(admin, m); return; }
+  // mode:"move" — отряд перенаправлен (mp-redirect) на пустое место или на
+  // цель, для которой у сервера нет подготовленного действия. Дошёл — и
+  // разворачивается домой, ровно как в RoK при переносе армии на чистую
+  // клетку. Тот же расчёт обратной дороги, что и у остальных возвращений.
+  if (m.mode === "move") {
+    const { data: ownerRow } = await admin.from("players").select("x,y").eq("id", m.player_id).maybeSingle();
+    const nowSec2 = Date.now() / 1000;
+    const homeX = ownerRow ? ownerRow.x : m.tx, homeY = ownerRow ? ownerRow.y : m.ty;
+    const dist2 = Math.hypot(homeX - m.tx, homeY - m.ty);
+    // Скорость — снимок, положенный в марш при отправке/перенаправлении (тот
+    // же приём, что у сбора: m.data.spd). Здесь её не пересчитываем: bonuses()
+    // в этом файле про бой, а не про дорогу, а marchSpeed сюда никогда и не
+    // переносился. Без снимка (совсем старый марш) берём длительность дороги
+    // сюда — путь симметричный.
+    const spd2 = (m.data && m.data.spd) || 0;
+    const back2 = spd2 ? Math.max(15, (dist2 / spd2) * 60)
+                       : Math.max(15, (m.t1 - m.t0) || 60);
+    await admin.from("marches").update({ state: "back", t0: nowSec2, t1: nowSec2 + back2 }).eq("id", m.id);
+    await admin.from("events").insert({
+      world_id: m.world_id, fire_at: new Date((nowSec2 + back2) * 1000).toISOString(),
+      type: "march_home", data: { march_id: m.id },
+    });
+    return;
+  }
 
   const { data: attRow, error: aErr } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
   if (aErr) throw aErr;

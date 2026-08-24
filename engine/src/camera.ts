@@ -83,6 +83,14 @@ export function attachOrbitControls(canvas: HTMLCanvasElement, cam: OrbitCamera)
   let pinch: { d: number; y: number; dist: number; yaw: number; pitch: number; angle: number } | null = null;
   let tapCand: { x: number; y: number; t: number } | null = null;
   let onTap: ((clientX: number, clientY: number) => void) | null = null;
+  // «Захват» — жест, который начался НЕ на пустом месте, а на чём-то, что
+  // приложение хочет тащить само (перетаскивание похода, см. main.ts). Пока
+  // захват держится, камера не панорамирует: иначе один и тот же палец
+  // одновременно тащил бы отряд и уводил под ним мир.
+  let onGrabStart: ((clientX: number, clientY: number) => boolean) | null = null;
+  let onGrabMove: ((clientX: number, clientY: number) => void) | null = null;
+  let onGrabEnd: ((clientX: number, clientY: number) => void) | null = null;
+  let grabbing = false;
   // Зовётся ТОЛЬКО из настоящих жестов ниже (pointerdown/wheel/keydown) —
   // никогда программно — поэтому main.ts вешает сюда сброс режима слежения
   // за походом (startFollowMarch): "пока не прервёшь" из запроса пользователя
@@ -148,9 +156,22 @@ export function attachOrbitControls(canvas: HTMLCanvasElement, cam: OrbitCamera)
       // cam.dist или дёрнуть камеру от несуществующего состояния).
     }
     if (pts.size === 1) {
-      drag = { x: e.clientX, y: e.clientY, tx: cam.target[0], tz: cam.target[2] };
-      tapCand = { x: e.clientX, y: e.clientY, t: performance.now() };
+      // Спрашиваем приложение ДО того, как заводить панораму: если под
+      // пальцем то, что оно тащит само, камера в этом жесте не участвует.
+      grabbing = !!onGrabStart?.(e.clientX, e.clientY);
+      if (grabbing) {
+        drag = null;
+        // tapCand оставляем: короткое касание без движения по тому же
+        // объекту должно остаться обычным тапом (выбор марша), а не
+        // превратиться в перетаскивание длиной ноль.
+        tapCand = { x: e.clientX, y: e.clientY, t: performance.now() };
+      } else {
+        drag = { x: e.clientX, y: e.clientY, tx: cam.target[0], tz: cam.target[2] };
+        tapCand = { x: e.clientX, y: e.clientY, t: performance.now() };
+      }
     } else if (pts.size === 2) {
+      // Второй палец отменяет захват — это уже щипок/поворот камеры.
+      if (grabbing) { grabbing = false; onGrabEnd?.(NaN, NaN); }
       drag = null;
       tapCand = null;
       const m = mid();
@@ -163,6 +184,7 @@ export function attachOrbitControls(canvas: HTMLCanvasElement, cam: OrbitCamera)
     e.preventDefault();
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (tapCand && Math.hypot(e.clientX - tapCand.x, e.clientY - tapCand.y) > TAP_MOVE) tapCand = null;
+    if (grabbing) { onGrabMove?.(e.clientX, e.clientY); return; }
     if (pts.size >= 2 && pinch) {
       const m = mid();
       cam.dist = Math.max(MIN_DIST, Math.min(MAX_DIST, pinch.dist * (pinch.d / Math.max(12, m.d))));
@@ -184,8 +206,16 @@ export function attachOrbitControls(canvas: HTMLCanvasElement, cam: OrbitCamera)
   });
 
   function lift(e: PointerEvent) {
-    if (tapCand && pts.size === 1 && performance.now() - tapCand.t < TAP_TIME) {
-      onTap?.(tapCand.x, tapCand.y);
+    const wasTap = !!(tapCand && pts.size === 1 && performance.now() - tapCand.t < TAP_TIME);
+    if (grabbing) {
+      grabbing = false;
+      // Короткое касание без движения — обычный тап (выбрать марш), а не
+      // перетаскивание на месте: NaN говорит main.ts «отменить, не
+      // перенаправлять».
+      onGrabEnd?.(wasTap ? NaN : e.clientX, wasTap ? NaN : e.clientY);
+    }
+    if (wasTap) {
+      onTap?.(tapCand!.x, tapCand!.y);
     }
     tapCand = null;
     pts.delete(e.pointerId);
@@ -253,6 +283,15 @@ export function attachOrbitControls(canvas: HTMLCanvasElement, cam: OrbitCamera)
     // родного "click" — родной click не всегда надёжно отличает тап от
     // только что случившейся панорамы тем же пальцем (тот же приём, что и
     // tryTap()/lift() в прошлом прототипе).
+    // Перетаскивание объекта пальцем: start возвращает true, если жест
+    // забирает приложение (тогда камера в нём не участвует).
+    onGrab(
+      start: (clientX: number, clientY: number) => boolean,
+      move: (clientX: number, clientY: number) => void,
+      end: (clientX: number, clientY: number) => void,
+    ) {
+      onGrabStart = start; onGrabMove = move; onGrabEnd = end;
+    },
     onTap(fn: (clientX: number, clientY: number) => void) {
       onTap = fn;
     },
