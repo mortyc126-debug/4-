@@ -40,6 +40,100 @@ function handleOptions(req) {
   return null;
 }
 
+// =============================================================================
+// savePlayerState — запись состояния игрока с проверкой, что его никто не
+// перезаписал, пока мы считали.
+// =============================================================================
+// Каждая функция здесь работает по схеме "прочитал строку игрока -> изменил
+// объект state в памяти -> записал его ЦЕЛИКОМ обратно". Пока запросы к
+// одному игроку идут строго по очереди, это верно. Но они идут не по
+// очереди: клиент опрашивает mp-join каждые пять секунд (а тот пишет строку
+// игрока — начисляет добычу), и тик мира (mp-tick) пишет её же, разрешая
+// события. Если игрок нажал "Строить" в тот же миг, порядок получался
+// такой:
+//     действие  читает state (постройки нет, ресурсы целы)
+//     mp-join   читает state (то же самое)
+//     действие  пишет  state (ресурсы списаны, стройка в очереди)
+//     mp-join   пишет  state — СВОЙ, прочитанный ДО действия
+// и стройка вместе со списанием исчезала бесследно. Обратный порядок так же
+// легко давал зеркальный исход — ресурсы списаны, а стройки нет. Ни ошибки,
+// ни следа в логах: последняя запись просто затирала чужую.
+//
+// Лечится проверкой версии при записи. updated_at и так есть у строки и и
+// так пишется при каждом изменении — используем его как метку версии:
+// обновляем строку ТОЛЬКО если updated_at всё ещё тот, что мы прочитали.
+// Не совпал — значит кто-то записал раньше нас, и наш объект state построен
+// на устаревших данных; сообщаем об этом вызывающему, а не затираем.
+// Отдельная колонка-счётчик не нужна: миграцию пришлось бы накатывать
+// руками через дашборд (см. supabase/README.md), а updated_at уже на месте.
+//
+// Новая метка строго больше прочитанной (Math.max с +1 мс) — время на
+// сервере может идти назад при коррекции часов, а метка версии обязана
+// только расти, иначе устаревшее значение однажды совпало бы снова.
+//
+// Возвращает { ok:true } | { conflict:true } | { error }.
+async function savePlayerState(admin, row, state) {
+  const prev = row.updated_at;
+  if (!prev) {
+    // Строка прочитана без updated_at (старый вызывающий код) — сверять не с
+    // чем; пишем как раньше, чтобы ничего не сломать, но и не притворяемся,
+    // что проверили.
+    const { error } = await admin.from("players")
+      .update({ state, updated_at: new Date().toISOString() }).eq("id", row.id);
+    return error ? { error } : { ok: true };
+  }
+  const nextIso = new Date(Math.max(Date.now(), Date.parse(prev) + 1)).toISOString();
+  const { data, error } = await admin.from("players")
+    .update({ state, updated_at: nextIso })
+    .eq("id", row.id).eq("updated_at", prev).select("id,updated_at");
+  if (error) return { error };
+  if (!data || !data.length) return { conflict: true };
+  // Своя же метка — на случай второй записи той же строки в этом запросе.
+  row.updated_at = data[0].updated_at;
+  return { ok: true };
+}
+
+
+// Обёртка для тика: проигранная гонка — исключение. Главный цикл ловит его,
+// НЕ помечает событие обработанным (см. try/catch и claimed_at там), и через
+// минуту это же событие разбирается заново — уже поверх свежего состояния.
+// Поэтому запись игрока в каждом обработчике стоит ПЕРВОЙ из всех изменений
+// в базе: если она не прошла, значит не сделано вообще ничего, и повтор
+// начинается с чистого листа, ничего не задваивая.
+async function savePlayerStateOrThrow(admin, row, state) {
+  const r = await savePlayerState(admin, row, state);
+  if (r.error) throw r.error;
+  if (r.conflict) throw new Error("состояние игрока " + row.id + " изменилось во время обработки события — повторим на следующем тике");
+}
+
+// Обе стороны боя пишутся вместе. Строки две, а записать их одним
+// неделимым действием через REST-интерфейс нельзя — поэтому: сначала обе
+// проверки версии по очереди, а если вторая не прошла, первую откатываем на
+// снимок, снятый ДО всех изменений. Без отката получилось бы хуже, чем без
+// проверки вовсе: атакующему потери и добыча уже записаны, событие брошено
+// и через минуту разбирается заново — и всё то же самое начисляется ему
+// ВТОРОЙ раз.
+// Снимок — обычная глубокая копия через JSON: состояние игрока и так
+// хранится в базе как JSONB, то есть заведомо сериализуемо без потерь.
+function snapshotState(state) {
+  return JSON.parse(JSON.stringify(state));
+}
+async function saveBothPlayersOrThrow(admin, rowA, stateA, snapA, rowB, stateB) {
+  await savePlayerStateOrThrow(admin, rowA, stateA);
+  const b = await savePlayerState(admin, rowB, stateB);
+  if (b.ok) return;
+  // Вторая сторона не записалась — возвращаем первую как было.
+  const rollback = await savePlayerState(admin, rowA, snapA);
+  if (!rollback.ok) {
+    // Откат тоже проиграл гонку: между нашей записью и откатом строку успел
+    // переписать кто-то третий. Случай крайне узкий, но молчать о нём
+    // нельзя — пусть будет видно в ответе тика (errors[]).
+    throw new Error("не удалось откатить игрока " + rowA.id + " после отказа записи игрока " + rowB.id + " — состояние могло разъехаться");
+  }
+  if (b.error) throw b.error;
+  throw new Error("состояние игрока " + rowB.id + " изменилось во время боя — повторим на следующем тике");
+}
+
 const BATCH = 200;
 
 Deno.serve(async (req) => {
@@ -139,9 +233,7 @@ async function applyTrain(admin, ev) {
   if (!T) return; // уже разобрано/отменено
   p.troops[T.type][T.tier] = (p.troops[T.type][T.tier] || 0) + T.n;
   p.train[type] = null;
-  const { error: updErr } = await admin
-    .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
-  if (updErr) throw updErr;
+  await savePlayerStateOrThrow(admin, row, p);
 }
 
 // Зеркало EV.heal(d) из index.html:4867-4873 — Фаза 4, седьмой кусочек.
@@ -166,9 +258,7 @@ async function applyHeal(admin, ev) {
   p.wounded[H.type][H.tier] = (p.wounded[H.type][H.tier] || 0) - n;
   p.troops[H.type][H.tier] = (p.troops[H.type][H.tier] || 0) + n;
   p.heal = null;
-  const { error: updErr } = await admin
-    .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
-  if (updErr) throw updErr;
+  await savePlayerStateOrThrow(admin, row, p);
 }
 
 // Зеркало EV.research(d) из index.html:4840-4844 — Фаза 5, Академия. Просто
@@ -187,9 +277,7 @@ async function applyResearch(admin, ev) {
   if (!p.tech) p.tech = {};
   p.tech[R.id] = R.lv;
   p.rsch = null;
-  const { error: updErr } = await admin
-    .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
-  if (updErr) throw updErr;
+  await savePlayerStateOrThrow(admin, row, p);
 }
 
 // index.html:2246 CRAFT_CHANCE — шанс успеха ковки по редкости 1..5, тот
@@ -229,9 +317,7 @@ async function applyCraft(admin, ev) {
     }
   }
   p.craft = null;
-  const { error: updErr } = await admin
-    .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
-  if (updErr) throw updErr;
+  await savePlayerStateOrThrow(admin, row, p);
 }
 
 // index.html RES — нужен здесь только для сборки snap.res (se>=1), больше
@@ -346,9 +432,7 @@ async function applyBuild(admin, ev) {
     p.b[q.b] = q.lv;
   }
   p.queues[slot] = null;
-  const { error: updErr } = await admin
-    .from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
-  if (updErr) throw updErr;
+  await savePlayerStateOrThrow(admin, row, p);
 }
 
 // =============================================================================
@@ -2291,6 +2375,8 @@ async function progressOrFinalizePvpBattle(admin, m, attRow, defRow, attP, defP,
 // battle_round (applyBattleRound) — на исход это не влияет никак, только
 // на то, сколько реального времени бой занял.
 async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, nowSec) {
+  // Снимок ДО единого изменения — на случай отката, см. saveBothPlayersOrThrow.
+  const attSnapshot = snapshotState(attP);
   defP.troops = unitsSub(defP.troops, state.defLossTotal);
   // Фаза 4, шестой кусочек: лазарет защитника (index.html:4351/4411-4423)
   // — часть потерь не гибнет насмерть. Слегка раненые (12%) немедленно
@@ -2356,10 +2442,7 @@ async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, no
   // здесь, пока ещё знаем survivors. Проверка на attP.gen.away===m.id — не
   // отобрать генерала у НОВОГО похода из-за завершения старого.
   if (state.attHasGen && unitsTotal(survivors) <= 0 && attP.gen && attP.gen.away === m.id) attP.gen.away = null;
-  const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
-  if (updA) throw updA;
-  const { error: updD } = await admin.from("players").update({ state: defP, updated_at: new Date().toISOString() }).eq("id", defRow.id);
-  if (updD) throw updD;
+  await saveBothPlayersOrThrow(admin, attRow, attP, attSnapshot, defRow, defP);
 
   const summary = {
     winner: state.winner, sent: state.attStartUnits, attLoss: state.attLossTotal, defLoss: state.defLossTotal,
@@ -2674,8 +2757,7 @@ async function applyMarchHome(admin, ev) {
     // Проверка на p.gen.away===m.id, а не просто m.data.has_gen — не
     // отобрать генерала у НОВОГО похода из-за возврата старого.
     if (m.data && m.data.has_gen && p.gen && p.gen.away === m.id) p.gen.away = null;
-    const { error: updErr } = await admin.from("players").update({ state: p, updated_at: new Date().toISOString() }).eq("id", row.id);
-    if (updErr) throw updErr;
+    await savePlayerStateOrThrow(admin, row, p);
   }
   await admin.from("marches").delete().eq("id", m.id);
 }
@@ -2882,6 +2964,8 @@ async function progressOrFinalizeNodeBattle(admin, m, attRow, occRow, attP, occP
 // оккупантом, либо стартует новый — если атакующий отбил точку), проигравший
 // уходит домой с тем, что уцелело.
 async function finalizeNodeBattle(admin, m, attRow, occRow, occMarch, attP, occP, state, nowSec) {
+  // Снимок ДО единого изменения — на случай отката, см. saveBothPlayersOrThrow.
+  const attSnapshot = snapshotState(attP);
   if (!attP.wounded) attP.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
   TKEYS.forEach((t) => { if (!attP.wounded[t]) attP.wounded[t] = {}; });
   if (!occP.wounded) occP.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
@@ -2906,10 +2990,7 @@ async function finalizeNodeBattle(admin, m, attRow, occRow, occMarch, attP, occP
   if (state.attHasGen && unitsTotal(attSurvivors) <= 0 && attP.gen && attP.gen.away === m.id) attP.gen.away = null;
   if (state.defHasGen && unitsTotal(occSurvivors) <= 0 && occP.gen && occP.gen.away === occMarch.id) occP.gen.away = null;
 
-  const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
-  if (updA) throw updA;
-  const { error: updO } = await admin.from("players").update({ state: occP, updated_at: new Date().toISOString() }).eq("id", occRow.id);
-  if (updO) throw updO;
+  await saveBothPlayersOrThrow(admin, attRow, attP, attSnapshot, occRow, occP);
 
   const summary = {
     winner: state.winner, sent: state.attStartUnits, attLoss: state.attLossTotal, defLoss: state.defLossTotal,
@@ -3071,6 +3152,23 @@ async function finalizeRaidBattle(admin, m, attRow, attP, state, nowSec) {
     tomeDrops = bookDrop(campLv * 100);
     if (!attP.tomes) attP.tomes = {};
     for (const v in tomeDrops) attP.tomes[v] = (attP.tomes[v] || 0) + tomeDrops[v];
+  }
+
+  // index.html:4950-4957 — та же логика, что и в applyMarchArrive выше
+  // (см. её заголовок): если весь отряд полёг, домашнего пути и
+  // applyMarchHome не будет, освобождаем away прямо здесь.
+  if (state.attHasGen && unitsTotal(survivors) <= 0 && attP.gen && attP.gen.away === m.id) attP.gen.away = null;
+  // Запись игрока поднята в НАЧАЛО списка изменений (раньше стояла в самом
+  // конце, после удаления лагеря, события его возрождения и письма). Причина
+  // — проверка версии в savePlayerState: при проигранной гонке эта функция
+  // бросает, событие не помечается обработанным и разбирается заново через
+  // минуту (см. аренду claimed_at в главном цикле). Если бы до броска уже
+  // успели удалиться клетка лагеря и уйти письмо, повтор либо задвоил бы
+  // письмо, либо не нашёл бы лагерь и потерял результат боя целиком. Теперь
+  // первым делом пишется игрок: не записалось — не сделано ничего.
+  await savePlayerStateOrThrow(admin, attRow, attP);
+
+  if (state.winner === "att") {
     await admin.from("map_cells").delete().eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY);
     // Фаза 8, кусочек 3 — зеркало mapDelete+schedule(CFG.RESPAWN_CAMP,
     // "respawn",...) из index.html (arriveMarch, camp/fort-ветка,
@@ -3102,13 +3200,6 @@ async function finalizeRaidBattle(admin, m, attRow, attP, state, nowSec) {
   if (genLeveledTo != null) raidMailRows.push(genLevelMailRow(m.world_id, attRow.id, genLeveledTo));
   const { error: mailErr } = await admin.from("mail").insert(raidMailRows);
   if (mailErr) throw mailErr;
-
-  // index.html:4950-4957 — та же логика, что и в applyMarchArrive выше
-  // (см. её заголовок): если весь отряд полёг, домашнего пути и
-  // applyMarchHome не будет, освобождаем away прямо здесь.
-  if (state.attHasGen && unitsTotal(survivors) <= 0 && attP.gen && attP.gen.away === m.id) attP.gen.away = null;
-  const { error: updA } = await admin.from("players").update({ state: attP, updated_at: new Date().toISOString() }).eq("id", attRow.id);
-  if (updA) throw updA;
 
   await sendSurvivorsHome(admin, m, nowSec, survivors, carry);
 }

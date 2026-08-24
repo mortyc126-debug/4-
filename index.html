@@ -13141,7 +13141,20 @@ async function mpEnsureAuth(){
   if(error) throw error;
   return data.session;
 }
-async function mpCall(fn, body){
+// tries — сколько ещё раз можно повторить при ответе "состояние изменилось"
+// (HTTP 409 + retry:true, см. savePlayerState/conflictResponse в
+// supabase/functions/*). Такой ответ означает, что пока сервер считал наше
+// действие, строку игрока успел переписать кто-то ещё — обычно наш же опрос
+// (mp-join раз в 5с начисляет добычу) или тик мира. Раньше сервер в этом
+// случае молча затирал чужую запись своей, и одна из двух правок пропадала
+// без следа: списанные ресурсы без постройки или постройка без списания.
+// Теперь он честно отказывается и просит повторить — а повторяем мы сами,
+// не показывая игроку ничего: сервер перечитает свежее состояние и посчитает
+// действие заново уже по нему. Небольшая пауза перед повтором разводит нас
+// с тем, кто выиграл гонку. Трёх попыток заведомо достаточно: конкурент —
+// это опрос раз в пять секунд, а не поток запросов.
+async function mpCall(fn, body, tries){
+  if(tries===undefined) tries=3;
   const session = await mpEnsureAuth();
   const ctrl = new AbortController();
   const timer = setTimeout(()=>ctrl.abort(), 15000);
@@ -13160,6 +13173,10 @@ async function mpCall(fn, body){
     clearTimeout(timer);
   }
   const j = await r.json().catch(()=>({}));
+  if(r.status===409 && j.retry && tries>0){
+    await new Promise(res=>setTimeout(res, 220+Math.random()*180));
+    return mpCall(fn, body, tries-1);
+  }
   if(!r.ok || j.err) throw new Error(j.err || ("HTTP "+r.status));
   return j;
 }
