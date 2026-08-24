@@ -2568,6 +2568,21 @@ async function applyMarchArrive(admin, ev) {
   // лагеря (m.data.camp_lv, снят на отправке в mp-raid), не с игроком —
   // отдельная функция ниже, та же причина отдельной ветки, что у gather.
   if (m.mode === "raid") { await applyRaidArrive(admin, m); return; }
+  // mode:"move" — отряд перенаправлен (mp-redirect) на пустое место или на
+  // цель, для которой у сервера нет подготовленного действия. Дошёл — и
+  // разворачивается домой, ровно как в RoK при переносе армии на чистую
+  // клетку. Тот же расчёт обратной дороги, что и у остальных возвращений.
+  // mode:"move" — отряд отправили просто В ТОЧКУ (перетаскиванием, см.
+  // mp-redirect). Дошёл — и СТОИТ там, пока не получит новый приказ. Прямое
+  // указание автора: «отряд не принимает решения самостоятельно, только по
+  // клику», поэтому никакого автоматического возвращения домой тут нет.
+  // Никакого события не заводим: ждать нечего, отряд снимется с места только
+  // новым перенаправлением (mp-redirect) или отзывом (mp-recall).
+  if (m.mode === "move") {
+    const nowSec2 = Date.now() / 1000;
+    await admin.from("marches").update({ state: "hold", t0: nowSec2, t1: nowSec2 }).eq("id", m.id);
+    return;
+  }
 
   const { data: attRow, error: aErr } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
   if (aErr) throw aErr;
@@ -2630,7 +2645,32 @@ async function applyMarchArrive(admin, ev) {
 // и того же 6-строчного куска, теперь один.
 async function sendSurvivorsHome(admin, m, nowSec, survivors, carry) {
   if (unitsTotal(survivors) <= 0) { await admin.from("marches").delete().eq("id", m.id); return; }
-  const { battle, ...restData } = m.data || {};
+  // redirect_to снимаем с данных вместе с battle: он одноразовый, ставится
+  // mp-redirect'ом в момент, когда отряд утащили ИЗ БОЯ. Бой к этой строке
+  // уже честно завершён (потери применены, добыча/почта разобраны выше) —
+  // осталось решить, куда идут уцелевшие: домой, как при обычном отступлении,
+  // или туда, куда их тащили. Второе — прямая просьба автора: перетаскивание
+  // во время боя засчитывается как отступление, но место, выбранное пальцем,
+  // при этом не теряется.
+  const { battle, redirect_to, ...restData } = m.data || {};
+  const spdNow = (m.data && m.data.spd) || 1;
+  if (redirect_to && Number.isFinite(redirect_to.x) && Number.isFinite(redirect_to.y)) {
+    // Расстояние — от МЕСТА БОЯ до выбранной точки, а не старое дорожное
+    // (m.data.dist считалось от замка до цели и здесь уже не про то).
+    const distR = Math.hypot(redirect_to.x - m.tx, redirect_to.y - m.ty);
+    const travelR = Math.max(15, (distR / spdNow) * 60);
+    const { error: updR } = await admin.from("marches").update({
+      mode: "move", state: "go", tx: redirect_to.x, ty: redirect_to.y,
+      t0: nowSec, t1: nowSec + travelR, units: survivors, data: { ...restData, carry },
+    }).eq("id", m.id);
+    if (updR) throw updR;
+    const { error: evR } = await admin.from("events").insert({
+      world_id: m.world_id, fire_at: new Date((nowSec + travelR) * 1000).toISOString(),
+      type: "march_arrive", data: { march_id: m.id },
+    });
+    if (evR) throw evR;
+    return;
+  }
   const dist = (m.data && m.data.dist) || 0, spd = (m.data && m.data.spd) || 1;
   const travelBack = Math.max(15, (dist / spd) * 60);
   const { error: updM } = await admin.from("marches")

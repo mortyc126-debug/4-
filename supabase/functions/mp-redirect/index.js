@@ -1,4 +1,16 @@
 // =============================================================================
+// mp-redirect — перенаправить свой поход на ходу (жест «перетащить отряд»)
+// =============================================================================
+// Просьба автора: механика RoK — марш можно взять пальцем и перетащить в
+// другое место, сколько угодно раз, и задача подстраивается под то, что под
+// пальцем. Жест живёт в engine/src/main.ts (controls.onGrab), мост —
+// redirectMarchTo() в index.html, а вся проверка и перепись марша здесь:
+// клиенту нельзя доверить переписывание собственного похода.
+//
+// Самодостаточная копия обвязки (клиент/хелперы/бонусы/marchSpeed) взята из
+// mp-recall — по тому же правилу, что и у остальных функций: Dashboard-
+// редактор не подтягивает относительные импорты.
+// =============================================================================
 // mp-recall — Фаза 4, девятый кусочек: отзыв похода на полпути. Зеркало
 // recallMarch(m) из index.html:4770-4780 — до сих пор поход, однажды
 // отправленный, нельзя было ни отменить, ни развернуть раньше срока:
@@ -66,6 +78,19 @@ function handleOptions(req) {
 }
 
 const TKEYS = ["inf", "arc", "cav", "sie"];
+// ---- Подготовка сбора: те же таблицы и формулы, что в mp-gather ------------
+// Перетащить отряд НА точку и чтобы он там собирал — прямая просьба автора
+// («нужно, чтобы отряд и собирал, а то как-то неполноценно»). Расчёт «сколько
+// увезём и сколько копать» живёт в mp-gather при отправке; здесь его точная
+// копия — по тому же правилу самодостаточных функций, что и всё остальное в
+// этой папке (Dashboard-редактор не подтягивает относительные импорты).
+// Держать в синхроне с mp-gather при правке формул.
+const TROOP_LOAD = { inf: 6, arc: 8, cav: 5, sie: 30 };      // index.html TROOP_TYPES[*].load
+const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];
+const GATHER_BASE_RATE = { food: 3000, wood: 3000, stone: 2250, gold: 1000, amber: 45 };
+// Нежить возит на 20% меньше осадными — её честный размен (index.html troopMod).
+const RACE_LOAD_MOD = { undead: { sie: 0.80 } };
+const troopLoadMod = (race, t) => (RACE_LOAD_MOD[race] && RACE_LOAD_MOD[race][t]) || 1;
 const TROOP_SPEED = { inf: 1.00, arc: 1.10, cav: 1.70, sie: 0.60 };
 const RACE_SPEED_MOD = { undead: { sie: 1.20 } }; // index.html RACE_TROOP_MOD — только нежить меняет скорость (осада)
 const troopSpeedMod = (race, t) => (RACE_SPEED_MOD[race] && RACE_SPEED_MOD[race][t]) || 1;
@@ -460,7 +485,9 @@ Deno.serve(async (req) => {
     let body = {};
     try { body = await req.json(); } catch (_) { /* noop */ }
     const marchId = Number(body.march_id);
+    const nx = Math.round(Number(body.x)), ny = Math.round(Number(body.y));
     if (!Number.isFinite(marchId)) return jsonResponse({ err: "Не указан поход" }, 400);
+    if (!Number.isFinite(nx) || !Number.isFinite(ny)) return jsonResponse({ err: "Не указана цель" }, 400);
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
@@ -473,115 +500,166 @@ Deno.serve(async (req) => {
     if (aErr) return jsonResponse({ err: aErr.message }, 500);
     if (!attRow) return jsonResponse({ err: "Игрок не найден — сначала mp-join" }, 400);
 
+    // Поход обязан быть СВОИМ — фильтр по player_id, а не проверка после
+    // выборки: чужой марш не должен даже читаться этим действием.
     const { data: m, error: mErr } = await admin
       .from("marches").select("*").eq("id", marchId).eq("player_id", attRow.id).maybeSingle();
     if (mErr) return jsonResponse({ err: mErr.message }, 500);
     if (!m) return jsonResponse({ err: "Поход не найден" }, 400);
-    // Фаза 21 — отступление посреди боя. state:"siege" (marches, зеркало
-    // mp-tick/index.js: initPvpBattle/initRaidBattle+applyBattleRound) —
-    // марш уже стоит под чужим городом ИЛИ у лагеря варваров, и бой идёт
-    // несколько тиков подряд (живые полоски HP, см.
-    // supabase/migrations/0005_realtime_battles.sql), а не разрешается
-    // мгновенно, как раньше. И то, и другое — mode:"attack"/"raid" —
-    // устроено на сервере абсолютно одинаково (initRaidBattle/
-    // runRaidBattleRounds — прямое зеркало PvP-версии, см. mp-tick),
-    // поэтому одна и та же ветка ниже обслуживает оба режима. Автор
-    // попросил именно такую кнопку: "отступить, если видишь что
-    // проигрываешь, или до конца воевать" — и то же самое для лагерей.
-    //
-    // НЕ дублируем сюда логику завершения боя (hospitalSplit/addXp/loot/
-    // mail — см. finalizePvpBattle/finalizeRaidBattle в mp-tick, десятки
-    // строк на каждую) — тот же принцип, что уже был явно заявлен в
-    // mp-join про triggerTick(): "дублировать логику применения событий
-    // рискованно, разъедется багфиксами при следующей правке". Вместо
-    // этого просто помечаем m.data.battle retreatRequested:true и толкаем
-    // тикер тем же способом, что и mp-join — applyBattleRound (mp-tick)
-    // сам увидит флаг на следующем же вызове (обычно доли секунды, а не до
-    // 15с планового тика) и честно завершит бой УЖЕ ИМЕЮЩИМСЯ, проверенным
-    // кодом: сторона отступающего забирает ровно то, что уцелело К ЭТОМУ
-    // МОМЕНТУ (ни одного нового раунда после нажатия кнопки), противник
-    // формально победитель (штурм/рейд не удался), но без трофеев — как и
-    // при обычном поражении атакующего.
-    // Фаза 25 — тем же способом отступает и mode:"gather" в state:"siege" —
-    // марш, отправленный собирать, застал точку занятой и завязал бой за
-    // право сбора (см. applyNodeContestArrive в mp-tick). Обычный
-    // "gather"+state:"gather" (уже спокойно собирает, боя нет) сюда не
-    // попадает — ветка ниже, без изменений.
-    if ((m.mode === "attack" || m.mode === "raid" || m.mode === "gather") && m.state === "siege") {
+    if (m.mode === "scout") return jsonResponse({ err: "Лазутчика не перенаправить" }, 400);
+    // Отряд утащили ИЗ БОЯ — это отступление, а не «телепорт из-под удара».
+    // Прямое решение автора: «когда я уведу отряд, пусть засчитывает как
+    // отступление». Логику завершения боя тут НЕ дублируем (hospitalSplit/
+    // addXp/добыча/почта — десятки строк в finalizePvpBattle/
+    // finalizeRaidBattle, разъедется при первой же правке): ставим тот же
+    // флаг retreatRequested, что и кнопка отступления в mp-recall, и толкаем
+    // тикер. applyBattleRound в mp-tick увидит флаг на ближайшем же вызове и
+    // честно завершит бой уже проверенным кодом — отступающий забирает ровно
+    // то, что уцелело к этому моменту, ни одного лишнего раунда.
+    // Место, куда тащили, при этом не теряется: кладём его в data.redirect_to,
+    // и когда бой завершится и отряд соберётся домой, applyMarchHome отправит
+    // его не в замок, а туда (см. там же).
+    if (m.state === "siege") {
       if (!(m.data && m.data.battle)) return jsonResponse({ err: "Бой уже завершается — подождите" }, 400);
-      if (!m.data.battle.retreatRequested) {
-        const battle = { ...m.data.battle, retreatRequested: true };
-        const { error: updM } = await admin.from("marches").update({ data: { ...m.data, battle } }).eq("id", m.id);
-        if (updM) return jsonResponse({ err: updM.message }, 500);
-      }
+      const battle = { ...m.data.battle, retreatRequested: true };
+      const { error: updS } = await admin.from("marches")
+        .update({ data: { ...m.data, battle, redirect_to: { x: nx, y: ny } } }).eq("id", m.id);
+      if (updS) return jsonResponse({ err: updS.message }, 500);
       await triggerTick(SUPABASE_URL);
       return jsonResponse({ ok: true, retreating: true });
     }
-    if (!["attack", "gather", "raid"].includes(m.mode)) return jsonResponse({ err: "Этот поход нельзя отозвать" }, 400);
-    if (m.state === "back") return jsonResponse({ err: "Отряд уже возвращается" }, 400);
-    // "go" — в пути, отзывается всегда; "gather" — уже стоит на точке сбора,
-    // отзывается ТОЛЬКО у mode:"gather" (у attack/raid такого состояния нет
-    // вообще). Любое другое сочетание сюда дойти не должно.
-    // state:"hold" — отряд стоит на позиции, куда его привели перетаскиванием
-    // (см. mode:"move" в mp-tick). Отзывается как обычный: он никуда не идёт,
-    // так что текущая точка — это и есть его координаты цели.
-    if (m.state !== "go" && m.state !== "hold" && !(m.mode === "gather" && m.state === "gather")) {
-      return jsonResponse({ err: "Отряд уже возвращается" }, 400);
-    }
 
     const nowSec = Date.now() / 1000;
-    let curX, curY, newData = m.data || {};
-    if (m.mode === "gather" && m.state === "gather") {
-      // index.html:4783 marchPos — на точке сбора координаты цели напрямую,
-      // без интерполяции (t0/t1 в этом состоянии — длительность СБОРА, не
-      // дорога). Отозван уже на месте — признаём сбор состоявшимся и
-      // простреливаем carry той же формулой, что и applyGathered в конце
-      // таймера (см. заголовок файла — без частичной добычи по времени).
-      curX = m.tx; curY = m.ty;
-      const carry = {};
-      if (m.data && m.data.res) carry[m.data.res] = m.data.take || 0;
-      newData = { ...(m.data || {}), carry };
+    const home = { x: attRow.x, y: attRow.y };
+
+    // ---- где отряд сейчас ---------------------------------------------------
+    // Тот же расчёт, что и у mp-recall: доля пройденного времени по прямой
+    // между концами текущего отрезка. Своего пути сервер не хранит (его
+    // строит клиент, см. mpBuildWorldSnapshot) — для ТАЙМИНГА этого достаточно.
+    let cur;
+    if (m.state === "gather" || m.state === "hold") {
+      cur = { x: m.tx, y: m.ty };            // стоит на точке / на позиции
     } else {
-      // Дословно marchPos(m)/recallMarch(m) из index.html:4770-4784, по
-      // прямой вместо настоящего path[] (см. заголовок файла).
-      const f = clamp((nowSec - m.t0) / Math.max(1, m.t1 - m.t0), 0, 1);
-      curX = attRow.x + (m.tx - attRow.x) * f;
-      curY = attRow.y + (m.ty - attRow.y) * f;
-      // Отозван ещё на подходе — если это gather-марш, резерв узла
-      // (data.take) возвращаем узлу: доехать он так и не успел, добывать
-      // нечего, но ресурс уже списан на отправке (Фаза 8, кусочек 1) — без
-      // возврата он бы пропал в никуда, ни игроку, ни узлу.
-      if (m.mode === "gather" && m.data && m.data.cell_x != null && m.data.cell_y != null && m.data.take > 0) {
+      const from = m.state === "back" ? { x: m.tx, y: m.ty } : home;
+      const to = m.state === "back" ? home : { x: m.tx, y: m.ty };
+      const f = Math.max(0, Math.min(1, (nowSec - m.t0) / Math.max(1, m.t1 - m.t0)));
+      cur = { x: from.x + (to.x - from.x) * f, y: from.y + (to.y - from.y) * f };
+    }
+
+    // ---- снять со сбора, вернув точке недокопанный остаток -------------------
+    // При отправке на точку за отрядом резервируется ВЕСЬ объём (mp-gather
+    // списывает amount сразу), поэтому при досрочном уходе он забирает только
+    // фактически накопанную долю — иначе перетаскивание было бы способом
+    // получить полную добычу мгновенно.
+    const newData = { ...(m.data || {}) };
+    if (m.state === "gather") {
+      const f = Math.max(0, Math.min(1, (nowSec - m.t0) / Math.max(1, m.t1 - m.t0)));
+      const take = (m.data && m.data.take) || 0;
+      const kept = Math.floor(take * f);
+      const back = take - kept;
+      newData.take = kept;
+      if (newData.carry && newData.res) newData.carry = { [newData.res]: kept };
+      const cx = m.data && m.data.cell_x, cy = m.data && m.data.cell_y;
+      if (back > 0 && cx != null && cy != null) {
         const { data: cell } = await admin.from("map_cells")
-          .select("data").eq("world_id", world.id).eq("x", m.data.cell_x).eq("y", m.data.cell_y).maybeSingle();
-        // Точка могла успеть исчезнуть (истощилась начисто кем-то другим,
-        // respawn ещё не подоспел) — тогда возвращать резерв некуда, честно
-        // теряется, тот же исход, что и опоздавший на пустую точку игрок.
+          .select("data").eq("world_id", world.id).eq("x", cx).eq("y", cy).maybeSingle();
         if (cell) {
-          await admin.from("map_cells")
-            .update({ data: { ...(cell.data || {}), amount: ((cell.data && cell.data.amount) || 0) + m.data.take } })
-            .eq("world_id", world.id).eq("x", m.data.cell_x).eq("y", m.data.cell_y);
+          const d2 = { ...(cell.data || {}) };
+          d2.amount = ((d2.amount || 0) + back);
+          await admin.from("map_cells").update({ data: d2 })
+            .eq("world_id", world.id).eq("x", cx).eq("y", cy);
         }
       }
+      // Донесение о сборе поедет вместе с отрядом только если он что-то унёс.
+      newData.gather_report = kept > 0 && newData.res
+        ? { res: newData.res, amount: kept, x: m.tx, y: m.ty } : null;
     }
-    const dist = Math.hypot(attRow.x - curX, attRow.y - curY);
-    const attP = attRow.state;
-    attP.race = attP.race || attRow.race; // самоисцеление легаси-записей, см. mp-attack/mp-train
-    const B = bonuses(attP);
+
+    // ---- что под новой целью → какой это режим ------------------------------
+    // Задача подстраивается под цель (просьба автора — «как в RoK»):
+    // город → штурм, лагерь/форт → рейд, точка → сбор, пустое место → просто
+    // идти туда (mode:"move", applyMarchArrive в mp-tick развернёт домой).
+    // Расу берём и из state, и из колонки: mp-join дублирует её в state
+    // (см. newPlayerState), но у записи, созданной до этого, поля в state нет
+    // — а bonuses() читает p.race первой же строкой и упал бы на всём
+    // перенаправлении. Дешёвая страховка вместо тихого 500.
+    const B = bonuses({ ...(attRow.state || {}), race: (attRow.state && attRow.state.race) || attRow.race });
+    const [cellRes, cityRes] = await Promise.all([
+      admin.from("map_cells").select("t,data").eq("world_id", world.id).eq("x", nx).eq("y", ny).maybeSingle(),
+      admin.from("players").select("id").eq("world_id", world.id).eq("x", nx).eq("y", ny).maybeSingle(),
+    ]);
+    const cell = cellRes.data, city = cityRes.data;
+    let mode = "move";
+    if (city && city.id !== attRow.id) mode = "attack";
+    else if (cell && (cell.t === "camp" || cell.t === "fort")) mode = "raid";
+    else if (cell && cell.t === "node") mode = "gather";
+    if (mode === "gather") {
+      // Готовим сбор ровно так же, как mp-gather при обычной отправке: сколько
+      // отряд увезёт (грузоподъёмность по составу и расе + B.load), сколько на
+      // точке осталось, и сколько секунд копать при нынешней скорости добычи.
+      // Объём резервируется за отрядом сразу (amount уменьшается) — тот же
+      // порядок, что и при отправке, иначе на одну точку можно было бы
+      // перетащить два отряда и оба «увезли бы всё».
+      const attP = attRow.state || {};
+      const cellData = (cell && cell.data) || {};
+      const cellAmount = Math.max(0, Number(cellData.amount) || 0);
+      const hallLv = Array.isArray(attP.b && attP.b.hall)
+        ? Math.max(0, ...attP.b.hall) : ((attP.b && attP.b.hall) || 1);
+      let loadCap = 0;
+      TKEYS.forEach((t) => {
+        for (let i = 1; i <= 5; i++) {
+          const n = (m.units[t] && m.units[t][i]) || 0;
+          loadCap += n * TROOP_LOAD[t] * TIER_MULT[i - 1] * troopLoadMod(attRow.race, t);
+        }
+      });
+      loadCap = Math.round(loadCap * (1 + (B.load || 0)));
+      const take = Math.min(loadCap, cellAmount);
+      if (take > 0) {
+        const res = cellData.res || "food";
+        const isAmber = res === "amber";
+        let rate = GATHER_BASE_RATE[res] * (60 + hallLv * 22) / 82 * (1 + (B.gather || 0));
+        rate *= isAmber ? (1 + (B.gatherAmber || 0))
+          : (res === "food" || res === "wood") ? (1 + (B.gatherFW || 0)) : (1 + (B.gatherSG || 0));
+        const gatherSecs = rate > 0 ? (take / rate) * 3600 : 0;
+        await admin.from("map_cells").update({ data: { ...cellData, amount: Math.max(0, cellAmount - take) } })
+          .eq("world_id", world.id).eq("x", nx).eq("y", ny);
+        newData.res = res; newData.take = take; newData.gather_secs = gatherSecs;
+        newData.cell_x = nx; newData.cell_y = ny;
+        newData.carry = isAmber ? { amber: take } : { [res]: take };
+        newData.gather_report = null;   // донесение появится, когда отряд закончит копать (applyGathered)
+      } else {
+        // Точка пуста или отряду нечем везти — доходит и возвращается, как с
+        // пустого места. Тихо не ломаемся и не «собираем ноль».
+        mode = "move";
+      }
+    }
+
+    const dist = Math.hypot(nx - cur.x, ny - cur.y);
     const spd = marchSpeed(m.units, attRow.race, B.march);
     const travel = Math.max(15, (dist / spd) * 60);
 
-    const { error: updM } = await admin.from("marches")
-      .update({ state: "back", t0: nowSec, t1: nowSec + travel, data: newData }).eq("id", m.id);
+    // spd кладём в марш: по нему mp-tick посчитает обратную дорогу для
+    // mode:"move" (там нет ни marchSpeed, ни дорожных бонусов).
+    newData.spd = spd;
+    const { error: updM } = await admin.from("marches").update({
+      mode, state: "go", tx: nx, ty: ny, t0: nowSec, t1: nowSec + travel, data: newData,
+    }).eq("id", m.id);
     if (updM) return jsonResponse({ err: updM.message }, 500);
+
+    // Старые события этого похода (прибытие/сбор/возвращение) больше не
+    // действительны — гасим, иначе отряд «прибудет» дважды.
+    await admin.from("events").update({ processed: true })
+      .eq("world_id", world.id).eq("processed", false)
+      .in("type", ["march_arrive", "gathered", "march_home"])
+      .contains("data", { march_id: m.id });
 
     const { error: evErr } = await admin.from("events").insert({
       world_id: world.id, fire_at: new Date((nowSec + travel) * 1000).toISOString(),
-      type: "march_home", data: { march_id: m.id },
+      type: "march_arrive", data: { march_id: m.id },
     });
     if (evErr) return jsonResponse({ err: evErr.message }, 500);
 
-    return jsonResponse({ ok: true, eta: travel });
+    return jsonResponse({ ok: true, eta: travel, mode });
   } catch (e) {
     return jsonResponse({ err: String(e && e.message || e) }, 500);
   }

@@ -1232,6 +1232,13 @@ async function main() {
   // раздельными вызовами setMarkers из разных мест (переписывали бы друг
   // друга — сеттер заменяет весь список целиком, а не добавляет).
   let highlightMarker: MarkerEntity | null = null;
+  // Перетаскивание похода пальцем (механика RoK — взял отряд и потащил в
+  // нужное место, сколько угодно раз). dragMarchId — что тащим,
+  // dragTargetMarker — метка под пальцем, она же предпросмотр новой цели;
+  // рисуется тем же instanced-вызовом, что и подсветка выбора (см. draw()).
+  let dragMarchId: number | null = null;
+  let dragTargetMarker: MarkerEntity | null = null;
+  const DRAG_MARKER_COLOR: [number, number, number] = [0.35, 0.85, 0.45];
   let selectedEid: number | null = null;
   // Выбранный поход (id из W.marches, не bitECS eid — марши не заведены
   // как настоящие сущности, см. marchMarkers ниже) — отдельное состояние
@@ -1514,6 +1521,65 @@ async function main() {
     // (screenToGround(...) === null тут раньше просто ничего не делал).
     if (hit?.kind === "ground") notifyParentCartouche(Math.floor(hit.x), Math.floor(hit.z));
   });
+
+  // ---- Перетаскивание похода пальцем ---------------------------------------
+  // Просьба автора: «можно было задать свой марш и перетащить в нужное место и
+  // так сколько хочешь раз, а не просто отправить и смотреть как они идут».
+  // Захват начинается, только если палец лёг на СВОЙ поход (чужие не тащим) —
+  // тогда камера в этом жесте не участвует (см. onGrab в camera.ts), под
+  // пальцем едет метка предполагаемой цели, а по отпусканию наверх уходит
+  // редирект. Короткое касание без движения захватом не считается и остаётся
+  // обычным тапом (выбор похода) — см. NaN из camera.ts.
+  function screenToPx(clientX: number, clientY: number): [number, number] {
+    const rect = canvas.getBoundingClientRect();
+    return [(clientX - rect.left) * (canvas.width / rect.width),
+            (clientY - rect.top) * (canvas.height / rect.height)];
+  }
+  function groundUnder(clientX: number, clientY: number): { x: number; z: number } | null {
+    const [px, py] = screenToPx(clientX, clientY);
+    const hit = findTapTarget(px, py);
+    if (!hit) return null;
+    if (hit.kind === "ground") return { x: hit.x, z: hit.z };
+    // Палец над постройкой/походом — целимся в их клетку, а не «мимо»:
+    // перетащить отряд НА лагерь или город это ровно то, что нужно.
+    if (hit.kind === "entity") {
+      const g = gridOf.get(hit.eid);
+      if (g) return { x: g.x + 0.5, z: g.y + 0.5 };
+    }
+    if (hit.kind === "march") return { x: hit.march.x, z: hit.march.y };
+    return null;
+  }
+  function setDragTarget(clientX: number, clientY: number) {
+    const g = groundUnder(clientX, clientY);
+    if (!g) { dragTargetMarker = null; return; }
+    dragTargetMarker = { x: g.x, y: heightAt(g.x, g.z) * HMAX + 3, z: g.z, color: DRAG_MARKER_COLOR };
+  }
+  controls.onGrab(
+    (clientX, clientY) => {
+      const [px, py] = screenToPx(clientX, clientY);
+      const hit = findTapTarget(px, py);
+      if (hit?.kind !== "march" || !hit.march.own) return false;
+      dragMarchId = hit.march.id;
+      setDragTarget(clientX, clientY);
+      return true;
+    },
+    (clientX, clientY) => { if (dragMarchId !== null) setDragTarget(clientX, clientY); },
+    (clientX, clientY) => {
+      const id = dragMarchId;
+      dragMarchId = null;
+      dragTargetMarker = null;
+      // NaN — жест оказался обычным тапом или перебит вторым пальцем.
+      if (id === null || !isFinite(clientX) || !isFinite(clientY)) return;
+      const g = groundUnder(clientX, clientY);
+      if (!g) return;
+      try {
+        const w = window.parent;
+        if (w && w !== window && typeof (w as any).redirectMarchTo === "function") {
+          (w as any).redirectMarchTo(id, Math.floor(g.x), Math.floor(g.z));
+        }
+      } catch (_) { /* кросс-origin или не встроено — молча */ }
+    },
+  );
 
   // ---- живая синхронизация: партия внутри игры не стоит на месте —
   // ресурсные точки истощаются и появляются заново в другом месте, лагеря
@@ -2094,6 +2160,7 @@ async function main() {
       }
     }
     if (highlightMarker) markers.push(highlightMarker);
+    if (dragTargetMarker) markers.push(dragTargetMarker);
     renderer.setMarkers(markers);
     (window as any).__marchCount = markers.length - (highlightMarker ? 1 : 0);
     // cw/ch/focalY — см. isModelOnScreen выше (frustum cull моделей),
