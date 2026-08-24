@@ -1479,6 +1479,7 @@ async function main() {
   // пересчитывать разницу по тысяче с лишним записей незачем, партия не
   // меняется настолько быстро.
   const SYNC_INTERVAL_MS = 3000;
+  let syncInFlight = false;   // см. затвор у setInterval ниже
   let syncCount = 0;
   async function syncLiveEntities() {
     // Центр отбора — ТЕКУЩАЯ позиция камеры, не стартовая: по мере того как
@@ -1582,7 +1583,18 @@ async function main() {
       // "Мире" интервал снова начинает срабатывать, а пропущенные появления
       // и исчезновения — это дискретные события, они подтянутся одним махом.
       if (isHidden()) return;
-      syncLiveEntities().catch((err) => console.error("live sync:", err));
+      // Затвор: syncLiveEntities() асинхронна (внутри догрузка .glb-моделей
+      // для новых сущностей). На медленной связи один проход легко
+      // переваливает за трёхсекундный интервал — и тогда следующий заход
+      // стартовал поверх незакончившегося, работая с той же картой
+      // keyToEid: сущность, которую первый проход ещё только собирался
+      // завести, для второго выглядела отсутствующей, и он заводил её
+      // повторно — дубли моделей на карте и лишние загрузки.
+      if (syncInFlight) return;
+      syncInFlight = true;
+      syncLiveEntities()
+        .catch((err) => console.error("live sync:", err))
+        .finally(() => { syncInFlight = false; });
     }, SYNC_INTERVAL_MS);
   }
 
@@ -1862,14 +1874,38 @@ async function main() {
     return sx > -marginPx && sx < cw + marginPx && sy > -marginPx && sy < ch + marginPx;
   }
 
+  // Обёртка вокруг кадра. requestAnimationFrame(draw) стоит в самом конце
+  // drawFrame(), а значит любое исключение оттуда (сорванная модель, гонка с
+  // потерянным GPU-устройством, неожиданное число в данных родителя)
+  // означало НАВСЕГДА остановленный рендер: картинка замирает, а весь
+  // остальной JS — подписи, синхронизация сущностей — как ни в чём не бывало
+  // продолжает работать. Ровно тот же обманчивый симптом, что уже описан
+  // выше у трёх прошлых багов этого файла (гонка layout'а, потеря device,
+  // схлопнутая канва), и лечится он тем же: кадр перезапускается при любом
+  // исходе, а сбой уходит в консоль/баннер, а не в тишину.
+  let drawErrorReported = false;
   function draw(tMs: number) {
+    try {
+      drawFrame(tMs);
+    } catch (err) {
+      console.error("draw:", err);
+      // Баннер — один раз за сессию: если ломается каждый кадр, шестьдесят
+      // одинаковых сообщений в секунду сделали бы его нечитаемым.
+      if (!drawErrorReported) {
+        drawErrorReported = true;
+        showGpuBanner(`Сбой в кадре: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    requestAnimationFrame(draw);
+  }
+  function drawFrame(tMs: number) {
     // Пока открыт "Город", 3D целиком скрыт — рисовать нечего и некуда.
     // Раньше цикл продолжал крутиться и молотить в схлопнутую канву: лишний
     // GPU-проход, перепроецирование подписей и пересчёт позиций походов
     // КАЖДЫЙ кадр за спиной у игрока, который смотрит совсем на другой экран.
     // Просто пропускаем кадр — состояние камеры и сущностей не трогаем, так
     // что возврат во вкладку продолжает ровно с того же места.
-    if (isHidden()) { requestAnimationFrame(draw); return; }
+    if (isHidden()) return;   // следующий кадр планирует обёртка draw() выше
     if (controls.isAutoOrbiting()) cam.yaw = tMs * 0.00015;
     controls.update(tMs); // WASD/стрелки — панорама, зажатая клавиша даёт непрерывный сдвиг между кадрами
     // marchMarkers() тут же (не ниже, как раньше) — followMarchId должен
@@ -1970,7 +2006,6 @@ async function main() {
     (window as any).__modelDrawCount = modelDrawCount;
     updateAmbientLabels();
     updateBattleLabels();
-    requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
 

@@ -5538,7 +5538,34 @@ function waterCrossingSpan(x0,y0,x1,y1){
     xx:x0+(x1-x0)*tExit, xy:y0+(y1-y0)*tExit,
   };
 }
-function waterPath(x0,y0,x1,y1){
+// Память на уже посчитанные обходы воды. waterPath — ЧИСТАЯ функция четырёх
+// координат: рельеф сеется фиксированным RW_SEED (см. её заголовок), от
+// партии/времени/игрока не зависит вовсе, поэтому один и тот же запрос
+// всегда даёт один и тот же путь.
+//
+// Зачем: mpWorldSnapshot() зовёт waterPath для КАЖДОГО марша, а сам
+// mpWorldSnapshot() читается 3D-движком КАЖДЫЙ КАДР (engine/src/main.ts,
+// draw() -> marchMarkers() -> loadLiveMarches() -> readLiveWorldMarches()).
+// Внутри же waterPath — до трёх запусков A* (margin 10/30/60) по локальной
+// сетке, каждый до 20 000 итераций. То есть при трёх маршах над водой это
+// до девяти A*-поисков ШЕСТЬДЕСЯТ РАЗ В СЕКУНДУ. Комментарий у
+// mpWorldSnapshot ("собирается заново на каждый вызов — дешёво,
+// кэшировать пока незачем") писался, когда путь марша был честной прямой
+// из двух точек; позже прямую заменили настоящим рельефным обходом, а вот
+// вывод про "дёшево" за ней не пересмотрели.
+// Кэш снимает это подчистую: первый кадр считает, все следующие берут
+// готовое. Заодно помогает и одиночной игре — там waterPath зовётся при
+// каждой отправке отряда по тем же самым, повторяющимся направлениям.
+//
+// Ключ — координаты, округлённые до 0.01 клетки: приходят они из
+// интерполяции (дробные), и без округления почти совпадающие запросы
+// считались бы каждый как новый, а кэш рос бы, не давая попаданий.
+// Потолок в 400 записей: при переполнении кэш просто сбрасывается целиком
+// (проще и предсказуемее вытеснения по одной, а пересчёт — это несколько
+// A* один раз, не каждый кадр).
+const WATER_PATH_CACHE_MAX=400;
+let waterPathCache=new Map();
+function waterPathUncached(x0,y0,x1,y1){
   const span=waterCrossingSpan(x0,y0,x1,y1);
   if(!span) return [{x:x0,y:y0},{x:x1,y:y1}];
   for(const margin of [10,30,60]){
@@ -5546,6 +5573,16 @@ function waterPath(x0,y0,x1,y1){
     if(detour) return simplifyWaterPath([{x:x0,y:y0},...detour,{x:x1,y:y1}]);
   }
   return [{x:x0,y:y0},{x:x1,y:y1}];   // не нашли обход даже с запасом — лучше прямая, чем не дать походу случиться
+}
+function waterPath(x0,y0,x1,y1){
+  const r=v=>Math.round(v*100)/100;
+  const k=r(x0)+","+r(y0)+","+r(x1)+","+r(y1);
+  const hit=waterPathCache.get(k);
+  if(hit) return hit;
+  const path=waterPathUncached(x0,y0,x1,y1);
+  if(waterPathCache.size>=WATER_PATH_CACHE_MAX) waterPathCache.clear();
+  waterPathCache.set(k,path);
+  return path;
 }
 function pathLength(path){
   let total=0;
@@ -12377,8 +12414,50 @@ function world3dWin(){
 //     синтезируется тут же, двумя точками): так же честно, как и вся
 //     остальная система маршей общего мира (mp-attack/mp-recall) — реального
 //     waterPath() по рельефу для общего мира по-прежнему нет.
+// Снимок кэшируется между кадрами — см. заголовок выше про то, что его
+// читает КАЖДЫЙ КАДР 3D-движок. Пересобирается только когда данные под ним
+// правда сменились, а не по таймеру: единственное, что обязано меняться от
+// кадра к кадру — поле t (текущее время, по нему движок сам интерполирует
+// положение марша между t0 и t1), его и обновляем на готовом объекте.
+//
+// Признак «данные сменились» составной:
+//   • тождество коллекций (===) — каждая выборка опроса ЗАМЕНЯЕТ массив
+//     целиком (mpState.marches=data и т.п.), так что смена данных всегда
+//     видна как смена объекта; сравнение семи ссылок ничего не стоит;
+//   • короткая подпись по маршам — потому что быстрый боевой опрос
+//     (mpBattleFastPollTick) правит state/data У ТЕХ ЖЕ объектов, не
+//     заменяя массив: по одному тождеству переход "в пути → осада" повис
+//     бы незамеченным до следующей общей выборки.
+let mpSnapCache=null, mpSnapRefs=null, mpSnapSig="";
+function mpMarchSig(){
+  let s="";
+  const add=m=>{
+    // Ход боя — тоже часть подписи: во время осады сервер правит
+    // data.battle У ТОГО ЖЕ объекта марша (раунд, оставшееся здоровье
+    // сторон), не заменяя ни массив, ни state. Без этих двух полей
+    // надземная полоса боя в 3D замерла бы на первом кадре осады.
+    const b=m.data&&m.data.battle;
+    s+=m.id+":"+m.state+":"+m.tx+","+m.ty+":"+m.t0+"-"+m.t1+
+       (b?":b"+b.round+"@"+b.revealAt:"")+";";
+  };
+  mpState.marches.forEach(add); s+="|";
+  mpState.incoming.forEach(add); s+="|";
+  mpState.worldBattles.forEach(add);
+  return s;
+}
 function mpWorldSnapshot(){
   if(!mpState.joined || !mpState.player) return null;
+  const refs=[mpState.player,mpState.neighbors,mpState.nodes,mpState.camps,
+              mpState.marches,mpState.incoming,mpState.worldBattles];
+  const sig=mpMarchSig();
+  if(mpSnapCache && mpSnapRefs && sig===mpSnapSig && refs.every((v,i)=>v===mpSnapRefs[i])){
+    mpSnapCache.t=Date.now()/1000;
+    return mpSnapCache;
+  }
+  mpSnapRefs=refs; mpSnapSig=sig;
+  return (mpSnapCache=mpBuildWorldSnapshot());
+}
+function mpBuildWorldSnapshot(){
   const me=mpState.player, st=me.state||{};
   const meHall=(st.b&&st.b.hall)||1;
   const players=[{id:me.id, race:me.race, nick:me.nick, x:me.x, y:me.y, b:{hall:meHall}}];
