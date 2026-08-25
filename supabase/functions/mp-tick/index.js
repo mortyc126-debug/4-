@@ -730,9 +730,54 @@ const AMBIENT_NODE_MIN_R = 30, AMBIENT_NODE_MAX_R = 90; // шире собств
 const AMBIENT_NODE_PER_PLAYER = 3, AMBIENT_NODE_FLOOR = 20; // потолок узлов = max(20, игроков×3)
 const AMBIENT_CAMP_PER_PLAYER = 1.5, AMBIENT_CAMP_FLOOR = 10;
 const AMBIENT_NODE_BATCH = 2, AMBIENT_CAMP_BATCH = 1;
+// Уборка ВЫЧЕРПАННЫХ ДОЧИСТА точек, к которым никто не идёт.
+//
+// Такая точка на карте не должна залёживаться: удаляет её и заводит respawn
+// applyGathered — то есть тот отряд, который её выбрал. Но amount может
+// обнулиться и БЕЗ отряда: mp-gather бронирует добычу при отправке, и если
+// отправка дальше сорвалась, бронь оставалась висеть (ровно этот баг чинится
+// в mp-gather — «резко обнулило янтарную жилу и не позволило собрать»).
+// Такую точку убирать было некому: она оставалась на карте навсегда, с
+// нулевыми резервами и подписью «Точка истощена».
+//
+// Живём внутри ambient_seed: он и так крутится раз в десять минут и занят
+// ровно содержимым карты — отдельная цепочка событий тут была бы лишней
+// сущностью, да ещё и требовала бы миграции для первого звена.
+//
+// Точку, на которую ИДЁТ или на которой УЖЕ СОБИРАЕТ чей-то отряд, не
+// трогаем: у неё ноль законный (вся добыча забронирована за ним), и разберёт
+// её applyGathered, когда отряд закончит.
+async function sweepEmptyNodes(admin, worldId) {
+  const [cellsRes, marchesRes] = await Promise.all([
+    admin.from("map_cells").select("x,y,data").eq("world_id", worldId).eq("t", "node"),
+    admin.from("marches").select("tx,ty,state,mode").eq("world_id", worldId).eq("mode", "gather"),
+  ]);
+  if (cellsRes.error || marchesRes.error) return;
+  const busy = new Set();
+  for (const m of (marchesRes.data || [])) {
+    if (m.state === "go" || m.state === "gather") busy.add(m.tx + "," + m.ty);
+  }
+  const dead = (cellsRes.data || []).filter(
+    (c) => ((c.data && c.data.amount) || 0) <= 0 && !busy.has(c.x + "," + c.y));
+  if (!dead.length) return;
+  const nowSec = Date.now() / 1000;
+  for (const c of dead) {
+    await admin.from("map_cells").delete().eq("world_id", worldId).eq("x", c.x).eq("y", c.y);
+    await admin.from("events").insert({
+      world_id: worldId, fire_at: new Date((nowSec + NODE_RESPAWN_SEC) * 1000).toISOString(),
+      type: "node_respawn", data: { x: c.x, y: c.y },
+    });
+  }
+  console.log("sweepEmptyNodes: убрано пустых точек", dead.length, "в мире", worldId);
+}
+
 async function applyAmbientSeed(admin, ev) {
   const worldId = ev.world_id;
   try {
+    // Сначала уборка, потом досев: иначе потолок точек считался бы вместе с
+    // мёртвыми, и карта не досевала бы новые, будучи «полной» пустышками.
+    try { await sweepEmptyNodes(admin, worldId); }
+    catch (e) { console.error("sweepEmptyNodes:", String(e && e.message || e)); }
     const { count: playerCount } = await admin.from("players").select("id", { count: "exact", head: true }).eq("world_id", worldId);
     const { count: nodeCount } = await admin.from("map_cells").select("x", { count: "exact", head: true }).eq("world_id", worldId).eq("t", "node");
     const { count: campCount } = await admin.from("map_cells").select("x", { count: "exact", head: true }).eq("world_id", worldId).in("t", ["camp", "fort"]);

@@ -8452,11 +8452,18 @@ function renderCartoucheMp(){
   // общий мир пока не умеет: march-по-клетке (в одиночке ведущий домой
   // марш просто разворачивается сам, arriveMarch) для него не перенесён —
   // у mp-attack/mp-gather/mp-raid всегда есть конкретная цель (город/точка/
-  // лагерь), похода "в пустоту" тут нет (это отдельная серверная фича, не
-  // просто перенос разметки). Показываем то, что честно можем — координаты
-  // и пояснение, а не молчим совсем, как раньше.
-  if(!o){ put("<div class='hd'>Пустошь "+coord+"</div>"+
-    "<div class='hint'>Общий мир пока не умеет отправлять отряд в пустоту — только на город, точку сбора или лагерь.</div>"); return; }
+  // лагерь), а теперь и поход "в пустоту" — автор попросил ("отправлять
+  // отряды в пустоту так сказать, или в пустошь"), под него заведена
+  // отдельная функция mp-move. Отряд дойдёт и ВСТАНЕТ там до нового приказа
+  // (mode:"move" -> state:"hold", см. applyMarchArrive в mp-tick); дальше его
+  // можно перетащить пальцем на любую цель или отозвать.
+  if(!o){
+    const water=isRealWater(sel.x,sel.y);
+    put("<div class='hd'>Пустошь "+coord+"</div>"+
+      (water?"<div class='hint'>Здесь вода — отряд не высадить.</div>":
+        "<button class='seal wide' style='margin-top:9px' data-mp='cartmovepick' data-k='"+sel.x+","+sel.y+"'>Отправить отряд</button>"));
+    return;
+  }
   if(o.t==="node"){
     const amount=o.amount||0;
     // Своя добыча — то же самое "Собрано X/Y" + "Отозвать", что и в
@@ -10378,10 +10385,30 @@ function mpPlaceDragMove(clientX,clientY){
 // Вынесена из foMultiplayer() (была локальной const-стрелкой там) — теперь
 // нужна и здесь, в компактном свитке похода; принимает st явным параметром
 // вместо чтения из замыкания.
+/* Автор: «добавь галочку, чтобы можно было всегда добавить генерала в любой
+   поход». Отдельной настройки в меню заводить не стали — галочка просто
+   ЗАПОМИНАЕТ своё положение: отметил один раз, и дальше полководец идёт со
+   всеми походами, пока не снимешь. Так же ведёт себя выбор в RoK.
+
+   Память общая на одиночную игру и общий мир: игрок один и тот же, и
+   объяснять ему, почему в одном режиме галочка стоит, а в другом нет, было
+   бы нечем. Хранится отдельно от сейва (localStorage напрямую) — это
+   настройка интерфейса, а не состояние партии: в облако ей незачем, и при
+   сбросе партии она не должна теряться. */
+const GEN_TAKE_KEY="fourbanners:gentake";
+function genTakeDefault(){
+  try{ return localStorage.getItem(GEN_TAKE_KEY)==="1" }catch(e){ return false }
+}
+function setGenTakeDefault(v){
+  try{ localStorage.setItem(GEN_TAKE_KEY, v?"1":"0") }catch(e){}
+}
 function mpGenTakeCheckboxHtml(st,id){
   if(!(st.gen&&st.gen.id!=null)) return "";
   if(st.gen.away!=null) return "<div class='note'>Полководец сейчас в другом походе — недоступен.</div>";
-  return "<div class='note'><label><input type='checkbox' id='"+id+"'> Взять полководца (боевые бонусы, риск попасть под удар в этом бою)</label></div>";
+  return "<div class='note'><label><input type='checkbox' id='"+id+"'"+
+    (genTakeDefault()?" checked":"")+
+    " onchange='setGenTakeDefault(this.checked)'>"+
+    " Взять полководца (боевые бонусы, риск попасть под удар в этом бою)</label></div>";
 }
 let mpMarchCtx=null, lastMarchSheet="";
 function mpOpenMarchModal(mode,target){
@@ -10390,6 +10417,7 @@ function mpOpenMarchModal(mode,target){
   mpMarchCtx={mode};
   if(mode==="attack") mpState.attackTarget=target;
   else if(mode==="gather") mpState.gatherTarget=target;
+  else if(mode==="move") mpState.moveTarget=target;
   else mpState.raidTarget=target;
   lastMarchSheet=mpMarchSheetHtml();
   setHtml($("#bm-body"), lastMarchSheet);
@@ -10435,6 +10463,26 @@ function mpMarchSheetHtml(){
     });
     h+="<div class='chips' style='margin-top:9px'>"+
        "<button class='seal' data-mp='gather' data-x='"+n.x+"' data-y='"+n.y+"'"+(mpState.loading?" disabled":"")+">Собрать</button> "+
+       "<button class='seal' data-act='closebuilding'>Отмена</button></div>";
+    return h;
+  }
+  if(mode==="move"){
+    const [mx,my]=String(mpState.moveTarget||"").split(",").map(Number);
+    if(!Number.isFinite(mx)||!Number.isFinite(my)) return gone("Клетка не выбрана");
+    const dist=Math.round(Math.hypot(mx-p.x,my-p.y));
+    let h="<div class='title'>Пустошь</div>"+
+      "<div class='note'>"+mx+", "+my+" · "+dist+" клет."+
+      (regionNameAt(mx,my)?" · "+regionNameAt(mx,my):"")+"</div>"+
+      "<div class='note'>Отряд дойдёт и встанет там до нового приказа — сам домой не вернётся. "+
+      "Дальше его можно перетащить пальцем на любую цель или отозвать.</div>"+errHtml;
+    TKEYS.forEach(t=>{
+      const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
+      h+="<div class='note'>"+unitName(t,1,p.race)+" (T1, есть "+RU(have)+"): "+
+         "<input id='mp-mv-"+t+"' type='number' min='0' max='"+have+"' value='0'></div>";
+    });
+    h+=mpGenTakeCheckboxHtml(st,"mp-mv-gen");
+    h+="<div class='chips' style='margin-top:9px'>"+
+       "<button class='seal' data-mp='move' data-x='"+mx+"' data-y='"+my+"'"+(mpState.loading?" disabled":"")+">Выступить</button> "+
        "<button class='seal' data-act='closebuilding'>Отмена</button></div>";
     return h;
   }
@@ -11780,7 +11828,7 @@ function openLevy(cx,cy){
   // разведка его вообще не зовут) — но это уже осознанный выбор игрока, а не
   // навязанное ограничение. По умолчанию НЕ взят — ни один поход не должен
   // молча забирать его, только явный клик (см. genWorld: gen.away).
-  let withGen=false;
+  let withGen=genTakeDefault();   // см. GEN_TAKE_KEY — галочка помнит своё положение
   const genAvail = p.gen && p.gen.id!=null;
   const genBusy = genAvail && p.gen.away!=null;
   const st={};
@@ -11866,7 +11914,7 @@ function openLevy(cx,cy){
   paint(); $("#veil").classList.add("open");
 
   box.oninput=e=>{
-    if(e.target.dataset.gen){ withGen=e.target.checked; return paint(); }
+    if(e.target.dataset.gen){ withGen=e.target.checked; setGenTakeDefault(withGen); return paint(); }
     const s=e.target.dataset.s; if(!s) return;
     const t=s.slice(0,3), i=+s.slice(3);
     st[s]=clamp(Math.round(+e.target.value||0),0,p.troops[t][i]);
@@ -11965,6 +12013,8 @@ function handleAct(e){
   if(cartGatherPick){ sel=null; selMarch=null; mpOpenMarchModal("gather",cartGatherPick.dataset.k); return; }
   const cartRaidPick=e.target.closest("[data-mp='cartraidpick']");
   if(cartRaidPick){ sel=null; selMarch=null; mpOpenMarchModal("raid",cartRaidPick.dataset.k); return; }
+  const cartMovePick=e.target.closest("[data-mp='cartmovepick']");
+  if(cartMovePick){ sel=null; selMarch=null; mpOpenMarchModal("move",cartMovePick.dataset.k); return; }
   // Фаза 17, кусочек 1 — клик по ячейке mpRenderCityMap(): открывает то же
   // иллюстрированное меню здания, что и одиночный data-cell/openBuildingModal()
   // чуть ниже (#building-modal/#bm-body), только своей mpOpenBuildingModal()
@@ -13008,6 +13058,8 @@ function handleMpAct(e){
   if(gatherBtn){ mpDoGather(+gatherBtn.dataset.x, +gatherBtn.dataset.y); return; }
   const raidBtn=e.target.closest("[data-mp='raid']");
   if(raidBtn){ mpDoRaid(+raidBtn.dataset.x, +raidBtn.dataset.y); return; }
+  const moveBtn=e.target.closest("[data-mp='move']");
+  if(moveBtn){ mpDoMove(+moveBtn.dataset.x, +moveBtn.dataset.y); return; }
   const scoutBtn=e.target.closest("[data-mp='scout']");
   if(scoutBtn){ mpDoScout(+scoutBtn.dataset.id); return; }
   const recallBtn=e.target.closest("[data-mp='recall']");
@@ -14544,6 +14596,22 @@ async function mpDoGather(x,y){
     await mpCall("mp-gather",{x,y,units});
     mpState.gatherTarget=null; if(mpMarchCtx){ mpMarchCtx=null; $("#building-modal").classList.remove("open"); }
     await mpRefreshPlayer(); await mpRefreshMarches(); await mpRefreshNodes();
+  }catch(e){ mpState.err=e.message; }
+  finally{ mpState.loading=false; mpRerender(); }
+}
+// Отправка отряда в ПУСТУЮ клетку (mp-move). Автор: «добавь возможность
+// отправлять отряды в пустоту так сказать, или в пустошь» — в одиночке это
+// было всегда (openLevy по пустой клетке), в общем мире цели раньше обязаны
+// были быть настоящими. Отряд дойдёт и встанет там до нового приказа.
+async function mpDoMove(x,y){
+  const units={};
+  TKEYS.forEach(t=>{ const inp=$("#mp-mv-"+t); units[t]={1:Math.max(0,Math.round(+((inp&&inp.value)||0)))}; });
+  const genInp=$("#mp-mv-gen"), withGen=!!(genInp&&genInp.checked);
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{
+    await mpCall("mp-move",{x,y,units,with_gen:withGen});
+    mpState.moveTarget=null; if(mpMarchCtx){ mpMarchCtx=null; $("#building-modal").classList.remove("open"); }
+    await mpRefreshPlayer(); await mpRefreshMarches();
   }catch(e){ mpState.err=e.message; }
   finally{ mpState.loading=false; mpRerender(); }
 }
