@@ -3140,11 +3140,17 @@ async function applyMarchHome(admin, ev) {
   }
   // Отложенное донесение о сборе (см. applyGathered) — письмо приходит ровно
   // сейчас, когда отряд вошёл в замок.
+  // gather_report — список донесений (по одному на каждую точку, где отряд
+  // копал: между ними его могли перетащить, см. mp-redirect). Старые марши в
+  // базе несут одиночный объект — принимаем оба вида.
   if (m.data && m.data.gather_report) {
-    const { error: gatherMailErr } = await admin.from("mail").insert({
-      world_id: m.world_id, player_id: m.player_id, kind: "gather", data: m.data.gather_report,
-    });
-    if (gatherMailErr) throw gatherMailErr;
+    const reports = Array.isArray(m.data.gather_report) ? m.data.gather_report : [m.data.gather_report];
+    if (reports.length) {
+      const { error: gatherMailErr } = await admin.from("mail").insert(
+        reports.map((r) => ({ world_id: m.world_id, player_id: m.player_id, kind: "gather", data: r })),
+      );
+      if (gatherMailErr) throw gatherMailErr;
+    }
   }
   await admin.from("marches").delete().eq("id", m.id);
 }
@@ -3182,8 +3188,30 @@ async function applyGathered(admin, ev) {
   const nowSec = Date.now() / 1000;
   const dist = (m.data && m.data.dist) || 0, spd = (m.data && m.data.spd) || 1;
   const travelBack = Math.max(MIN_TRAVEL, (dist / spd) * 60);
-  const carry = {}; if (m.data && m.data.res) carry[m.data.res] = m.data.take || 0;
-  let gatherReport = null;
+  // Складываем с тем, что отряд УЖЕ везёт, а не присваиваем заново: на эту
+  // точку он мог попасть перетаскиванием (mp-redirect), уже неся добычу с
+  // предыдущей — присвоение стирало её начисто.
+  const carry = { ...((m.data && m.data.carry) || {}) };
+  if (m.data && m.data.res) {
+    const key = m.data.res === "amber" ? "amber" : m.data.res;
+    carry[key] = (carry[key] || 0) + (m.data.take || 0);
+  }
+  // НАЙДЕН реальный баг: gatherReport объявлялся здесь как null, записывался
+  // в марш вот этим самым update — и ТОЛЬКО ПОТОМ, ниже по функции, ему
+  // присваивалось настоящее донесение. В базу всегда уходил null, второй
+  // записи не было, и applyMarchHome отправлять было нечего: письма о сборе
+  // в общем мире не приходили вовсе. Считаем ДО записи.
+  //
+  // Накапливаем списком: отряд мог собрать на одной точке, быть перетащенным
+  // на другую (mp-redirect) и дособрать там — донесение должно прийти на
+  // каждую, а не только на последнюю.
+  const reports = Array.isArray(m.data && m.data.gather_report)
+    ? m.data.gather_report.slice()
+    : ((m.data && m.data.gather_report) ? [m.data.gather_report] : []);
+  if (m.data && m.data.res && (m.data.take || 0) > 0) {
+    reports.push({ res: m.data.res, amount: m.data.take, x: m.tx, y: m.ty });
+  }
+  const gatherReport = reports.length ? reports : null;
   const { error: updM } = await admin.from("marches")
     // from — точка, с которой обоз уходит домой. Обязательно ПЕРЕЗАПИСАТЬ:
     // на сбор отряд мог попасть перетаскиванием (mp-redirect ставит там
@@ -3203,11 +3231,8 @@ async function applyGathered(admin, ev) {
   // письмо получил как только они в замок зашли». Раньше письмо уходило
   // ровно здесь — сбор на точке закончен, а отряду идти домой ещё всю
   // дорогу; со стороны это и выглядело как «письмо приходит через время
-  // после сбора». Складываем донесение в данные марша, отдаёт его
-  // applyMarchHome по прибытии.
-  if (m.data && m.data.res && (m.data.take || 0) > 0) {
-    gatherReport = { res: m.data.res, amount: m.data.take, x: m.tx, y: m.ty };
-  }
+  // после сбора». Складываем донесение в данные марша (см. reports выше),
+  // отдаёт его applyMarchHome по прибытии.
   const { error: evErr } = await admin.from("events").insert({
     world_id: m.world_id, fire_at: new Date((nowSec + travelBack) * 1000).toISOString(),
     type: "march_home", data: { march_id: m.id },

@@ -5963,6 +5963,11 @@ function pathPointAt(m,f){
 // которого "на глаз" быть не должно) — тогда откалибровали на 24 клетки/мин
 // у пехоты. Пользователь попросил ещё +33% сверху (32 = round(24*1.33)).
 const MARCH_SPEED_SCALE=32;
+// Технический пол дорожного времени (секунды) — только чтобы t1>t0 и событие
+// прибытия не оказалось в прошлом при переносе отряда на соседнюю клетку. С
+// пятнадцатисекундной фазой боя не путать: автор оговорил прямо — «это никак
+// не влияет на скорость или дорогу отряда».
+const MIN_TRAVEL=3;
 function marchSpeed(p,units){
   let s=99; TKEYS.forEach(t=>{for(let i=1;i<=5;i++) if(units[t][i]>0) s=Math.min(s,TROOP_TYPES[t].speed*troopMod(p.race,t,"speed"))});
   if(s>90) s=1;
@@ -6111,7 +6116,7 @@ function recallMarch(m){
   const p=W.players.find(q=>q.id===m.pid);
   const cur=marchPos(m);   // текущее положение на маршруте — новый путь домой считаем от него, не от цели
   const path=waterPath(cur.x,cur.y,p.x,p.y);
-  const back=Math.max(15,pathTravelCost(path)*(1-portalShortcut(p))/marchSpeed(p,m.units)*60);
+  const back=Math.max(MIN_TRAVEL,pathTravelCost(path)*(1-portalShortcut(p))/marchSpeed(p,m.units)*60);
   m.state="back"; m.t0=W.t; m.t1=W.t+back;
   setMarchPath(m,path);
   unschedule(e=>e.data&&e.data.mid===m.id);
@@ -6175,11 +6180,22 @@ function redirectMarch(m,tx,ty){
   const p=W.players.find(q=>q.id===m.pid); if(!p) return {err:"Хозяина нет"};
   tx=Math.round(tx); ty=Math.round(ty);
   if(m.state==="gather") releaseGathering(m);
+  // Собственный замок под пальцем — это «вернись домой», а не «встань посреди
+  // двора». marchRedirectTarget ниже различает только тип клетки (city), не
+  // владельца, и на свой же город выдавал бы mode:"attack" — прибытие тогда
+  // упирается в arriveMarch, где def.id===p.id, и отряд разворачивается ещё
+  // на один отрезок пути вместо того чтобы просто зайти в ворота. recallMarch
+  // считает дорогу от текущего места и ставит событие "home" — то самое, что
+  // возвращает войска в гарнизон, зачисляет добычу и отпускает полководца.
+  if(tx===p.x && ty===p.y){ recallMarch(m); return {ok:true,eta:m.t1-W.t,mode:"home"} }
   const t=marchRedirectTarget(tx,ty);
   const cur=marchPos(m);
   const path=waterPath(cur.x,cur.y,tx,ty);
   const d=pathTravelCost(path)*(1-portalShortcut(p));
-  const travel=Math.max(15, d/marchSpeed(p,m.units)*60);
+  // MIN_TRAVEL, а не 15: пятнадцать секунд — фаза боя (развёртывание/
+  // отступление), к дороге отношения не имеет. См. одноимённую константу в
+  // mp-redirect/mp-recall/mp-tick — там тот же разбор.
+  const travel=Math.max(MIN_TRAVEL, d/marchSpeed(p,m.units)*60);
   m.mode=t.mode; m.tx=tx; m.ty=ty;
   m.x0=cur.x; m.y0=cur.y;
   m.state="go"; m.t0=W.t; m.t1=W.t+travel;
