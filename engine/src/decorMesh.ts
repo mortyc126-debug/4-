@@ -93,7 +93,31 @@ function trunk(pos: number[], nrm: number[], mid: number[], shd: number[], uv: n
 // центральной оси, а не честная 3D-геометрия — тот же приём, что и в
 // любой игре с деревьями: реальный объём даёт не число полигонов, а сама
 // текстура (силуэт вырезан по контуру кроны/травинок в самой картинке).
-function billboardCross(pos: number[], nrm: number[], mid: number[], shd: number[], uv: number[], planes: number, halfWidth: number, baseY: number, topY: number, m: number, shade: number, xOffset = 0) {
+// texPadBottom — доля ПОЛНОСТЬЮ ПРОЗРАЧНОЙ полосы внизу самой картинки.
+// Карточка рисуется целиком, от baseY до topY, и картинка натягивается на неё
+// тоже целиком — значит, если у картинки внизу пустое поле, видимое растение
+// начинается ВЫШЕ основания карточки и висит в воздухе. Ровно это автор и
+// увидел: кусты и трава парят над землёй.
+//
+// Деревьев это не касается, хотя пустая полоса есть и у их текстур: у них
+// есть ствол — настоящая геометрия от самой земли, — и он их держит. Парят
+// только те, что состоят ИЗ ОДНИХ карточек, без ствола: куст и трава.
+//
+// Лечим сдвигом всей карточки вниз ровно на высоту этой полосы: видимая часть
+// садится основанием на землю, а размер и пропорции остаются теми же, что
+// были, — сдвиг, а не растяжение. Ушедший под землю кусок карточки прозрачен
+// целиком, рисовать там нечего.
+//
+// Числа мерены по тому же порогу альфы, по которому шейдер делает discard
+// (a < 0.5, см. DECOR_SHADER в renderer.ts):
+//     node tools/measure_decor_padding.mjs
+// Перемеряйте после ЛЮБОЙ замены картинки декора.
+function billboardCross(pos: number[], nrm: number[], mid: number[], shd: number[], uv: number[], planes: number, halfWidth: number, baseY: number, topY: number, m: number, shade: number, xOffset = 0, texPadBottom = 0) {
+  if (texPadBottom > 0) {
+    const drop = (topY - baseY) * texPadBottom;
+    baseY -= drop;
+    topY -= drop;
+  }
   for (let p = 0; p < planes; p++) {
     const a = (p / planes) * Math.PI; // 0..π — плоскость и её "изнанка" через 180° это та же плоскость (у декор-пайплайна нет backface culling, см. renderer.ts)
     const dx = Math.cos(a), dz = Math.sin(a);
@@ -188,19 +212,30 @@ export function buildDeadTreeMesh(): DecorMesh {
 
 // ---- куст: без ствола, компактный крест кроны у самой земли (bush.png) —
 // заполняет средний ярус между травой и деревьями.
+// bush.png — 91 прозрачная строка из 768 снизу (11.85%), самый парящий из
+// всего декора: куст висел примерно на восьмую часть собственной высоты.
+const BUSH_TEX_PAD = 91 / 768;
 export function buildBushMesh(): DecorMesh {
   const b = mk();
-  billboardCross(b.positions, b.normals, b.materialIds, b.shades, b.uvs, 3, 0.55, 0.02, 0.72, 1, 1.0);
+  // baseY был 0.02 — маленький подъём над землёй, доставшийся от общей формы
+  // вызова (у кроны дерева он осмыслен, она сидит НА СТВОЛЕ). У куста ствола
+  // нет, держаться этому подъёму не на чем, и он добавлялся к парению поверх
+  // пустой полосы текстуры. Основание карточки вертикальное, с землёй оно не
+  // компланарно — z-fighting'а от нуля тут быть не может.
+  billboardCross(b.positions, b.normals, b.materialIds, b.shades, b.uvs, 3, 0.55, 0, 0.72, 1, 1.0, 0, BUSH_TEX_PAD);
   return done(b);
 }
 
 // ---- пучок травы: два креста разной высоты со сдвигом по X — не один
 // силуэт по центру инстанса, а небольшая группа, гуще читается как заросли,
 // не единственная плашка (grass_tuft.png).
+// grass_tuft.png — 32 прозрачные строки из 768 снизу (4.17%). Оба креста
+// пучка берут одну и ту же картинку, значит и поправка у них одна.
+const GRASS_TEX_PAD = 32 / 768;
 export function buildGrassMesh(): DecorMesh {
   const b = mk();
-  billboardCross(b.positions, b.normals, b.materialIds, b.shades, b.uvs, 2, 0.4, 0, 0.62, 1, 1.0, -0.14);
-  billboardCross(b.positions, b.normals, b.materialIds, b.shades, b.uvs, 2, 0.32, 0, 0.5, 1, 0.92, 0.16);
+  billboardCross(b.positions, b.normals, b.materialIds, b.shades, b.uvs, 2, 0.4, 0, 0.62, 1, 1.0, -0.14, GRASS_TEX_PAD);
+  billboardCross(b.positions, b.normals, b.materialIds, b.shades, b.uvs, 2, 0.32, 0, 0.5, 1, 0.92, 0.16, GRASS_TEX_PAD);
   return done(b);
 }
 
