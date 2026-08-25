@@ -924,10 +924,6 @@ function newPlayerState(race, nowSec) {
     // Янтарь — отдельное поле, не часть res (index.html:2823 p.amber — та же
     // причина: премиальная валюта не из общей четвёрки, в склад не идёт).
     amber: 0,
-    // Очки убийств (RoK), index.html addKillPoints — начисляются mp-tick'ом
-    // в finalizePvpBattle/finalizeNodeBattle, НЕ в finalizeRaidBattle (PvE
-    // не в зачёт). kpByTier — разбивка по тирам Т1-Т5 для профиля.
-    kp: 0, kpByTier: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
   };
 }
 
