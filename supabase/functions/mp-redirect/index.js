@@ -575,8 +575,19 @@ Deno.serve(async (req) => {
       const take = (m.data && m.data.take) || 0;
       const kept = Math.floor(take * f);
       const back = take - kept;
-      newData.take = kept;
-      if (newData.carry && newData.res) newData.carry = { [newData.res]: kept };
+      // Накопанное кладём в carry — это то, что отряд физически увозит.
+      // Раньше carry трогался ТОЛЬКО если уже существовал, а появляется он
+      // лишь в applyGathered (по завершении сбора) — значит у отряда, снятого
+      // с НЕЗАКОНЧЕННОГО сбора, добыча не попадала никуда: донесение о ней
+      // уходило, applyMarchHome зачислять было нечего.
+      // Складываем, а не заменяем: отряд мог уже везти добычу с прошлой точки.
+      newData.take = 0;                       // резерв точки за нами больше не числится
+      const carried = { ...(newData.carry || {}) };
+      if (kept > 0 && newData.res) {
+        const key = newData.res === "amber" ? "amber" : newData.res;
+        carried[key] = (carried[key] || 0) + kept;
+      }
+      newData.carry = carried;
       const cx = m.data && m.data.cell_x, cy = m.data && m.data.cell_y;
       if (back > 0 && cx != null && cy != null) {
         const { data: cell } = await admin.from("map_cells")
@@ -589,8 +600,13 @@ Deno.serve(async (req) => {
         }
       }
       // Донесение о сборе поедет вместе с отрядом только если он что-то унёс.
-      newData.gather_report = kept > 0 && newData.res
-        ? { res: newData.res, amount: kept, x: m.tx, y: m.ty } : null;
+      // Списком, а не одиночным объектом: отряд может копать на нескольких
+      // точках подряд, и письмо должно прийти на каждую (см. applyGathered/
+      // applyMarchHome в mp-tick — они читают тот же список).
+      const reports = Array.isArray(newData.gather_report) ? newData.gather_report.slice()
+        : (newData.gather_report ? [newData.gather_report] : []);
+      if (kept > 0 && newData.res) reports.push({ res: newData.res, amount: kept, x: m.tx, y: m.ty });
+      newData.gather_report = reports.length ? reports : null;
     }
 
     // ---- что под новой целью → какой это режим ------------------------------
@@ -604,13 +620,27 @@ Deno.serve(async (req) => {
     const B = bonuses({ ...(attRow.state || {}), race: (attRow.state && attRow.state.race) || attRow.race });
     const [cellRes, cityRes] = await Promise.all([
       admin.from("map_cells").select("t,data").eq("world_id", world.id).eq("x", nx).eq("y", ny).maybeSingle(),
-      admin.from("players").select("id").eq("world_id", world.id).eq("x", nx).eq("y", ny).maybeSingle(),
+      admin.from("players").select("id,shield_until").eq("world_id", world.id).eq("x", nx).eq("y", ny).maybeSingle(),
     ]);
     const cell = cellRes.data, city = cityRes.data;
+    // Свой собственный замок под пальцем — это «вернись домой», а не «встань
+    // посреди двора». НАЙДЕН реальный баг (автор сообщил: «марш не заходит в
+    // замок, то есть он чисто в центре стоит и всё»): своего города тут не
+    // было ни в одной ветке, режим оставался "move", а applyMarchArrive для
+    // "move" ставит state:"hold" — отряд честно доходил до замка и вставал
+    // НА ПОЗИЦИИ прямо в нём. Войска не возвращались в гарнизон, добыча не
+    // зачислялась, полководец так и числился в отъезде. Разбирает всё это
+    // applyMarchHome, а он приходит только по событию march_home на марш в
+    // состоянии "back" — см. ветку goHome ниже.
+    const goHome = (city && city.id === attRow.id) || (nx === home.x && ny === home.y);
     let mode = "move";
-    if (city && city.id !== attRow.id) mode = "attack";
-    else if (cell && (cell.t === "camp" || cell.t === "fort")) mode = "raid";
-    else if (cell && cell.t === "node") mode = "gather";
+    // Под щитом штурма не будет (та же проверка, что и в mp-attack) — но
+    // жест не отменяем: отряд просто идёт в указанную клетку. Иначе
+    // перетаскивание молча «не срабатывало» бы на половине карты.
+    const shielded = !!(city && Number(city.shield_until) > nowSec);
+    if (!goHome && city && city.id !== attRow.id && !shielded) mode = "attack";
+    else if (!goHome && cell && (cell.t === "camp" || cell.t === "fort")) mode = "raid";
+    else if (!goHome && cell && cell.t === "node") mode = "gather";
     if (mode === "gather") {
       // Готовим сбор ровно так же, как mp-gather при обычной отправке: сколько
       // отряд увезёт (грузоподъёмность по составу и расе + B.load), сколько на
@@ -643,14 +673,44 @@ Deno.serve(async (req) => {
           .eq("world_id", world.id).eq("x", nx).eq("y", ny);
         newData.res = res; newData.take = take; newData.gather_secs = gatherSecs;
         newData.cell_x = nx; newData.cell_y = ny;
-        newData.carry = isAmber ? { amber: take } : { [res]: take };
-        newData.gather_report = null;   // донесение появится, когда отряд закончит копать (applyGathered)
+        // carry ЗДЕСЬ не трогаем: он копит уже увезённое (см. снятие со сбора
+        // выше), а добычу с ЭТОЙ точки допишет applyGathered, когда отряд
+        // закончит копать — ровно как при обычной отправке через mp-gather.
+        // Прежняя строка присваивала carry целиком и стирала всё, что отряд
+        // вёз с предыдущей точки.
+        // gather_report тут НЕ сбрасываем: в нём уже могут лежать донесения с
+        // предыдущих точек этого же отряда. Донесение по ЭТОЙ точке допишет
+        // applyGathered, когда отряд закончит копать.
       } else {
         // Точка пуста или отряду нечем везти — доходит и возвращается, как с
         // пустого места. Тихо не ломаемся и не «собираем ноль».
         mode = "move";
       }
     }
+
+    // ---- данные ПОД НОВУЮ задачу -------------------------------------------
+    // Раньше не переписывалось ничего, кроме сбора, — и это ломало всё
+    // остальное молча, без единой ошибки в логе:
+    //   * штурм без data.defender_id: applyMarchArrive не находил защитника и
+    //     разворачивал отряд домой без боя. А если defender_id оставался от
+    //     ПРЕДЫДУЩЕЙ цели — отряд бил её же, стоя совсем в другом месте;
+    //   * рейд без data.camp_lv/cell_x/cell_y: applyRaidArrive не находил
+    //     лагерь по старым координатам и считал его «уже разгромленным» —
+    //     отряд возвращался пустым, лагерь оставался цел;
+    //   * data.dist (расстояние ДО ДОМА, по нему считают обратную дорогу
+    //     sendSurvivorsHome и applyGathered) оставался от старой цели.
+    // Поля прошлой задачи снимаем явно: иначе они переживают смену режима.
+    delete newData.defender_id;
+    delete newData.camp_lv;
+    if (mode !== "gather") { delete newData.res; delete newData.take; delete newData.gather_secs; }
+    if (mode !== "gather" && mode !== "raid") { delete newData.cell_x; delete newData.cell_y; }
+    if (mode === "attack") newData.defender_id = city.id;
+    if (mode === "raid") {
+      newData.camp_lv = ((cell && cell.data && cell.data.lv) || 1);
+      newData.cell_x = nx; newData.cell_y = ny;
+    }
+    // Расстояние ДО ДОМА от новой цели — по нему поедет обратная дорога.
+    newData.dist = Math.hypot(nx - home.x, ny - home.y);
 
     const dist = Math.hypot(nx - cur.x, ny - cur.y);
     const spd = marchSpeed(m.units, attRow.race, B.march);
@@ -669,8 +729,17 @@ Deno.serve(async (req) => {
     // расстояние от правды, и клиент рисовал линию от текущего места, а не
     // от замка (см. withPath в index.html, читает это же поле).
     newData.from = { x: cur.x, y: cur.y };
+
+    // Домой — это состояние "back" и событие march_home: только оно приводит
+    // к applyMarchHome, который и заводит отряд В замок (войска в гарнизон,
+    // добыча в казну, полководец из отъезда, донесение о сборе в почту, марш
+    // с карты долой). Состояние "go" с любым режимом сюда не ведёт вовсе.
+    const arriving = goHome
+      ? { mode: "move", state: "back", ev: "march_home" }
+      : { mode, state: "go", ev: "march_arrive" };
     const { error: updM } = await admin.from("marches").update({
-      mode, state: "go", tx: nx, ty: ny, t0: nowSec, t1: nowSec + travel, data: newData,
+      mode: arriving.mode, state: arriving.state,
+      tx: nx, ty: ny, t0: nowSec, t1: nowSec + travel, data: newData,
     }).eq("id", m.id);
     if (updM) return jsonResponse({ err: updM.message }, 500);
 
@@ -683,11 +752,11 @@ Deno.serve(async (req) => {
 
     const { error: evErr } = await admin.from("events").insert({
       world_id: world.id, fire_at: new Date((nowSec + travel) * 1000).toISOString(),
-      type: "march_arrive", data: { march_id: m.id },
+      type: arriving.ev, data: { march_id: m.id },
     });
     if (evErr) return jsonResponse({ err: evErr.message }, 500);
 
-    return jsonResponse({ ok: true, eta: travel, mode });
+    return jsonResponse({ ok: true, eta: travel, mode: goHome ? "home" : mode });
   } catch (e) {
     return jsonResponse({ err: String(e && e.message || e) }, 500);
   }
