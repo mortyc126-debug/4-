@@ -1308,6 +1308,39 @@ body.mp-placing #place-toolbar{display:flex}
 .cbuild .lvl{position:absolute;bottom:2px;right:4px;font-family:var(--data);font-size:10px;
   color:var(--gilt-hi);background:rgba(0,0,0,.55);padding:0 3px;line-height:1.4;z-index:2}
 
+/* Фаза 29 — прочность постройки прямо на карте города. Полоска появляется
+   ТОЛЬКО у повреждённого здания (см. buildHpBarHtml): в мирное время город
+   не должен быть утыкан двумя десятками одинаковых черт, которые ничего не
+   сообщают. Прижата к нижнему краю плитки здания, над ней остаётся значок
+   уровня (.lvl, свой z-index выше) — они не спорят за место.
+   Цвет ведёт от гранатового (почти сбито) к медной зелени (почти цело) —
+   тот же ход, что и у .hpbar боевой полоски, чтобы состояние читалось
+   одинаково и в бою, и в городе. .crit добавляет пульсацию на последней
+   четверти: здание вот-вот рухнет, это стоит заметить, не вглядываясь. */
+.cbuild .bhp{position:absolute;left:8%;right:8%;bottom:1px;height:3px;z-index:2;
+  background:rgba(0,0,0,.62);border-radius:2px;overflow:hidden;pointer-events:none;
+  box-shadow:0 0 0 1px rgba(0,0,0,.45)}
+/* Цвет — от ДОЛИ оставшейся прочности, а не градиентом вдоль полоски (как у
+   боевой .hpbar): на трёх пикселях градиент читается наоборот — у сильно
+   побитого здания кончик полоски оказывался зелёным. Три ступени, как у
+   любого индикатора состояния: цело — медная зелень, потрёпано — золото,
+   вот-вот рухнет — гранат. */
+.cbuild .bhp i{display:block;height:100%;border-radius:2px;
+  background:var(--verdigris);transition:width .4s ease,background .4s ease}
+.cbuild .bhp.warn i{background:var(--gilt)}
+.cbuild .bhp.crit i{background:var(--garnet);animation:bhpPulse 1.4s ease-in-out infinite}
+/* Значок уровня стоит там же, у нижнего края, и на узкой плитке налезал на
+   полоску. Приподнимаем его РОВНО у повреждённых зданий (полоска есть только
+   у них) — у целого города разметка не меняется вовсе. */
+.cbuild:has(.bhp) .lvl{bottom:6px}
+@keyframes bhpPulse{0%,100%{opacity:1}50%{opacity:.45}}
+@media (prefers-reduced-motion:reduce){ .cbuild .bhp.crit i{animation:none} }
+/* Строка "Прочность" в карточке здания — переиспользует .hpbar боя (см. её
+   заголовок), только со своим подписью-строкой в стиле остальных
+   характеристик здания. */
+.bm-hp{margin:10px 0 2px}
+.bm-hp .hpline img{width:13px;height:13px;object-fit:contain;vertical-align:-2px;margin-right:4px}
+
 /* Свободная застройка (Фаза 4) — призрак здания "в руках" (.pghost) и
    подсветка клетки под ним (#place-highlight), см. mpUpdatePlaceDom/
    mpPlaceDragMove. Подсветка — только прямоугольник footprint, не вся
@@ -3783,6 +3816,59 @@ const buildCost = (bk,lv,p) => {
   // в RoK постройки не стоят золота — только еда/дерево/камень (точные числа из таблиц)
   return {food:Math.round((r.food||0)*cut),wood:Math.round((r.wood||0)*cut),stone:Math.round((r.stone||0)*cut),gold:0};
 };
+/* ---- Прочность построек (Фаза 29) --------------------------------------
+   Дословное зеркало блока "Прочность построек, снос осадой и восстановление"
+   из supabase/functions/_shared/rules.js — при правке ЛЮБОГО числа здесь
+   его нужно поправить и там (тот же уговор, что и у всех остальных боевых
+   формул этого файла). Считает ровно то же самое, но нужно клиенту не для
+   решения, а только чтобы РИСОВАТЬ: сервер один решает, сколько прочности у
+   здания осталось, а браузер между опросами показывает, как она сама
+   восстанавливается, не дожидаясь ответа.
+   Осада тут ничего не считает — весь урон только на сервере (mp-tick). */
+const BUILD_HP_BASE=250, BUILD_HP_POW=1.2;
+const BUILD_HP_MULT={hall:3,wall:2.5,garrison:2,scout:0.8,farm:0.6,lumber:0.6,quarry:0.6,mine:0.6};
+const BUILD_HP_FLAT={forge:3000};
+const BUILD_REGEN_CALM_SEC=1800, BUILD_REGEN_PER_HOUR=0.20;
+function buildingMaxHp(bk,lv){
+  if(lv<=0) return 0;
+  if(BUILD_HP_FLAT[bk]!=null) return BUILD_HP_FLAT[bk];
+  return Math.round(BUILD_HP_BASE*Math.pow(lv,BUILD_HP_POW)*(BUILD_HP_MULT[bk]||1));
+}
+// Уровень конкретного участка — своя функция, а не cityCellLevel(p,c): та
+// принимает запись CITY_CELLS (старая карта фиксированных слотов), а
+// прочность нужна и свободной застройке (p.layout), и Ратуше со Стеной,
+// которых в layout нет вовсе.
+function buildLvOf(st,bk,plot){
+  const raw=st.b[bk];
+  return (Array.isArray(raw) ? raw[plot||0] : raw)||0;
+}
+// Сколько прочности показывать ПРЯМО СЕЙЧАС: то, что прислал сервер, плюс
+// самостоятельно накопившаяся починка с момента его отметки. Чистая функция,
+// состояние не трогает — иначе следующий же опрос сервера затёр бы
+// досчитанное, и полоска дёргалась бы туда-сюда каждые пять секунд.
+function buildHpShown(st,bk,plot,nowSec){
+  const max=buildingMaxHp(bk,buildLvOf(st,bk,plot));
+  if(max<=0) return 0;
+  const raw=st.bhp && st.bhp[bk];
+  const cur=Array.isArray(raw) ? raw[plot||0] : (typeof raw==="number"?raw:undefined);
+  if(cur==null || !(cur>=0)) return max;         // здания нет в bhp — оно цело
+  const from=Math.max(st.bhpAt||0,(st.lastHitAt||0)+BUILD_REGEN_CALM_SEC);
+  const dt=Math.max(0,(nowSec||Date.now()/1000)-from);
+  return Math.max(0,Math.min(max, cur + max*BUILD_REGEN_PER_HOUR*(dt/3600)));
+}
+// Полоска под зданием на карте города. Целое здание полоски не показывает
+// вовсе — иначе город в мирное время был бы утыкан двумя десятками
+// одинаковых зелёных черт, которые ничего не сообщают.
+function buildHpBarHtml(st,bk,plot,nowSec){
+  const max=buildingMaxHp(bk,buildLvOf(st,bk,plot));
+  if(max<=0) return "";
+  const hp=buildHpShown(st,bk,plot,nowSec);
+  if(hp>=max) return "";
+  const pct=Math.max(0,Math.min(100,hp/max*100));
+  const tone=pct<=25?" crit":pct<=60?" warn":"";
+  return "<div class='bhp"+tone+"' title='Прочность "+fmt(hp)+" / "+fmt(max)+"'>"+
+         "<i style='width:"+pct.toFixed(1)+"%'></i></div>";
+}
 const prodRate  = lv => lv<=0?0:tblRow(PROD_TABLE,lv);   // в час
 const storeCap  = lv => tblRow(STORE_TABLE,Math.max(1,lv));
 const troopStat = (type,tier,stat) => Math.round(TROOP_TYPES[type][stat]*TIER_MULT[tier-1]);
@@ -8652,12 +8738,14 @@ function mpRenderFreeformCity(){
   const p=mpCityShim(), st=mpState.player.state;
   const layout=Array.isArray(st.layout)?st.layout:[];
   let h="<div id='citymap-wrap'><img class='base' src='city-map.jpg'>";
+  const nowSecCity=Date.now()/1000;
   ["hall","wall"].forEach(bk=>{
     const lv=p.b[bk]||0, pos=CITY_FIXED_GRID_POS[bk], r=cityGridCellToPct(pos.gx,pos.gy,pos.w,pos.h);
     h+="<div class='cbuild"+(lv>0?" built":"")+(mpFixedSel===bk?" sel":"")+"' data-layoutfixed='"+bk+"' "+
        "style='left:"+r.left+"%;top:"+r.top+"%;width:"+r.w+"%;height:"+r.h+"%'>"+
        "<div class='shape'></div>"+
-       (lv>0?(bk!=="wall"?"<img class='bimg' src='"+cityCellImg({bk,pl:null})+"'>":"")+"<span class='lvl'>"+lv+"</span>":"")+
+       (lv>0?(bk!=="wall"?"<img class='bimg' src='"+cityCellImg({bk,pl:null})+"'>":"")+"<span class='lvl'>"+lv+"</span>"+
+             buildHpBarHtml(st,bk,null,nowSecCity):"")+
        "</div>";
   });
   layout.forEach((e,li)=>{
@@ -8676,6 +8764,7 @@ function mpRenderFreeformCity(){
        "style='left:"+r.left+"%;top:"+r.top+"%;width:"+r.w+"%;height:"+r.h+"%'>"+
        "<div class='shape'></div>"+
        "<img class='bimg' src='"+cityCellImg({bk:e.b,pl:e.plot})+"'><span class='lvl'>"+lv+"</span>"+
+       buildHpBarHtml(st,e.b,e.plot,nowSecCity)+
        "</div>";
   });
   // Призрак размещаемого здания + подсветка клетки под ним (Фаза 4) —
@@ -9937,6 +10026,29 @@ function mpBuildingModalHtmlFor(bld,plot){
   if(!maxed && lv>0){
     h+="<table id='bm-stats'><tr><td>Мощь здания</td><td>"+fmt(buildingPower(bld,lv))+" &rarr; "+fmt(buildingPower(bld,nextLv))+"</td></tr></table>";
     h+=mpBuildingStatDeltaHtml(bld,lv,nextLv,hallLv);
+  }
+  // Фаза 29 — прочность. Строка показывается у ЛЮБОГО построенного здания
+  // (а не только у повреждённого, как полоска на карте): в карточке игрок
+  // как раз и выясняет, сколько здание держит и через сколько починится,
+  // поэтому целое "10 400 / 10 400" здесь осмысленно, а на карте — шум.
+  if(lv>0){
+    const hpMax=buildingMaxHp(bld,lv), hpNow=buildHpShown(st,bld,plot,Date.now()/1000);
+    h+="<div class='bm-hp'>"+
+       "<div class='hpline'><span><img src='images/ui/stat-hp.png' alt=''>Прочность</span>"+
+       "<b>"+fmt(hpNow)+" / "+fmt(hpMax)+"</b></div>"+
+       "<div class='hpbar'><i style='width:"+(hpMax>0?Math.max(0,Math.min(100,hpNow/hpMax*100)):0).toFixed(1)+"%'></i></div>";
+    if(hpNow<hpMax){
+      // Когда починится: либо ждём конца окна тишины, либо уже чинимся и
+      // осталось добрать недостающее по BUILD_REGEN_PER_HOUR.
+      const nowSec=Date.now()/1000, calmAt=(st.lastHitAt||0)+BUILD_REGEN_CALM_SEC;
+      const full=(hpMax-hpNow)/(hpMax*BUILD_REGEN_PER_HOUR)*3600;
+      h+="<div class='note' style='margin-top:6px'>"+
+         (nowSec<calmAt
+           ? "Восстановление начнётся через "+fmtDur(calmAt-nowSec)+" — пока город под ударом, каменщики не выходят."
+           : "Восстановится полностью через "+fmtDur(full)+".")+
+         "</div>";
+    }
+    h+="</div>";
   }
   if(canGo){
     h+="<div id='bm-reqs'>"+RES.map(r=>{
