@@ -1927,8 +1927,24 @@ const BUILD_RU_NAME = {
   garrison: "Гарнизон", scout: "Разведка", forge: "Горн", portal: "Портал",
   market: "Рынок", alliance: "Центр Альянса",
 };
+// Род каждого названия — иначе строка хроники выходит "Гарнизон обрушена",
+// "Склад обрушена", "Казармы обрушена". Одна буква на здание дешевле, чем
+// выкручиваться безличными формулировками в каждом сообщении.
+// m — мужской, f — женский, n — средний, p — множественное (Казармы).
+const BUILD_RU_GENDER = {
+  hall: "f", wall: "f", farm: "f", lumber: "f", quarry: "f", mine: "f",
+  store: "m", barracks: "p", range: "n", stable: "f", siege: "f",
+  hospital: "m", academy: "f", garrison: "m", scout: "f", forge: "m",
+  portal: "m", market: "m", alliance: "m",
+};
 function buildRuName(bk, plot) {
   return (BUILD_RU_NAME[bk] || bk) + (plot != null ? " (участок " + (plot + 1) + ")" : "");
+}
+// Согласованное окончание причастия: ruinWord("обрушен", bk) → "обрушена"
+// для Академии, "обрушен" для Склада, "обрушены" для Казарм.
+function ruinWord(stem, bk) {
+  const g = BUILD_RU_GENDER[bk] || "f";
+  return stem + (g === "m" ? "" : g === "f" ? "а" : g === "n" ? "о" : "ы");
 }
 function buildingMaxHp(bk, lv) {
   if (lv <= 0) return 0;
@@ -2090,7 +2106,8 @@ function runDemolishRounds(state, attP, defP) {
         break;
       }
       D.ruined.push({ bk: t.bk, plot: t.plot, lv: t.lv, round: D.round });
-      pushLog(state, "ruin", buildRuName(t.bk, t.plot) + " (" + t.lv + " ур.) обрушена и разобрана до основания.", "att");
+      pushLog(state, "ruin", buildRuName(t.bk, t.plot) + " (" + t.lv + " ур.) " +
+        ruinWord("обрушен", t.bk) + " и " + ruinWord("разобран", t.bk) + " до основания.", "att");
       D.i++;
     } else {
       pushLog(state, "breach", buildRuName(t.bk, t.plot) + " под ударом таранов — прочность " +

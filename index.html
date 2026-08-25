@@ -1491,6 +1491,33 @@ body.mp-placing #place-toolbar{display:flex}
 .hpbar-gen{height:4px;opacity:.7}
 .hpbar-gen i{background:linear-gradient(90deg,var(--garnet),var(--gilt-hi))}
 
+/* Фаза 29 — список того, что осада сделала с городом, в письме о бое
+   (mpDemolishHtml). Сетка, а не флекс: название слева тянется, число справа
+   всегда на одном месте, полоска прочности у уцелевших занимает всю ширину
+   второй строкой. Снесённое — гранатовым и зачёркнутым: здания больше нет,
+   это не "меньше стало", а "не осталось". */
+.ruin-row{display:grid;grid-template-columns:16px 1fr auto;gap:0 8px;align-items:baseline;
+  padding:5px 0;border-bottom:1px solid var(--rule-soft);font-size:12.5px}
+.ruin-row:last-child{border-bottom:none}
+.ruin-row > i{font-style:normal;color:var(--vellum-faint);text-align:center}
+.ruin-row .ruin-nm{color:var(--vellum)}
+.ruin-row > b{font-family:var(--data);font-size:11.5px;font-weight:normal;color:var(--vellum-dim);
+  white-space:nowrap}
+/* Полоска прочности здесь красится ПО ДОЛЕ, как на карте города (см.
+   .cbuild .bhp), а не градиентом вдоль остатка, как боевая .hpbar: у
+   постройки важно "сколько от неё осталось", а не "где кончилась полоска". */
+.ruin-row .hpbar{grid-column:2/4;margin-top:4px}
+.ruin-row .hpbar i{background:var(--verdigris)}
+.ruin-row.warn .hpbar i{background:var(--gilt)}
+.ruin-row.crit .hpbar i{background:var(--garnet)}
+.ruin-row.gone > i{color:var(--garnet)}
+.ruin-row.gone .ruin-nm{color:var(--vellum-dim);text-decoration:line-through;
+  text-decoration-color:rgba(150,50,59,.7)}
+.ruin-row.gone > b{color:var(--garnet)}
+/* Перечень уже обрушенного прямо во время осады (mpDemolishLiveHtml) —
+   вторая, приглушённая строка под полоской текущей цели. */
+.note.ruin-live{color:var(--garnet);opacity:.85}
+
 /* Табличка-реестр */
 .roll{width:100%;border-collapse:collapse;font-size:13px}
 .roll td{padding:4px 0;border-bottom:1px dotted var(--rule-soft);color:var(--vellum-dim)}
@@ -11291,7 +11318,12 @@ function mailRowHtml(m){
    остаются нейтральными. */
 const BATTLE_LOG_ICON={weather:"&#9730;",volley:"&#10148;",tower:"&#9819;",panic:"&#9888;",
   counter:"&#8634;",raise:"&#9760;",general:"&#9876;",mark:"&#9873;",round:"&#8226;",
-  rout:"&#8617;",end:"&#9873;"};
+  rout:"&#8617;",end:"&#9873;",
+  // Фаза 29 — снос города: таран бьёт по постройке (breach) и постройка
+  // рухнула (ruin). Оба приходят от mp-tick стороной "att" — у защитника
+  // они покрасятся как плохие новости сами, тем же правилом, что и всё
+  // остальное в хронике (см. mpBattleLogHtml).
+  breach:"&#9874;",ruin:"&#10007;"};
 // Проценты бонуса — со знаком (+12.3% / −4.0%), тем же округлением, что и
 // остальные проценты в игре (одна десятая, как у snap talents/statTxt).
 function pctTxt(v){ return (v>=0?"+":"")+(v*100).toFixed(1)+"%"; }
@@ -14796,6 +14828,40 @@ function mpBattleInterp(battle, from, to){
   const frac=Math.max(0,Math.min(1,(Date.now()-battle.revealStart)/(battle.revealAt-battle.revealStart)));
   return from+(to-from)*frac;
 }
+// Фаза 29 — вторая половина осады: армия защитника разбита, тараны взялись
+// за сам город (b.phase==="demolish", см. runDemolishRounds в mp-tick).
+// Полоски войск в этот момент показывать нечего — у обороны их ноль, — зато
+// есть настоящая цель: та постройка, которую ломают прямо сейчас. Та же
+// интерполяция по времени, что и у войск, только между revealFromHp и
+// curHp конкретного здания.
+// revealFromKey/curKey — защита от рывка полоски, когда за один тик успели
+// добить одну постройку и взяться за следующую: интерполировать "с прошлого
+// здания на нынешнее" бессмысленно, показываем сразу текущее значение.
+function mpDemolishLiveHtml(b, mine){
+  const D=b && b.demolish; if(!b || b.phase!=="demolish" || !D) return "";
+  const ruinedN=(D.ruined&&D.ruined.length)||0;
+  let h="<div class='note'>"+
+    (mine?"Стены взяты — тараны разбирают город":"Стены пали — город разбирают таранами")+
+    " · заход "+(D.round||0)+" из "+DEMOLISH_ROUNDS_UI+
+    (ruinedN?" · разрушено: "+ruinedN:"")+"</div>";
+  if(D.curName && D.curMax>0){
+    const from=(D.revealFromKey===D.curKey)?D.revealFromHp:D.curHp;
+    h+=mpHpBarHtml(D.curName, mpBattleInterp(b, from, D.curHp), D.curMax, null);
+  }
+  if(ruinedN) h+="<div class='note ruin-live'>Обрушено: "+
+    D.ruined.map(r=>escHtml(r.bk?buildRuNameUI(r.bk,r.plot):"")).filter(Boolean).join(", ")+"</div>";
+  return h;
+}
+// Те же имена построек, что шлёт mp-tick в письме, — но для живой осады
+// сервер кладёт в ruined только ключи, а не готовую подпись (в письме имя
+// собирается один раз на финале, здесь оно нужно каждый тик).
+function buildRuNameUI(bk,plot){
+  const nm=(BUILDINGS[bk]&&BUILDINGS[bk].name)||bk;
+  return nm+(plot!=null?" ("+(plot+1)+")":"");
+}
+// Зеркало DEMOLISH_ROUNDS из mp-tick/_shared/rules.js — только для подписи
+// "заход N из 8", на расчёт не влияет ничем.
+const DEMOLISH_ROUNDS_UI=8;
 // Быстрый (1с) опрос ТОЛЬКО во время боя, не всегда — автор попросил именно
 // так: "не постоянно, а именно при боях... чтобы не превышать лимиты".
 // Обычный select через уже открытую RLS, БЕЗ вызова mp-tick — на порядок
@@ -15295,6 +15361,28 @@ function mpMailSiegeEntry(m){
     cls: cls==="hot"?"win":cls==="war"?"lose":"", tone: cls==="hot"?"green":cls==="war"?"red":"blue",
     title, sub:note, detailHtml:"<div class='note'>"+note+"</div>"};
 }
+// Фаза 29 — что осада сделала с городом. Данные шлёт mp-tick в
+// summary.demolish (см. finalizePvpBattle): ruined — снесённое до основания,
+// damaged — устоявшее, но побитое. Старые письма (до этого деплоя) поля не
+// несут вовсе — блок тогда просто не рисуется, как и остальные поздние
+// добавления в этом письме.
+function mpDemolishHtml(dem, mine){
+  if(!dem || (!dem.ruined || !dem.ruined.length) && (!dem.damaged || !dem.damaged.length)) return "";
+  const hd = mine ? "Что мы сделали с городом" : "Что стало с нашим городом";
+  let h="<div class='mail-chron'><div class='mail-chron-hd'>"+hd+"</div>";
+  (dem.ruined||[]).forEach(r=>{
+    h+="<div class='ruin-row gone'><i>&#10007;</i><span class='ruin-nm'>"+escHtml(r.name)+"</span>"+
+       "<b>было "+r.lv+" ур.</b></div>";
+  });
+  (dem.damaged||[]).forEach(r=>{
+    const pct=r.max>0?Math.max(0,Math.min(100,r.hp/r.max*100)):0;
+    const tone=pct<=25?" crit":pct<=60?" warn":"";
+    h+="<div class='ruin-row"+tone+"'><i>&#9874;</i><span class='ruin-nm'>"+escHtml(r.name)+"</span>"+
+       "<b>"+fmt(r.hp)+" / "+fmt(r.max)+"</b>"+
+       "<div class='hpbar'><i style='width:"+pct.toFixed(1)+"%'></i></div></div>";
+  });
+  return h+"</div>";
+}
 function mpMailBattleEntry(m){
   const d=m.data, mine=d.role==="attacker";
   const myLoss=mine?d.attLoss:d.defLoss, oppLoss=mine?d.defLoss:d.attLoss;
@@ -15306,7 +15394,11 @@ function mpMailBattleEntry(m){
   const myPower=mine?d.attPower:d.defPower, oppPower=mine?d.defPower:d.attPower;
   const tier=battleOutcomeTier(myStart,myHs.dead||0,myHs.hurt||0,won,myPower,oppPower);
   const title=(mine?"Напали на ":"Напали от ")+(d.opponent_nick||"Безымянный лорд")+" — "+tier.name;
-  const sub="Наши потери: "+RU(lostN(myLoss))+" · потери противника: "+RU(lostN(oppLoss));
+  // Фаза 29 — снесённые постройки важнее потерь: если город разобрали, это
+  // первое, что должно быть видно в строке списка, не разворачивая письмо.
+  const ruinedN=(d.demolish && d.demolish.ruined && d.demolish.ruined.length)||0;
+  const sub=(ruinedN?(mine?"Разрушено построек: ":"Разрушено наших построек: ")+ruinedN+" · ":"")+
+    "Наши потери: "+RU(lostN(myLoss))+" · потери противника: "+RU(lostN(oppLoss));
 
   // attRace/defCoords/... — Фаза 29: раньше сервер их не слал вовсе, старые
   // письма (до этого деплоя) их не несут — тогда честно откатываемся на
@@ -15358,6 +15450,7 @@ function mpMailBattleEntry(m){
         const lootTxt=d.loot&&RES.filter(r=>d.loot[r]).map(r=>resIconSpan(r,RU(d.loot[r]))).join("");
         if(mine&&won&&lootTxt) detailHtml+="<div class='mail-note'>Захвачено: "+lootTxt+"</div>";
         else if(!mine&&!won&&lootTxt) detailHtml+="<div class='mail-note'>Разграблено: "+lootTxt+"</div>";
+        detailHtml+=mpDemolishHtml(d.demolish,mine);
         detailHtml+=mpBattleLogHtml(d.log,mine);
       } else {
         const hospPart=(label,x)=>x.dead!=null?(" · "+label+": легкораненые "+RU(x.slight||0)+", тяжелораненые "+RU(x.hurt||0)+", убито "+RU(x.dead||0)):"";
@@ -15750,9 +15843,11 @@ function foMultiplayer(embedded, only){
         // Фаза 21 — оборона видит СВОЮ полоску как "defHpLeft" в state
         // боя, атакующего — как "attHpLeft" (mpHpBarHtml ниже нейтрален к
         // роли, просто рисует то, что дали).
-        h+="<div class='note'>Бой идёт — раунд "+b.round+(b.weather&&b.weather.id!=="clear"?" · "+b.weather.name:"")+"</div>"+
-           mpHpBarHtml("Наша оборона",mpBattleInterp(b,b.revealFromDefHp,b.defHpLeft),b.defStartHp,mpBattleInterp(b,b.revealFromDefGenFrac,b.defGenHpFrac))+
-           mpHpBarHtml("Противник",mpBattleInterp(b,b.revealFromAttHp,b.attHpLeft),b.attStartHp,mpBattleInterp(b,b.revealFromAttGenFrac,b.attGenHpFrac));
+        h+= b.phase==="demolish"
+          ? mpDemolishLiveHtml(b,false)
+          : "<div class='note'>Бой идёт — раунд "+b.round+(b.weather&&b.weather.id!=="clear"?" · "+b.weather.name:"")+"</div>"+
+            mpHpBarHtml("Наша оборона",mpBattleInterp(b,b.revealFromDefHp,b.defHpLeft),b.defStartHp,mpBattleInterp(b,b.revealFromDefGenFrac,b.defGenHpFrac))+
+            mpHpBarHtml("Противник",mpBattleInterp(b,b.revealFromAttHp,b.attHpLeft),b.attStartHp,mpBattleInterp(b,b.revealFromAttGenFrac,b.attGenHpFrac));
       } else {
         const left=Math.max(0,m.t1-Date.now()/1000);
         h+="<div class='note'>Подход через "+fmtDur(left)+" — состав отряда неизвестен без разведки.</div>";
@@ -15814,9 +15909,12 @@ function foMultiplayer(embedded, only){
       // mp-tick), поэтому вместо "Осталось: ..." — живые полоски HP.
       const b=sieging&&m.data&&m.data.battle;
       if(b){
-        h+="<div class='note'>Бой идёт — раунд "+b.round+(b.weather&&b.weather.id!=="clear"?" · "+b.weather.name:"")+"</div>"+
-           mpHpBarHtml("Наши",mpBattleInterp(b,b.revealFromAttHp,b.attHpLeft),b.attStartHp,mpBattleInterp(b,b.revealFromAttGenFrac,b.attGenHpFrac))+
-           mpHpBarHtml("Противник",mpBattleInterp(b,b.revealFromDefHp,b.defHpLeft),b.defStartHp,mpBattleInterp(b,b.revealFromDefGenFrac,b.defGenHpFrac));
+        h+= b.phase==="demolish"
+          ? mpDemolishLiveHtml(b,true)+
+            mpHpBarHtml("Наши",mpBattleInterp(b,b.revealFromAttHp,b.attHpLeft),b.attStartHp,null)
+          : "<div class='note'>Бой идёт — раунд "+b.round+(b.weather&&b.weather.id!=="clear"?" · "+b.weather.name:"")+"</div>"+
+            mpHpBarHtml("Наши",mpBattleInterp(b,b.revealFromAttHp,b.attHpLeft),b.attStartHp,mpBattleInterp(b,b.revealFromAttGenFrac,b.attGenHpFrac))+
+            mpHpBarHtml("Противник",mpBattleInterp(b,b.revealFromDefHp,b.defHpLeft),b.defStartHp,mpBattleInterp(b,b.revealFromDefGenFrac,b.defGenHpFrac));
       } else if(contested){
         h+="<div class='note'>Бой идёт — раунд "+cb.round+(cb.weather&&cb.weather.id!=="clear"?" · "+cb.weather.name:"")+"</div>"+
            mpHpBarHtml("Наши",mpBattleInterp(cb,cb.revealFromDefHp,cb.defHpLeft),cb.defStartHp,mpBattleInterp(cb,cb.revealFromDefGenFrac,cb.defGenHpFrac))+

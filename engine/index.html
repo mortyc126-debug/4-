@@ -67,6 +67,12 @@
   .blabel .btitle{font-size:11px;color:#f0dfae;font-variant:small-caps;letter-spacing:.03em;white-space:nowrap}
   .blabel.retreat .btitle{color:#e2a1a1}
   .blabel.deploy .btitle{color:#cfead6}
+  /* Фаза 29 — снос города: подпись золотом (не тревожно-красным, как
+     отступление, — для нападающего это успех), а нижняя полоска в этот
+     момент показывает прочность ломаемой постройки, а не оборону, поэтому
+     красится в цвет камня, а не крови. */
+  .blabel.demolish .btitle{color:#e6c273}
+  .blabel.demolish .bbar.def i{background:#b08d5a}
   .blabel .bbar{width:52px;height:4px;border-radius:2px;background:rgba(0,0,0,.55);
     border:1px solid rgba(0,0,0,.6);overflow:hidden}
   .blabel .bbar i{display:block;height:100%;transition:width .4s ease}
