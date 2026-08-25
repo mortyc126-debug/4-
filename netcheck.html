@@ -1,0 +1,81 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Право Правителя — проверка связи</title>
+<!--
+  Страница самопроверки. Автор сообщил: «в игру можно попасть только со
+  включенным VPN» — а «попасть» может означать разное, и лечится оно
+  по-разному:
+
+    • не открывается САМА страница  -> провайдер блокирует наш хостинг.
+      Ни одна правка в коде игры этого не исправит: нужен другой домен или
+      другой хостинг. Признак: эта страница тоже не открылась.
+    • страница открылась, а игра мертва -> блокируется чужой домен данных
+      (*.supabase.co). Лечится обходом через наш же домен — он проверяется
+      ниже строкой «запасной путь».
+
+  Открывать БЕЗ VPN. Ничего никуда не отправляет, только дёргает те же
+  адреса, что и сама игра, и показывает, какие ответили.
+-->
+<style>
+  body{margin:0;padding:22px 16px;background:#14110c;color:#e8dcc4;
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  h1{font-size:19px;margin:0 0 4px;letter-spacing:.04em}
+  .sub{color:#9b8a6d;font-size:13px;margin:0 0 18px}
+  .row{display:flex;align-items:baseline;gap:10px;padding:9px 0;
+    border-bottom:1px solid rgba(155,138,109,.22)}
+  .nm{flex:1;min-width:0}
+  .nm b{display:block;font-weight:600}
+  .nm span{color:#9b8a6d;font-size:12px;word-break:break-all}
+  .st{font-weight:600;white-space:nowrap;font-size:13px}
+  .wait{color:#9b8a6d}.ok{color:#7fc08a}.err{color:#e0796f}
+  #verdict{margin-top:20px;padding:14px;border-radius:8px;
+    background:rgba(155,138,109,.12);border:1px solid rgba(155,138,109,.3);font-size:14px}
+  #verdict b{color:#f0c674}
+</style>
+<h1>Проверка связи</h1>
+<p class="sub">Откройте эту страницу <b>без VPN</b>. Она проверяет те же адреса, что использует игра.</p>
+<div id="list"></div>
+<div id="verdict">Проверяю…</div>
+<script>
+const SUPABASE_URL="https://xzuwqgpwzlmpglnuijio.supabase.co";
+const checks=[
+  {key:"site",   name:"Сам сайт (наш хостинг)", url:location.origin+"/vendor/supabase-js-2.112.4.min.js",
+   note:"если бы он не работал, эта страница не открылась бы вовсе"},
+  {key:"data",   name:"Данные игры (карта высот)", url:location.origin+"/heightmap/region-map-v1.bin"},
+  {key:"direct", name:"Сервер игры напрямую", url:SUPABASE_URL+"/auth/v1/health",
+   note:"чужой домен — именно его чаще всего и не пускает провайдер"},
+  {key:"proxy",  name:"Сервер игры запасным путём", url:location.origin+"/sb/auth/v1/health",
+   note:"тот же сервер, но через адрес нашего сайта"},
+];
+const res={};
+const list=document.getElementById("list");
+for(const c of checks){
+  const row=document.createElement("div"); row.className="row";
+  row.innerHTML="<div class='nm'><b></b><span></span></div><div class='st wait'>проверяю…</div>";
+  row.querySelector("b").textContent=c.name;
+  row.querySelector("span").textContent=c.url+(c.note?" — "+c.note:"");
+  list.appendChild(row); c.el=row.querySelector(".st");
+}
+async function run(c){
+  const ctrl=new AbortController(); const t=setTimeout(()=>ctrl.abort(), 12000);
+  const t0=Date.now();
+  try{
+    // no-store, чтобы не получить бодрый ответ из кэша вместо настоящей проверки
+    const r=await fetch(c.url,{cache:"no-store",signal:ctrl.signal});
+    res[c.key]=true;
+    c.el.className="st ok"; c.el.textContent="доступен · "+(Date.now()-t0)+" мс";
+  }catch(e){
+    res[c.key]=false;
+    c.el.className="st err";
+    c.el.textContent=(e&&e.name==="AbortError")?"не ответил за 12 с":"не доступен";
+  }finally{ clearTimeout(t); }
+}
+Promise.all(checks.map(run)).then(()=>{
+  const v=document.getElementById("verdict");
+  if(res.direct && res.proxy) v.innerHTML="<b>Всё доступно.</b> Блокировки на пути игры нет — если игра всё равно не работает, дело не в сети, покажите это разработчику.";
+  else if(!res.direct && res.proxy) v.innerHTML="<b>Домен сервера заблокирован, но обход работает.</b> Игра должна работать и без VPN: она сама переключается на запасной путь.";
+  else if(!res.direct && !res.proxy) v.innerHTML="<b>Сервер недоступен обоими путями.</b> Либо сервер лежит, либо провайдер режет и наш домен тоже. Покажите этот экран разработчику.";
+  else v.innerHTML="<b>Прямой путь работает, запасной — нет.</b> Игра будет работать, но обход для заблокированных сетей не настроен: правило /sb на хостинге не применилось.";
+});
+</script>

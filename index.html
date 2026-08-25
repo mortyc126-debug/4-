@@ -1717,7 +1717,14 @@ body.mp-placing #place-toolbar{display:flex}
   <div class="mp-loading-txt">Загрузка мира…</div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- Библиотека Supabase лежит В РЕПОЗИТОРИИ, а не тянется с cdn.jsdelivr.net.
+     Автор сообщил: «в игру можно попасть только со включенным VPN». Каждый
+     внешний домен на пути загрузки — отдельная точка отказа для игрока, у
+     которого провайдер до этого домена не пускает; а без этой библиотеки
+     ломается вообще всё сетевое, включая вход в общий мир. Версия зашита в
+     имя файла: так его можно кэшировать хоть на год, а обновление приезжает
+     под новым именем и мимо кэша. -->
+<script src="/vendor/supabase-js-2.112.4.min.js"></script>
 <script>
 "use strict";
 // Фаза 13 — общий мир как единственная точка входа. По умолчанию (обычная
@@ -7596,8 +7603,68 @@ function advanceToAnimated(target, onProgress){
    ========================================================================= */
 const SUPABASE_URL="https://xzuwqgpwzlmpglnuijio.supabase.co";
 const SUPABASE_ANON_KEY="sb_publishable_OOPvf-dpPbzy4kqC4a88jg_kwgpqkQz";
+
+/* ---- Запасной путь до Supabase через собственный домен -------------------
+   Автор сообщил: «в игру можно попасть только со включенным VPN». Сама
+   страница отдаётся нашим хостингом, а вот все данные — с чужого домена
+   (*.supabase.co). Если провайдер игрока не пускает именно туда, страница
+   откроется, но игра будет мертва: ни сохранений, ни общего мира.
+
+   Лечится тем, что тот же самый API доступен ЕЩЁ И по адресу нашего же
+   сайта: /sb/... переписывается хостингом на supabase.co (см. routes в
+   render.yaml). Раз игрок эту страницу загрузил — значит до нашего домена он
+   доходит, и этот путь для него рабочий.
+
+   Прямой адрес остаётся ОСНОВНЫМ: он короче (без лишнего звена) и у
+   большинства игроков работает. На запасной переключаемся сами, молча, при
+   первой же СЕТЕВОЙ ошибке — не по коду ответа, а именно когда запрос не
+   доехал вовсе (fetch отвергает промис). Ошибку «сервер ответил 500»
+   переключением не лечат.
+
+   Выбор запоминается: в следующий раз игрок с заблокированным доменом сразу
+   пойдёт запасным путём, без потерянной попытки на каждый запрос. Раз в
+   сутки пробуем прямой снова — блокировки снимают так же, как ставят. */
+const SB_PROXY_BASE=(location.origin||"")+"/sb";
+const SB_ROUTE_KEY="fourbanners:sbroute", SB_ROUTE_RECHECK_MS=24*3600*1000;
+let sbBase=SUPABASE_URL;
+try{
+  const saved=JSON.parse(localStorage.getItem(SB_ROUTE_KEY)||"null");
+  if(saved && saved.proxy && Date.now()-saved.at<SB_ROUTE_RECHECK_MS) sbBase=SB_PROXY_BASE;
+}catch(e){}
+function sbRememberRoute(proxy){
+  try{ localStorage.setItem(SB_ROUTE_KEY, JSON.stringify({proxy:!!proxy, at:Date.now()})) }catch(e){}
+}
+// Единственная точка, через которую в Supabase уходят ВСЕ запросы: и свои
+// (mpCall ниже), и те, что делает сама библиотека — ей этот fetch передаётся
+// в global.fetch, поэтому пересоздавать клиент при смене пути не нужно.
+async function sbFetch(input, init){
+  const orig = typeof input==="string" ? input : (input && input.url) || String(input);
+  const swap = (base)=> orig.startsWith(SUPABASE_URL) ? base+orig.slice(SUPABASE_URL.length) : orig;
+  // Request нельзя переиспользовать с другим URL — пересобираем из него init.
+  const opts = (typeof input==="string" || !input) ? init : Object.assign({
+    method:input.method, headers:input.headers, body:input.body,
+    credentials:input.credentials, mode:input.mode, signal:input.signal,
+  }, init||{});
+  try{
+    return await fetch(swap(sbBase), opts);
+  }catch(e){
+    // Прерывание по таймауту/навигации — не про блокировку, повторять нечего.
+    if(e && e.name==="AbortError") throw e;
+    if(sbBase===SUPABASE_URL && SB_PROXY_BASE){
+      sbBase=SB_PROXY_BASE; sbRememberRoute(true);
+      console.warn("прямой путь до Supabase недоступен — переходим на запасной через свой домен");
+      return await fetch(swap(sbBase), opts);
+    }
+    if(sbBase!==SUPABASE_URL){
+      // Запасной тоже не отвечает: возможно, дело не в блокировке, а в самом
+      // сервере — вернём выбор к прямому, чтобы не залипнуть на обходе.
+      sbRememberRoute(false);
+    }
+    throw e;
+  }
+}
 const sb=(window.supabase&&window.supabase.createClient)
-  ? window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY)
+  ? window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{global:{fetch:sbFetch}})
   : null;
 function deviceId(){
   try{
@@ -13848,7 +13915,9 @@ async function mpCall(fn, body, tries){
   const timer = setTimeout(()=>ctrl.abort(), 15000);
   let r;
   try{
-    r = await fetch(SUPABASE_URL+"/functions/v1/"+fn, {
+    // sbFetch, а не голый fetch: у Edge Functions тот же домен, что и у
+    // остального API, и тот же запасной путь (см. sbFetch выше).
+    r = await sbFetch(SUPABASE_URL+"/functions/v1/"+fn, {
       method:"POST",
       headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+session.access_token, "apikey":SUPABASE_ANON_KEY },
       body: JSON.stringify(body||{}),
