@@ -7836,6 +7836,44 @@ function sbRememberRoute(proxy){
 // Единственная точка, через которую в Supabase уходят ВСЕ запросы: и свои
 // (mpCall ниже), и те, что делает сама библиотека — ей этот fetch передаётся
 // в global.fetch, поэтому пересоздавать клиент при смене пути не нужно.
+// Сколько ждать ответа по каждому пути, прежде чем считать его непроезжим.
+// Здесь и был провал всей затеи с запасным путём: переключение стояло только
+// на ОТКАЗ fetch (промис отвергнут). А блокировка по имени хоста — та самая,
+// из-за которой этот обход и заводили, — так себя не ведёт: она НЕ отвергает
+// пакеты, а молча их выбрасывает, и запрос просто висит. Промис не
+// отвергается никогда, catch ниже не наступает, на запасной путь никто не
+// переходит, и игра умирает с «Проверка входа не отвечает дольше 10с» —
+// ровно то, что автор и увидел. Почерк описан в deploy/README.md: «вечная
+// загрузка, а не „сайт недоступен“».
+// Теперь висящий запрос — такой же отказ, как и отвергнутый: своё прерывание
+// по времени, и сразу вторая попытка через свой домен. Запасному даём больше
+// (лишнее звено), но всё вместе должно укладываться в внешние таймауты
+// mpWithTimeout/mpCall, иначе игрок увидит их сообщение раньше, чем обход
+// успеет сработать.
+const SB_TRY_DIRECT_MS=5000, SB_TRY_PROXY_MS=8000;
+// Прерывание по времени поверх чужого signal (у mpCall он свой, 15с). Своим
+// контроллером, а не AbortSignal.any — та новее, чем часть телефонов, на
+// которых в это играют.
+function sbFetchOnce(url, opts, ms){
+  const outer = opts && opts.signal;
+  const ctrl = new AbortController();
+  let byTimeout=false;
+  const relay = ()=>ctrl.abort();
+  const timer = setTimeout(()=>{ byTimeout=true; ctrl.abort(); }, ms);
+  if(outer){ if(outer.aborted) ctrl.abort(); else outer.addEventListener("abort", relay); }
+  const cleanup = ()=>{ clearTimeout(timer); if(outer) outer.removeEventListener("abort", relay); };
+  return fetch(url, Object.assign({}, opts, {signal:ctrl.signal})).then(
+    r => { cleanup(); return r; },
+    e => {
+      cleanup();
+      // Прервали МЫ по времени — это "путь непроезжий", а не отмена вызова:
+      // пусть sbFetch попробует запасной. Прервал вызывающий — честно
+      // пробрасываем отмену дальше, повторять нечего.
+      if(byTimeout){ const t=new Error("Ответа нет дольше "+Math.round(ms/1000)+"с"); t.name="SbRouteDead"; throw t; }
+      throw e;
+    }
+  );
+}
 async function sbFetch(input, init){
   const orig = typeof input==="string" ? input : (input && input.url) || String(input);
   const swap = (base)=> orig.startsWith(SUPABASE_URL) ? base+orig.slice(SUPABASE_URL.length) : orig;
@@ -7844,19 +7882,30 @@ async function sbFetch(input, init){
     method:input.method, headers:input.headers, body:input.body,
     credentials:input.credentials, mode:input.mode, signal:input.signal,
   }, init||{});
+  const onProxy = sbBase!==SUPABASE_URL;
   try{
-    return await fetch(swap(sbBase), opts);
+    return await sbFetchOnce(swap(sbBase), opts, onProxy?SB_TRY_PROXY_MS:SB_TRY_DIRECT_MS);
   }catch(e){
-    // Прерывание по таймауту/навигации — не про блокировку, повторять нечего.
+    // Отмена самим вызывающим (таймаут mpCall, уход со страницы) — не про
+    // блокировку, повторять нечего.
     if(e && e.name==="AbortError") throw e;
-    if(sbBase===SUPABASE_URL && SB_PROXY_BASE){
+    if(!onProxy && SB_PROXY_BASE){
       sbBase=SB_PROXY_BASE; sbRememberRoute(true);
-      console.warn("прямой путь до Supabase недоступен — переходим на запасной через свой домен");
-      return await fetch(swap(sbBase), opts);
+      console.warn("прямой путь до Supabase не отвечает — переходим на запасной через свой домен:", e && e.message);
+      try{
+        return await sbFetchOnce(swap(sbBase), opts, SB_TRY_PROXY_MS);
+      }catch(e2){
+        // Запасной тоже не отвечает — значит дело не в блокировке одного
+        // домена, а в сети или в самом сервере. Снимаем только что
+        // поставленное предпочтение, иначе игрок остался бы залипшим на
+        // обходе на сутки из-за разовой потери связи. Отмену вызывающим сюда
+        // не относим — она ничего не говорит о проезжести пути.
+        if(!(e2 && e2.name==="AbortError")) sbRememberRoute(false);
+        throw e2;
+      }
     }
-    if(sbBase!==SUPABASE_URL){
-      // Запасной тоже не отвечает: возможно, дело не в блокировке, а в самом
-      // сервере — вернём выбор к прямому, чтобы не залипнуть на обходе.
+    if(onProxy){
+      // Тот же сброс, когда мы пришли сюда уже по запомненному обходу.
       sbRememberRoute(false);
     }
     throw e;
@@ -14187,9 +14236,15 @@ async function mpEnsureAuth(){
   // есть — signInAnonymously() без этой проверки заводит НОВОГО анонимного
   // пользователя при каждом вызове (проверено на практике: id игрока рос
   // при каждом визите), а нужен один и тот же игрок между заходами.
-  const { data:{ session } } = await mpWithTimeout(sb.auth.getSession(), 10000, "Проверка входа");
+  // 18с, а не 10: внутри одного вызова теперь помещаются ДВЕ попытки — прямой
+  // путь (5с) и запасной через свой домен (8с), см. sbFetch. Со старым
+  // порогом внешний таймаут срабатывал раньше, чем обход успевал включиться,
+  // и игрок видел «Проверка входа не отвечает» вместо рабочей игры. Долгое
+  // ожидание тут разовое: удавшийся обход запоминается на сутки, и следующий
+  // заход идёт по нему сразу.
+  const { data:{ session } } = await mpWithTimeout(sb.auth.getSession(), 18000, "Проверка входа");
   if(session) return session;
-  const { data, error } = await mpWithTimeout(sb.auth.signInAnonymously(), 10000, "Вход в игру");
+  const { data, error } = await mpWithTimeout(sb.auth.signInAnonymously(), 18000, "Вход в игру");
   if(error) throw error;
   return data.session;
 }
@@ -14209,7 +14264,11 @@ async function mpCall(fn, body, tries){
   if(tries===undefined) tries=3;
   const session = await mpEnsureAuth();
   const ctrl = new AbortController();
-  const timer = setTimeout(()=>ctrl.abort(), 15000);
+  // 20с по той же причине, что и у проверки входа выше: этот AbortController
+  // отменяет запрос НАСОВСЕМ, а внутри sbFetch на него приходится две
+  // попытки — прямая и запасная. На пятнадцати секундах он обрывал обход на
+  // полпути.
+  const timer = setTimeout(()=>ctrl.abort(), 20000);
   let r;
   try{
     // sbFetch, а не голый fetch: у Edge Functions тот же домен, что и у
@@ -14221,7 +14280,7 @@ async function mpCall(fn, body, tries){
       signal: ctrl.signal,
     });
   }catch(e){
-    if(e.name==="AbortError") throw new Error("Сервер не отвечает дольше 15с. Попробуйте ещё раз.");
+    if(e.name==="AbortError") throw new Error("Сервер не отвечает дольше 20с. Попробуйте ещё раз.");
     throw e;
   }finally{
     clearTimeout(timer);
