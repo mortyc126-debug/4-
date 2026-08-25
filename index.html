@@ -1391,8 +1391,22 @@ body.mp-placing #place-toolbar{display:flex}
 /* Строка "Прочность" в карточке здания — переиспользует .hpbar боя (см. её
    заголовок), только со своим подписью-строкой в стиле остальных
    характеристик здания. */
-.bm-hp{margin:10px 0 2px}
+/* Строка «Прочность» в карточке здания. Изначально она просто переиспользовала
+   .hpline/.hpbar боевой панели — а те рассчитаны на ТЁМНУЮ подложку: на
+   пергаменте карточки светлый vellum-dim по светлому фону читался еле-еле, а
+   градиент гранат→зелень поперёк всей ширины кричал тревогой даже у целого
+   здания. Здесь свои цвета: те же чернила и та же линейка, что у соседней
+   таблицы #bm-stats, и заливка одним тоном по доле остатка (три ступени, как
+   на карте города), а не градиентом вдоль полоски. */
+.bm-hp{margin:10px 0 16px;padding-bottom:12px;border-bottom:1px solid rgba(90,69,48,.25)}
+.bm-hp .hpline{color:#5a4530;font-size:13px;margin-top:0}
+.bm-hp .hpline b{color:#3a2c1c}
 .bm-hp .hpline img{width:13px;height:13px;object-fit:contain;vertical-align:-2px;margin-right:4px}
+.bm-hp .hpbar{height:6px;background:rgba(90,69,48,.18);border-color:rgba(90,69,48,.3)}
+.bm-hp .hpbar i{background:var(--verdigris)}
+.bm-hp.warn .hpbar i{background:var(--gilt-dim)}
+.bm-hp.crit .hpbar i{background:var(--garnet)}
+.bm-hp .note{color:#7a6448}
 
 /* Свободная застройка (Фаза 4) — призрак здания "в руках" (.pghost) и
    подсветка клетки под ним (#place-highlight), см. mpUpdatePlaceDom/
@@ -10138,10 +10152,11 @@ function mpBuildingModalHtmlFor(bld,plot){
   // поэтому целое "10 400 / 10 400" здесь осмысленно, а на карте — шум.
   if(lv>0){
     const hpMax=buildingMaxHp(bld,lv), hpNow=buildHpShown(st,bld,plot,Date.now()/1000);
-    h+="<div class='bm-hp'>"+
+    const hpPct=hpMax>0?Math.max(0,Math.min(100,hpNow/hpMax*100)):0;
+    h+="<div class='bm-hp"+(hpPct<=25?" crit":hpPct<=60?" warn":"")+"'>"+
        "<div class='hpline'><span><img src='images/ui/stat-hp.png' alt=''>Прочность</span>"+
        "<b>"+fmt(hpNow)+" / "+fmt(hpMax)+"</b></div>"+
-       "<div class='hpbar'><i style='width:"+(hpMax>0?Math.max(0,Math.min(100,hpNow/hpMax*100)):0).toFixed(1)+"%'></i></div>";
+       "<div class='hpbar'><i style='width:"+hpPct.toFixed(1)+"%'></i></div>";
     if(hpNow<hpMax){
       // Когда починится: либо ждём конца окна тишины, либо уже чинимся и
       // осталось добрать недостающее по BUILD_REGEN_PER_HOUR.
@@ -14295,9 +14310,36 @@ function mpRenderRelease(){
 // оставалась предыдущая. Теперь сбой отрисовки остаётся сбоем отрисовки:
 // он виден в консоли для разбора, но не рушит ни вход, ни опрос, ни
 // переключение вкладок — следующий такт (через секунду) нарисует заново.
+// Отказ сервера ДОЛЖЕН быть виден игроку. Раньше почти все сетевые действия
+// (стройка, набор, лечение, исследования, Горн, ковка, атака, сбор, рейд,
+// таланты, экипировка — все mpDo*) в catch клали текст ошибки в mpState.err и
+// на этом успокаивались. Показывала его ровно одна страница — старый сводный
+// список «Общий мир», — а её удалили в Фазе 20 вместе с дублирующим меню.
+// С тех пор отказ выглядел так: игрок жмёт «Улучшить», сервер отвечает
+// «Все бригады заняты», клиент честно это получает — и не рисует НИЧЕГО.
+// Ни в модалке здания, ни всплывашкой. Со стороны — «нажимаю, ничего не
+// происходит», ровно та жалоба, с которой это и нашлось.
+//
+// Чиним в одной точке, а не в двух десятках mpDo*: mpRerender() зовётся в
+// finally у каждого из них, так что достаточно показать здесь то, что там
+// положили. Заодно это покроет и все будущие действия — забыть будет негде.
+// Показываем ОДИН раз на каждый новый текст: mpRerender крутится ежесекундно
+// на опросе, без этой памяти всплывашка висела бы вечно.
+let mpLastHeraldedErr=null;
+function mpHeraldErr(){
+  if(!mpState.err){ mpLastHeraldedErr=null; return; }
+  if(mpState.err===mpLastHeraldedErr) return;
+  mpLastHeraldedErr=mpState.err;
+  herald(mpState.err);
+}
 function mpRerender(){
   try{ mpRerenderNow(); }
   catch(e){ console.error("mpRerender:", e); }
+  // Вне try выше: даже если перерисовка сорвалась, сказать игроку, что
+  // именно ответил сервер, всё равно нужно — это и есть последний рубеж,
+  // на котором отказ ещё можно показать.
+  try{ mpHeraldErr(); }
+  catch(e){ console.error("mpHeraldErr:", e); }
 }
 function mpRerenderNow(){
   // Фаза 17, кусочек 2 — при .mp-gated ЛЮБАЯ вкладка меню (не только "mp")
