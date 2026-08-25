@@ -435,6 +435,9 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   background:none;background-image:url(images/ui/mail-parchment.jpg);background-size:cover;
   background-position:center;border-color:rgba(90,69,48,.4);
   box-shadow:0 4px 18px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.25)}
+#cartouche .rgn{font-variant:small-caps;letter-spacing:.16em;font-size:10.5px;
+  color:#8a6a45;margin:-1px 0 4px;padding-right:16px;border-bottom:1px solid rgba(90,69,48,.22);
+  padding-bottom:3px}
 #cartouche .hd{font-variant:small-caps;letter-spacing:.13em;font-size:14px;color:#2c2114;
   display:flex;align-items:center;gap:7px;margin-bottom:5px;padding-right:16px;font-weight:bold}
 #cartouche .co{display:flex;justify-content:space-between;gap:16px;font-size:12.5px;
@@ -1714,7 +1717,14 @@ body.mp-placing #place-toolbar{display:flex}
   <div class="mp-loading-txt">Загрузка мира…</div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- Библиотека Supabase лежит В РЕПОЗИТОРИИ, а не тянется с cdn.jsdelivr.net.
+     Автор сообщил: «в игру можно попасть только со включенным VPN». Каждый
+     внешний домен на пути загрузки — отдельная точка отказа для игрока, у
+     которого провайдер до этого домена не пускает; а без этой библиотеки
+     ломается вообще всё сетевое, включая вход в общий мир. Версия зашита в
+     имя файла: так его можно кэшировать хоть на год, а обновление приезжает
+     под новым именем и мимо кэша. -->
+<script src="/vendor/supabase-js-2.112.4.min.js"></script>
 <script>
 "use strict";
 // Фаза 13 — общий мир как единственная точка входа. По умолчанию (обычная
@@ -3569,6 +3579,81 @@ fetch("/heightmap/elevation-v"+HEIGHTMAP_VERSION+".bin").then(r=>{
   console.warn("настоящие данные высот не загрузились, isRealWater остаётся на процедурном фолбэке:", err);
   onRealElevSettled(false);
 });
+// ---- Регионы карты: как называется место, куда ткнул игрок ---------------
+// Разбивка мира на 16 областей (worldgen/regions/, разрез как в Total War —
+// по перевалам и рекам, а не сеткой) уже видна на карте линией границы (см.
+// TERRAIN_SHADER в engine/src/renderer.ts). Автор попросил показывать ещё и
+// НАЗВАНИЕ области в панели при тапе.
+//
+// Исходная карта регионов — тексель на клетку мира, 2.88 МБ: столько ради
+// одной подписи не качают. Здесь читается её понижённая копия (шаг 4 клетки,
+// 600×300 = 176 КБ, см. worldgen/regions/bake_region_lookup.py) — точность в
+// четыре клетки для подписи избыточна и так: сама граница нарисована линией
+// в три клетки шириной.
+//
+// Как и у высот выше, загрузка асинхронная и НЕ обязательная: пока файла нет
+// (или он не доехал) — regionNameAt() возвращает пустую строку, и панель
+// просто рисуется без строки региона, как рисовалась всегда.
+const REGION_STEP=4, REGION_W=600, REGION_H=300;
+// Имена даны по АРХЕТИПУ области (степь/горы/лес/поморье/пойма — см.
+// worldgen/regions/regions_buffs.json, оттуда же они пойдут в бонусы, когда
+// дойдёт до механики) и по тому, где лежит её СУША: у многих областей центр
+// приходится на открытое море, и ориентироваться на него было бы неверно.
+// Порядок — по значению в файле (0..15), это id региона минус один: в
+// regions-v1.bin нумерация с нуля, в regions_meta.json — с единицы.
+const REGION_NAMES=[
+  "Полуночная Отмель",  // 0 — суши нет вовсе, одно мелководье на самом севере
+  "Полуночная Пойма",   // 1 — плодородная, крайний север
+  "Стылый Кряж",        // 2 — горы северо-востока
+  "Янтарная Гавань",    // 3 — поморье северо-востока
+  "Одинокая Коса",      // 4 — островок на западе, суши всего ничего
+  "Тихие Броды",        // 5 — речные долины запада
+  "Дикое Поле",         // 6 — степь в центре
+  "Восходный Мыс",      // 7 — поморье на крайнем востоке
+  "Медвежья Пуща",      // 8 — леса запада
+  "Вольная Равнина",    // 9 — степь юга-центра
+  "Золотая Долина",     // 10 — пойма юго-востока
+  "Железный Хребет",    // 11 — горы востока
+  "Соляной Берег",      // 12 — поморье юго-запада
+  "Седые Утёсы",        // 13 — горы юга
+  "Сумрачный Бор",      // 14 — леса юга
+  "Гремучие Пики",      // 15 — горы юго-востока
+];
+let regionMapData=null;
+fetch("/heightmap/region-map-v1.bin").then(r=>{
+  if(!r.ok) throw new Error("HTTP "+r.status);
+  return r.arrayBuffer();
+}).then(buf=>{
+  if(buf.byteLength!==REGION_W*REGION_H) throw new Error("неверный размер: "+buf.byteLength);
+  regionMapData=new Uint8Array(buf);
+  // Панель могла быть открыта в момент, когда файл доехал — перерисуем, иначе
+  // строка региона появится только со следующим тапом.
+  try{ renderCartouche() }catch(e){}
+}).catch(err=>{
+  console.warn("карта регионов не загрузилась, подписи областей не будет:", err);
+});
+// Имя области в клетке. Пустая строка — данных нет, области нет (открытое
+// море вдали от берегов) или точка вне запечённой области мира: во всех этих
+// случаях панель просто обходится без строки региона.
+function regionNameAt(x,y){
+  if(!regionMapData) return "";
+  const px=Math.floor((x+RW_WORLD_HALF_X)/REGION_STEP), py=Math.floor((y+RW_WORLD_HALF_Z)/REGION_STEP);
+  if(px<0||py<0||px>=REGION_W||py>=REGION_H) return "";
+  const v=regionMapData[py*REGION_W+px];
+  return v<REGION_NAMES.length ? REGION_NAMES[v] : "";
+}
+// Готовая шапка панели: название области сверху (если известно) и координаты
+// в том же виде, что и в письмах — "X:12 Y:-30", а не "12 · -30". Автор:
+// «приведи к нормальному формату x и y, как в письмах».
+function cartRegionLine(x,y){
+  const n=regionNameAt(x,y);
+  return n ? "<div class='rgn'>"+n+"</div>" : "";
+}
+function cartCoord(x,y){
+  return "<span class='n' style='font-family:var(--data);font-size:10px;color:var(--vellum-faint)'>"+
+    "X:"+x+" Y:"+y+"</span>";
+}
+
 // ---- Гонка «посчитали воду раньше, чем узнали, где она» -------------------
 // Файл выше — 5.76 МБ, на телефоне через LTE это СЕКУНДЫ. Всё это время
 // isRealWater() молча отвечает по процедурному фолбэку (rwHeightAt), и это не
@@ -7518,8 +7603,68 @@ function advanceToAnimated(target, onProgress){
    ========================================================================= */
 const SUPABASE_URL="https://xzuwqgpwzlmpglnuijio.supabase.co";
 const SUPABASE_ANON_KEY="sb_publishable_OOPvf-dpPbzy4kqC4a88jg_kwgpqkQz";
+
+/* ---- Запасной путь до Supabase через собственный домен -------------------
+   Автор сообщил: «в игру можно попасть только со включенным VPN». Сама
+   страница отдаётся нашим хостингом, а вот все данные — с чужого домена
+   (*.supabase.co). Если провайдер игрока не пускает именно туда, страница
+   откроется, но игра будет мертва: ни сохранений, ни общего мира.
+
+   Лечится тем, что тот же самый API доступен ЕЩЁ И по адресу нашего же
+   сайта: /sb/... переписывается хостингом на supabase.co (см. routes в
+   render.yaml). Раз игрок эту страницу загрузил — значит до нашего домена он
+   доходит, и этот путь для него рабочий.
+
+   Прямой адрес остаётся ОСНОВНЫМ: он короче (без лишнего звена) и у
+   большинства игроков работает. На запасной переключаемся сами, молча, при
+   первой же СЕТЕВОЙ ошибке — не по коду ответа, а именно когда запрос не
+   доехал вовсе (fetch отвергает промис). Ошибку «сервер ответил 500»
+   переключением не лечат.
+
+   Выбор запоминается: в следующий раз игрок с заблокированным доменом сразу
+   пойдёт запасным путём, без потерянной попытки на каждый запрос. Раз в
+   сутки пробуем прямой снова — блокировки снимают так же, как ставят. */
+const SB_PROXY_BASE=(location.origin||"")+"/sb";
+const SB_ROUTE_KEY="fourbanners:sbroute", SB_ROUTE_RECHECK_MS=24*3600*1000;
+let sbBase=SUPABASE_URL;
+try{
+  const saved=JSON.parse(localStorage.getItem(SB_ROUTE_KEY)||"null");
+  if(saved && saved.proxy && Date.now()-saved.at<SB_ROUTE_RECHECK_MS) sbBase=SB_PROXY_BASE;
+}catch(e){}
+function sbRememberRoute(proxy){
+  try{ localStorage.setItem(SB_ROUTE_KEY, JSON.stringify({proxy:!!proxy, at:Date.now()})) }catch(e){}
+}
+// Единственная точка, через которую в Supabase уходят ВСЕ запросы: и свои
+// (mpCall ниже), и те, что делает сама библиотека — ей этот fetch передаётся
+// в global.fetch, поэтому пересоздавать клиент при смене пути не нужно.
+async function sbFetch(input, init){
+  const orig = typeof input==="string" ? input : (input && input.url) || String(input);
+  const swap = (base)=> orig.startsWith(SUPABASE_URL) ? base+orig.slice(SUPABASE_URL.length) : orig;
+  // Request нельзя переиспользовать с другим URL — пересобираем из него init.
+  const opts = (typeof input==="string" || !input) ? init : Object.assign({
+    method:input.method, headers:input.headers, body:input.body,
+    credentials:input.credentials, mode:input.mode, signal:input.signal,
+  }, init||{});
+  try{
+    return await fetch(swap(sbBase), opts);
+  }catch(e){
+    // Прерывание по таймауту/навигации — не про блокировку, повторять нечего.
+    if(e && e.name==="AbortError") throw e;
+    if(sbBase===SUPABASE_URL && SB_PROXY_BASE){
+      sbBase=SB_PROXY_BASE; sbRememberRoute(true);
+      console.warn("прямой путь до Supabase недоступен — переходим на запасной через свой домен");
+      return await fetch(swap(sbBase), opts);
+    }
+    if(sbBase!==SUPABASE_URL){
+      // Запасной тоже не отвечает: возможно, дело не в блокировке, а в самом
+      // сервере — вернём выбор к прямому, чтобы не залипнуть на обходе.
+      sbRememberRoute(false);
+    }
+    throw e;
+  }
+}
 const sb=(window.supabase&&window.supabase.createClient)
-  ? window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY)
+  ? window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{global:{fetch:sbFetch}})
   : null;
 function deviceId(){
   try{
@@ -8106,8 +8251,15 @@ function renderCartouche(){
   // Крестик добавляется тут ОДИН раз, а не в каждой из веток ниже
   // (node/camp-fort/city/march) — put() оборачивает готовое тело панели,
   // ветки ничего не знают про кнопку закрытия.
+  // Название ОБЛАСТИ (см. cartRegionLine) добавляется тут, а не в каждой из
+  // веток ниже — как и кнопка закрытия: ветки про него ничего не знают.
+  // Клетку put определяет сам: у панели похода это его цель, у всего
+  // остального — выбранная клетка.
   const put=h=>{
-    const full=h?"<button class='cart-close' data-act='closecartouche' title='Закрыть' aria-label='Закрыть'>&times;</button>"+h:h;
+    const pm=selMarch!=null?W.marches.find(x=>x.id===selMarch):null;
+    const rc=pm?{x:pm.tx,y:pm.ty}:sel;
+    const head=(h&&rc)?cartRegionLine(rc.x,rc.y):"";
+    const full=h?"<button class='cart-close' data-act='closecartouche' title='Закрыть' aria-label='Закрыть'>&times;</button>"+head+h:h;
     if(full!==lastCart){ lastCart=full; setHtml(el,full) } el.style.display=full?"block":"none";
   };
   if(selMarch!=null){
@@ -8117,12 +8269,11 @@ function renderCartouche(){
       const owner=W.players.find(q=>q.id===m.pid);
       const p=me();
       const mine=owner&&owner.id===p.id;
-      const mcoord="<span class='n' style='font-family:var(--data);font-size:10px;color:var(--vellum-faint)'>"+
-        m.tx+" · "+m.ty+"</span>";
+      const mcoord=cartCoord(m.tx,m.ty);
       let body="<div class='hd'>"+(owner?shieldSvg(owner.race,14):"")+(owner?owner.nick:"?")+" — отряд "+mcoord+"</div>"+
         "<div class='co'><span>Состояние</span><b>"+(MARCH_STATE_RU[m.state]||m.state)+"</b></div>"+
         "<div class='co'><span>Воинов</span><b>"+RU(countUnits(m.units))+"</b></div>"+
-        "<div class='co'><span>Цель</span><b>"+m.tx+" · "+m.ty+"</b></div>"+
+        "<div class='co'><span>Цель</span><b>X:"+m.tx+" Y:"+m.ty+"</b></div>"+
         (m.state!=="gather"&&m.state!=="siege"?"<div class='co'><span>Прибытие через</span><b>"+fmtDur(Math.max(0,m.t1-W.t))+"</b></div>":"")+
         // Своему отряду видно всегда (это твоё же решение при отправке, см.
         // openLevy) — чужому только через scoutMarchSnapshot (se>=2), не тут.
@@ -8150,8 +8301,7 @@ function renderCartouche(){
   }
   if(!sel){ put(""); return }
   const o=W.map[key(sel.x,sel.y)], p=me();
-  const coord="<span class='n' style='font-family:var(--data);font-size:10px;color:var(--vellum-faint)'>"+
-    sel.x+" · "+sel.y+"</span>";
+  const coord=cartCoord(sel.x,sel.y);
   if(!o){
     // Свободный тап по пустой местности — пользователь просил видеть
     // координаты клетки и иметь возможность послать туда отряд ("Пустошь").
@@ -8257,8 +8407,14 @@ function renderCartoucheFor(x,y){ sel={x,y}; renderCartouche(); }
 // открываем ту же folio, там он уже показывается).
 function renderCartoucheMp(){
   const el=$("#cartouche");
+  // Название ОБЛАСТИ — см. одноимённый put в renderCartouche выше, тот же
+  // смысл; источник походов только другой (mpState вместо W).
   const put=h=>{
-    const full=h?"<button class='cart-close' data-act='closecartouche' title='Закрыть' aria-label='Закрыть'>&times;</button>"+h:h;
+    const pm=selMarch!=null
+      ? (mpState.marches||[]).concat(mpState.incoming||[]).find(x=>x.id===selMarch) : null;
+    const rc=pm?{x:pm.tx,y:pm.ty}:sel;
+    const head=(h&&rc)?cartRegionLine(rc.x,rc.y):"";
+    const full=h?"<button class='cart-close' data-act='closecartouche' title='Закрыть' aria-label='Закрыть'>&times;</button>"+head+h:h;
     if(full!==lastCart){ lastCart=full; setHtml(el,full) } el.style.display=full?"block":"none";
   };
   const snap=mpWorldSnapshot();
@@ -8270,12 +8426,11 @@ function renderCartoucheMp(){
     else {
       const owner=snap.players.find(q=>q.id===m.pid);
       const mine=m.pid===me.id;
-      const mcoord="<span class='n' style='font-family:var(--data);font-size:10px;color:var(--vellum-faint)'>"+
-        m.tx+" · "+m.ty+"</span>";
+      const mcoord=cartCoord(m.tx,m.ty);
       let body="<div class='hd'>"+(owner?shieldSvg(owner.race,14):"")+(owner?owner.nick:"?")+" — отряд "+mcoord+"</div>"+
         "<div class='co'><span>Состояние</span><b>"+(MARCH_STATE_RU[m.state]||m.state)+"</b></div>"+
         "<div class='co'><span>Воинов</span><b>"+RU(countUnits(m.units))+"</b></div>"+
-        "<div class='co'><span>Цель</span><b>"+m.tx+" · "+m.ty+"</b></div>"+
+        "<div class='co'><span>Цель</span><b>X:"+m.tx+" Y:"+m.ty+"</b></div>"+
         // t0/t1 общего мира — реальное unix-время (Date.now()/1000), НЕ W.t
         // одиночки (см. mpWorldSnapshot()) — иначе "прибытие через" считало
         // бы от чужих часов и показывало бы бессмыслицу.
@@ -8291,8 +8446,7 @@ function renderCartoucheMp(){
   }
   if(!sel){ put(""); return; }
   const o=snap.map[key(sel.x,sel.y)];
-  const coord="<span class='n' style='font-family:var(--data);font-size:10px;color:var(--vellum-faint)'>"+
-    sel.x+" · "+sel.y+"</span>";
+  const coord=cartCoord(sel.x,sel.y);
   // Пустошь — автор попросил перенести интерфейс из одиночки, где панель
   // показывает координаты (см. renderCartouche выше). Отправить туда отряд
   // общий мир пока не умеет: march-по-клетке (в одиночке ведущий домой
@@ -13761,7 +13915,9 @@ async function mpCall(fn, body, tries){
   const timer = setTimeout(()=>ctrl.abort(), 15000);
   let r;
   try{
-    r = await fetch(SUPABASE_URL+"/functions/v1/"+fn, {
+    // sbFetch, а не голый fetch: у Edge Functions тот же домен, что и у
+    // остального API, и тот же запасной путь (см. sbFetch выше).
+    r = await sbFetch(SUPABASE_URL+"/functions/v1/"+fn, {
       method:"POST",
       headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+session.access_token, "apikey":SUPABASE_ANON_KEY },
       body: JSON.stringify(body||{}),
