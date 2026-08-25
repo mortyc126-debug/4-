@@ -13004,10 +13004,16 @@ function mpWorldSnapshot(){
 function mpBuildWorldSnapshot(){
   const me=mpState.player, st=me.state||{};
   const meHall=(st.b&&st.b.hall)||1;
-  const players=[{id:me.id, race:me.race, nick:me.nick, x:me.x, y:me.y, b:{hall:meHall}}];
+  // gen — сюда же, рядом с race: 3D-мир выбирает модель похода по расе
+  // владельца и по номеру его полководца (см. marchModelPath/loadLiveMarches
+  // в движке). У себя номер знаем из своего же state, у соседей — из
+  // выборки mpRefreshNeighbors (поле gen там же).
+  const players=[{id:me.id, race:me.race, nick:me.nick, x:me.x, y:me.y, b:{hall:meHall},
+                  gen:{id:(st.gen&&st.gen.id!=null)?st.gen.id:null}}];
   const byId={}; byId[me.id]=players[0];
   mpState.neighbors.forEach(n=>{
-    const p={id:n.id, race:n.race, nick:n.nick, x:n.x, y:n.y, b:{hall:Number(n.hall)||1}, shieldUntil:Number(n.shield_until)||0};
+    const p={id:n.id, race:n.race, nick:n.nick, x:n.x, y:n.y, b:{hall:Number(n.hall)||1},
+             gen:{id:(n.gen==null||n.gen==="")?null:Number(n.gen)}, shieldUntil:Number(n.shield_until)||0};
     players.push(p); byId[n.id]=p;
   });
   const map={};
@@ -14028,7 +14034,12 @@ async function mpRefreshNeighbors(){
   // см. коммент выше), просто "стоит ли сейчас щит" — нужен renderCartoucheMp
   // (см. её же коммент): автор попросил перенести интерфейс окон мира из
   // одиночки, а там кнопка "Атака" скрывается под щитом (см. renderCartouche).
-  const { data, error } = await sb.from("players").select("id,nick,race,x,y,is_bot,hall:state->b->>hall,shield_until")
+  // gen — номер выбранного соседом полководца (0/1) из его же players.state:
+  // нужен 3D-миру, чтобы над чужим походом с полководцем стояла модель
+  // ИМЕННО ЭТОГО полководца, а не первого попавшегося у расы (см.
+  // marchModelPath в engine/src/main.ts). Тот же приём, что и hall строкой
+  // выше — вытащить одно поле из JSON, а не тянуть весь state соседа.
+  const { data, error } = await sb.from("players").select("id,nick,race,x,y,is_bot,hall:state->b->>hall,gen:state->gen->>id,shield_until")
     .eq("world_id", mpState.player.world_id).neq("id", mpState.player.id).order("id");
   if(!error && data){ mpState.neighbors=data; mpRerenderData(); }
 }
@@ -14487,7 +14498,14 @@ async function mpBattleFastPollTick(){
 async function mpRefreshMarches(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("marches").select("*")
-    .eq("player_id",mpState.player.id).in("mode",["attack","gather","raid"]).order("t1");
+    // "move" — отряд, которого перетащили пальцем на пустое место (mp-redirect
+    // ставит именно этот режим, см. её же комментарий): без него собственный
+    // отряд ПРОПАДАЛ и из панели "Отряды в поле", и из 3D-мира ровно в тот
+    // момент, когда игрок его туда привёл. "scout" — разведчик: в одиночке
+    // он в этой панели всегда был (renderFieldArmyWorld фильтрует только по
+    // владельцу), да и модель разведчика в 3D показывать не над чем, пока
+    // его марш сюда не попадает.
+    .eq("player_id",mpState.player.id).in("mode",["attack","gather","raid","move","scout"]).order("t1");
   if(!error && data){ mpState.marches=data; mpMaybeToggleBattleFastPoll(); mpRerenderData(); }
 }
 // Фаза 8, кусочек 1 — точки сбора рядом (map_cells, t:"node"). RLS
@@ -15372,7 +15390,14 @@ function foMultiplayer(embedded, only){
   // а компактный свиток похода (mpOpenMarchModal/mpMarchSheetHtml) открывается
   // прямо оттуда, без прыжка на отдельную длинную страницу.
   if(show("army") && mpState.marches.length){
-    h+=rubric("Отряды в поле",mpState.marches.length+" из "+mpMarchSlots(st.b.hall||0));
+    // Разведчики слот похода не занимают (у них свой потолок, см. mp-scout) —
+    // в одиночке этот счётчик их и не считает (index.html:11278,
+    // !isScoutMarch). Раньше вопрос не стоял: разведчики в mpState.marches
+    // вообще не попадали. Теперь попадают (иначе им негде показать модель
+    // разведчика в 3D), так что счётчик надо было привести к одиночке —
+    // иначе он показывал бы «3 из 2».
+    const inSlots=mpState.marches.filter(m=>m.mode!=="scout"&&m.mode!=="scoutmarch").length;
+    h+=rubric("Отряды в поле",inSlots+" из "+mpMarchSlots(st.b.hall||0));
     mpState.marches.forEach(m=>{
       const going=m.state==="go", gathering=m.state==="gather", sieging=m.state==="siege";
       const isGather=m.mode==="gather", isRaid=m.mode==="raid";

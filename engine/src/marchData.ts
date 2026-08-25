@@ -41,6 +41,19 @@ export interface LiveMarchPos {
   ty: number;
   t1: number;
   battle: LiveBattleInfo | null;
+  // Поля ниже — для выбора 3D-модели похода (main.ts, marchModelPath):
+  // раса владельца, номер выбранного им полководца (0/1, null — не выбран),
+  // взят ли полководец В ЭТОТ поход и разведка ли это. Тот же принцип, что
+  // в Total War: с полководцем идёт модель самого полководца, без него —
+  // «армия без генерала» своей расы, у разведки своя модель.
+  race: string;
+  genId: number | null;
+  hasGen: boolean;
+  scout: boolean;
+  // Курс движения (радианы, для modelMatrix) — чтобы модель шла ЛИЦОМ по
+  // пути, а не всегда на север. NaN — курса нет (отряд стоит: сбор/осада/
+  // "на позиции"), тогда main.ts сохраняет прежний разворот.
+  yaw: number;
 }
 
 interface LiveMarch {
@@ -55,13 +68,19 @@ interface LiveMarch {
   path?: { x: number; y: number }[];
   pathCum?: number[];
   pathLen?: number;
-  data?: { battle?: any } | null;
+  mode?: string;
+  // hasGen — одиночная игра (sendMarch кладёт его прямо в марш),
+  // data.has_gen — общий мир (Edge Functions пишут его в JSON-поле data
+  // строки marches: см. mp-attack/mp-raid/mp-gather). Одно и то же по
+  // смыслу, просто исторически разные имена в двух источниках.
+  hasGen?: boolean;
+  data?: { battle?: any; has_gen?: boolean } | null;
 }
 
 interface LiveWorldMarches {
   t: number;
   marches: LiveMarch[];
-  players: Array<{ id: number; nick?: string; name?: string }>;
+  players: Array<{ id: number; nick?: string; name?: string; race?: string; gen?: { id?: number | null } | null }>;
 }
 
 function countUnits(units: Record<string, Record<number, number>>): number {
@@ -90,6 +109,12 @@ function readLiveWorldMarches(): LiveWorldMarches | null {
   return null;
 }
 
+// Насколько вперёд/назад по пути смотреть, вычисляя курс модели. Доля от
+// ВСЕГО пути: на длинном марше это десятки клеток, на коротком — метры;
+// нам нужна только СТОРОНА движения, точность тут ни при чём, а слишком
+// маленький шаг упёрся бы в погрешность float на медленных участках.
+const YAW_LOOKAHEAD = 0.004;
+
 // Дословный порт pathPointAt из index.html.
 function pathPointAt(m: LiveMarch, f: number): { x: number; y: number } {
   const path = m.path, cum = m.pathCum;
@@ -117,7 +142,7 @@ export function loadLiveMarches(): LiveMarchPos[] | null {
   // алгоритмическая цена, не зависящая от того, куда смотрит камера —
   // строим карту один раз на вызов (O(игроков)), дальше поиск владельца
   // O(1) на марш вместо O(игроков).
-  const playersById = new Map<number, { id: number; nick?: string; name?: string }>();
+  const playersById = new Map<number, { id: number; nick?: string; name?: string; race?: string; gen?: { id?: number | null } | null }>();
   for (const p of W.players) playersById.set(p.id, p);
   const out: LiveMarchPos[] = [];
   for (const m of W.marches) {
@@ -129,6 +154,21 @@ export function loadLiveMarches(): LiveMarchPos[] | null {
         ? { x: m.tx, y: m.ty }
         : pathPointAt(m, Math.max(0, Math.min(1, (W.t - m.t0) / Math.max(1, m.t1 - m.t0))));
     const owner = playersById.get(m.pid);
+    // Курс — по двум точкам пути рядом с текущим положением (а не по
+    // разнице кадров: на паузе/при followMarch кадры могут идти без
+    // движения вовсе, и разворот дёргался бы от шума). Стоящий отряд
+    // (сбор/осада/"на позиции") курса не имеет — NaN, см. LiveMarchPos.yaw.
+    let yaw = NaN;
+    if (m.state !== "gather" && m.state !== "siege" && m.state !== "hold") {
+      const f = Math.max(0, Math.min(1, (W.t - m.t0) / Math.max(1, m.t1 - m.t0)));
+      const a = pathPointAt(m, Math.max(0, f - YAW_LOOKAHEAD));
+      const b = pathPointAt(m, Math.min(1, f + YAW_LOOKAHEAD));
+      const dx = b.x - a.x, dy = b.y - a.y;
+      // Модели походов смотрят в +Z (проверено рендером силуэтов со всех
+      // четырёх сторон, см. tools/decimate_glb.mjs рядом), а modelMatrix
+      // переводит локальный +Z в (sin yaw, 0, cos yaw) — отсюда atan2(dx,dz).
+      if (dx * dx + dy * dy > 1e-12) yaw = Math.atan2(dx, dy);
+    }
     const b = m.state === "siege" && m.data && m.data.battle ? m.data.battle : null;
     const battle: LiveBattleInfo | null = b
       ? {
@@ -152,6 +192,11 @@ export function loadLiveMarches(): LiveMarchPos[] | null {
       ty: m.ty,
       t1: m.t1,
       battle,
+      race: owner?.race ?? "human",
+      genId: owner && owner.gen && owner.gen.id != null ? owner.gen.id : null,
+      hasGen: !!(m.hasGen ?? (m.data && m.data.has_gen)),
+      scout: m.mode === "scout" || m.mode === "scoutmarch",
+      yaw,
     });
   }
   return out;

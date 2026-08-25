@@ -39,7 +39,24 @@ export async function loadGLB(url: string): Promise<ParsedGLB> {
   function accArr(i: number) {
     const a = acc(i), v = bv(a.bufferView), Ctor = CTYPE[a.componentType];
     const byteOff = (v.byteOffset || 0) + (a.byteOffset || 0);
-    return new Ctor(bin!, byteOff, a.count * NCOMP[a.type]);
+    const n = NCOMP[a.type];
+    const tight = n * Ctor.BYTES_PER_ELEMENT;
+    // Чересстрочная (interleaved) раскладка вершин — bufferView.byteStride
+    // больше размера самого элемента: позиция/нормаль/UV одной вершины лежат
+    // подряд, а не тремя отдельными плотными массивами. Плотный
+    // new Ctor(bin, off, count*n) прочитал бы такой буфер КАК ЕСТЬ — то есть
+    // выдал бы кашу из перемешанных атрибутов, молча, без единой ошибки
+    // (модель просто нарисовалась бы взрывом полигонов). Ровно на этом
+    // спотыкались модели походов: gltf-transform по умолчанию пишет
+    // interleaved (см. tools/decimate_glb.mjs — там раскладка принудительно
+    // переключена на SEPARATE). Пайплайн в modelRenderer.ts всё равно ждёт
+    // три ОТДЕЛЬНЫХ вершинных буфера с шагом 12/12/8 байт, так что честный
+    // разбор тут — разложить чересстрочные данные по плотным массивам.
+    const stride = v.byteStride || 0;
+    if (!stride || stride === tight) return new Ctor(bin!, byteOff, a.count * n);
+    const out = new Ctor(a.count * n);
+    for (let k = 0; k < a.count; k++) out.set(new Ctor(bin!, byteOff + k * stride, n), k * n);
+    return out;
   }
 
   const prim = json.meshes[0].primitives[0];
