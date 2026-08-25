@@ -42,8 +42,17 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
 WORLD_W, WORLD_H = 2400, 1200
 
-# Уровень моря в heightmap/elevation-v6.bin — тот же порог, что и у движка
-# (engine/src/terrain.ts) и у клиентского isRealWater в index.html.
+# Уровень моря и МАСШТАБ ВЫСОТЫ в heightmap/elevation-v6.bin — те же, что у
+# движка (engine/src/terrain.ts: ELEV_SCALE/65535, порог SEA) и у клиентского
+# isRealWater в index.html.
+#
+# ELEV_SCALE тут не украшение: без него порог сдвигается вчетверо. Именно на
+# этом здесь и споткнулись — маска суши считалась как raw/65535 > SEA, то есть
+# сушей объявлялись только 20.6% карты (высокогорье) вместо настоящих 82.4%.
+# Разметка регионов из-за этого рисовалась лишь на вершинах, а на большей
+# части настоящей суши её не было вовсе — при том, что запечена она была
+# «правильно» и проверки сходились сами с собой.
+ELEV_SCALE = 2.5
 SEA = 0.235
 
 # Ширина сплошного ядра линии границы, в клетках мира (=текселях, тут 1:1), и
@@ -149,7 +158,8 @@ def main():
     elev_path = REPO_ROOT / "heightmap" / "elevation-v6.bin"
     elev = np.fromfile(elev_path, dtype="<u2")
     assert elev.size == WORLD_W * WORLD_H, f"{elev_path}: не {WORLD_W}x{WORLD_H}"
-    sea_mask = (elev.reshape(WORLD_H, WORLD_W).astype(np.float32) / 65535.0) <= SEA
+    height = elev.reshape(WORLD_H, WORLD_W).astype(np.float32) * (ELEV_SCALE / 65535.0)
+    sea_mask = height < SEA
     rm[sea_mask] = -1
 
     ids = sorted(int(v) for v in np.unique(rm) if v >= 0)

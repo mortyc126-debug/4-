@@ -302,22 +302,49 @@ Deno.serve(async (req) => {
     const spd = marchSpeed(sendUnits, attP.race, B.march);
     const travel = Math.max(20, (dist / spd) * 60);
 
-    // Бронируем добычу за этим отрядом сразу (та же логика, что и в
-    // index.html arriveMarch — cell.amount уменьшается по факту отправки,
-    // не по факту прибытия), чтобы второй отряд на ту же точку не мог
-    // рассчитывать на уже занятые ресурсы.
+    // НАЙДЕН реальный баг (автор: «попытался собрать янтарь, но мне резко игра
+    // обнулила янтарную жилу и не позволила это сделать»).
+    //
+    // Бронь добычи (списание cell.amount) стояла ПЕРВОЙ, а сохранение игрока
+    // — после неё, и при проигранной гонке за строку игрока функция отвечала
+    // 409. Клиент на 409 молча повторяет запрос (см. mpCall в index.html), но
+    // amount к этому моменту УЖЕ СПИСАН и никем не возвращён: повтор видит
+    // точку беднее, списывает ещё раз, и так до нуля — после чего проверка
+    // «Точка истощена» выше отвергает запрос совсем. Отряд не ушёл, а жила
+    // пуста. У янтарных жил запасы малы, поэтому там это срабатывало с
+    // первого же раза; у больших точек баг тот же, просто съедал долю.
+    //
+    // Порядок исправлен: сначала списываем ВОЙСКА (это и есть место, где
+    // случается конфликт версий — при нём точка остаётся нетронутой), и
+    // только потом бронируем добычу. Всё, что может сорваться после брони,
+    // её возвращает: mp-attack/mp-raid ровно так же откатывают уже созданный
+    // марш, здесь этого не было — единственная функция, которая правит
+    // общий ресурс карты, и единственная без компенсации.
+    TKEYS.forEach((t) => {
+      for (let i = 1; i <= 5; i++) attP.troops[t][i] = Math.max(0, (attP.troops[t][i] || 0) - sendUnits[t][i]);
+    });
+    const saved = await savePlayerState(admin, attRow, attP);
+    if (saved.conflict) return conflictResponse();          // точка ещё не тронута — повтор безопасен
+    if (saved.error) return jsonResponse({ err: saved.error.message }, 500);
+
+    // Бронируем добычу за этим отрядом (та же логика, что и в index.html
+    // arriveMarch — cell.amount уменьшается по факту отправки, не по факту
+    // прибытия), чтобы второй отряд на ту же точку не мог рассчитывать на уже
+    // занятые ресурсы.
     const newCellData = { ...(cell.data || {}), amount: Math.max(0, cellAmount - take) };
     const { error: updCell } = await admin.from("map_cells")
       .update({ data: newCellData, updated_at: new Date().toISOString() })
       .eq("world_id", world.id).eq("x", tx).eq("y", ty);
     if (updCell) return jsonResponse({ err: updCell.message }, 500);
-
-    TKEYS.forEach((t) => {
-      for (let i = 1; i <= 5; i++) attP.troops[t][i] = Math.max(0, (attP.troops[t][i] || 0) - sendUnits[t][i]);
-    });
-    const saved = await savePlayerState(admin, attRow, attP);
-    if (saved.conflict) return conflictResponse();          // см. savePlayerState
-    if (saved.error) return jsonResponse({ err: saved.error.message }, 500);
+    // Вернуть точке забронированное — на случай, если дальше что-то сорвётся.
+    const unbookCell = async () => {
+      const { data: fresh } = await admin.from("map_cells")
+        .select("data").eq("world_id", world.id).eq("x", tx).eq("y", ty).maybeSingle();
+      if (!fresh) return;   // точку успели снести — возвращать некуда
+      await admin.from("map_cells")
+        .update({ data: { ...(fresh.data || {}), amount: ((fresh.data && fresh.data.amount) || 0) + take } })
+        .eq("world_id", world.id).eq("x", tx).eq("y", ty);
+    };
 
     const nowSec = Date.now() / 1000;
     const { data: march, error: mErr } = await admin.from("marches").insert({
@@ -325,13 +352,18 @@ Deno.serve(async (req) => {
       tx, ty, t0: nowSec, t1: nowSec + travel,
       units: sendUnits, data: { res, take, dist, spd, gather_secs: gatherSecs, cell_x: tx, cell_y: ty },
     }).select().single();
-    if (mErr) return jsonResponse({ err: mErr.message }, 500);
+    if (mErr) { await unbookCell(); return jsonResponse({ err: mErr.message }, 500); }
 
     const { error: evErr } = await admin.from("events").insert({
       world_id: world.id, fire_at: new Date((nowSec + travel) * 1000).toISOString(),
       type: "march_arrive", data: { march_id: march.id },
     });
-    if (evErr) return jsonResponse({ err: evErr.message }, 500);
+    // Марш без события прибытия — вечно идущий отряд; убираем и его, и бронь.
+    if (evErr) {
+      await admin.from("marches").delete().eq("id", march.id);
+      await unbookCell();
+      return jsonResponse({ err: evErr.message }, 500);
+    }
 
     return jsonResponse({ ok: true, march_id: march.id, eta: travel + gatherSecs });
   } catch (e) {
