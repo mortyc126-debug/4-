@@ -65,19 +65,24 @@ function handleOptions(req) {
 // только расти, иначе устаревшее значение однажды совпало бы снова.
 //
 // Возвращает { ok:true } | { conflict:true } | { error }.
-async function savePlayerState(admin, row, state) {
+// Фаза 31 — power пишется ТЕМ ЖЕ UPDATE, что и state: отдельным запросом
+// это был бы второй рейс к базе на каждом пятисекундном опросе каждого
+// игрока и вторая гонка за ту же строку. Аргумент необязательный — все
+// прежние вызывающие места (их тут ещё несколько) работают как работали.
+async function savePlayerState(admin, row, state, power) {
+  const extra = (power == null) ? {} : { power: Math.round(power) };
   const prev = row.updated_at;
   if (!prev) {
     // Строка прочитана без updated_at (старый вызывающий код) — сверять не с
     // чем; пишем как раньше, чтобы ничего не сломать, но и не притворяемся,
     // что проверили.
     const { error } = await admin.from("players")
-      .update({ state, updated_at: new Date().toISOString() }).eq("id", row.id);
+      .update({ state, ...extra, updated_at: new Date().toISOString() }).eq("id", row.id);
     return error ? { error } : { ok: true };
   }
   const nextIso = new Date(Math.max(Date.now(), Date.parse(prev) + 1)).toISOString();
   const { data, error } = await admin.from("players")
-    .update({ state, updated_at: nextIso })
+    .update({ state, ...extra, updated_at: nextIso })
     .eq("id", row.id).eq("updated_at", prev).select("id,updated_at");
   if (error) return { error };
   if (!data || !data.length) return { conflict: true };
@@ -599,6 +604,278 @@ function syncRes(p, nowSec) {
   p.resAt = nowSec;
 }
 
+
+// =============================================================================
+// Мощь державы (power) — Фаза 31.
+// =============================================================================
+// --- НАЧАЛО СГЕНЕРИРОВАННОГО БЛОКА (tools/gen_power_tables.mjs) ---
+// Таблицы мощи, вынутые из index.html. НЕ ПРАВИТЬ РУКАМИ: правьте исходные
+// таблицы в index.html и перегенерируйте (node tools/gen_power_tables.mjs).
+// Сверить, не разошлись ли копии: node tools/gen_power_tables.mjs --check
+const POWER_BUILD = {
+  hall: [7,21,59,154,383,852,1847,3706,6504,10933,16723,24693,35213,48838,66400,91451,125005,170590,232957,318769,442735,630860,907085,1322485,2195458],
+  farm: [5,11,18,28,38,68,150,309,549,874,1366,2032,3049,4419,6176,8576,11896,16246,21966,29846,40211,54646,74946,103446,143196],
+  lumber: [5,11,18,28,38,68,150,309,549,874,1366,2032,3049,4419,6176,8576,11896,16246,21966,29846,40211,54646,74946,103446,143196],
+  quarry: [5,10,16,32,88,198,387,627,934,1351,1979,2926,4152,5708,7690,10260,14000,19220,26260,35860,49300,67780,94060,132500,192100],
+  mine: [6,19,46,100,219,401,699,1335,1758,2668,3984,5958,8678,12454,17707,25126,36126,52139,75230,108850,158176,230233,336750,495206,735046],
+  academy: [5,11,27,61,145,336,688,1346,2591,4975,7970,11679,16387,22391,30127,40207,53497,71227,95369,128424,174240,239921,336515,481806,783449],
+  store: [5,10,17,41,92,201,402,778,1489,2848,4552,6703,9436,12942,17488,23447,31354,42032,56560,76832,104966,145492,205219,295585,478367],
+  barracks: [5,10,20,37,94,244,525,1059,2083,4063,6520,9576,13407,18241,24400,32325,42636,56328,74659,99431,133357,181631,252430,359629,592326],
+  range: [5,10,20,37,94,244,525,1059,2083,4063,6520,9576,13407,18241,24400,32325,42636,56328,74659,99431,133357,181631,252430,359629,592326],
+  stable: [5,10,20,37,94,244,525,1059,2083,4063,6520,9576,13407,18241,24400,32325,42636,56328,74659,99431,133357,181631,252430,359629,592326],
+  siege: [5,10,26,63,126,293,600,1173,2258,4332,6931,10202,14355,19679,26573,35603,47574,63716,85697,115969,158145,218794,308118,442817,716764],
+  hospital: [5,13,32,65,162,366,723,1262,2077,3310,4967,7220,10319,14632,20699,29316,41665,59576,85644,123830,179944,263152,387338,574480,881480],
+  wall: [5,15,37,94,226,519,1037,1965,3656,6784,10816,16060,22965,32169,44583,61540,84977,117860,164369,230776,326321,466309,674163,986224,1545374],
+  garrison: [5,11,21,44,100,221,446,868,1671,3213,5133,7538,10570,14421,19367,25787,34217,45545,60804,81650,110460,151716,212389,303649,495562],
+  scout: [5,10,16,32,81,191,398,769,1274,1971,2916,4286,5956,7969,10350,13191,17149,22223,28423,36109,46007,58118,74187,96279,139023],
+  forge: [5],
+  market: [5,10,27,84,193,379,634,1102,1973,3615,5687,8317,11684,16040,21741,29294,39422,53250,72284,98780,136090,190096,269894,390404,626317],
+  alliance: [5,10,21,53,116,265,535,1032,1962,3722,5945,8761,12366,17036,23146,31245,42109,56900,77229,105544,145342,202900,287897,415855,667083],
+  portal: [5,13,32,78,186,428,863,1656,3124,5880,9393,13870,19676,27280,37355,50874,69237,94544,129869,179600,250281,353115,505339,734015,1164412],
+};
+const POWER_RSCH = {
+  eco_stone0: [5],
+  eco_gold0: [384],
+  eco_food1: [44,142,347,797,1697],
+  eco_wood1: [44,142,347,797,1697],
+  eco_build1: [269,672,1272,2141,3918],
+  eco_stone1: [406,1147,2485,5161,10513],
+  eco_gold1: [406,1147,2485,5161,10513],
+  eco_rsch1: [725,2176,5078,10882,22490],
+  eco_gfood1: [161,483,1127,2415,4991],
+  eco_gwood1: [161,483,1127,2415,4991],
+  eco_gstone1: [581,1672,3710,7786,15938],
+  eco_ggold1: [581,1672,3710,7786,15938],
+  eco_load1: [669,2007,4683,10035,20739],
+  eco_cap1: [494,1482,3458,7410,15314],
+  eco_amber0: [9182],
+  eco_wood2: [2027,4953,9185,15313,24190,37069,55775,82970,122555,180236],
+  eco_food2: [2027,4953,9185,15313,24190,37069,55775,82970,122555,180236],
+  eco_gwood2: [3190,7831,14592,24454,38855,59910,90721,135855,202041,299196],
+  eco_gfood2: [3190,7831,14592,24454,38855,59910,90721,135855,202041,299196],
+  eco_build2: [3915,9620,17937,30078,47822,73778,111786,167500,249252,369332],
+  eco_rsch2: [3915,9620,17937,30078,47822,73778,111786,167500,249252,369332],
+  eco_gold2: [3190,7831,14592,24454,38855,59910,90721,135855,202041,299196],
+  eco_stone2: [3190,7831,14592,24454,38855,59910,90721,135855,202041,299196],
+  eco_ggold2: [4065,10020,18753,31574,50416,78129,118926,179040,267695,398558],
+  eco_gstone2: [4065,10020,18753,31574,50416,78129,118926,179040,267695,398558],
+  eco_gall2: [4540,11210,21019,35453,56711,88049,134286,202560,303458,452681],
+  eco_load2: [5420,13550,25745,44039,71484,112656,174414,267053,406011,614450],
+  eco_amber1: [5420,13550,25745,44039,71484,112656,174414,267053,406011,614450],
+  eco_crown_dwarf: [5255,13138,24961,42698,69308],
+  eco_crown_human: [5255,13138,24961,42698,69308],
+  eco_crown_elf: [5255,13138,24961,42698,69308],
+  eco_crown_undead: [5255,13138,24961,42698,69308],
+  mil_trainspd: [56],
+  mil_atk_inf1: [184,252,457,748,1298],
+  mil_atk_arc1: [184,252,457,748,1298],
+  mil_atk_cav1: [184,252,457,748,1298],
+  mil_atk_sie1: [184,252,457,748,1298],
+  mil_tier_inf2: [2690],
+  mil_tier_arc2: [2690],
+  mil_tier_cav2: [2690],
+  mil_tier_sie2: [3050],
+  mil_scout1: [381,971,1910,3450,6056],
+  mil_march1: [381,971,1910,3450,6056],
+  mil_def_inf1: [1214,3123,6216,11386,20305],
+  mil_def_arc1: [1214,3123,6216,11386,20305],
+  mil_def_cav1: [1214,3123,6216,11386,20305],
+  mil_def_sie1: [1214,3123,6216,11386,20305],
+  mil_tier_inf3: [27243],
+  mil_tier_arc3: [27243],
+  mil_tier_cav3: [27243],
+  mil_tier_sie3: [32427],
+  mil_scout2: [4220,11630,26435,58362,135413],
+  mil_atk_all1: [5671,14827,30421,56408,100570,177222,312936,557994,1008570,1850342],
+  mil_def_all1: [5671,14827,30421,56408,100570,177222,312936,557994,1008570,1850342],
+  mil_hp_all1: [5671,14827,30421,56408,100570,177222,312936,557994,1008570,1850342],
+  mil_march2: [8877,22198,43136,74543,121648],
+  mil_tier_inf4: [159930],
+  mil_tier_arc4: [159930],
+  mil_tier_cav4: [159930],
+  mil_tier_sie4: [211770],
+  mil_atk_inf2: [4191,10823,21462,38805,67589,116294,202693,354410,626223,1122415],
+  mil_atk_arc2: [4191,10823,21462,38805,67589,116294,202693,354410,626223,1122415],
+  mil_atk_cav2: [4191,10823,21462,38805,67589,116294,202693,354410,626223,1122415],
+  mil_atk_sie2: [4536,11859,23881,43989,78302,138066,246584,442538,802824,1475963],
+  mil_def_inf2: [4536,11859,23881,43989,78302,138066,246584,442538,802824,1475963],
+  mil_def_arc2: [4536,11859,23881,43989,78302,138066,246584,442538,802824,1475963],
+  mil_def_cav2: [4536,11859,23881,43989,78302,138066,246584,442538,802824,1475963],
+  mil_def_sie2: [5055,13415,27510,51765,94373,170726,312421,574730,1067727,2006287],
+  mil_atk_all2: [5930,15604,31674,58891,105938,188950,341205,619354,1136111,2110314],
+  mil_def_all2: [5930,15604,31674,58891,105938,188950,341205,619354,1136111,2110314],
+  mil_hp_all2: [5930,15604,31674,58891,105938,188950,341205,619354,1136111,2110314],
+  mil_tier_inf5: [485748],
+  mil_tier_arc5: [485748],
+  mil_tier_cav5: [485748],
+  mil_tier_sie5: [672382],
+  mil_crown_dwarf: [4832,12633,25920,48063,85691],
+  mil_crown_human: [4832,12633,25920,48063,85691],
+  mil_crown_elf: [4832,12633,25920,48063,85691],
+  mil_crown_undead: [4832,12633,25920,48063,85691],
+};
+// id технологии -> [волна, ветка] (0=eco, 1=mil) для формулы-запаса у узлов
+// без своей строки в таблице (см. researchPower в index.html).
+const POWER_RSCH_META = {
+  eco_stone0: [1,0],
+  eco_gold0: [1,0],
+  eco_food1: [1,0],
+  eco_wood1: [1,0],
+  eco_build1: [1,0],
+  eco_stone1: [1,0],
+  eco_gold1: [1,0],
+  eco_rsch1: [1,0],
+  eco_gfood1: [1,0],
+  eco_gwood1: [1,0],
+  eco_gstone1: [1,0],
+  eco_ggold1: [1,0],
+  eco_load1: [1,0],
+  eco_cap1: [1,0],
+  eco_amber0: [1,0],
+  eco_crown_dwarf: [4,0],
+  eco_crown_human: [4,0],
+  eco_crown_elf: [4,0],
+  eco_crown_undead: [4,0],
+  eco_wood2: [2,0],
+  eco_food2: [2,0],
+  eco_gwood2: [2,0],
+  eco_build2: [2,0],
+  eco_gfood2: [2,0],
+  eco_rsch2: [2,0],
+  eco_gold2: [2,0],
+  eco_stone2: [2,0],
+  eco_ggold2: [2,0],
+  eco_gall2: [2,0],
+  eco_gstone2: [2,0],
+  eco_load2: [2,0],
+  eco_amber1: [2,0],
+  mil_atk_inf1: [1,1],
+  mil_atk_inf2: [2,1],
+  mil_atk_arc1: [1,1],
+  mil_atk_arc2: [2,1],
+  mil_atk_cav1: [1,1],
+  mil_atk_cav2: [2,1],
+  mil_atk_sie1: [1,1],
+  mil_atk_sie2: [2,1],
+  mil_def_inf1: [1,1],
+  mil_def_inf2: [2,1],
+  mil_def_arc1: [1,1],
+  mil_def_arc2: [2,1],
+  mil_def_cav1: [1,1],
+  mil_def_cav2: [2,1],
+  mil_def_sie1: [1,1],
+  mil_def_sie2: [2,1],
+  mil_atk_all1: [2,1],
+  mil_atk_all2: [3,1],
+  mil_def_all1: [2,1],
+  mil_def_all2: [3,1],
+  mil_hp_all1: [2,1],
+  mil_hp_all2: [3,1],
+  mil_trainspd: [1,1],
+  mil_march1: [1,1],
+  mil_march2: [2,1],
+  mil_scout1: [1,1],
+  mil_scout2: [2,1],
+  mil_crown_dwarf: [4,1],
+  mil_crown_human: [4,1],
+  mil_crown_elf: [4,1],
+  mil_crown_undead: [4,1],
+  mil_tier_inf2: [1,1],
+  mil_tier_inf3: [2,1],
+  mil_tier_inf4: [3,1],
+  mil_tier_inf5: [4,1],
+  mil_tier_arc2: [1,1],
+  mil_tier_arc3: [2,1],
+  mil_tier_arc4: [3,1],
+  mil_tier_arc5: [4,1],
+  mil_tier_cav2: [1,1],
+  mil_tier_cav3: [2,1],
+  mil_tier_cav4: [3,1],
+  mil_tier_cav5: [4,1],
+  mil_tier_sie2: [1,1],
+  mil_tier_sie3: [2,1],
+  mil_tier_sie4: [3,1],
+  mil_tier_sie5: [4,1],
+};
+const POWER_RSCH_WAVE = {1:0.018,2:5,3:20,4:60};
+const POWER_RSCH_BASE = [28500,26200];
+const POWER_UNIT = [1,2,3,4,10];
+const POWER_GEAR = [1250,2750,6250,15000,37500];
+// --- КОНЕЦ СГЕНЕРИРОВАННОГО БЛОКА ---
+// Мощь державы — Фаза 31. Дословный порт mpPower()/power() из index.html:
+// постройки + войска (дома И в походах) + исследования + полководец +
+// надетое снаряжение. Таблицы чисел — в сгенерированном блоке выше.
+//
+// До этой фазы мощь считалась ТОЛЬКО в браузере, а колонка players.power так
+// и стояла нулём с самой первой миграции. Автор: "будут рейтинги в том числе
+// и по мощи" — значит число должно быть у сервера, а не у клиента, который
+// его к тому же может назвать любым.
+//
+// marchUnits — состав отрядов, которые прямо сейчас В ПОЛЕ. Их войска
+// вычтены из p.troops ещё на отправке (см. mp-attack/mp-gather), и без этого
+// слагаемого мощь проваливалась бы на время каждого похода, а рейтинг
+// дёргался бы туда-сюда просто от того, воюет игрок или сидит дома.
+const POWER_TKEYS = ["inf", "arc", "cav", "sie"];
+const powerTblRow = (arr, lv) => arr[Math.max(0, Math.min(arr.length - 1, Math.round(lv) - 1))];
+function buildingPowerOf(bk, lv) {
+  lv = +lv || 0;
+  if (lv <= 0) return 0;
+  const arr = POWER_BUILD[bk];
+  if (!arr || !arr.length) return 0;
+  return powerTblRow(arr, lv);
+}
+function researchPowerOf(id, lv) {
+  const arr = POWER_RSCH[id];
+  const row = arr && arr[lv - 1];
+  if (row != null) return row;
+  // Формула-запас для узлов без своей строки в таблице — index.html
+  // researchPower(): lv * волна * база ветки.
+  const meta = POWER_RSCH_META[id];
+  if (!meta) return 0;
+  return lv * (POWER_RSCH_WAVE[meta[0]] || 0) * (POWER_RSCH_BASE[meta[1]] || 0);
+}
+function powerOf(p, marchUnits) {
+  let v = 0;
+  for (const bk of Object.keys(POWER_BUILD)) {
+    const lv = p.b && p.b[bk];
+    if (Array.isArray(lv)) lv.forEach((l) => { v += buildingPowerOf(bk, l || 0); });
+    else v += buildingPowerOf(bk, lv || 0);
+  }
+  const addUnits = (u) => {
+    if (!u) return;
+    for (const t of POWER_TKEYS) for (let i = 1; i <= 5; i++) v += ((u[t] && u[t][i]) || 0) * POWER_UNIT[i - 1];
+  };
+  addUnits(p.troops);
+  (marchUnits || []).forEach(addUnits);
+  const tech = p.tech || {};
+  for (const id of Object.keys(tech)) {
+    const lv = tech[id] || 0;
+    if (lv) v += researchPowerOf(id, lv);
+  }
+  // index.html genPowerOf: 2000 + 318.5*ур^1.5, плюс 1000 за каждое
+  // вложенное очко таланта.
+  const g = p.gen || {};
+  let talSpent = 0;
+  for (const k in (g.tal || {})) talSpent += g.tal[k] || 0;
+  v += 2000 + Math.pow(g.lv || 1, 1.5) * 318.5 + talSpent * 1000;
+  // index.html gearPowerOf: по мощи редкости за каждый надетый предмет.
+  for (const it of Object.values(p.gear || {})) {
+    if (it && it.rarity) v += POWER_GEAR[it.rarity - 1] || 0;
+  }
+  return Math.round(v);
+}
+// Пишется в две точки сразу: колонка players.power (по ней пойдут рейтинги —
+// индексировать и сортировать JSONB ради этого незачем) и state.peakPower
+// (высшая мощь за всё правление, для итога на экране гибели: текущая на
+// момент смерти всегда занижена, у павшего к тому времени нет ни войск, ни
+// половины города).
+function applyPower(p, row, marchUnits) {
+  const v = powerOf(p, marchUnits);
+  p.peakPower = Math.max(p.peakPower || 0, v);
+  if (row) row.power = v;
+  return v;
+}
+
 // Тот же снимок полей, что newPlayer() в index.html (см. index.html:2968) —
 // специально в той же форме, чтобы Фаза 5 (перенос остальных действий) не
 // переписывала форму состояния заново. ai/pts=5/gear/inventory и т.д. —
@@ -1020,6 +1297,18 @@ Deno.serve(async (req) => {
       if (st.b) { st.b.forge = st.b.forge || 0; st.b.portal = st.b.portal || 0; st.b.market = st.b.market || 0; st.b.alliance = st.b.alliance || 0; }
       if (st.b) ensureLayout(st);
       syncRes(st, nowSec);
+      // Фаза 31 — мощь державы. mp-join дёргается клиентом на КАЖДОМ
+      // пятисекундном опросе, то есть это самая частая точка в игре, где
+      // состояние игрока уже перечитано и вот-вот будет записано, — дешевле
+      // места для пересчёта нет. Колонка players.power до сих пор стояла
+      // нулём с самой первой миграции; по ней пойдут рейтинги, поэтому
+      // считает её сервер, а не клиент, который мог бы назвать любое число.
+      // Отряды в поле — отдельным запросом: их войска вычтены из st.troops
+      // ещё на отправке (mp-attack/mp-gather), и без них мощь проваливалась
+      // бы на всё время каждого похода.
+      const marchRows = await admin.from("marches").select("units").eq("player_id", existing.data.id);
+      if (marchRows.error) return jsonResponse({ err: marchRows.error.message }, 500);
+      const pw = applyPower(st, null, (marchRows.data || []).map((r) => r.units));
       // Эта запись — самая частая в игре: клиент дёргает mp-join на КАЖДОМ
       // пятисекундном опросе. Именно она чаще всего и затирала чужие правки
       // (см. подробности у savePlayerState выше): пока mp-join считал
@@ -1032,7 +1321,7 @@ Deno.serve(async (req) => {
       // кто выиграл гонку, начислил ровно то же самое сам. Достаточно
       // перечитать строку и вернуть её свежую — игрок получит актуальное
       // состояние, включая своё только что применённое действие.
-      const savedJoin = await savePlayerState(admin, existing.data, st);
+      const savedJoin = await savePlayerState(admin, existing.data, st, pw);
       if (savedJoin.error) return jsonResponse({ err: savedJoin.error.message }, 500);
       if (savedJoin.conflict) {
         const again = await admin.from("players").select("*").eq("id", existing.data.id).maybeSingle();
@@ -1058,10 +1347,15 @@ Deno.serve(async (req) => {
     const allCells = await admin.from("map_cells").select("x,y").eq("world_id", world.id);
     const { x, y } = pickSpawn(allPlayers.data || [], allCells.data || []);
 
+    // Фаза 31 — мощь новичка известна сразу, ждать первого опроса незачем:
+    // и колонка, и высшая мощь заполняются прямо на вставке.
+    const newState = newPlayerState(race, nowSec);
+    const newPower = powerOf(newState, []);
+    newState.peakPower = newPower;
     const ins = await admin.from("players").insert({
       world_id: world.id, auth_uid: user.id, is_bot: false, race,
       nick: typeof body.nick === "string" ? body.nick.slice(0, 40) : "",
-      x, y, state: newPlayerState(race, nowSec),
+      x, y, state: newState, power: newPower,
     }).select().single();
     if (ins.error) return jsonResponse({ err: ins.error.message }, 500);
 

@@ -14639,6 +14639,11 @@ function mpRenderDeath(){
   h+="<dl class='death-ledger'>"+
      "<div class='death-row'><dt>Пал от руки</dt><dd><span class='slayer'>"+escHtml(slayer)+"</span></dd></div>"+
      (e.ruledSec!=null?"<div class='death-row'><dt>Правил</dt><dd>"+mpRuledTxt(e.ruledSec)+"</dd></div>":"")+
+     // Фаза 31 — высшая мощь за всё правление, а не оставшаяся на момент
+     // гибели: у павшего к этой секунде нет ни войск, ни половины города.
+     // Считает и копит её сервер (applyPower в mp-join/mp-tick), клиент
+     // только показывает.
+     (e.peakPower?"<div class='death-row'><dt>Высшая мощь</dt><dd>"+RU(e.peakPower)+"</dd></div>":"")+
      (e.hall?"<div class='death-row'><dt>Ратуша</dt><dd>"+e.hall+" ур.</dd></div>":"")+
      (e.ruined?"<div class='death-row'><dt>Обрушено построек</dt><dd>"+e.ruined+"</dd></div>":"")+
      // RU(), а не fmt(): на надгробии "184.5K" выглядит как сбой округления,
