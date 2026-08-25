@@ -33,7 +33,7 @@ const baseState = () => ({
   res: { food: 53800, wood: 55000, stone: 101300, gold: 126600 }, resAt: Date.now() / 1000 - 3600,
   gen: { lv: 4, xp: 120, pts: 5, tal: {}, id: 1, away: null }, gear: {}, tech: {},
   inventory: {}, materials: { ore: [0,0,0,0,0], leather: [0,0,0,0,0], bone: [0,0,0,0,0], ebony: [0,0,0,0,0] },
-  tomes: {}, amber: 0, kp: 0, kpByTier: { 1:0, 2:0, 3:0, 4:0, 5:0 },
+  tomes: {}, amber: 0,
 });
 // Состояние ДО поздних фаз: нет прочности/высшей мощи/раскладки города, часть
 // ключей построек отсутствует, multi-здание записано скаляром. Именно такие

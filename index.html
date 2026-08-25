@@ -218,22 +218,6 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    длине результата, а не только сокращаем разряды. */
 .profile-power-chip{position:absolute;top:37%;left:50%;transform:translate(-50%,-50%);
   font-family:var(--data);color:var(--gilt-hi);font-weight:bold;white-space:nowrap}
-/* Очки убийств (RoK-стиль, см. addKillPoints) — плашка под гербом мощи,
-   иконка временно текстовая ("&#9876;") — автор сам подберёт свою картинку
-   позже, тут важно только само отображение числа. */
-.profile-kp-wrap{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:10px;
-  padding:6px 14px;border-radius:10px;background:rgba(0,0,0,.18);border:1px solid var(--rule)}
-.profile-kp-ico{font-size:15px;line-height:1;color:var(--gilt)}
-.profile-kp-label{font-size:12px;color:var(--vellum-dim)}
-.profile-kp-val{font-family:var(--data);font-weight:bold;color:var(--gilt-hi)}
-.kp-info-btn{width:18px;height:18px;border-radius:50%;border:1px solid var(--gilt-dim);
-  background:transparent;color:var(--vellum-dim);font-size:11px;font-style:italic;
-  font-family:Georgia,serif;line-height:1;cursor:pointer;padding:0}
-.profile-kp-detail{margin-top:6px;width:100%;max-width:240px;display:flex;flex-direction:column;gap:2px}
-.kp-tier-row{display:flex;justify-content:space-between;gap:14px;padding:3px 12px;font-size:12.5px;
-  color:var(--vellum-dim)}
-.kp-tier-row b{color:var(--vellum);font-family:var(--data)}
-
 .gen-portrait-wrap{position:relative}
 .gen-portrait{width:44px;height:44px;object-fit:contain;display:block}
 
@@ -548,6 +532,29 @@ body.mp-gated #app.view-city ~ #mp-build-fab{display:block}
    mpEnterPlaceMode/mpCancelPlace/mpDoPlaceConfirm — надёжнее, чем гонка
    специфичности между двумя классовыми правилами на разных предках. */
 #mp-build-fab span{display:none}
+/* Фаза 34 — значок исследования. Автор: "иконка как и строительство, но
+   появляется она только при действующем исследовании, а если нет, то и
+   иконки нет". Поэтому те же размеры/место/условия показа, что у
+   #mp-build-fab (общий мир + вид города), НО с одной добавкой: показ
+   включает JS по st.rsch (см. mpUpdateResearchFab) — состояние академии
+   из CSS не видно.
+   Стоит НАД значком строительства: 98 (его bottom) + 56 (его высота) +
+   14 (тот же зазор, что между строительством и #view-toggle) = 168. */
+#mp-rsch-fab{display:none;position:fixed;left:21px;bottom:168px;z-index:20;
+  width:56px;height:56px;padding:0;border-radius:50%;border:none;overflow:hidden;
+  background:transparent;color:var(--gilt-hi)}
+#mp-rsch-fab img{width:100%;height:100%;object-fit:cover;pointer-events:none}
+#mp-rsch-fab span{display:none}
+#mp-rsch-fab:active{transform:scale(.9)}
+/* Тонкое кольцо прогресса вокруг значка — сколько исследованию осталось.
+   conic-gradient по --f (0..1), ставится из JS тем же тиком, что и показ.
+   Своя обёртка не нужна: псевдоэлемент поверх картинки, не перехватывает
+   тапы (pointer-events наследовать нечему — он не в потоке событий). */
+#mp-rsch-fab::after{content:"";position:absolute;inset:-3px;border-radius:50%;
+  background:conic-gradient(var(--gilt-hi) calc(var(--f,0)*360deg),transparent 0);
+  -webkit-mask:radial-gradient(closest-side,transparent calc(100% - 3px),#000 calc(100% - 3px));
+  mask:radial-gradient(closest-side,transparent calc(100% - 3px),#000 calc(100% - 3px));
+  pointer-events:none}
 #place-toolbar{display:none;position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:20;gap:16px}
 body.mp-placing #place-toolbar{display:flex}
 .place-btn{width:56px;height:56px;border-radius:50%;font-size:26px;line-height:1;padding:0;
@@ -1361,31 +1368,34 @@ body.mp-placing #place-toolbar{display:flex}
 .cbuild .lvl{position:absolute;bottom:2px;right:4px;font-family:var(--data);font-size:10px;
   color:var(--gilt-hi);background:rgba(0,0,0,.55);padding:0 3px;line-height:1.4;z-index:2}
 
-/* Фаза 29 — прочность постройки прямо на карте города. Полоска появляется
-   ТОЛЬКО у повреждённого здания (см. buildHpBarHtml): в мирное время город
-   не должен быть утыкан двумя десятками одинаковых черт, которые ничего не
-   сообщают. Прижата к нижнему краю плитки здания, над ней остаётся значок
-   уровня (.lvl, свой z-index выше) — они не спорят за место.
-   Цвет ведёт от гранатового (почти сбито) к медной зелени (почти цело) —
-   тот же ход, что и у .hpbar боевой полоски, чтобы состояние читалось
-   одинаково и в бою, и в городе. .crit добавляет пульсацию на последней
-   четверти: здание вот-вот рухнет, это стоит заметить, не вглядываясь. */
-.cbuild .bhp{position:absolute;left:8%;right:8%;bottom:1px;height:3px;z-index:2;
-  background:rgba(0,0,0,.62);border-radius:2px;overflow:hidden;pointer-events:none;
-  box-shadow:0 0 0 1px rgba(0,0,0,.45)}
+/* Фаза 29 — прочность постройки прямо на карте города; Фаза 34 — по прямой
+   просьбе автора ("замени на всех зданиях и сделай её заметнее, увеличь раза
+   в 3") показывается теперь у КАЖДОГО построенного здания, а не только у
+   повреждённого, втрое выше прежнего (3px -> 9px) и со своим значком
+   (icon-durability.png) слева от полоски.
+   Прижата к нижнему краю плитки здания, над ней остаётся значок уровня
+   (.lvl, свой z-index выше) — они не спорят за место.
+   Цвет — три ступени: цело — медная зелень, потрёпано — золото, вот-вот
+   рухнет — гранат. .crit добавляет пульсацию на последней четверти: здание
+   вот-вот рухнет, это стоит заметить, не вглядываясь. */
+.cbuild .bhp{position:absolute;left:6%;right:6%;bottom:1px;height:9px;z-index:2;
+  display:flex;align-items:center;gap:3px;pointer-events:none}
+.cbuild .bhp .dico{width:9px;height:9px;flex:0 0 auto;object-fit:contain;
+  filter:drop-shadow(0 1px 1px rgba(0,0,0,.85))}
+.cbuild .bhp .track{flex:1 1 auto;height:100%;background:rgba(0,0,0,.62);
+  border-radius:3px;overflow:hidden;box-shadow:0 0 0 1px rgba(0,0,0,.45)}
 /* Цвет — от ДОЛИ оставшейся прочности, а не градиентом вдоль полоски (как у
-   боевой .hpbar): на трёх пикселях градиент читается наоборот — у сильно
-   побитого здания кончик полоски оказывался зелёным. Три ступени, как у
-   любого индикатора состояния: цело — медная зелень, потрёпано — золото,
-   вот-вот рухнет — гранат. */
-.cbuild .bhp i{display:block;height:100%;border-radius:2px;
+   боевой .hpbar): градиент вдоль читается наоборот — у сильно побитого
+   здания кончик полоски оказывался зелёным. */
+.cbuild .bhp i{display:block;height:100%;border-radius:3px;
   background:var(--verdigris);transition:width .4s ease,background .4s ease}
 .cbuild .bhp.warn i{background:var(--gilt)}
 .cbuild .bhp.crit i{background:var(--garnet);animation:bhpPulse 1.4s ease-in-out infinite}
 /* Значок уровня стоит там же, у нижнего края, и на узкой плитке налезал на
-   полоску. Приподнимаем его РОВНО у повреждённых зданий (полоска есть только
-   у них) — у целого города разметка не меняется вовсе. */
-.cbuild:has(.bhp) .lvl{bottom:6px}
+   полоску. Полоска теперь есть у всех построенных зданий, поэтому и подъём
+   значка общий — но правило оставлено на :has(), чтобы пустой участок
+   (полоски нет) разметку не менял. */
+.cbuild:has(.bhp) .lvl{bottom:12px}
 @keyframes bhpPulse{0%,100%{opacity:1}50%{opacity:.45}}
 @media (prefers-reduced-motion:reduce){ .cbuild .bhp.crit i{animation:none} }
 /* Строка "Прочность" в карточке здания — переиспользует .hpbar боя (см. её
@@ -1401,12 +1411,29 @@ body.mp-placing #place-toolbar{display:flex}
 .bm-hp{margin:10px 0 16px;padding-bottom:12px;border-bottom:1px solid rgba(90,69,48,.25)}
 .bm-hp .hpline{color:#5a4530;font-size:13px;margin-top:0}
 .bm-hp .hpline b{color:#3a2c1c}
-.bm-hp .hpline img{width:13px;height:13px;object-fit:contain;vertical-align:-2px;margin-right:4px}
+/* Значок прочности втрое крупнее прежнего (13 -> 34px, просьба автора
+   "увеличь раза в 3"), поэтому строка выстраивается флексом по центру, а не
+   базовой линией текста. */
+.bm-hp .hpline{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.bm-hp .hpline span{display:flex;align-items:center;gap:8px}
+.bm-hp .hpline img{width:34px;height:34px;object-fit:contain;margin:0}
 .bm-hp .hpbar{height:6px;background:rgba(90,69,48,.18);border-color:rgba(90,69,48,.3)}
 .bm-hp .hpbar i{background:var(--verdigris)}
 .bm-hp.warn .hpbar i{background:var(--gilt-dim)}
 .bm-hp.crit .hpbar i{background:var(--garnet)}
 .bm-hp .note{color:#7a6448}
+
+/* Фаза 34 — кнопки действий со значком. Автор прислал набор иконок и
+   расписал, какая куда: разведка, сбор, лагерь, отзыв, осада, разрушение.
+   Значок идёт ПЕРЕД подписью и не заменяет её: подпись — то, что кнопка
+   сделает, значок — быстрое узнавание среди соседних кнопок. 22px — по
+   высоте строки .seal, чтобы кнопка не выросла. */
+.seal.ico{display:inline-flex;align-items:center;justify-content:center;gap:7px}
+.seal.ico img{width:22px;height:22px;object-fit:contain;flex:0 0 auto;
+  filter:drop-shadow(0 1px 2px rgba(0,0,0,.5))}
+/* Та же кнопка на всю ширину картуша (.wide) — значок прижат к подписи, а
+   не разъезжается по краям. */
+.seal.wide.ico{display:flex}
 
 /* Свободная застройка (Фаза 4) — призрак здания "в руках" (.pghost) и
    подсветка клетки под ним (#place-highlight), см. mpUpdatePlaceDom/
@@ -1563,10 +1590,14 @@ body.mp-placing #place-toolbar{display:flex}
    всегда на одном месте, полоска прочности у уцелевших занимает всю ширину
    второй строкой. Снесённое — гранатовым и зачёркнутым: здания больше нет,
    это не "меньше стало", а "не осталось". */
-.ruin-row{display:grid;grid-template-columns:16px 1fr auto;gap:0 8px;align-items:baseline;
+.ruin-row{display:grid;grid-template-columns:26px 1fr auto;gap:0 8px;align-items:center;
   padding:5px 0;border-bottom:1px solid var(--rule-soft);font-size:12.5px}
 .ruin-row:last-child{border-bottom:none}
-.ruin-row > i{font-style:normal;color:var(--vellum-faint);text-align:center}
+.ruin-row > i{font-style:normal;color:var(--vellum-faint);text-align:center;line-height:0}
+/* Значки автора вместо прежних текстовых знаков (крест/молот): развалины —
+   у снесённого, таран — у уцелевшего, но побитого. */
+.ruin-row > i img{width:24px;height:24px;object-fit:contain;vertical-align:middle}
+.ruin-row.gone > i img{filter:drop-shadow(0 0 3px rgba(150,50,59,.55))}
 .ruin-row .ruin-nm{color:var(--vellum)}
 .ruin-row > b{font-family:var(--data);font-size:11.5px;font-weight:normal;color:var(--vellum-dim);
   white-space:nowrap}
@@ -1582,8 +1613,12 @@ body.mp-placing #place-toolbar{display:flex}
   text-decoration-color:rgba(150,50,59,.7)}
 .ruin-row.gone > b{color:var(--garnet)}
 /* Перечень уже обрушенного прямо во время осады (mpDemolishLiveHtml) —
-   вторая, приглушённая строка под полоской текущей цели. */
+   вторая, приглушённая строка под полоской текущей цели. Значки автора
+   (таран у заголовка фазы, развалины у перечня) — той же высоты, что строка,
+   поэтому строки выстраиваются флексом, а не базовой линией. */
 .note.ruin-live{color:var(--garnet);opacity:.85}
+.note.ruin-hd,.note.ruin-live{display:flex;align-items:center;gap:7px}
+.note.ruin-hd img,.note.ruin-live img{width:26px;height:26px;object-fit:contain;flex:0 0 auto}
 
 /* Табличка-реестр */
 .roll{width:100%;border-collapse:collapse;font-size:13px}
@@ -1774,6 +1809,7 @@ body.mp-placing #place-toolbar{display:flex}
      Иконка — icon-build-fab.png (круглый медальон от автора), не путать с
      icon-build.png — тот отдельный, занятого слота бригады. -->
 <button id="mp-build-fab" aria-label="Строительство"><img src="images/ui/icon-build-fab.png" alt=""><span>Строить</span></button>
+<button id="mp-rsch-fab" aria-label="Исследование"><img src="images/ui/icon-research.png" alt=""><span>Исследование</span></button>
 <!-- Призрак здания "в руках" подтверждается/отменяется тут — статичные
      кнопки в шаблоне, а не часть mpRenderFreeformCity(): position:fixed
      внутри динамически пересобираемого #folio рисковал бы поехать, если у
@@ -3969,18 +4005,20 @@ function buildHpShown(st,bk,plot,nowSec){
   const dt=Math.max(0,(nowSec||Date.now()/1000)-from);
   return Math.max(0,Math.min(max, cur + max*BUILD_REGEN_PER_HOUR*(dt/3600)));
 }
-// Полоска под зданием на карте города. Целое здание полоски не показывает
-// вовсе — иначе город в мирное время был бы утыкан двумя десятками
-// одинаковых зелёных черт, которые ничего не сообщают.
+// Полоска под зданием на карте города — у КАЖДОГО построенного здания.
+// Раньше она появлялась только у повреждённого (чтобы мирный город не был
+// утыкан одинаковыми зелёными чертами), но автор попросил обратное прямо:
+// "замени на всех зданиях и сделай её заметнее". Пустой участок (max<=0,
+// здания ещё нет) полоски по-прежнему не получает — там показывать нечего.
 function buildHpBarHtml(st,bk,plot,nowSec){
   const max=buildingMaxHp(bk,buildLvOf(st,bk,plot));
   if(max<=0) return "";
   const hp=buildHpShown(st,bk,plot,nowSec);
-  if(hp>=max) return "";
   const pct=Math.max(0,Math.min(100,hp/max*100));
   const tone=pct<=25?" crit":pct<=60?" warn":"";
   return "<div class='bhp"+tone+"' title='Прочность "+fmt(hp)+" / "+fmt(max)+"'>"+
-         "<i style='width:"+pct.toFixed(1)+"%'></i></div>";
+         "<img class='dico' src='images/ui/icon-durability.png' alt=''>"+
+         "<span class='track'><i style='width:"+pct.toFixed(1)+"%'></i></span></div>";
 }
 const prodRate  = lv => lv<=0?0:tblRow(PROD_TABLE,lv);   // в час
 const storeCap  = lv => tblRow(STORE_TABLE,Math.max(1,lv));
@@ -4187,7 +4225,6 @@ function newPlayer(id,race,x,y,isBot){
     inventory:Object.fromEntries(GEAR_SLOTS.map(s=>[s.id,{bastion:[0,0,0,0,0],storm:[0,0,0,0,0]}])),
     materials:{ore:[0,0,0,0,0],leather:[0,0,0,0,0],bone:[0,0,0,0,0],ebony:[0,0,0,0,0]}, craft:null,
     tomes:{},
-    kp:0, kpByTier:{1:0,2:0,3:0,4:0,5:0},   // очки убийств (RoK), см. addKillPoints
     shieldUntil:0, lostTo:null, power:0,
     ai:{aggr, greed:.4+RNG()*.5, caution:.3+RNG()*.6, nextThink:0, target:null},
   };
@@ -5787,34 +5824,8 @@ function splitLosses(p,loss,deathFrac,broken){
   // тяжелораненые едут отсюда же — конкурирующей перезаписи p.wounded
   // нигде нет, в отличие от p.troops.
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++){ const w=r.hurtUnits[t][i]||0; if(w) p.wounded[t][i]+=w; }});
-  // deadUnits/hurtUnits — сверх прежнего возврата, только для addKillPoints
-  // (см. её заголовок): нужна разбивка ПРОТИВНИКА по тирам, а не только сумма.
-  return {dead:r.dead,hurt:r.hurt,slight:r.slight,slightUnits:r.slightUnits,deadUnits:r.deadUnits,hurtUnits:r.hurtUnits};
+  return {dead:r.dead,hurt:r.hurt,slight:r.slight,slightUnits:r.slightUnits};
 }
-// Очки убийств (Kill Points), как в RoK — расчёт и пороговые числа дал сам
-// пользователь, с проверочным примером ("10000 тяжелораненых T4 + 5000 T5
-// = 10000*10 + 5000*20 = 200000"), совпадает с общеизвестной таблицей
-// множителей по тирам. Считаются только "Dead"+"Severely Wounded" (в нашей
-// модели — deadUnits+hurtUnits из hospitalSplit, БЕЗ slightUnits — те сами
-// тут же возвращаются в строй, RoK их тоже не засчитывает), и ТОЛЬКО за
-// PvP: убийства/раны нейтралов (разбойники/лагеря) в счёт не идут — поэтому
-// addKillPoints зовётся из battleCity (штурм города), но НЕ из ветки
-// camp/fort в arriveMarch (рейд на варваров).
-// hs — разбор потерь ПРОТИВНИКА (результат splitLosses/hospitalSplit ЕГО
-// стороны), а не своей: KP начисляются за урон, нанесённый ЧУЖОЙ армии.
-const KP_TIER_MULT=[1,2,4,10,20];
-function addKillPoints(p,hs){
-  if(!p) return;
-  if(!p.kp) p.kp=0;
-  if(!p.kpByTier) p.kpByTier={1:0,2:0,3:0,4:0,5:0};
-  let add=0;
-  for(let i=1;i<=5;i++){
-    let n=0; TKEYS.forEach(t=>{ n+=(hs.deadUnits[t][i]||0)+(hs.hurtUnits[t][i]||0); });
-    if(n>0){ p.kpByTier[i]=(p.kpByTier[i]||0)+n; add+=n*KP_TIER_MULT[i-1]; }
-  }
-  p.kp+=add;
-}
-
 /* =========================================================================
    МАРШИ — маршрут в обход воды. Раньше поход двигался по прямой между
    точкой отправления и целью: пока воды на карте не было, это было не
@@ -7253,12 +7264,6 @@ function battleCity(att,def,m){
   // этого конкретного боя гибнет заметно тяжелее победившей.
   const la=splitLosses(att,r.lossA,A.deathFrac*(r.win==="A"?WIN_DEATH_MULT:LOSE_DEATH_MULT),A.broken);
   const ld=splitLosses(def,r.lossD,D.deathFrac*(r.win==="D"?WIN_DEATH_MULT:LOSE_DEATH_MULT),D.broken);
-  // Очки убийств (см. addKillPoints) — штурм города PvP, засчитывается
-  // обеим сторонам: атакующий за потери обороны (ld), оборона за потери
-  // атакующего (la). Рейд на разбойников (arriveMarch, camp/fort) этого
-  // вызова не делает вовсе — PvE в зачёт не идёт.
-  addKillPoints(att,ld);
-  addKillPoints(def,la);
   // Легкораненые — назад в units ДО перезаписи def.troops/m.units ниже,
   // иначе перезапись их просто стёрла бы (см. addUnitsInto/splitLosses).
   // Раньше это делалось только для защитника (у атакующего "лёгких" не
@@ -8691,7 +8696,7 @@ function renderCartoucheMp(){
         // бы от чужих часов и показывало бы бессмыслицу.
         (m.state!=="gather"?"<div class='co'><span>Прибытие через</span><b>"+fmtDur(Math.max(0,m.t1-Date.now()/1000))+"</b></div>":"");
       if(mine){
-        body+="<button class='seal wide' style='margin-top:9px' data-mp='cartrecall' data-id='"+m.id+"'>Отозвать</button>";
+        body+="<button class='seal wide ico' style='margin-top:9px' data-mp='cartrecall' data-id='"+m.id+"'><img src='images/ui/icon-recall.png' alt=''>Отозвать</button>";
       } else {
         body+="<div class='hint'>Разведка чужих отрядов в пути в общем мире пока не поддержана.</div>";
       }
@@ -8716,7 +8721,7 @@ function renderCartoucheMp(){
     const water=isRealWater(sel.x,sel.y);
     put("<div class='hd'>Пустошь "+coord+"</div>"+
       (water?"<div class='hint'>Здесь вода — отряд не высадить.</div>":
-        "<button class='seal wide' style='margin-top:9px' data-mp='cartmovepick' data-k='"+sel.x+","+sel.y+"'>Отправить отряд</button>"));
+        "<button class='seal wide ico' style='margin-top:9px' data-mp='cartmovepick' data-k='"+sel.x+","+sel.y+"'><img src='images/ui/icon-camp.png' alt=''>Отправить отряд</button>"));
     return;
   }
   if(o.t==="node"){
@@ -8734,10 +8739,10 @@ function renderCartoucheMp(){
       const f=clamp((nowSec-g.t0)/Math.max(1,g.t1-g.t0),0,1);
       const target=(g.data&&g.data.take)||0, got=Math.round(target*f);
       body+="<div class='co'><span>Собрано</span><b>"+fmt(got)+" / "+fmt(target)+"</b></div>"+
-        "<button class='seal wide' style='margin-top:9px' data-mp='cartrecall' data-id='"+g.id+"'>Отозвать</button>";
+        "<button class='seal wide ico' style='margin-top:9px' data-mp='cartrecall' data-id='"+g.id+"'><img src='images/ui/icon-recall.png' alt=''>Отозвать</button>";
     } else {
       body += amount>0
-        ? "<button class='seal wide' style='margin-top:9px' data-mp='cartgatherpick' data-k='"+o.x+","+o.y+"'>Собрать</button>"
+        ? "<button class='seal wide ico' style='margin-top:9px' data-mp='cartgatherpick' data-k='"+o.x+","+o.y+"'><img src='images/ui/icon-gather.png' alt=''>Собрать</button>"
         : "<div class='hint'>Точка истощена.</div>";
     }
     put(body);
@@ -8760,7 +8765,7 @@ function renderCartoucheMp(){
       "<div class='co'><span>Сила заставы</span><b>"+fmt(fp)+"</b></div>"+
       "<div class='co'><span>Ваше войско</span><b>"+fmt(my)+"</b></div>"+
       "<div class='co'><span>Прогноз</span><b style='color:"+ok[1]+"'>"+ok[0]+"</b></div>"+
-      "<button class='seal wide blood' style='margin-top:9px' data-mp='cartraidpick' data-k='"+o.x+","+o.y+"'>Атаковать</button>");
+      "<button class='seal wide blood ico' style='margin-top:9px' data-mp='cartraidpick' data-k='"+o.x+","+o.y+"'><img src='images/ui/icon-siege.png' alt=''>Атаковать</button>");
     return;
   }
   if(o.t==="city"){
@@ -8779,8 +8784,8 @@ function renderCartoucheMp(){
       "<div class='co'><span>Ратуша</span><b>"+q.b.hall+"</b></div>"+
       (shielded?"<div class='co'><span>Статус</span><b style='color:#7ab2e0'>Под щитом мира</b></div>":"")+
       "<div class='chips' style='margin-top:9px'>"+
-        (hasScout?"<button class='seal' data-mp='cartscout' data-id='"+q.id+"'>Разведать</button>":"")+
-        (shielded?"":"<button class='seal blood' data-mp='cartattackpick' data-id='"+q.id+"'>Атака</button>")+
+        (hasScout?"<button class='seal ico' data-mp='cartscout' data-id='"+q.id+"'><img src='images/ui/icon-scout.png' alt=''>Разведать</button>":"")+
+        (shielded?"":"<button class='seal blood ico' data-mp='cartattackpick' data-id='"+q.id+"'><img src='images/ui/icon-siege.png' alt=''>Атака</button>")+
       "</div>");
     return;
   }
@@ -9018,20 +9023,43 @@ function mpRenderBrigadesWorld(){
 // застрявшее время ПРИХОДА, не время конца боя (см. заголовок "Отряды в
 // поле" внутри foMultiplayer), поэтому вместо таймера/прогресса — просто
 // "Бой".
+// Какой значок у отряда в поле — по тому, ЧЕМ он сейчас занят, а не по
+// одной картинке на все случаи, как было раньше (везде icon-march.png).
+// Автор прислал набор и расписал его по делу: разведка, сбор, лагерь
+// ("появляется, когда отряд стоит где-нибудь на карте и ничего не делает" —
+// это ровно state:"hold", отряд, дошедший в пустошь по mp-move), осада.
+// Возврат домой (state:"back") остаётся общей иконкой марша: это уже не
+// занятие, а дорога.
+function mpMarchIcon(m){
+  if(m.mode==="scout") return "images/ui/icon-scout.png";
+  if(m.state==="gather") return "images/ui/icon-gather.png";
+  if(m.state==="hold") return "images/ui/icon-camp.png";
+  if(m.state==="siege") return "images/ui/icon-siege.png";
+  if(m.state==="go"&&m.mode==="gather") return "images/ui/icon-gather.png";
+  return "images/ui/icon-march.png";
+}
 function mpFieldArmyCellHtml(m,nowSec,act){
   const sieging=m.state==="siege";
+  const ico=mpMarchIcon(m);
   const st=MARCH_STATE_RU[m.state]||m.state;
   const hint=act==="followmarch"?" — нажмите, чтобы проследить камерой":"";
   const title=RU(countUnits(m.units))+" воинов · "+st+" · цель "+m.tx+"·"+m.ty
-    +(sieging?"":" · осталось "+fmtDur(Math.max(0,m.t1-nowSec)))+hint;
+    +((sieging||m.state==="hold")?"":" · осталось "+fmtDur(Math.max(0,m.t1-nowSec)))+hint;
   const attrs=act==="followmarch" ? "data-act='followmarch' data-m='"+m.id+"'" : "data-mpmarch='"+m.id+"'";
   if(sieging){
     return "<div class='slotcell' "+attrs+" title='"+title+"'>"+
-       "<img src='images/ui/icon-march.png'><span class='timer'>Бой</span></div>";
+       "<img src='"+ico+"'><span class='timer'>Бой</span></div>";
+  }
+  // Отряд, вставший в пустоши, никуда не идёт — таймера и полоски у него
+  // нет вовсе, вместо них подпись "стоит": прежний обратный отсчёт до m.t1
+  // у него давно истёк и показывал бы вечный ноль.
+  if(m.state==="hold"){
+    return "<div class='slotcell' "+attrs+" title='"+title+"'>"+
+       "<img src='"+ico+"'><span class='timer'>стоит</span></div>";
   }
   const f=Math.max(0,Math.min(1,(nowSec-m.t0)/Math.max(1,m.t1-m.t0)));
   return "<div class='slotcell' "+attrs+" title='"+title+"'>"+
-     "<img src='images/ui/icon-march.png'><span class='timer'>"+fmtDur(Math.max(0,m.t1-nowSec))+"</span>"+
+     "<img src='"+ico+"'><span class='timer'>"+fmtDur(Math.max(0,m.t1-nowSec))+"</span>"+
      "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
 }
 function mpRenderFieldArmy(){
@@ -10210,7 +10238,7 @@ function mpBuildingModalHtmlFor(bld,plot){
     const hpMax=buildingMaxHp(bld,lv), hpNow=buildHpShown(st,bld,plot,Date.now()/1000);
     const hpPct=hpMax>0?Math.max(0,Math.min(100,hpNow/hpMax*100)):0;
     h+="<div class='bm-hp"+(hpPct<=25?" crit":hpPct<=60?" warn":"")+"'>"+
-       "<div class='hpline'><span><img src='images/ui/stat-hp.png' alt=''>Прочность</span>"+
+       "<div class='hpline'><span><img src='images/ui/icon-durability.png' alt=''>Прочность</span>"+
        "<b>"+fmt(hpNow)+" / "+fmt(hpMax)+"</b></div>"+
        "<div class='hpbar'><i style='width:"+hpPct.toFixed(1)+"%'></i></div>";
     if(hpNow<hpMax){
@@ -10336,6 +10364,39 @@ function mpCloseBuildingModal(){
 // (клик по слоту бригады всё ещё резолвится через CITY_CELLS-индекс, см.
 // заголовок mpRenderFreeformCity), своя переменная для карты, чтобы не
 // путать два независимых источника индекса.
+// Фаза 34 — значок исследования (#mp-rsch-fab). Показывается ТОЛЬКО пока
+// академия занята: нет st.rsch — нет и значка (прямая формулировка автора).
+// Из CSS это не видно (состояние живёт в mpState), поэтому показ ставит JS
+// на каждом опросе — там же, где перерисовывается всё остальное.
+// Условия видимости в остальном те же, что у #mp-build-fab: общий мир, вид
+// города, не режим размещения здания.
+function mpUpdateResearchFab(){
+  const el=$("#mp-rsch-fab"); if(!el) return;
+  const st=mpState.player&&mpState.player.state;
+  const rsch=st&&st.rsch;
+  const show = !!rsch && !SP_UNLOCKED && $("#app").classList.contains("view-city")
+            && !document.body.classList.contains("mp-placing");
+  el.style.display=show?"block":"none";
+  if(!show) return;
+  const now=Date.now()/1000;
+  const f=Math.max(0,Math.min(1,1-(rsch.t1-now)/Math.max(1,rsch.t1-rsch.t0)));
+  el.style.setProperty("--f",f.toFixed(3));
+  const rn=findNode(rsch.id);
+  el.title=(rn?nodeTitle(rn):rsch.id)+" \u2192 ур. "+rsch.lv+" · готово через "+fmtDur(Math.max(0,rsch.t1-now));
+}
+// Тап по значку исследования открывает карточку Академии — ту же самую, что
+// и тап по самому зданию на карте города (mpOpenLayoutModal), а не отдельный
+// экран: исследование живёт в академии, второго места для него заводить
+// незачем. Академия — обычное здание из p.layout, ищем её там же.
+function mpOpenAcademyFromFab(){
+  const st=mpState.player&&mpState.player.state; if(!st) return;
+  const layout=Array.isArray(st.layout)?st.layout:[];
+  const li=layout.findIndex(e=>e.b==="academy");
+  if(li>=0){ mpOpenLayoutModal(li); return; }
+  // Академии нет в раскладке (старое состояние без layout) — честно скажем,
+  // а не откроем пустую карточку.
+  herald("Академия ещё не отстроена.");
+}
 let mpLayoutSel=-1;
 function mpOpenLayoutModal(li){
   const entry=(mpState.player.state.layout||[])[li]; if(!entry) return;
@@ -10560,6 +10621,7 @@ function mpEnterPlaceMode(bk,plot){
   mpPlaceCtx={mode:'new', b:bk, plot, gx, gy, valid:collisionOk(layout,fp,gx,gy,-1), li:-1};
   document.body.classList.add("mp-placing");
   $("#mp-build-fab").style.display="none";
+  mpUpdateResearchFab();
   mpRenderFolio();
 }
 // Свободная застройка (Фаза 5) — перенос уже стоящего здания: "в руки"
@@ -10578,12 +10640,14 @@ function mpEnterRelocateMode(bk,plot){
   mpPlaceCtx={mode:'relocate', b:bk, plot, gx:entry.gx, gy:entry.gy, valid:true, li};
   document.body.classList.add("mp-placing");
   $("#mp-build-fab").style.display="none";
+  mpUpdateResearchFab();
   mpRenderFolio();
 }
 function mpCancelPlace(){
   mpPlaceCtx=null;
   document.body.classList.remove("mp-placing");
   $("#mp-build-fab").style.display="";
+  mpUpdateResearchFab();
   mpRenderFolio();
 }
 // Фаза 6 — {b,plot,gx,gy,at} свежепоставленного/перенесённого здания или
@@ -10610,6 +10674,7 @@ async function mpDoPlaceConfirm(){
     mpPlaceCtx=null;
     document.body.classList.remove("mp-placing");
     $("#mp-build-fab").style.display="";
+    mpUpdateResearchFab();
     herald(mode==="relocate"?"Перенесено.":"Заложено.");
     mpJustPlaced={b,plot,gx,gy,at:Date.now()};
     setTimeout(()=>{ mpJustPlaced=null; },LAND_MS);
@@ -10732,7 +10797,7 @@ function mpMarchSheetHtml(){
     });
     h+=mpGenTakeCheckboxHtml(st,"mp-atk-gen");
     h+="<div class='chips' style='margin-top:9px'>"+
-       "<button class='seal blood' data-mp='attack' data-id='"+n.id+"'"+(mpState.loading?" disabled":"")+">В поход</button> "+
+       "<button class='seal blood ico' data-mp='attack' data-id='"+n.id+"'"+(mpState.loading?" disabled":"")+"><img src='images/ui/icon-siege.png' alt=''>В поход</button> "+
        "<button class='seal' data-act='closebuilding'>Отмена</button></div>";
     return h;
   }
@@ -10750,7 +10815,7 @@ function mpMarchSheetHtml(){
          "<input id='mp-gth-"+t+"' type='number' min='0' max='"+have+"' value='0'></div>";
     });
     h+="<div class='chips' style='margin-top:9px'>"+
-       "<button class='seal' data-mp='gather' data-x='"+n.x+"' data-y='"+n.y+"'"+(mpState.loading?" disabled":"")+">Собрать</button> "+
+       "<button class='seal ico' data-mp='gather' data-x='"+n.x+"' data-y='"+n.y+"'"+(mpState.loading?" disabled":"")+"><img src='images/ui/icon-gather.png' alt=''>Собрать</button> "+
        "<button class='seal' data-act='closebuilding'>Отмена</button></div>";
     return h;
   }
@@ -10770,7 +10835,7 @@ function mpMarchSheetHtml(){
     });
     h+=mpGenTakeCheckboxHtml(st,"mp-mv-gen");
     h+="<div class='chips' style='margin-top:9px'>"+
-       "<button class='seal' data-mp='move' data-x='"+mx+"' data-y='"+my+"'"+(mpState.loading?" disabled":"")+">Выступить</button> "+
+       "<button class='seal ico' data-mp='move' data-x='"+mx+"' data-y='"+my+"'"+(mpState.loading?" disabled":"")+"><img src='images/ui/icon-camp.png' alt=''>Выступить</button> "+
        "<button class='seal' data-act='closebuilding'>Отмена</button></div>";
     return h;
   }
@@ -10788,7 +10853,7 @@ function mpMarchSheetHtml(){
   });
   h+=mpGenTakeCheckboxHtml(st,"mp-rd-gen");
   h+="<div class='chips' style='margin-top:9px'>"+
-     "<button class='seal blood' data-mp='raid' data-x='"+c.x+"' data-y='"+c.y+"'"+(mpState.loading?" disabled":"")+">В поход</button> "+
+     "<button class='seal blood ico' data-mp='raid' data-x='"+c.x+"' data-y='"+c.y+"'"+(mpState.loading?" disabled":"")+"><img src='images/ui/icon-siege.png' alt=''>В поход</button> "+
      "<button class='seal' data-act='closebuilding'>Отмена</button></div>";
   return h;
 }
@@ -11295,23 +11360,6 @@ function profilePowerFontSize(str){
 // его мощи. Сама функция только ПОКАЗЫВАЕТ (правило файла про неприкосновенные
 // интерактивные функции одиночки не нарушено), поэтому хватило параметра
 // вместо отдельной копии.
-// Разбивка очков убийств по тирам (см. addKillPoints) — свёрнута по
-// умолчанию, разворачивается кнопкой "i" рядом со счётчиком, как в RoK
-// ("нажмите на иконку i рядом со счётчиком, откроется разбивка Т1-Т5").
-let kpInfoOpen=false;
-function profileKpHtml(p){
-  const kp=p.kp||0, byT=p.kpByTier||{};
-  let h="<div class='profile-kp-wrap'><span class='profile-kp-ico'>&#9876;</span>"+
-    "<span class='profile-kp-label'>Очки убийств</span>"+
-    "<span class='profile-kp-val'>"+fmt(kp)+"</span>"+
-    "<button class='kp-info-btn' data-act='kpinfo' title='Разбивка по тирам'>i</button></div>";
-  if(kpInfoOpen){
-    h+="<div class='profile-kp-detail'>"+[1,2,3,4,5].map(i=>
-      "<div class='kp-tier-row'><span>Т"+i+" (&times;"+KP_TIER_MULT[i-1]+")</span><b>"+fmt(byT[i]||0)+"</b></div>"
-    ).join("")+"</div>";
-  }
-  return h;
-}
 function foProfile(pIn){
   const p=pIn||me();
   const avSrc=playerAvatarSrc(p);
@@ -11349,7 +11397,6 @@ function foProfile(pIn){
      "<div class='note'>"+RACES[p.race].name+"</div>"+
      "<div class='profile-power-wrap'><img class='wreath' src='images/ui/profile-wreath.png' alt=''>"+
      "<span class='profile-power-chip' style='font-size:"+profilePowerFontSize(fmt(power(p)))+"px'>"+fmt(power(p))+"</span></div>"+
-     profileKpHtml(p)+
      "</div>";
   // Предпросмотр экрана летописи — только в одиночке (SP_UNLOCKED): экран
   // относится к её собственной регистрации (runOnboarding/claimChronicle),
@@ -12515,11 +12562,6 @@ function handleAct(e){
     genTab=b.dataset.t;
     refreshGenIfOpen();
   }
-  else if(a==="kpinfo"){
-    kpInfoOpen=!kpInfoOpen;
-    refreshProfileIfOpen();
-    return;
-  }
   else if(a==="academytab"){
     academyTab=b.dataset.t;
     if(buildingModalSel>=0) setHtml($("#bm-body"), buildingModalHtml(buildingModalSel));  }
@@ -12678,6 +12720,10 @@ function toggleView(){
   app.classList.toggle("view-world", showingCity);
   img.src = showingCity ? "images/ui/icon-city.png" : "images/ui/icon-world.png";
   img.alt = showingCity ? "Город" : "Мир";
+  // Значок исследования живёт только в виде города (как и значок
+  // строительства) — переключение вида должно снимать/возвращать его сразу,
+  // не дожидаясь следующего опроса.
+  if(!SP_UNLOCKED) mpUpdateResearchFab();
   if(showingCity){
     // 3D-мир грузим лениво, при первом заходе во вкладку — ни к чему тянуть
     // WebGPU, загрузку моделей и рельефа, пока игрок вообще не открыл "Мир".
@@ -13169,6 +13215,7 @@ $("#crest").addEventListener("click",()=>openMenuModal("profile"));
 // и у #view-toggle/#menu-btn чуть выше (статичные элементы шаблона, не
 // внутри #folio — незачем гонять их через делегированный handleMpAct).
 $("#mp-build-fab").addEventListener("click",mpOpenBuildPicker);
+$("#mp-rsch-fab").addEventListener("click",mpOpenAcademyFromFab);
 $("#place-cancel").addEventListener("click",mpCancelPlace);
 $("#place-confirm").addEventListener("click",mpDoPlaceConfirm);
 // Перетаскивание призрака — Pointer Events, делегировано на #folio (сам
@@ -14442,6 +14489,9 @@ function mpRerenderNow(){
   // они есть, а на мире их нет» — теперь и бригады строительства видны
   // поверх 3D-мира (#brigades-world), не только на вкладке "Город".
   if(!SP_UNLOCKED) mpRenderBrigadesWorld();
+  // Значок исследования — тот же тик: академия могла освободиться (значок
+  // должен пропасть) или, наоборот, принять новое исследование.
+  if(!SP_UNLOCKED) mpUpdateResearchFab();
   // Фаза 17, кусочек 1 — тот же довод для открытого меню здания
   // (mpOpenBuildingModal): постройка могла завершиться, набор/лечение/ковка
   // подойти к концу, ресурсы истратиться — без этого кнопка "Улучшить"
@@ -14739,9 +14789,6 @@ function mpRenderDeath(){
      (e.peakPower?"<div class='death-row'><dt>Высшая мощь</dt><dd>"+RU(e.peakPower)+"</dd></div>":"")+
      (e.hall?"<div class='death-row'><dt>Ратуша</dt><dd>"+e.hall+" ур.</dd></div>":"")+
      (e.ruined?"<div class='death-row'><dt>Обрушено построек</dt><dd>"+e.ruined+"</dd></div>":"")+
-     // RU(), а не fmt(): на надгробии "184.5K" выглядит как сбой округления,
-     // а не как итог правления — тут число должно стоять целиком.
-     (e.kp?"<div class='death-row'><dt>Очков убийств</dt><dd>"+RU(e.kp)+"</dd></div>":"")+
      "</dl>";
   h+="<button class='death-go' data-mp='restart'"+(mpRestarting?" disabled":"")+">"+
      (mpRestarting?"Летопись закрывается…":"Заложить новую летопись")+"</button>";
@@ -15127,7 +15174,7 @@ function mpBattleInterp(battle, from, to){
 function mpDemolishLiveHtml(b, mine){
   const D=b && b.demolish; if(!b || b.phase!=="demolish" || !D) return "";
   const ruinedN=(D.ruined&&D.ruined.length)||0;
-  let h="<div class='note'>"+
+  let h="<div class='note ruin-hd'><img src='images/ui/icon-siege.png' alt=''>"+
     (mine?"Стены взяты — тараны разбирают город":"Стены пали — город разбирают таранами")+
     " · заход "+(D.round||0)+" из "+DEMOLISH_ROUNDS_UI+
     (ruinedN?" · разрушено: "+ruinedN:"")+"</div>";
@@ -15135,7 +15182,7 @@ function mpDemolishLiveHtml(b, mine){
     const from=(D.revealFromKey===D.curKey)?D.revealFromHp:D.curHp;
     h+=mpHpBarHtml(D.curName, mpBattleInterp(b, from, D.curHp), D.curMax, null);
   }
-  if(ruinedN) h+="<div class='note ruin-live'>Обрушено: "+
+  if(ruinedN) h+="<div class='note ruin-live'><img src='images/ui/icon-ruin.png' alt=''>Обрушено: "+
     D.ruined.map(r=>escHtml(r.bk?buildRuNameUI(r.bk,r.plot):"")).filter(Boolean).join(", ")+"</div>";
   return h;
 }
@@ -15658,13 +15705,15 @@ function mpDemolishHtml(dem, mine){
   const hd = mine ? "Что мы сделали с городом" : "Что стало с нашим городом";
   let h="<div class='mail-chron'><div class='mail-chron-hd'>"+hd+"</div>";
   (dem.ruined||[]).forEach(r=>{
-    h+="<div class='ruin-row gone'><i>&#10007;</i><span class='ruin-nm'>"+escHtml(r.name)+"</span>"+
+    h+="<div class='ruin-row gone'><i><img src='images/ui/icon-ruin.png' alt=''></i>"+
+       "<span class='ruin-nm'>"+escHtml(r.name)+"</span>"+
        "<b>было "+r.lv+" ур.</b></div>";
   });
   (dem.damaged||[]).forEach(r=>{
     const pct=r.max>0?Math.max(0,Math.min(100,r.hp/r.max*100)):0;
     const tone=pct<=25?" crit":pct<=60?" warn":"";
-    h+="<div class='ruin-row"+tone+"'><i>&#9874;</i><span class='ruin-nm'>"+escHtml(r.name)+"</span>"+
+    h+="<div class='ruin-row"+tone+"'><i><img src='images/ui/icon-siege.png' alt=''></i>"+
+       "<span class='ruin-nm'>"+escHtml(r.name)+"</span>"+
        "<b>"+fmt(r.hp)+" / "+fmt(r.max)+"</b>"+
        "<div class='hpbar'><i style='width:"+pct.toFixed(1)+"%'></i></div></div>";
   });
