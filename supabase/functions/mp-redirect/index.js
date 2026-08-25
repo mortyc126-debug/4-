@@ -95,6 +95,10 @@ const TROOP_SPEED = { inf: 1.00, arc: 1.10, cav: 1.70, sie: 0.60 };
 const RACE_SPEED_MOD = { undead: { sie: 1.20 } }; // index.html RACE_TROOP_MOD — только нежить меняет скорость (осада)
 const troopSpeedMod = (race, t) => (RACE_SPEED_MOD[race] && RACE_SPEED_MOD[race][t]) || 1;
 const MARCH_SPEED_SCALE = 32;
+// Технический пол дорожного времени (секунды). Не имеет отношения к
+// пятнадцатисекундной фазе боя — нужен лишь чтобы t1 > t0 и запланированное
+// событие прибытия не оказалось в прошлом при переносе на соседнюю клетку.
+const MIN_TRAVEL = 3;
 // index.html:2854 epochOf — эпоха ратуши (1..5), нужна для bonuses() ниже
 // (расовые эпохальные способности).
 const epochOf = (hall) => (hall >= 25 ? 5 : hall >= 19 ? 4 : hall >= 13 ? 3 : hall >= 7 ? 2 : 1);
@@ -540,10 +544,24 @@ Deno.serve(async (req) => {
     if (m.state === "gather" || m.state === "hold") {
       cur = { x: m.tx, y: m.ty };            // стоит на точке / на позиции
     } else {
-      const from = m.state === "back" ? { x: m.tx, y: m.ty } : home;
+      // Начало ТЕКУЩЕГО отрезка — data.from (см. ниже, пишется вместе с каждой
+      // сменой цели). Без него тут стоял дом — и это был корень сразу двух
+      // жалоб автора: «отряд телепортировался на базу» и «куда бы ни повёл,
+      // всегда 15 секунд». Уже перенаправленный отряд из дома не выходит: он
+      // идёт с того места, где его застали. Считая от дома, сервер брал не то
+      // расстояние, а клиент (withPath) ещё и РИСОВАЛ путь от дома — отряд
+      // зримо прыгал в замок. Дальше по кругу: игрок тащит его туда, где
+      // видит (у замка), расстояние выходит крошечным, время падает в пол
+      // Math.max(...) — те самые вечные 15 секунд.
+      // Марши, созданные до этой правки, data.from не несут — для них
+      // по-прежнему дом, и это для них верно: они и правда вышли из дома.
+      const d0 = m.data || {};
+      const started = d0.from && Number.isFinite(d0.from.x) && Number.isFinite(d0.from.y)
+        ? d0.from
+        : (m.state === "back" ? { x: m.tx, y: m.ty } : home);
       const to = m.state === "back" ? home : { x: m.tx, y: m.ty };
       const f = Math.max(0, Math.min(1, (nowSec - m.t0) / Math.max(1, m.t1 - m.t0)));
-      cur = { x: from.x + (to.x - from.x) * f, y: from.y + (to.y - from.y) * f };
+      cur = { x: started.x + (to.x - started.x) * f, y: started.y + (to.y - started.y) * f };
     }
 
     // ---- снять со сбора, вернув точке недокопанный остаток -------------------
@@ -636,11 +654,21 @@ Deno.serve(async (req) => {
 
     const dist = Math.hypot(nx - cur.x, ny - cur.y);
     const spd = marchSpeed(m.units, attRow.race, B.march);
-    const travel = Math.max(15, (dist / spd) * 60);
+    // MIN_TRAVEL, а не прежние 15: пятнадцать секунд — это фаза БОЯ
+    // (развёртывание и отступление), автор это прямо оговорил — «это никак не
+    // влияет на скорость или дорогу отряда». Держать их полом дорожного
+    // времени значило бы, что любой перенос ближе восьми клеток идёт ровно
+    // столько же, сколько перенос на восемь. Здесь нужен только технический
+    // минимум, чтобы t1 > t0 и событие прибытия не оказалось в прошлом.
+    const travel = Math.max(MIN_TRAVEL, (dist / spd) * 60);
 
     // spd кладём в марш: по нему mp-tick посчитает обратную дорогу для
     // mode:"move" (там нет ни marchSpeed, ни дорожных бонусов).
     newData.spd = spd;
+    // Откуда отряд пошёл В ЭТОТ РАЗ — чтобы и следующий перенос считал
+    // расстояние от правды, и клиент рисовал линию от текущего места, а не
+    // от замка (см. withPath в index.html, читает это же поле).
+    newData.from = { x: cur.x, y: cur.y };
     const { error: updM } = await admin.from("marches").update({
       mode, state: "go", tx: nx, ty: ny, t0: nowSec, t1: nowSec + travel, data: newData,
     }).eq("id", m.id);

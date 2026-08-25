@@ -421,11 +421,14 @@ async function turnScoutHome(admin, m, attRow, report) {
   // ДО этой правки, поля нет — тогда берём длительность дороги туда: путь
   // симметричный, это честнее любой выдуманной константы.
   const spd = m.data && m.data.spd;
-  const travelBack = spd ? Math.max(15, (dist / spd) * 60)
-                         : Math.max(15, (m.t1 - m.t0) || 60);
+  const travelBack = spd ? Math.max(MIN_TRAVEL, (dist / spd) * 60)
+                         : Math.max(MIN_TRAVEL, (m.t1 - m.t0) || 60);
   const { error: updErr } = await admin.from("marches")
     .update({ state: "back", t0: nowSec, t1: nowSec + travelBack,
-              data: { ...(m.data || {}), scout_report: report } }).eq("id", m.id);
+              // from — цель, от которой лазутчик поворачивает назад. Пишем
+              // явно: поле общее на все отрезки марша (см. mp-redirect), и
+              // унаследованное от прошлого отрезка увело бы линию возврата.
+              data: { ...(m.data || {}), scout_report: report, from: { x: m.tx, y: m.ty } } }).eq("id", m.id);
   if (updErr) throw updErr;
   const { error: evErr } = await admin.from("events").insert({
     world_id: m.world_id, fire_at: new Date((nowSec + travelBack) * 1000).toISOString(),
@@ -2119,6 +2122,13 @@ function battleRoundsPerTick(ticksBudget) {
 // (плановый или толкнутый mp-join), просто не имеет смысла ставить его
 // короче реального интервала тикера.
 const BATTLE_TICK_SECONDS = 15;
+// Технический пол ДОРОЖНОГО времени (секунды) — только чтобы t1 > t0 и
+// запланированное событие не оказалось в прошлом при переносе на соседнюю
+// клетку. С BATTLE_TICK_SECONDS выше не путать: пятнадцать секунд это фаза
+// боя (развёртывание/отступление), автор оговорил прямо — «это никак не
+// влияет на скорость или дорогу отряда». Стоявшие тут прежде Math.max(15,…)
+// и были тем самым «куда бы ни повёл — всегда 15 секунд».
+const MIN_TRAVEL = 3;
 // index.html:2867 HOSPITAL_CAP_TABLE / hospitalCap / totalHospitalCap —
 // сколько раненых вмещает лазарет (сумма по всем 4 построенным участкам,
 // см. Фаза 5, пятый кусочек).
@@ -2658,10 +2668,15 @@ async function sendSurvivorsHome(admin, m, nowSec, survivors, carry) {
     // Расстояние — от МЕСТА БОЯ до выбранной точки, а не старое дорожное
     // (m.data.dist считалось от замка до цели и здесь уже не про то).
     const distR = Math.hypot(redirect_to.x - m.tx, redirect_to.y - m.ty);
-    const travelR = Math.max(15, (distR / spdNow) * 60);
+    const travelR = Math.max(MIN_TRAVEL, (distR / spdNow) * 60);
     const { error: updR } = await admin.from("marches").update({
       mode: "move", state: "go", tx: redirect_to.x, ty: redirect_to.y,
-      t0: nowSec, t1: nowSec + travelR, units: survivors, data: { ...restData, carry },
+      // from — МЕСТО БОЯ: уцелевшие уходят оттуда, где дрались, а не из
+      // замка. Клиент ведёт линию именно по этому полю (см. withPath в
+      // index.html); без него отступивший отряд зримо прыгал домой и уже
+      // оттуда шёл к выбранной точке.
+      t0: nowSec, t1: nowSec + travelR, units: survivors,
+      data: { ...restData, carry, from: { x: m.tx, y: m.ty } },
     }).eq("id", m.id);
     if (updR) throw updR;
     const { error: evR } = await admin.from("events").insert({
@@ -2672,9 +2687,13 @@ async function sendSurvivorsHome(admin, m, nowSec, survivors, carry) {
     return;
   }
   const dist = (m.data && m.data.dist) || 0, spd = (m.data && m.data.spd) || 1;
-  const travelBack = Math.max(15, (dist / spd) * 60);
+  const travelBack = Math.max(MIN_TRAVEL, (dist / spd) * 60);
   const { error: updM } = await admin.from("marches")
-    .update({ state: "back", t0: nowSec, t1: nowSec + travelBack, units: survivors, data: { ...restData, carry } }).eq("id", m.id);
+    // from — цель, от которой отряд разворачивается; для возврата это и был
+    // прежний неявный расчёт, теперь он записан явно (иначе поле осталось бы
+    // от ПРЕДЫДУЩЕГО отрезка и увело бы линию возврата не туда).
+    .update({ state: "back", t0: nowSec, t1: nowSec + travelBack, units: survivors,
+              data: { ...restData, carry, from: { x: m.tx, y: m.ty } } }).eq("id", m.id);
   if (updM) throw updM;
   const { error: evErr } = await admin.from("events").insert({
     world_id: m.world_id, fire_at: new Date((nowSec + travelBack) * 1000).toISOString(),
@@ -3162,12 +3181,16 @@ async function applyGathered(admin, ev) {
 
   const nowSec = Date.now() / 1000;
   const dist = (m.data && m.data.dist) || 0, spd = (m.data && m.data.spd) || 1;
-  const travelBack = Math.max(15, (dist / spd) * 60);
+  const travelBack = Math.max(MIN_TRAVEL, (dist / spd) * 60);
   const carry = {}; if (m.data && m.data.res) carry[m.data.res] = m.data.take || 0;
   let gatherReport = null;
   const { error: updM } = await admin.from("marches")
+    // from — точка, с которой обоз уходит домой. Обязательно ПЕРЕЗАПИСАТЬ:
+    // на сбор отряд мог попасть перетаскиванием (mp-redirect ставит там
+    // mode:"gather" и своё from), и старое значение увело бы обратный путь
+    // от места, где отряда давно нет.
     .update({ state: "back", t0: nowSec, t1: nowSec + travelBack,
-              data: { ...m.data, carry, gather_report: gatherReport } }).eq("id", m.id);
+              data: { ...m.data, carry, gather_report: gatherReport, from: { x: m.tx, y: m.ty } } }).eq("id", m.id);
   if (updM) throw updM;
   // Донесение о сборе — зеркало pushMail({cat:"report",kind:"gather",...})
   // в EV.gathered одиночки (index.html) — автор сообщил: «я собрал
