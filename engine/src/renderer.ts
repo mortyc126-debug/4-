@@ -370,9 +370,22 @@ fn fs(in: VOut) -> @location(0) vec4f {
                     && in.waterFlag <= 0.5;
   let regionC = textureSampleLevel(texRegions, samp, regionUV, 0.0);
   let regionA = select(0.0, regionC.a, inRegionBounds);
-  albedo = mix(albedo, regionC.rgb, regionA);
 
-  let lit = albedo * lighting;
+  // Красим ПОСЛЕ освещения, а не подмешиваем в albedo до него. Это и была
+  // причина «прошёлся камерой по всей карте, границ нигде нет»: albedo
+  // умножается на lighting, а на затенённом склоне оно около 0.3 — сдвиг
+  // цвета в тридцать единиц превращался на экране в девять. Замерено на
+  // офлайн-рендере этого же шейдера (tools/render_terrain.py): при прежней
+  // схеме два кадра, с наложением и без, отличались максимум на 16-20 из
+  // 255, то есть на 7% — глазом на буром рельефе это не читается вовсе.
+  //
+  // Яркость заливка забирает у уже освещённой земли (lum), поэтому рельеф,
+  // тени и текстура видны сквозь неё, а сила накладки больше не зависит от
+  // того, светлый под ней склон или тёмный.
+  let litBase = albedo * lighting;
+  let lum = dot(litBase, vec3f(0.299, 0.587, 0.114));
+  let paint = regionC.rgb * clamp(0.30 + lum * 1.25, 0.0, 1.5);
+  let lit = mix(litBase, paint, regionA);
   let d = distance(in.worldPos, fog.eye.xyz);
   let k = d * fog.color.w; let f = clamp(1.0 - exp(-k * k), 0.0, 1.0);
   return vec4f(mix(lit, fog.color.rgb, f), 1.0);
