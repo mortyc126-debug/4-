@@ -72,19 +72,24 @@ function handleOptions(req) {
 // только расти, иначе устаревшее значение однажды совпало бы снова.
 //
 // Возвращает { ok:true } | { conflict:true } | { error }.
+// Фаза 31 — power пишется ТЕМ ЖЕ UPDATE, что и state (как в mp-join): вторым
+// запросом это была бы вторая гонка за ту же строку и лишний рейс к базе.
+// Число берётся из row.power, если вызывающий его туда положил (см.
+// applyPower) — все прежние вызовы работают как работали.
 async function savePlayerState(admin, row, state) {
+  const extra = (row && row.power != null) ? { power: Math.round(row.power) } : {};
   const prev = row.updated_at;
   if (!prev) {
     // Строка прочитана без updated_at (старый вызывающий код) — сверять не с
     // чем; пишем как раньше, чтобы ничего не сломать, но и не притворяемся,
     // что проверили.
     const { error } = await admin.from("players")
-      .update({ state, updated_at: new Date().toISOString() }).eq("id", row.id);
+      .update({ state, ...extra, updated_at: new Date().toISOString() }).eq("id", row.id);
     return error ? { error } : { ok: true };
   }
   const nextIso = new Date(Math.max(Date.now(), Date.parse(prev) + 1)).toISOString();
   const { data, error } = await admin.from("players")
-    .update({ state, updated_at: nextIso })
+    .update({ state, ...extra, updated_at: nextIso })
     .eq("id", row.id).eq("updated_at", prev).select("id,updated_at");
   if (error) return { error };
   if (!data || !data.length) return { conflict: true };
@@ -467,6 +472,15 @@ async function applyBuild(admin, ev) {
   const p = row.state;
   const q = p.queues[slot];
   if (!q) return; // уже разобрано/отменено
+  // Фаза 29 — было ли тут здание ДО этой стройки. Если нет (уровень 0), это
+  // не улучшение, а постройка заново — например, на месте снесённого
+  // осадой. Прочность у новостройки полная, и старую запись о ней нужно
+  // убрать: у multi-зданий (ферма/лесопилка/каменоломня/шахта/госпиталь)
+  // прочность хранится массивом по участкам, и обнулённый destroyBuilding()
+  // участок иначе так и остался бы нулём — отстроенная ферма выходила бы с
+  // нулевой прочностью и падала от первого же удара. У обычных зданий
+  // destroyBuilding() запись удаляет целиком, но лишним не будет и им.
+  const wasLv = buildLvAt(p, q.b, q.plot);
   if (q.plot != null) {
     // Самоисцеление той же старой формы, что и в mp-build (см. комментарий
     // там) — на случай, если запись когда-то попала в очередь до починки.
@@ -475,6 +489,7 @@ async function applyBuild(admin, ev) {
   } else {
     p.b[q.b] = q.lv;
   }
+  if (!wasLv) setBuildHp(p, q.b, q.plot, buildingMaxHp(q.b, q.lv));
   p.queues[slot] = null;
   await savePlayerStateOrThrow(admin, row, p);
 }
@@ -950,11 +965,15 @@ const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];
 // load — index.html:2583-2588 TROOP_TYPES (там же атк/защ/хп/скорость/магия,
 // но load не переносился в этот файл раньше — combat-математике он не
 // нужен, добавлен здесь ради carryCap в PvP-грабеже, см. applyMarchArrive.
+// name — при переносе из index.html:2578 поле потерялось, а
+// newlyBrokenTypes() ниже его читает: строка хроники про слом дисциплины
+// выходила у ВСЕХ боёв как "Обороняющиеся:  дрогнули" — с пустым перечнем
+// родов войск вместо "Пехота, Лучники". Восстановлено по эталону.
 const TROOP_TYPES = {
-  inf: { atk: 34, def: 46, hp: 44, load: 6, speed: 1.00, magicAtk: 8, magicDef: 18, beats: "arc", losesTo: "cav" },
-  arc: { atk: 50, def: 30, hp: 36, load: 8, speed: 1.10, magicAtk: 20, magicDef: 8, beats: "cav", losesTo: "inf" },
-  cav: { atk: 46, def: 34, hp: 40, load: 5, speed: 1.70, magicAtk: 12, magicDef: 12, beats: "inf", losesTo: "arc" },
-  sie: { atk: 24, def: 20, hp: 60, load: 30, speed: 0.60, magicAtk: 26, magicDef: 6, beats: null, losesTo: null },
+  inf: { name: "Пехота", atk: 34, def: 46, hp: 44, load: 6, speed: 1.00, magicAtk: 8, magicDef: 18, beats: "arc", losesTo: "cav" },
+  arc: { name: "Лучники", atk: 50, def: 30, hp: 36, load: 8, speed: 1.10, magicAtk: 20, magicDef: 8, beats: "cav", losesTo: "inf" },
+  cav: { name: "Конница", atk: 46, def: 34, hp: 40, load: 5, speed: 1.70, magicAtk: 12, magicDef: 12, beats: "inf", losesTo: "arc" },
+  sie: { name: "Осадные", atk: 24, def: 20, hp: 60, load: 30, speed: 0.60, magicAtk: 26, magicDef: 6, beats: null, losesTo: null },
 };
 const RACE_TROOP_MOD = {
   dwarf: { inf: { atk: 1.05, def: 1.05, hp: 1.05 } },
@@ -1890,6 +1909,586 @@ function battleBuffSnapshotMp(B) {
 }
 function pvpTotalTroops(attUnits, defUnits) { return unitsTotal(attUnits) + unitsTotal(defUnits); }
 
+
+// =============================================================================
+// Мощь державы (power) — Фаза 31.
+// =============================================================================
+// --- НАЧАЛО СГЕНЕРИРОВАННОГО БЛОКА (tools/gen_power_tables.mjs) ---
+// Таблицы мощи, вынутые из index.html. НЕ ПРАВИТЬ РУКАМИ: правьте исходные
+// таблицы в index.html и перегенерируйте (node tools/gen_power_tables.mjs).
+// Сверить, не разошлись ли копии: node tools/gen_power_tables.mjs --check
+const POWER_BUILD = {
+  hall: [7,21,59,154,383,852,1847,3706,6504,10933,16723,24693,35213,48838,66400,91451,125005,170590,232957,318769,442735,630860,907085,1322485,2195458],
+  farm: [5,11,18,28,38,68,150,309,549,874,1366,2032,3049,4419,6176,8576,11896,16246,21966,29846,40211,54646,74946,103446,143196],
+  lumber: [5,11,18,28,38,68,150,309,549,874,1366,2032,3049,4419,6176,8576,11896,16246,21966,29846,40211,54646,74946,103446,143196],
+  quarry: [5,10,16,32,88,198,387,627,934,1351,1979,2926,4152,5708,7690,10260,14000,19220,26260,35860,49300,67780,94060,132500,192100],
+  mine: [6,19,46,100,219,401,699,1335,1758,2668,3984,5958,8678,12454,17707,25126,36126,52139,75230,108850,158176,230233,336750,495206,735046],
+  academy: [5,11,27,61,145,336,688,1346,2591,4975,7970,11679,16387,22391,30127,40207,53497,71227,95369,128424,174240,239921,336515,481806,783449],
+  store: [5,10,17,41,92,201,402,778,1489,2848,4552,6703,9436,12942,17488,23447,31354,42032,56560,76832,104966,145492,205219,295585,478367],
+  barracks: [5,10,20,37,94,244,525,1059,2083,4063,6520,9576,13407,18241,24400,32325,42636,56328,74659,99431,133357,181631,252430,359629,592326],
+  range: [5,10,20,37,94,244,525,1059,2083,4063,6520,9576,13407,18241,24400,32325,42636,56328,74659,99431,133357,181631,252430,359629,592326],
+  stable: [5,10,20,37,94,244,525,1059,2083,4063,6520,9576,13407,18241,24400,32325,42636,56328,74659,99431,133357,181631,252430,359629,592326],
+  siege: [5,10,26,63,126,293,600,1173,2258,4332,6931,10202,14355,19679,26573,35603,47574,63716,85697,115969,158145,218794,308118,442817,716764],
+  hospital: [5,13,32,65,162,366,723,1262,2077,3310,4967,7220,10319,14632,20699,29316,41665,59576,85644,123830,179944,263152,387338,574480,881480],
+  wall: [5,15,37,94,226,519,1037,1965,3656,6784,10816,16060,22965,32169,44583,61540,84977,117860,164369,230776,326321,466309,674163,986224,1545374],
+  garrison: [5,11,21,44,100,221,446,868,1671,3213,5133,7538,10570,14421,19367,25787,34217,45545,60804,81650,110460,151716,212389,303649,495562],
+  scout: [5,10,16,32,81,191,398,769,1274,1971,2916,4286,5956,7969,10350,13191,17149,22223,28423,36109,46007,58118,74187,96279,139023],
+  forge: [5],
+  market: [5,10,27,84,193,379,634,1102,1973,3615,5687,8317,11684,16040,21741,29294,39422,53250,72284,98780,136090,190096,269894,390404,626317],
+  alliance: [5,10,21,53,116,265,535,1032,1962,3722,5945,8761,12366,17036,23146,31245,42109,56900,77229,105544,145342,202900,287897,415855,667083],
+  portal: [5,13,32,78,186,428,863,1656,3124,5880,9393,13870,19676,27280,37355,50874,69237,94544,129869,179600,250281,353115,505339,734015,1164412],
+};
+const POWER_RSCH = {
+  eco_stone0: [5],
+  eco_gold0: [384],
+  eco_food1: [44,142,347,797,1697],
+  eco_wood1: [44,142,347,797,1697],
+  eco_build1: [269,672,1272,2141,3918],
+  eco_stone1: [406,1147,2485,5161,10513],
+  eco_gold1: [406,1147,2485,5161,10513],
+  eco_rsch1: [725,2176,5078,10882,22490],
+  eco_gfood1: [161,483,1127,2415,4991],
+  eco_gwood1: [161,483,1127,2415,4991],
+  eco_gstone1: [581,1672,3710,7786,15938],
+  eco_ggold1: [581,1672,3710,7786,15938],
+  eco_load1: [669,2007,4683,10035,20739],
+  eco_cap1: [494,1482,3458,7410,15314],
+  eco_amber0: [9182],
+  eco_wood2: [2027,4953,9185,15313,24190,37069,55775,82970,122555,180236],
+  eco_food2: [2027,4953,9185,15313,24190,37069,55775,82970,122555,180236],
+  eco_gwood2: [3190,7831,14592,24454,38855,59910,90721,135855,202041,299196],
+  eco_gfood2: [3190,7831,14592,24454,38855,59910,90721,135855,202041,299196],
+  eco_build2: [3915,9620,17937,30078,47822,73778,111786,167500,249252,369332],
+  eco_rsch2: [3915,9620,17937,30078,47822,73778,111786,167500,249252,369332],
+  eco_gold2: [3190,7831,14592,24454,38855,59910,90721,135855,202041,299196],
+  eco_stone2: [3190,7831,14592,24454,38855,59910,90721,135855,202041,299196],
+  eco_ggold2: [4065,10020,18753,31574,50416,78129,118926,179040,267695,398558],
+  eco_gstone2: [4065,10020,18753,31574,50416,78129,118926,179040,267695,398558],
+  eco_gall2: [4540,11210,21019,35453,56711,88049,134286,202560,303458,452681],
+  eco_load2: [5420,13550,25745,44039,71484,112656,174414,267053,406011,614450],
+  eco_amber1: [5420,13550,25745,44039,71484,112656,174414,267053,406011,614450],
+  eco_crown_dwarf: [5255,13138,24961,42698,69308],
+  eco_crown_human: [5255,13138,24961,42698,69308],
+  eco_crown_elf: [5255,13138,24961,42698,69308],
+  eco_crown_undead: [5255,13138,24961,42698,69308],
+  mil_trainspd: [56],
+  mil_atk_inf1: [184,252,457,748,1298],
+  mil_atk_arc1: [184,252,457,748,1298],
+  mil_atk_cav1: [184,252,457,748,1298],
+  mil_atk_sie1: [184,252,457,748,1298],
+  mil_tier_inf2: [2690],
+  mil_tier_arc2: [2690],
+  mil_tier_cav2: [2690],
+  mil_tier_sie2: [3050],
+  mil_scout1: [381,971,1910,3450,6056],
+  mil_march1: [381,971,1910,3450,6056],
+  mil_def_inf1: [1214,3123,6216,11386,20305],
+  mil_def_arc1: [1214,3123,6216,11386,20305],
+  mil_def_cav1: [1214,3123,6216,11386,20305],
+  mil_def_sie1: [1214,3123,6216,11386,20305],
+  mil_tier_inf3: [27243],
+  mil_tier_arc3: [27243],
+  mil_tier_cav3: [27243],
+  mil_tier_sie3: [32427],
+  mil_scout2: [4220,11630,26435,58362,135413],
+  mil_atk_all1: [5671,14827,30421,56408,100570,177222,312936,557994,1008570,1850342],
+  mil_def_all1: [5671,14827,30421,56408,100570,177222,312936,557994,1008570,1850342],
+  mil_hp_all1: [5671,14827,30421,56408,100570,177222,312936,557994,1008570,1850342],
+  mil_march2: [8877,22198,43136,74543,121648],
+  mil_tier_inf4: [159930],
+  mil_tier_arc4: [159930],
+  mil_tier_cav4: [159930],
+  mil_tier_sie4: [211770],
+  mil_atk_inf2: [4191,10823,21462,38805,67589,116294,202693,354410,626223,1122415],
+  mil_atk_arc2: [4191,10823,21462,38805,67589,116294,202693,354410,626223,1122415],
+  mil_atk_cav2: [4191,10823,21462,38805,67589,116294,202693,354410,626223,1122415],
+  mil_atk_sie2: [4536,11859,23881,43989,78302,138066,246584,442538,802824,1475963],
+  mil_def_inf2: [4536,11859,23881,43989,78302,138066,246584,442538,802824,1475963],
+  mil_def_arc2: [4536,11859,23881,43989,78302,138066,246584,442538,802824,1475963],
+  mil_def_cav2: [4536,11859,23881,43989,78302,138066,246584,442538,802824,1475963],
+  mil_def_sie2: [5055,13415,27510,51765,94373,170726,312421,574730,1067727,2006287],
+  mil_atk_all2: [5930,15604,31674,58891,105938,188950,341205,619354,1136111,2110314],
+  mil_def_all2: [5930,15604,31674,58891,105938,188950,341205,619354,1136111,2110314],
+  mil_hp_all2: [5930,15604,31674,58891,105938,188950,341205,619354,1136111,2110314],
+  mil_tier_inf5: [485748],
+  mil_tier_arc5: [485748],
+  mil_tier_cav5: [485748],
+  mil_tier_sie5: [672382],
+  mil_crown_dwarf: [4832,12633,25920,48063,85691],
+  mil_crown_human: [4832,12633,25920,48063,85691],
+  mil_crown_elf: [4832,12633,25920,48063,85691],
+  mil_crown_undead: [4832,12633,25920,48063,85691],
+};
+// id технологии -> [волна, ветка] (0=eco, 1=mil) для формулы-запаса у узлов
+// без своей строки в таблице (см. researchPower в index.html).
+const POWER_RSCH_META = {
+  eco_stone0: [1,0],
+  eco_gold0: [1,0],
+  eco_food1: [1,0],
+  eco_wood1: [1,0],
+  eco_build1: [1,0],
+  eco_stone1: [1,0],
+  eco_gold1: [1,0],
+  eco_rsch1: [1,0],
+  eco_gfood1: [1,0],
+  eco_gwood1: [1,0],
+  eco_gstone1: [1,0],
+  eco_ggold1: [1,0],
+  eco_load1: [1,0],
+  eco_cap1: [1,0],
+  eco_amber0: [1,0],
+  eco_crown_dwarf: [4,0],
+  eco_crown_human: [4,0],
+  eco_crown_elf: [4,0],
+  eco_crown_undead: [4,0],
+  eco_wood2: [2,0],
+  eco_food2: [2,0],
+  eco_gwood2: [2,0],
+  eco_build2: [2,0],
+  eco_gfood2: [2,0],
+  eco_rsch2: [2,0],
+  eco_gold2: [2,0],
+  eco_stone2: [2,0],
+  eco_ggold2: [2,0],
+  eco_gall2: [2,0],
+  eco_gstone2: [2,0],
+  eco_load2: [2,0],
+  eco_amber1: [2,0],
+  mil_atk_inf1: [1,1],
+  mil_atk_inf2: [2,1],
+  mil_atk_arc1: [1,1],
+  mil_atk_arc2: [2,1],
+  mil_atk_cav1: [1,1],
+  mil_atk_cav2: [2,1],
+  mil_atk_sie1: [1,1],
+  mil_atk_sie2: [2,1],
+  mil_def_inf1: [1,1],
+  mil_def_inf2: [2,1],
+  mil_def_arc1: [1,1],
+  mil_def_arc2: [2,1],
+  mil_def_cav1: [1,1],
+  mil_def_cav2: [2,1],
+  mil_def_sie1: [1,1],
+  mil_def_sie2: [2,1],
+  mil_atk_all1: [2,1],
+  mil_atk_all2: [3,1],
+  mil_def_all1: [2,1],
+  mil_def_all2: [3,1],
+  mil_hp_all1: [2,1],
+  mil_hp_all2: [3,1],
+  mil_trainspd: [1,1],
+  mil_march1: [1,1],
+  mil_march2: [2,1],
+  mil_scout1: [1,1],
+  mil_scout2: [2,1],
+  mil_crown_dwarf: [4,1],
+  mil_crown_human: [4,1],
+  mil_crown_elf: [4,1],
+  mil_crown_undead: [4,1],
+  mil_tier_inf2: [1,1],
+  mil_tier_inf3: [2,1],
+  mil_tier_inf4: [3,1],
+  mil_tier_inf5: [4,1],
+  mil_tier_arc2: [1,1],
+  mil_tier_arc3: [2,1],
+  mil_tier_arc4: [3,1],
+  mil_tier_arc5: [4,1],
+  mil_tier_cav2: [1,1],
+  mil_tier_cav3: [2,1],
+  mil_tier_cav4: [3,1],
+  mil_tier_cav5: [4,1],
+  mil_tier_sie2: [1,1],
+  mil_tier_sie3: [2,1],
+  mil_tier_sie4: [3,1],
+  mil_tier_sie5: [4,1],
+};
+const POWER_RSCH_WAVE = {1:0.018,2:5,3:20,4:60};
+const POWER_RSCH_BASE = [28500,26200];
+const POWER_UNIT = [1,2,3,4,10];
+const POWER_GEAR = [1250,2750,6250,15000,37500];
+// --- КОНЕЦ СГЕНЕРИРОВАННОГО БЛОКА ---
+// Мощь державы — Фаза 31. Дословный порт mpPower()/power() из index.html:
+// постройки + войска (дома И в походах) + исследования + полководец +
+// надетое снаряжение. Таблицы чисел — в сгенерированном блоке выше.
+//
+// До этой фазы мощь считалась ТОЛЬКО в браузере, а колонка players.power так
+// и стояла нулём с самой первой миграции. Автор: "будут рейтинги в том числе
+// и по мощи" — значит число должно быть у сервера, а не у клиента, который
+// его к тому же может назвать любым.
+//
+// marchUnits — состав отрядов, которые прямо сейчас В ПОЛЕ. Их войска
+// вычтены из p.troops ещё на отправке (см. mp-attack/mp-gather), и без этого
+// слагаемого мощь проваливалась бы на время каждого похода, а рейтинг
+// дёргался бы туда-сюда просто от того, воюет игрок или сидит дома.
+const POWER_TKEYS = ["inf", "arc", "cav", "sie"];
+const powerTblRow = (arr, lv) => arr[Math.max(0, Math.min(arr.length - 1, Math.round(lv) - 1))];
+function buildingPowerOf(bk, lv) {
+  lv = +lv || 0;
+  if (lv <= 0) return 0;
+  const arr = POWER_BUILD[bk];
+  if (!arr || !arr.length) return 0;
+  return powerTblRow(arr, lv);
+}
+function researchPowerOf(id, lv) {
+  const arr = POWER_RSCH[id];
+  const row = arr && arr[lv - 1];
+  if (row != null) return row;
+  // Формула-запас для узлов без своей строки в таблице — index.html
+  // researchPower(): lv * волна * база ветки.
+  const meta = POWER_RSCH_META[id];
+  if (!meta) return 0;
+  return lv * (POWER_RSCH_WAVE[meta[0]] || 0) * (POWER_RSCH_BASE[meta[1]] || 0);
+}
+function powerOf(p, marchUnits) {
+  let v = 0;
+  for (const bk of Object.keys(POWER_BUILD)) {
+    const lv = p.b && p.b[bk];
+    if (Array.isArray(lv)) lv.forEach((l) => { v += buildingPowerOf(bk, l || 0); });
+    else v += buildingPowerOf(bk, lv || 0);
+  }
+  const addUnits = (u) => {
+    if (!u) return;
+    for (const t of POWER_TKEYS) for (let i = 1; i <= 5; i++) v += ((u[t] && u[t][i]) || 0) * POWER_UNIT[i - 1];
+  };
+  addUnits(p.troops);
+  (marchUnits || []).forEach(addUnits);
+  const tech = p.tech || {};
+  for (const id of Object.keys(tech)) {
+    const lv = tech[id] || 0;
+    if (lv) v += researchPowerOf(id, lv);
+  }
+  // index.html genPowerOf: 2000 + 318.5*ур^1.5, плюс 1000 за каждое
+  // вложенное очко таланта.
+  const g = p.gen || {};
+  let talSpent = 0;
+  for (const k in (g.tal || {})) talSpent += g.tal[k] || 0;
+  v += 2000 + Math.pow(g.lv || 1, 1.5) * 318.5 + talSpent * 1000;
+  // index.html gearPowerOf: по мощи редкости за каждый надетый предмет.
+  for (const it of Object.values(p.gear || {})) {
+    if (it && it.rarity) v += POWER_GEAR[it.rarity - 1] || 0;
+  }
+  return Math.round(v);
+}
+// Пишется в две точки сразу: колонка players.power (по ней пойдут рейтинги —
+// индексировать и сортировать JSONB ради этого незачем) и state.peakPower
+// (высшая мощь за всё правление, для итога на экране гибели: текущая на
+// момент смерти всегда занижена, у павшего к тому времени нет ни войск, ни
+// половины города).
+function applyPower(p, row, marchUnits) {
+  const v = powerOf(p, marchUnits);
+  p.peakPower = Math.max(p.peakPower || 0, v);
+  if (row) row.power = v;
+  return v;
+}
+
+// =============================================================================
+// Прочность построек и снос осадой — Фаза 29.
+// =============================================================================
+// Дословная копия блока "Прочность построек, снос осадой и восстановление" из
+// ../_shared/rules.js (тот же принцип самодостаточных копий, что и у всего
+// остального в этом файле — Dashboard-редактор не тянет относительные
+// импорты). При правке ЛЮБОГО числа править обе копии и зеркало в index.html.
+const BUILD_MULTI = new Set(["hospital", "farm", "lumber", "quarry", "mine"]);
+const BUILD_HP_BASE = 250, BUILD_HP_POW = 1.2;
+const BUILD_HP_MULT = {
+  hall: 3, wall: 2.5, garrison: 2, scout: 0.8,
+  farm: 0.6, lumber: 0.6, quarry: 0.6, mine: 0.6,
+};
+const BUILD_HP_FLAT = { forge: 3000 };
+const BUILD_REGEN_CALM_SEC = 1800, BUILD_REGEN_PER_HOUR = 0.20;
+const BLD_TRAIN = { barracks: "inf", range: "arc", stable: "cav", siege: "sie" };
+// Все ключи построек, какие бывают у игрока (BKEYS в index.html). Нужен
+// именно полный список, а не только те, что умеет строить mp-build: снести
+// можно любое стоящее здание, включая Портал/Рынок/Центр Альянса.
+const ALL_BKEYS = ["hall", "wall", "farm", "lumber", "quarry", "mine", "store",
+  "barracks", "range", "stable", "siege", "hospital", "academy", "garrison",
+  "scout", "forge", "portal", "market", "alliance"];
+// Имена для писем и хроники боя. Без расовых/эпохальных вариантов
+// (BUILDING_TIER_NAMES в index.html — целая таблица на 4 расы): переносить её
+// сюда ради строчки отчёта непропорционально, а общее имя понятно всем.
+const BUILD_RU_NAME = {
+  hall: "Ратуша", wall: "Стена", farm: "Ферма", lumber: "Лесопилка",
+  quarry: "Каменоломня", mine: "Золотая шахта", store: "Склад",
+  barracks: "Казармы", range: "Стрельбище", stable: "Конюшня",
+  siege: "Мастерская", hospital: "Госпиталь", academy: "Академия",
+  garrison: "Гарнизон", scout: "Разведка", forge: "Горн", portal: "Портал",
+  market: "Рынок", alliance: "Центр Альянса",
+};
+// Род каждого названия — иначе строка хроники выходит "Гарнизон обрушена",
+// "Склад обрушена", "Казармы обрушена". Одна буква на здание дешевле, чем
+// выкручиваться безличными формулировками в каждом сообщении.
+// m — мужской, f — женский, n — средний, p — множественное (Казармы).
+const BUILD_RU_GENDER = {
+  hall: "f", wall: "f", farm: "f", lumber: "f", quarry: "f", mine: "f",
+  store: "m", barracks: "p", range: "n", stable: "f", siege: "f",
+  hospital: "m", academy: "f", garrison: "m", scout: "f", forge: "m",
+  portal: "m", market: "m", alliance: "m",
+};
+function buildRuName(bk, plot) {
+  return (BUILD_RU_NAME[bk] || bk) + (plot != null ? " (участок " + (plot + 1) + ")" : "");
+}
+// Согласованное окончание причастия: ruinWord("обрушен", bk) → "обрушена"
+// для Академии, "обрушен" для Склада, "обрушены" для Казарм.
+function ruinWord(stem, bk) {
+  const g = BUILD_RU_GENDER[bk] || "f";
+  return stem + (g === "m" ? "" : g === "f" ? "а" : g === "n" ? "о" : "ы");
+}
+function buildingMaxHp(bk, lv) {
+  if (lv <= 0) return 0;
+  if (BUILD_HP_FLAT[bk] != null) return BUILD_HP_FLAT[bk];
+  return Math.round(BUILD_HP_BASE * Math.pow(lv, BUILD_HP_POW) * (BUILD_HP_MULT[bk] || 1));
+}
+function buildLvAt(p, bk, plot) {
+  const raw = p.b && p.b[bk];
+  return (Array.isArray(raw) ? raw[plot || 0] : raw) || 0;
+}
+function buildHpAt(p, bk, plot) {
+  const max = buildingMaxHp(bk, buildLvAt(p, bk, plot));
+  if (max <= 0) return 0;
+  const raw = p.bhp && p.bhp[bk];
+  const cur = Array.isArray(raw) ? raw[plot || 0] : (typeof raw === "number" ? raw : undefined);
+  if (cur == null || !(cur >= 0)) return max;
+  return Math.min(max, cur);
+}
+function setBuildHp(p, bk, plot, hp) {
+  const max = buildingMaxHp(bk, buildLvAt(p, bk, plot));
+  if (!p.bhp) p.bhp = {};
+  const v = Math.max(0, Math.min(max, Math.round(hp)));
+  if (BUILD_MULTI.has(bk)) {
+    if (!Array.isArray(p.bhp[bk])) p.bhp[bk] = [0, 1, 2, 3].map((i) => buildingMaxHp(bk, buildLvAt(p, bk, i)));
+    p.bhp[bk][plot || 0] = v;
+    if (p.bhp[bk].every((h, i) => h >= buildingMaxHp(bk, buildLvAt(p, bk, i)))) delete p.bhp[bk];
+  } else {
+    if (v >= max) delete p.bhp[bk]; else p.bhp[bk] = v;
+  }
+}
+function syncBuildingHp(p, nowSec) {
+  if (!p.bhp || !Object.keys(p.bhp).length) { p.bhpAt = nowSec; return; }
+  const from = Math.max(p.bhpAt || 0, (p.lastHitAt || 0) + BUILD_REGEN_CALM_SEC);
+  const dt = nowSec - from;
+  p.bhpAt = nowSec;
+  if (dt <= 0) return;
+  for (const bk of Object.keys(p.bhp)) {
+    const plots = BUILD_MULTI.has(bk) ? [0, 1, 2, 3] : [null];
+    for (const plot of plots) {
+      const max = buildingMaxHp(bk, buildLvAt(p, bk, plot));
+      if (max <= 0) continue;
+      const cur = buildHpAt(p, bk, plot);
+      if (cur >= max) continue;
+      setBuildHp(p, bk, plot, cur + max * BUILD_REGEN_PER_HOUR * (dt / 3600));
+    }
+  }
+}
+const SIEGE_BDMG_BASE = 0.75;
+const DEMOLISH_ROUNDS = 8;
+// Раундов сноса за один тик — в отличие от самого боя, не зависит от размера
+// армии: ломать город всегда одинаково долго, ~минуту (8 раундов по 2 за тик
+// в 15с). Иначе мелкая осада разносила бы постройки мгновенно, одним вызовом,
+// и вся "живая" подача пропала бы именно там, где она нужнее всего.
+const DEMOLISH_ROUNDS_PER_TICK = 2;
+const DEMOLISH_FIRST = ["wall", "garrison"];
+function siegeBreachPerRound(units, race, B) {
+  let dmg = 0;
+  for (let i = 1; i <= 5; i++) {
+    const n = (units.sie && units.sie[i]) || 0;
+    if (n > 0) dmg += n * SIEGE_BDMG_BASE * TIER_MULT[i - 1];
+  }
+  const bonus = 1 + ((B && B.atkSie) || 0) + ((B && B.matkSie) || 0);
+  return dmg * bonus * troopMod(race, "sie", "atk");
+}
+function demolishOrder(p) {
+  const out = [];
+  const push = (bk, plot) => { if (buildLvAt(p, bk, plot) > 0) out.push({ bk, plot }); };
+  DEMOLISH_FIRST.forEach((bk) => push(bk, null));
+  const middle = [];
+  ALL_BKEYS.forEach((bk) => {
+    if (bk === "hall" || DEMOLISH_FIRST.includes(bk)) return;
+    const plots = BUILD_MULTI.has(bk) ? [0, 1, 2, 3] : [null];
+    plots.forEach((plot) => {
+      const lv = buildLvAt(p, bk, plot);
+      if (lv > 0) middle.push({ bk, plot, lv });
+    });
+  });
+  middle.sort((a, b) => b.lv - a.lv || (a.bk < b.bk ? -1 : a.bk > b.bk ? 1 : (a.plot || 0) - (b.plot || 0)));
+  middle.forEach((e) => out.push({ bk: e.bk, plot: e.plot }));
+  push("hall", null);
+  return out;
+}
+
+// -----------------------------------------------------------------------------
+// Фаза сноса. Начинается ПОСЛЕ того, как защитник разбит (см. конец
+// runPvpBattleRounds): армия победила — теперь осадные орудия принимаются за
+// сам город. Идёт теми же events(type:'battle_round') и тем же темпом, что и
+// бой, поэтому клиенту не нужно ничего нового, чтобы показать её вживую.
+//
+// Снимок целей делается ОДИН раз, на завязке фазы, и живёт в state боя, а не
+// в состоянии защитника: игроки пишутся в базу только в finalizePvpBattle
+// (см. saveBothPlayersOrThrow) — ровно как потери войск, которые тоже
+// начисляются одним разом в конце, а не по раунду. Заодно это снимает гонку:
+// защитник может в это время строиться и тратить ресурсы, его строку никто
+// не трогает до последнего момента.
+function siegeUnitsAlive(units) {
+  let n = 0;
+  for (let i = 1; i <= 5; i++) n += (units.sie && units.sie[i]) || 0;
+  return n;
+}
+function beginDemolish(state, attP, defP, nowSec) {
+  if (state.winner !== "att") return false;
+  if (siegeUnitsAlive(state.attU) <= 0) return false;
+  // Регенерацию досчитываем ДО снимка — иначе осада застала бы город с той
+  // прочностью, что была на момент прошлого штурма, а не нынешней.
+  syncBuildingHp(defP, nowSec);
+  const targets = demolishOrder(defP).map((e) => {
+    const lv = buildLvAt(defP, e.bk, e.plot);
+    return { bk: e.bk, plot: e.plot, lv, hp: buildHpAt(defP, e.bk, e.plot), max: buildingMaxHp(e.bk, lv) };
+  });
+  if (!targets.length) return false;
+  state.phase = "demolish";
+  state.concluded = false;
+  state.demolish = {
+    round: 0, i: 0, targets, ruined: [], hallFell: false,
+    // Гарнизон продолжает бить по осадным, пока сам стоит — поэтому прийти
+    // с горсткой орудий и спокойно разбирать город нельзя, они кончатся
+    // раньше запала осады.
+    garrisonLv: buildLvAt(defP, "garrison", null),
+  };
+  pushLog(state, "breach", "Поле за нападавшими. Осадные орудия подтягивают к стенам — " + siegeUnitsAlive(state.attU) + " в строю.", "att");
+  return true;
+}
+// Продолжает снос с того места, где остановился прошлый тик. Мутирует state,
+// как и runPvpBattleRounds, и по тем же правилам: revealFrom* — то, что
+// клиент видит ПРЯМО СЕЙЧАС, поля без префикса — то, что будет через
+// BATTLE_TICK_SECONDS; между ними клиент интерполирует.
+function runDemolishRounds(state, attP, defP) {
+  const D = state.demolish;
+  const attB = bonuses(attP);
+  const rnd = battleRngMp(state.marchId);
+  const roll = () => 1 + (rnd() * 2 - 1) * 0.05;
+  state.revealFromAttHp = state.attHpLeft;
+  state.revealFromDefHp = state.defHpLeft;
+  state.revealFromRound = state.round;
+  state.revealFromAttGenFrac = state.attGenHpFrac;
+  state.revealFromDefGenFrac = state.defGenHpFrac;
+  // Полоска цели: с чего начинали этот кусок и на чём закончим (см. выше).
+  const curBefore = D.targets[D.i];
+  D.revealFromHp = curBefore ? curBefore.hp : 0;
+  D.revealFromKey = curBefore ? curBefore.bk + ":" + (curBefore.plot == null ? "" : curBefore.plot) : null;
+
+  let attU = state.attU;
+  let done = 0;
+  while (D.round < DEMOLISH_ROUNDS && done < DEMOLISH_ROUNDS_PER_TICK) {
+    const t = D.targets[D.i];
+    if (!t) break;                                   // город разобран целиком
+    const breach = siegeBreachPerRound(attU, attP.race, attB) * roll();
+    if (breach <= 0) break;                          // осадные кончились
+    D.round++; done++; state.round++;
+    t.hp = Math.max(0, t.hp - breach);
+    if (t.hp <= 0) {
+      if (t.bk === "hall") {
+        // Ратушу не сносят — она не может пропасть с карты города. Но её
+        // обнуление и есть гибель правителя (см. Фазу 30): здесь только
+        // честно помечаем, разбирается это в finalizePvpBattle.
+        D.hallFell = true;
+        pushLog(state, "ruin", "Ворота Ратуши выбиты. Город пал.", "att");
+        break;
+      }
+      D.ruined.push({ bk: t.bk, plot: t.plot, lv: t.lv, round: D.round });
+      pushLog(state, "ruin", buildRuName(t.bk, t.plot) + " (" + t.lv + " ур.) " +
+        ruinWord("обрушен", t.bk) + " и " + ruinWord("разобран", t.bk) + " до основания.", "att");
+      D.i++;
+    } else {
+      pushLog(state, "breach", buildRuName(t.bk, t.plot) + " под ударом таранов — прочность " +
+        Math.round(t.hp) + " из " + t.max + ".", "att");
+    }
+    // Ответ гарнизона — тот же залп, что и на подходе к городу (см.
+    // garrisonVolley в initPvpBattle), только теперь по каждому раунду сноса
+    // и только пока сам гарнизон стоит.
+    if (D.garrisonLv > 0) {
+      const attS = sideStats(attU, attP.race, attB, state.attBroken, state.attRisen);
+      const volley = garrisonVolley(D.garrisonLv, attS);
+      if (volley) {
+        const before = unitsTotal(attU);
+        const l = applyLosses(attU, volley, attP.race, attB.hp, null, rnd);
+        attU = unitsSub(attU, l.units);
+        state.attLossTotal = unitsAdd(state.attLossTotal, l.units);
+        const fell = before - unitsTotal(attU);
+        if (fell > 0) pushLog(state, "tower", "Сторожевая башня бьёт по осадным — пало " + fell + ".", "def");
+      }
+    }
+    // Гарнизон рухнул именно в этом раунде — дальше он уже не стреляет.
+    if (D.garrisonLv > 0 && D.ruined.some((r) => r.bk === "garrison")) D.garrisonLv = 0;
+  }
+
+  state.attU = attU;
+  state.attHpLeft = Math.round(sideStats(attU, attP.race, attB, state.attBroken, state.attRisen).totalHp);
+  const cur = D.targets[D.i];
+  D.curHp = cur ? Math.round(cur.hp) : 0;
+  D.curMax = cur ? cur.max : 0;
+  D.curName = cur ? buildRuName(cur.bk, cur.plot) : null;
+  D.curKey = cur ? cur.bk + ":" + (cur.plot == null ? "" : cur.plot) : null;
+  state.revealStart = Date.now();
+  state.revealAt = state.revealStart + BATTLE_TICK_SECONDS * 1000;
+  // Запал вышел, город разобран целиком, орудия кончились или Ратуша пала —
+  // фаза окончена, дальше обычный конец боя (трофеи, дорога домой, письма).
+  const spent = D.round >= DEMOLISH_ROUNDS || !D.targets[D.i] || siegeUnitsAlive(attU) <= 0 || D.hallFell;
+  if (spent) {
+    state.concluded = true;
+    pushLog(state, "end",
+      D.hallFell ? "Ратуша разбита. Правителю этого города больше нечем править." :
+      D.ruined.length ? "Осада выдохлась. Разрушено построек: " + D.ruined.length + "." :
+      "Осадные орудия не смогли обрушить ни одной постройки.",
+      "att");
+  }
+  return state;
+}
+// Переносит итог сноса в состояние защитника. Зовётся ОДИН раз, из
+// finalizePvpBattle, там же, где начисляются потери войск, — до этого момента
+// город защитника цел и в базе, и на экране.
+function destroyBuilding(p, bk, plot) {
+  if (BUILD_MULTI.has(bk)) {
+    if (!Array.isArray(p.b[bk])) p.b[bk] = [p.b[bk] || 0, 0, 0, 0];
+    p.b[bk][plot || 0] = 0;
+  } else {
+    p.b[bk] = 0;
+  }
+  // Здания нет — прочности у него тоже нет.
+  if (p.bhp) {
+    if (BUILD_MULTI.has(bk) && Array.isArray(p.bhp[bk])) p.bhp[bk][plot || 0] = 0;
+    else delete p.bhp[bk];
+  }
+  // С карты города (свободная застройка) — участок освобождается, на нём
+  // можно строить заново или поставить туда что-то другое.
+  const samePlot = (a, b) => (a == null ? null : a) === (b == null ? null : b);
+  if (Array.isArray(p.layout)) p.layout = p.layout.filter((e) => !(e.b === bk && samePlot(e.plot, plot)));
+  // Всё, что шло ВНУТРИ здания, сгорает вместе с ним: недостроенный уровень,
+  // набор войск, исследование, ковка. Само событие в очереди отменять не
+  // нужно — apply*-обработчики выше все до одного проверяют "слот пуст —
+  // выходим", так что осиротевшее событие просто тихо гаснет.
+  if (Array.isArray(p.queues)) {
+    p.queues = p.queues.map((q) => (q && q.b === bk && samePlot(q.plot, plot)) ? null : q);
+  }
+  const tt = BLD_TRAIN[bk];
+  if (tt && p.train) p.train[tt] = null;
+  if (bk === "academy") p.rsch = null;
+  if (bk === "forge") p.craft = null;
+  // Лечение прерывается, только если не осталось НИ ОДНОГО лазарета: у
+  // госпиталя четыре участка, потеря одного из них очередь не рвёт.
+  if (bk === "hospital" && [0, 1, 2, 3].every((i) => buildLvAt(p, "hospital", i) <= 0)) p.heal = null;
+}
+function applyDemolishToDefender(defP, state, nowSec) {
+  const D = state.demolish;
+  if (!D) return;
+  D.targets.forEach((t) => {
+    const ruined = D.ruined.some((r) => r.bk === t.bk && (r.plot == null ? null : r.plot) === (t.plot == null ? null : t.plot));
+    if (ruined) { destroyBuilding(defP, t.bk, t.plot); return; }
+    // Уцелевшие, но задетые — запоминаем оставшуюся прочность (с неё же
+    // начнётся починка через полчаса тишины и следующая осада, если она
+    // случится раньше).
+    if (t.hp < t.max) setBuildHp(defP, t.bk, t.plot, t.hp);
+  });
+  defP.bhpAt = nowSec;
+}
+
 function initPvpBattle(attUnits, attP, defUnits, defP, defWallLv, defGarrisonLv, marchId, attHasGen, attDeathFrac, defDeathFrac) {
   const attB = bonuses(attP), defB = bonuses(defP, true);
   let attU = attUnits, defU = defUnits;
@@ -2143,6 +2742,13 @@ function runPvpBattleRounds(state, attP, defP, defWallLv, defGarrisonLv, roundsB
       state.winner === "att" ? "Бой выдохся. Нападавшие сохранили больше сил — поле за ними." :
                   "Бой выдохся. Оборонявшиеся сохранили больше сил — штурм не удался.",
       state.winner);
+    // Фаза 29 — разбить армию защитника ещё не значит закончить осаду: если
+    // у нападавших уцелели осадные орудия, начинается снос самого города
+    // (см. beginDemolish — она же и решает, начинать ли вообще, и снимает
+    // state.concluded обратно, если да). Отступление сюда не попадает:
+    // retreated ставится в applyPvpBattleRound уже ПОСЛЕ этого места, а
+    // winner там всегда "def" — beginDemolish на такой исход не срабатывает.
+    beginDemolish(state, attP, defP, Date.now() / 1000);
   }
   return state;
 }
@@ -2652,7 +3258,10 @@ async function applyMarchArrive(admin, ev) {
   const nowSec = Date.now() / 1000;
   // Цель пропала или встала под щит уже после отправки марша — бой не
   // случается, отряд просто разворачивается (как recallMarch без боя).
-  if (!defRow || defRow.shield_until > nowSec) {
+  // Фаза 30 — павшего добивать не за чем: его города на карте уже нет ни у
+  // кого, и второй раз убить его нельзя. Отряд разворачивается тем же
+  // способом, что и при пропавшей цели/щите.
+  if (!defRow || defRow.dead_at || defRow.shield_until > nowSec) {
     await sendSurvivorsHome(admin, m, nowSec, m.units, {});
     return;
   }
@@ -2796,6 +3405,33 @@ async function progressOrFinalizePvpBattle(admin, m, attRow, defRow, attP, defP,
 // куска раундов (applyMarchArrive) или спустя несколько events'ов
 // battle_round (applyBattleRound) — на исход это не влияет никак, только
 // на то, сколько реального времени бой занял.
+// Фаза 30 — правитель погиб. Три следствия, и все три обязаны случиться
+// вместе: имя уходит в летопись (единственное, что переживает гибель, —
+// прямая просьба автора), игрок помечается dead_at (с карты он пропадает
+// для всех немедленно, но свою строку ещё видит — иначе тот, кого снесли
+// офлайн, не увидел бы вообще ничего), и его походы распускаются: вести их
+// некому и возвращаться некуда.
+async function markRulerFallen(admin, m, attRow, defRow, defP, nowSec) {
+  const e = defP.epitaph || {};
+  const { error: chErr } = await admin.from("chronicles").insert({
+    world_id: m.world_id, kind: "fall",
+    nick: defRow.nick || "", race: defRow.race || "",
+    data: {
+      slayer_id: attRow.id, slayer_nick: attRow.nick || "", slayer_race: attRow.race || "",
+      x: defRow.x, y: defRow.y, hall: e.hall || 0, kp: e.kp || 0,
+      ruled_sec: e.ruledSec || 0, ruined: e.ruined || 0,
+      // Для будущего свода летописей и рейтингов: чего этот правитель успел
+      // достичь на пике, а не с чем остался в последнюю секунду.
+      peak_power: e.peakPower || 0,
+    },
+  });
+  if (chErr) throw chErr;
+  const { error: dErr } = await admin.from("players")
+    .update({ dead_at: new Date(nowSec * 1000).toISOString() }).eq("id", defRow.id);
+  if (dErr) throw dErr;
+  const { error: mErr } = await admin.from("marches").delete().eq("player_id", defRow.id);
+  if (mErr) throw mErr;
+}
 async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, nowSec) {
   // Снимок ДО единого изменения — на случай отката, см. saveBothPlayersOrThrow.
   const attSnapshot = snapshotState(attP);
@@ -2864,7 +3500,59 @@ async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, no
   // здесь, пока ещё знаем survivors. Проверка на attP.gen.away===m.id — не
   // отобрать генерала у НОВОГО похода из-за завершения старого.
   if (state.attHasGen && unitsTotal(survivors) <= 0 && attP.gen && attP.gen.away === m.id) attP.gen.away = null;
+  // Фаза 29 — итог сноса переносится в город защитника ровно здесь, одним
+  // разом, вместе с потерями войск: до этой строки его строку в базе не
+  // трогали вовсе (см. заголовок beginDemolish). ПОСЛЕ грабежа склада выше —
+  // намеренно: осаждающий сперва выносит амбары, а уж потом жжёт их, и
+  // защита ресурсов складом считается по складу, который ещё стоял.
+  applyDemolishToDefender(defP, state, nowSec);
+  // Отсчёт тишины для починки — от КОНЦА боя, а не от момента удара: пока по
+  // городу работают тараны, каменщики не выходят, а следующий штурм в
+  // пределах получаса застаёт постройки ровно там, где их оставил прошлый.
+  defP.lastHitAt = nowSec;
+  // Фаза 30 — Ратуша доведена до нуля прочности. Сама она не сносится (с
+  // карты города пропасть не может), но её обнуление и есть конец правления.
+  // Итог правления кладём В СОСТОЯНИЕ игрока, а не только в летопись: экран
+  // гибели читает свою же строку players обычным опросом, без похода в
+  // отдельную таблицу — а строка ещё живёт, помеченная dead_at (почему не
+  // стираем сразу — см. migrations/0007_ruler_death.sql).
+  // Фаза 31 — бой меняет мощь сильнее всего остального: у обеих сторон
+  // убыли войска, у защитника вдобавок могло не остаться половины города.
+  // Считаем прямо здесь, а не ждём, пока каждый из них зайдёт в игру и его
+  // пересчитает mp-join, — иначе в рейтинге долго висели бы армии, которых
+  // уже нет. survivors — то, что идёт домой маршем: у атакующего эти войска
+  // вычтены из state, но принадлежат ему и в мощь входят.
+  // Прочие отряды обеих сторон, что сейчас в поле (этот марш исключён — его
+  // строка ещё несёт ДОБОЕВОЙ состав, а настоящий остаток мы и так знаем как
+  // survivors; посчитать оба значило бы удвоить это войско в мощи).
+  const { data: liveMarches, error: lmErr } = await admin.from("marches")
+    .select("player_id,units").in("player_id", [attRow.id, defRow.id]).neq("id", m.id);
+  if (lmErr) throw lmErr;
+  const marchesOf = (pid) => (liveMarches || []).filter((r) => r.player_id === pid).map((r) => r.units);
+  applyPower(attP, attRow, marchesOf(attRow.id).concat([survivors]));
+  applyPower(defP, defRow, marchesOf(defRow.id));
+  const rulerFell = !!(state.demolish && state.demolish.hallFell);
+  if (rulerFell) {
+    defP.epitaph = {
+      at: nowSec,
+      slayerNick: attRow.nick || "", slayerRace: attRow.race || "",
+      x: defRow.x, y: defRow.y,
+      hall: buildLvAt(defP, "hall", null),
+      kp: defP.kp || 0,
+      // Высшая мощь за всё правление, а не та, что осталась на момент
+      // гибели: у павшего к этой секунде нет ни войск, ни половины города,
+      // и текущее число сказало бы о нём неправду.
+      peakPower: defP.peakPower || 0,
+      power: defRow.power || 0,
+      ruledSec: Math.max(0, Math.round(nowSec - new Date(defRow.created_at).getTime() / 1000)),
+      ruined: (state.demolish.ruined || []).length,
+    };
+  }
   await saveBothPlayersOrThrow(admin, attRow, attP, attSnapshot, defRow, defP);
+  // Строго ПОСЛЕ успешной записи состояния: если та отвалится по конфликту
+  // (см. savePlayerState), бой пересчитается заново — а запись в летописи и
+  // метка о гибели должны появиться ровно один раз и только по факту.
+  if (rulerFell) await markRulerFallen(admin, m, attRow, defRow, defP, nowSec);
 
   const summary = {
     winner: state.winner, sent: state.attStartUnits, attLoss: state.attLossTotal, defLoss: state.defLossTotal,
@@ -2886,6 +3574,18 @@ async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, no
     attGen: state.attHasGen && attP.gen && attP.gen.id != null ? { id: attP.gen.id, lv: attP.gen.lv, tal: attP.gen.tal || {} } : null,
     defGen: (defP.gen && defP.gen.away == null && defP.gen.id != null) ? { id: defP.gen.id, lv: defP.gen.lv, tal: defP.gen.tal || {} } : null,
     attBuffs: battleBuffSnapshotMp(bonuses(attP)), defBuffs: battleBuffSnapshotMp(bonuses(defP, true)),
+    // Фаза 29 — что осада сделала с самим городом. ruined — снесённые до
+    // основания постройки (уровень, на котором они стояли, — чтобы в письме
+    // было видно, чего именно лишился защитник); damaged — устоявшие, но
+    // побитые. Пусто у обычного отражённого штурма: фазы сноса там не было.
+    demolish: state.demolish ? {
+      rounds: state.demolish.round,
+      ruined: state.demolish.ruined.map((r) => ({ bk: r.bk, plot: r.plot, lv: r.lv, name: buildRuName(r.bk, r.plot) })),
+      damaged: state.demolish.targets
+        .filter((t) => t.hp > 0 && t.hp < t.max)
+        .map((t) => ({ bk: t.bk, plot: t.plot, lv: t.lv, name: buildRuName(t.bk, t.plot), hp: Math.round(t.hp), max: t.max })),
+      hallFell: !!state.demolish.hallFell,
+    } : null,
     log: state.log || [],
   };
   const mailRows = [
@@ -3080,7 +3780,15 @@ async function applyPvpBattleRound(admin, m) {
   // то, что уцелело к моменту нажатия кнопки; защитник формально победитель
   // (штурм не удался), но без трофеев — как и при обычном поражении
   // атакующего (loot в finalizePvpBattle полагается только winner:"att").
-  if (state.retreatRequested && !state.concluded) {
+  // Фаза 29 — отзыв войск во время СНОСА (армия защитника уже разбита):
+  // прощального залпа нет и победитель не меняется — бой давно выигран,
+  // отзыв просто прекращает разбирать город и уводит орудия домой. Ветка
+  // отступления ниже рассчитана на обратное (штурм не удался, поле за
+  // обороной) и к этому моменту неприменима.
+  if (state.retreatRequested && state.phase === "demolish" && !state.concluded) {
+    state.concluded = true;
+    pushLog(state, "end", "Осадные орудия отведены от стен по приказу — город недоразобран.", "att");
+  } else if (state.retreatRequested && !state.concluded) {
     // Фаза 24 — извещение о начале отступления, тем же приёмом, что и
     // "начинается развёртывание" в applyMarchArrive: обеим сторонам сразу,
     // ДО прощального залпа — "неудача уже решена, но поле боя ещё не
@@ -3101,6 +3809,11 @@ async function applyPvpBattleRound(admin, m) {
     // мгновенно, автор попросил тоже дать ему 15с "на побег").
     applyRetreatVolley(state, attP, defP);
     state.concluded = true; state.winner = "def"; state.retreated = true;
+  } else if (state.phase === "demolish" && !state.concluded) {
+    // Фаза 29 — армия защитника разбита, идёт снос построек: свой цикл
+    // раундов со своим темпом (см. runDemolishRounds), но те же
+    // events(type:'battle_round') и тот же march в state:"siege".
+    runDemolishRounds(state, attP, defP);
   } else if (!state.concluded) {
     // !state.concluded — Фаза 22: если бой уже завершился ПРОШЛЫМ вызовом
     // (state.pendingFinalize=true, см. progressOrFinalizePvpBattle) и этот

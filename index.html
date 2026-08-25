@@ -1039,6 +1039,59 @@ body.mp-placing #place-toolbar{display:flex}
   display:flex;flex-direction:column}
 .ob-seal{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);width:52px;height:auto;
   pointer-events:none;opacity:.8;z-index:71;filter:drop-shadow(0 3px 6px rgba(0,0,0,.5))}
+
+/* Фаза 30 — экран гибели правителя. Тот же пергамент и тот же каркас, что у
+   #onboard (это буквально та же летопись, только последняя её страница), но
+   лист обгорелый: город взят и сожжён, и лист об этом — единственный экран
+   в игре, где пергамент не чистый. Подпалины — слои радиальных градиентов
+   поверх той же текстуры, а не отдельная картинка: рисовать художнику ради
+   одного экрана нечего, а так он собирается из того, что уже есть. */
+#death{position:fixed;inset:0;z-index:75;display:none;align-items:stretch;justify-content:center;
+  padding:0;background:rgba(6,3,1,.92)}
+#death.open{display:flex}
+#death .death-card{position:relative;width:100%;max-width:720px;
+  overflow-y:auto;-webkit-overflow-scrolling:touch;
+  background-image:url(images/ui/mail-parchment.jpg);background-size:cover;background-position:center;
+  box-shadow:0 0 70px rgba(0,0,0,.75);display:flex;flex-direction:column}
+/* Гарь по краям и пятна — поверх пергамента, но ПОД текстом (свой слой,
+   а не ::after у карточки, иначе он лёг бы поверх букв). */
+#death .death-card::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:0;
+  box-shadow:inset 0 0 60px rgba(20,10,3,.85),inset 0 0 160px rgba(58,32,12,.55);
+  background:
+    radial-gradient(46% 26% at 0% 30%,rgba(24,12,4,.8),transparent 72%),
+    radial-gradient(40% 20% at 100% 62%,rgba(24,12,4,.72),transparent 72%),
+    radial-gradient(34% 15% at 58% 102%,rgba(24,12,4,.78),transparent 74%),
+    radial-gradient(30% 13% at 22% -2%,rgba(24,12,4,.68),transparent 76%),
+    linear-gradient(180deg,rgba(24,12,4,.35),transparent 22%,transparent 78%,rgba(24,12,4,.4))}
+.death-seal{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);width:52px;height:auto;
+  pointer-events:none;opacity:.7;z-index:76;filter:drop-shadow(0 3px 6px rgba(0,0,0,.6)) grayscale(.35)}
+#death-body{position:relative;z-index:1;width:100%;max-width:480px;box-sizing:border-box;
+  margin:auto auto;padding:40px 22px 74px;align-self:center}
+#death-hd{text-align:center;margin-bottom:6px;font-size:11px;letter-spacing:.16em;
+  text-transform:uppercase;color:#8a6d2c}
+#death-title{text-align:center;font-size:26px;line-height:1.2;color:#231a11;margin-bottom:10px}
+#death-rule{width:120px;height:1px;margin:0 auto 14px;border:0;
+  background:linear-gradient(90deg,transparent,rgba(122,60,44,.6),transparent)}
+#death-name{text-align:center;font-style:italic;font-size:16px;color:#4a3826;margin-bottom:3px}
+#death-banner{text-align:center;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:#8d7a5c;margin-bottom:20px}
+.death-p{font-size:14.5px;line-height:1.68;color:#3c2e1f;margin:0 0 12px}
+.death-p.solace{color:#54402a}
+.death-ledger{margin:20px 0 24px;border-top:1px solid rgba(122,95,58,.34);
+  border-bottom:1px solid rgba(122,95,58,.34);padding:13px 0;display:grid;gap:9px}
+.death-row{display:flex;align-items:baseline;justify-content:space-between;gap:14px}
+.death-row dt{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:#8d7a5c;
+  white-space:nowrap}
+.death-row dd{margin:0;font-family:var(--data);font-size:12.5px;color:#33271b;text-align:right}
+.death-row dd .slayer{color:var(--garnet)}
+#death-body .death-go{display:block;width:100%;padding:14px 18px;margin-bottom:11px;
+  border:1px solid #5a1c23;background:linear-gradient(180deg,#8c2f37,#6d232b);
+  color:#f6e9cf;font-family:var(--serif);font-size:15px;letter-spacing:.06em;cursor:pointer;
+  box-shadow:0 2px 0 rgba(40,12,14,.5),inset 0 1px 0 rgba(255,220,190,.2)}
+#death-body .death-go:hover{background:linear-gradient(180deg,#9d363e,#7a2830)}
+#death-body .death-go:disabled{opacity:.55;cursor:default}
+.death-fine{text-align:center;font-size:12px;line-height:1.55;color:#8d7a5c;margin:14px 0 0}
+.death-err{text-align:center;font-size:12.5px;color:#8a3c2c;margin:10px 0 0}
 #ob-body{width:100%;max-width:480px;box-sizing:border-box;margin:auto auto;
   padding:40px 22px 74px;align-self:center}
 #ob-hd{text-align:center;margin-bottom:6px;font-size:11px;letter-spacing:.14em;
@@ -1308,6 +1361,39 @@ body.mp-placing #place-toolbar{display:flex}
 .cbuild .lvl{position:absolute;bottom:2px;right:4px;font-family:var(--data);font-size:10px;
   color:var(--gilt-hi);background:rgba(0,0,0,.55);padding:0 3px;line-height:1.4;z-index:2}
 
+/* Фаза 29 — прочность постройки прямо на карте города. Полоска появляется
+   ТОЛЬКО у повреждённого здания (см. buildHpBarHtml): в мирное время город
+   не должен быть утыкан двумя десятками одинаковых черт, которые ничего не
+   сообщают. Прижата к нижнему краю плитки здания, над ней остаётся значок
+   уровня (.lvl, свой z-index выше) — они не спорят за место.
+   Цвет ведёт от гранатового (почти сбито) к медной зелени (почти цело) —
+   тот же ход, что и у .hpbar боевой полоски, чтобы состояние читалось
+   одинаково и в бою, и в городе. .crit добавляет пульсацию на последней
+   четверти: здание вот-вот рухнет, это стоит заметить, не вглядываясь. */
+.cbuild .bhp{position:absolute;left:8%;right:8%;bottom:1px;height:3px;z-index:2;
+  background:rgba(0,0,0,.62);border-radius:2px;overflow:hidden;pointer-events:none;
+  box-shadow:0 0 0 1px rgba(0,0,0,.45)}
+/* Цвет — от ДОЛИ оставшейся прочности, а не градиентом вдоль полоски (как у
+   боевой .hpbar): на трёх пикселях градиент читается наоборот — у сильно
+   побитого здания кончик полоски оказывался зелёным. Три ступени, как у
+   любого индикатора состояния: цело — медная зелень, потрёпано — золото,
+   вот-вот рухнет — гранат. */
+.cbuild .bhp i{display:block;height:100%;border-radius:2px;
+  background:var(--verdigris);transition:width .4s ease,background .4s ease}
+.cbuild .bhp.warn i{background:var(--gilt)}
+.cbuild .bhp.crit i{background:var(--garnet);animation:bhpPulse 1.4s ease-in-out infinite}
+/* Значок уровня стоит там же, у нижнего края, и на узкой плитке налезал на
+   полоску. Приподнимаем его РОВНО у повреждённых зданий (полоска есть только
+   у них) — у целого города разметка не меняется вовсе. */
+.cbuild:has(.bhp) .lvl{bottom:6px}
+@keyframes bhpPulse{0%,100%{opacity:1}50%{opacity:.45}}
+@media (prefers-reduced-motion:reduce){ .cbuild .bhp.crit i{animation:none} }
+/* Строка "Прочность" в карточке здания — переиспользует .hpbar боя (см. её
+   заголовок), только со своим подписью-строкой в стиле остальных
+   характеристик здания. */
+.bm-hp{margin:10px 0 2px}
+.bm-hp .hpline img{width:13px;height:13px;object-fit:contain;vertical-align:-2px;margin-right:4px}
+
 /* Свободная застройка (Фаза 4) — призрак здания "в руках" (.pghost) и
    подсветка клетки под ним (#place-highlight), см. mpUpdatePlaceDom/
    mpPlaceDragMove. Подсветка — только прямоугольник footprint, не вся
@@ -1457,6 +1543,33 @@ body.mp-placing #place-toolbar{display:flex}
   transition:width .4s ease}
 .hpbar-gen{height:4px;opacity:.7}
 .hpbar-gen i{background:linear-gradient(90deg,var(--garnet),var(--gilt-hi))}
+
+/* Фаза 29 — список того, что осада сделала с городом, в письме о бое
+   (mpDemolishHtml). Сетка, а не флекс: название слева тянется, число справа
+   всегда на одном месте, полоска прочности у уцелевших занимает всю ширину
+   второй строкой. Снесённое — гранатовым и зачёркнутым: здания больше нет,
+   это не "меньше стало", а "не осталось". */
+.ruin-row{display:grid;grid-template-columns:16px 1fr auto;gap:0 8px;align-items:baseline;
+  padding:5px 0;border-bottom:1px solid var(--rule-soft);font-size:12.5px}
+.ruin-row:last-child{border-bottom:none}
+.ruin-row > i{font-style:normal;color:var(--vellum-faint);text-align:center}
+.ruin-row .ruin-nm{color:var(--vellum)}
+.ruin-row > b{font-family:var(--data);font-size:11.5px;font-weight:normal;color:var(--vellum-dim);
+  white-space:nowrap}
+/* Полоска прочности здесь красится ПО ДОЛЕ, как на карте города (см.
+   .cbuild .bhp), а не градиентом вдоль остатка, как боевая .hpbar: у
+   постройки важно "сколько от неё осталось", а не "где кончилась полоска". */
+.ruin-row .hpbar{grid-column:2/4;margin-top:4px}
+.ruin-row .hpbar i{background:var(--verdigris)}
+.ruin-row.warn .hpbar i{background:var(--gilt)}
+.ruin-row.crit .hpbar i{background:var(--garnet)}
+.ruin-row.gone > i{color:var(--garnet)}
+.ruin-row.gone .ruin-nm{color:var(--vellum-dim);text-decoration:line-through;
+  text-decoration-color:rgba(150,50,59,.7)}
+.ruin-row.gone > b{color:var(--garnet)}
+/* Перечень уже обрушенного прямо во время осады (mpDemolishLiveHtml) —
+   вторая, приглушённая строка под полоской текущей цели. */
+.note.ruin-live{color:var(--garnet);opacity:.85}
 
 /* Табличка-реестр */
 .roll{width:100%;border-collapse:collapse;font-size:13px}
@@ -1681,6 +1794,25 @@ body.mp-placing #place-toolbar{display:flex}
   <img class="ob-seal" src="images/ui/mail-seal.png" alt="">
   <div class="ob-card">
     <div id="ob-body"></div>
+  </div>
+</div>
+
+<!-- Фаза 30 — экран гибели правителя. Свой оверлей, а НЕ переиспользованный
+     #onboard (как у регистрации): сразу после него игрок уходит в ту самую
+     регистрацию заново, и делить с ней один DOM-узел значило бы гасить экран
+     гибели ровно в тот момент, когда на его месте рисуется следующий шаг —
+     та же гонка за один узел, из-за которой claimChronicle() уже пришлось
+     разводить с runMpOnboarding() (см. start()). z-index 75 — выше #onboard
+     (70), но ниже накидки загрузки (90). Тело рисуется из JS
+     (mpRenderDeath), здесь только каркас с уголками и печатью, как у почты. -->
+<div id="death">
+  <img class="menu-corner tl" src="images/ui/mail-corner.png" alt="">
+  <img class="menu-corner tr" src="images/ui/mail-corner.png" alt="">
+  <img class="menu-corner bl" src="images/ui/mail-corner.png" alt="">
+  <img class="menu-corner br" src="images/ui/mail-corner.png" alt="">
+  <img class="death-seal" src="images/ui/mail-seal.png" alt="">
+  <div class="death-card">
+    <div id="death-body"></div>
   </div>
 </div>
 
@@ -3783,6 +3915,59 @@ const buildCost = (bk,lv,p) => {
   // в RoK постройки не стоят золота — только еда/дерево/камень (точные числа из таблиц)
   return {food:Math.round((r.food||0)*cut),wood:Math.round((r.wood||0)*cut),stone:Math.round((r.stone||0)*cut),gold:0};
 };
+/* ---- Прочность построек (Фаза 29) --------------------------------------
+   Дословное зеркало блока "Прочность построек, снос осадой и восстановление"
+   из supabase/functions/_shared/rules.js — при правке ЛЮБОГО числа здесь
+   его нужно поправить и там (тот же уговор, что и у всех остальных боевых
+   формул этого файла). Считает ровно то же самое, но нужно клиенту не для
+   решения, а только чтобы РИСОВАТЬ: сервер один решает, сколько прочности у
+   здания осталось, а браузер между опросами показывает, как она сама
+   восстанавливается, не дожидаясь ответа.
+   Осада тут ничего не считает — весь урон только на сервере (mp-tick). */
+const BUILD_HP_BASE=250, BUILD_HP_POW=1.2;
+const BUILD_HP_MULT={hall:3,wall:2.5,garrison:2,scout:0.8,farm:0.6,lumber:0.6,quarry:0.6,mine:0.6};
+const BUILD_HP_FLAT={forge:3000};
+const BUILD_REGEN_CALM_SEC=1800, BUILD_REGEN_PER_HOUR=0.20;
+function buildingMaxHp(bk,lv){
+  if(lv<=0) return 0;
+  if(BUILD_HP_FLAT[bk]!=null) return BUILD_HP_FLAT[bk];
+  return Math.round(BUILD_HP_BASE*Math.pow(lv,BUILD_HP_POW)*(BUILD_HP_MULT[bk]||1));
+}
+// Уровень конкретного участка — своя функция, а не cityCellLevel(p,c): та
+// принимает запись CITY_CELLS (старая карта фиксированных слотов), а
+// прочность нужна и свободной застройке (p.layout), и Ратуше со Стеной,
+// которых в layout нет вовсе.
+function buildLvOf(st,bk,plot){
+  const raw=st.b[bk];
+  return (Array.isArray(raw) ? raw[plot||0] : raw)||0;
+}
+// Сколько прочности показывать ПРЯМО СЕЙЧАС: то, что прислал сервер, плюс
+// самостоятельно накопившаяся починка с момента его отметки. Чистая функция,
+// состояние не трогает — иначе следующий же опрос сервера затёр бы
+// досчитанное, и полоска дёргалась бы туда-сюда каждые пять секунд.
+function buildHpShown(st,bk,plot,nowSec){
+  const max=buildingMaxHp(bk,buildLvOf(st,bk,plot));
+  if(max<=0) return 0;
+  const raw=st.bhp && st.bhp[bk];
+  const cur=Array.isArray(raw) ? raw[plot||0] : (typeof raw==="number"?raw:undefined);
+  if(cur==null || !(cur>=0)) return max;         // здания нет в bhp — оно цело
+  const from=Math.max(st.bhpAt||0,(st.lastHitAt||0)+BUILD_REGEN_CALM_SEC);
+  const dt=Math.max(0,(nowSec||Date.now()/1000)-from);
+  return Math.max(0,Math.min(max, cur + max*BUILD_REGEN_PER_HOUR*(dt/3600)));
+}
+// Полоска под зданием на карте города. Целое здание полоски не показывает
+// вовсе — иначе город в мирное время был бы утыкан двумя десятками
+// одинаковых зелёных черт, которые ничего не сообщают.
+function buildHpBarHtml(st,bk,plot,nowSec){
+  const max=buildingMaxHp(bk,buildLvOf(st,bk,plot));
+  if(max<=0) return "";
+  const hp=buildHpShown(st,bk,plot,nowSec);
+  if(hp>=max) return "";
+  const pct=Math.max(0,Math.min(100,hp/max*100));
+  const tone=pct<=25?" crit":pct<=60?" warn":"";
+  return "<div class='bhp"+tone+"' title='Прочность "+fmt(hp)+" / "+fmt(max)+"'>"+
+         "<i style='width:"+pct.toFixed(1)+"%'></i></div>";
+}
 const prodRate  = lv => lv<=0?0:tblRow(PROD_TABLE,lv);   // в час
 const storeCap  = lv => tblRow(STORE_TABLE,Math.max(1,lv));
 const troopStat = (type,tier,stat) => Math.round(TROOP_TYPES[type][stat]*TIER_MULT[tier-1]);
@@ -8652,12 +8837,14 @@ function mpRenderFreeformCity(){
   const p=mpCityShim(), st=mpState.player.state;
   const layout=Array.isArray(st.layout)?st.layout:[];
   let h="<div id='citymap-wrap'><img class='base' src='city-map.jpg'>";
+  const nowSecCity=Date.now()/1000;
   ["hall","wall"].forEach(bk=>{
     const lv=p.b[bk]||0, pos=CITY_FIXED_GRID_POS[bk], r=cityGridCellToPct(pos.gx,pos.gy,pos.w,pos.h);
     h+="<div class='cbuild"+(lv>0?" built":"")+(mpFixedSel===bk?" sel":"")+"' data-layoutfixed='"+bk+"' "+
        "style='left:"+r.left+"%;top:"+r.top+"%;width:"+r.w+"%;height:"+r.h+"%'>"+
        "<div class='shape'></div>"+
-       (lv>0?(bk!=="wall"?"<img class='bimg' src='"+cityCellImg({bk,pl:null})+"'>":"")+"<span class='lvl'>"+lv+"</span>":"")+
+       (lv>0?(bk!=="wall"?"<img class='bimg' src='"+cityCellImg({bk,pl:null})+"'>":"")+"<span class='lvl'>"+lv+"</span>"+
+             buildHpBarHtml(st,bk,null,nowSecCity):"")+
        "</div>";
   });
   layout.forEach((e,li)=>{
@@ -8676,6 +8863,7 @@ function mpRenderFreeformCity(){
        "style='left:"+r.left+"%;top:"+r.top+"%;width:"+r.w+"%;height:"+r.h+"%'>"+
        "<div class='shape'></div>"+
        "<img class='bimg' src='"+cityCellImg({bk:e.b,pl:e.plot})+"'><span class='lvl'>"+lv+"</span>"+
+       buildHpBarHtml(st,e.b,e.plot,nowSecCity)+
        "</div>";
   });
   // Призрак размещаемого здания + подсветка клетки под ним (Фаза 4) —
@@ -9550,6 +9738,12 @@ function mpNormalizeState(st){
 function mpSetPlayer(pl){
   if(pl && pl.state) mpNormalizeState(pl.state);
   mpState.player=pl;
+  // Фаза 30 — единственная точка, через которую игрок попадает в mpState
+  // (вход, опрос, местный кэш), поэтому проверка гибели стоит именно здесь,
+  // а не в трёх местах по отдельности. Экран показывается сразу, как только
+  // сервер сообщил dead_at, — хоть в первый заход после сноса, хоть прямо
+  // посреди сессии, если игрока добили, пока он смотрел на карту.
+  if(pl && pl.dead_at && !$("#death").classList.contains("open")) mpShowDeath();
   return pl;
 }
 function mpFullShim(mp,st){
@@ -9937,6 +10131,29 @@ function mpBuildingModalHtmlFor(bld,plot){
   if(!maxed && lv>0){
     h+="<table id='bm-stats'><tr><td>Мощь здания</td><td>"+fmt(buildingPower(bld,lv))+" &rarr; "+fmt(buildingPower(bld,nextLv))+"</td></tr></table>";
     h+=mpBuildingStatDeltaHtml(bld,lv,nextLv,hallLv);
+  }
+  // Фаза 29 — прочность. Строка показывается у ЛЮБОГО построенного здания
+  // (а не только у повреждённого, как полоска на карте): в карточке игрок
+  // как раз и выясняет, сколько здание держит и через сколько починится,
+  // поэтому целое "10 400 / 10 400" здесь осмысленно, а на карте — шум.
+  if(lv>0){
+    const hpMax=buildingMaxHp(bld,lv), hpNow=buildHpShown(st,bld,plot,Date.now()/1000);
+    h+="<div class='bm-hp'>"+
+       "<div class='hpline'><span><img src='images/ui/stat-hp.png' alt=''>Прочность</span>"+
+       "<b>"+fmt(hpNow)+" / "+fmt(hpMax)+"</b></div>"+
+       "<div class='hpbar'><i style='width:"+(hpMax>0?Math.max(0,Math.min(100,hpNow/hpMax*100)):0).toFixed(1)+"%'></i></div>";
+    if(hpNow<hpMax){
+      // Когда починится: либо ждём конца окна тишины, либо уже чинимся и
+      // осталось добрать недостающее по BUILD_REGEN_PER_HOUR.
+      const nowSec=Date.now()/1000, calmAt=(st.lastHitAt||0)+BUILD_REGEN_CALM_SEC;
+      const full=(hpMax-hpNow)/(hpMax*BUILD_REGEN_PER_HOUR)*3600;
+      h+="<div class='note' style='margin-top:6px'>"+
+         (nowSec<calmAt
+           ? "Восстановление начнётся через "+fmtDur(calmAt-nowSec)+" — пока город под ударом, каменщики не выходят."
+           : "Восстановится полностью через "+fmtDur(full)+".")+
+         "</div>";
+    }
+    h+="</div>";
   }
   if(canGo){
     h+="<div id='bm-reqs'>"+RES.map(r=>{
@@ -11179,7 +11396,12 @@ function mailRowHtml(m){
    остаются нейтральными. */
 const BATTLE_LOG_ICON={weather:"&#9730;",volley:"&#10148;",tower:"&#9819;",panic:"&#9888;",
   counter:"&#8634;",raise:"&#9760;",general:"&#9876;",mark:"&#9873;",round:"&#8226;",
-  rout:"&#8617;",end:"&#9873;"};
+  rout:"&#8617;",end:"&#9873;",
+  // Фаза 29 — снос города: таран бьёт по постройке (breach) и постройка
+  // рухнула (ruin). Оба приходят от mp-tick стороной "att" — у защитника
+  // они покрасятся как плохие новости сами, тем же правилом, что и всё
+  // остальное в хронике (см. mpBattleLogHtml).
+  breach:"&#9874;",ruin:"&#10007;"};
 // Проценты бонуса — со знаком (+12.3% / −4.0%), тем же округлением, что и
 // остальные проценты в игре (одна десятая, как у snap talents/statTxt).
 function pctTxt(v){ return (v>=0?"+":"")+(v*100).toFixed(1)+"%"; }
@@ -12955,6 +13177,9 @@ function handleMpAct(e){
   }
   const joinBtn=e.target.closest("[data-mp='join']");
   if(joinBtn){ const nickInp=$("#mp-nick"); mpState.nick=nickInp?nickInp.value:""; mpDoJoin(); return; }
+  // Фаза 30 — "Заложить новую летопись" на экране гибели.
+  const restartBtn=e.target.closest("[data-mp='restart']");
+  if(restartBtn){ mpDoRestart(); return; }
   // Фаза 19, кусочек 1 — карусель обучения войск (абсолютная копия
   // одиночных browsetrain/ucfocus/traingo, см. их же ветки в handleAct()).
   const browseTrainBtn=e.target.closest("[data-mp='browsetrain']");
@@ -13886,6 +14111,11 @@ let mpOpenInFlight = false;
 const MP_CACHE_KEY="fourbanners:mpcache1";
 function mpSaveCache(){
   if(!mpState.joined || !mpState.player) return;
+  // Фаза 30 — павшего в кэш не кладём: этот кэш существует ровно затем,
+  // чтобы мгновенно нарисовать город до ответа сервера, а рисовать город
+  // мертвеца незачем — при следующем заходе он должен увидеть экран гибели
+  // (или уже чистую регистрацию, если успел нажать кнопку).
+  if(mpState.player.dead_at) return;
   try{
     localStorage.setItem(MP_CACHE_KEY, JSON.stringify({
       v:1, dev:DEVICE_ID, at:Date.now(),
@@ -14287,8 +14517,12 @@ async function mpRefreshNeighbors(){
   // ИМЕННО ЭТОГО полководца, а не первого попавшегося у расы (см.
   // marchModelPath в engine/src/main.ts). Тот же приём, что и hall строкой
   // выше — вытащить одно поле из JSON, а не тянуть весь state соседа.
+  // Фаза 30 — павшие (dead_at) с карты пропадают немедленно и для всех: их
+  // города больше нет, атаковать/разведывать их нельзя (mp-attack/mp-scout
+  // отвечают отказом), и висеть замком в 3D им незачем. Своя же строка сюда
+  // не попадает вовсе (neq по id) — экран гибели берёт её из mpState.player.
   const { data, error } = await sb.from("players").select("id,nick,race,x,y,is_bot,hall:state->b->>hall,gen:state->gen->>id,shield_until")
-    .eq("world_id", mpState.player.world_id).neq("id", mpState.player.id).order("id");
+    .eq("world_id", mpState.player.world_id).neq("id", mpState.player.id).is("dead_at", null).order("id");
   if(!error && data){ mpState.neighbors=data; mpRerenderData(); }
 }
 // Фаза 4 — свежие боевые отчёты (mail, RLS mail_select_own из миграции
@@ -14360,6 +14594,110 @@ async function mpDoSendMail(){
   }catch(e){
     mpComposeSending=false; mpComposeErr=e.message||"Не удалось отправить письмо"; mpRerender();
   }
+}
+/* =========================================================================
+   Фаза 30 — гибель правителя.
+   =========================================================================
+   Ратушу довели до нуля прочности (см. runDemolishRounds/markRulerFallen в
+   mp-tick). Строка игрока ещё существует, помеченная dead_at, и несёт итог
+   правления в state.epitaph — ровно затем, чтобы тот, кого снесли, пока он
+   был офлайн, увидел честный экран, а не пустую регистрацию. Настоящее
+   стирание — по кнопке (mp-restart), см. её заголовок.
+   ========================================================================= */
+function mpIsDead(){ return !!(mpState.player && mpState.player.dead_at); }
+let mpRestarting=false, mpRestartErr=null;
+// Срок правления словами. fmtDur() тут не годится: она считает часами и
+// минутами (её дело — таймеры стройки), а правление меряется днями, и
+// "154 ч 12 мин" на надгробии читается как ошибка, а не как срок.
+function mpRuledTxt(sec){
+  sec=Math.max(0,Math.round(sec||0));
+  const d=Math.floor(sec/86400), h=Math.floor(sec%86400/3600), m=Math.floor(sec%3600/60);
+  if(d) return d+" "+plural(d,"день","дня","дней")+(h?" "+h+" "+plural(h,"час","часа","часов"):"");
+  if(h) return h+" "+plural(h,"час","часа","часов")+(m?" "+m+" мин":"");
+  return m+" мин";
+}
+function plural(n,one,few,many){
+  const n10=n%10, n100=n%100;
+  if(n10===1 && n100!==11) return one;
+  if(n10>=2 && n10<=4 && (n100<12||n100>14)) return few;
+  return many;
+}
+function mpRenderDeath(){
+  const pl=mpState.player; if(!pl) return;
+  const e=(pl.state && pl.state.epitaph) || {};
+  const raceName=(RACES[pl.race] && RACES[pl.race].name) || "";
+  const slayer=e.slayerNick || "неизвестный полководец";
+  let h="<div id='death-hd'>Летопись окончена</div>"+
+    "<div id='death-title'>Правитель погиб</div>"+
+    "<hr id='death-rule'>"+
+    "<div id='death-name'>"+escHtml(pl.nick||"Безымянный лорд")+"</div>"+
+    "<div id='death-banner'>"+escHtml(raceName)+(e.x!=null?" · "+e.x+" : "+e.y:"")+"</div>";
+  h+="<p class='death-p'>Ворота Ратуши выбиты таранами, знамя снято со шпиля, "+
+     "а последняя дружина полегла на ступенях. Твой род более не правит этими землями.</p>"+
+     "<p class='death-p solace'>Но летописец успел дописать страницу. Имя твоё внесено в свод — "+
+     "и стереть его не властен ни огонь, ни победитель.</p>";
+  h+="<dl class='death-ledger'>"+
+     "<div class='death-row'><dt>Пал от руки</dt><dd><span class='slayer'>"+escHtml(slayer)+"</span></dd></div>"+
+     (e.ruledSec!=null?"<div class='death-row'><dt>Правил</dt><dd>"+mpRuledTxt(e.ruledSec)+"</dd></div>":"")+
+     // Фаза 31 — высшая мощь за всё правление, а не оставшаяся на момент
+     // гибели: у павшего к этой секунде нет ни войск, ни половины города.
+     // Считает и копит её сервер (applyPower в mp-join/mp-tick), клиент
+     // только показывает.
+     (e.peakPower?"<div class='death-row'><dt>Высшая мощь</dt><dd>"+RU(e.peakPower)+"</dd></div>":"")+
+     (e.hall?"<div class='death-row'><dt>Ратуша</dt><dd>"+e.hall+" ур.</dd></div>":"")+
+     (e.ruined?"<div class='death-row'><dt>Обрушено построек</dt><dd>"+e.ruined+"</dd></div>":"")+
+     // RU(), а не fmt(): на надгробии "184.5K" выглядит как сбой округления,
+     // а не как итог правления — тут число должно стоять целиком.
+     (e.kp?"<div class='death-row'><dt>Очков убийств</dt><dd>"+RU(e.kp)+"</dd></div>":"")+
+     "</dl>";
+  h+="<button class='death-go' data-mp='restart'"+(mpRestarting?" disabled":"")+">"+
+     (mpRestarting?"Летопись закрывается…":"Заложить новую летопись")+"</button>";
+  if(mpRestartErr) h+="<div class='death-err'>"+escHtml(mpRestartErr)+"</div>";
+  h+="<p class='death-fine'>Новый правитель начнёт с чистого листа: прежние земли, войска, "+
+     "постройки и союзы утрачены безвозвратно.</p>";
+  setHtml($("#death-body"), h);
+}
+// Показываем экран и глушим всё остальное: опрос сервера павшему не нужен
+// (его строка больше не меняется), а накидка загрузки и открытые модалки
+// закрываются, чтобы не мигать под полупрозрачным фоном.
+function mpShowDeath(){
+  mpStopPolling();
+  mpHideLoading();
+  const bm=$("#building-modal"); if(bm) bm.classList.remove("open");
+  const mm=$("#menu-modal"); if(mm) mm.classList.remove("open");
+  const ob=$("#onboard"); if(ob) ob.classList.remove("open");
+  mpRenderDeath();
+  $("#death").classList.add("open");
+}
+function mpHideDeath(){ $("#death").classList.remove("open"); }
+// "Заложить новую летопись": стереть павшего по-настоящему и тут же пройти
+// регистрацию заново — с выбора расы, как в самый первый раз. Именно поэтому
+// экран гибели живёт в СВОЁМ узле, а не в #onboard: следующий шаг рисуется
+// как раз в #onboard, и делить их было бы нечем.
+async function mpDoRestart(){
+  if(mpRestarting) return;
+  mpRestarting=true; mpRestartErr=null; mpRenderDeath();
+  try{
+    await mpCall("mp-restart",{});
+  }catch(err){
+    mpRestarting=false;
+    mpRestartErr=err.message||"Не удалось начать заново. Попробуйте ещё раз.";
+    mpRenderDeath();
+    return;
+  }
+  mpRestarting=false;
+  // Полный сброс: следующий mpOpen() должен пойти по пути НОВОГО игрока
+  // (mp-join без записи → "Нужна раса" → runMpOnboarding), а не подхватить
+  // остатки павшего из памяти вкладки или из местного кэша.
+  try{ localStorage.removeItem(MP_CACHE_KEY); }catch(_){ }
+  mpState.joined=false; mpState.player=null; mpState.race=null; mpState.err=null;
+  mpState.neighbors=[]; mpState.nodes=[]; mpState.camps=[]; mpState.marches=[]; mpState.incoming=[];
+  mpState.mail=[]; mpState.scoutMail=[]; mpState.raidMail=[]; mpState.siegeMail=[];
+  mpState.nodeBattleMail=[]; mpState.gatherMail=[]; mpState.noteMail=[]; mpState.pmMail=[];
+  mpHideDeath();
+  await mpOpen();
+  mpRenderFolio(); mpRenderTop();
+  if(!mpState.joined) openMenuModal("mp");
 }
 // Открытие вкладки: если этот anon-uid уже заходил в общий мир раньше
 // (сессия сохранена в localStorage), mp-join без указания расы вернёт уже
@@ -14684,6 +15022,40 @@ function mpBattleInterp(battle, from, to){
   const frac=Math.max(0,Math.min(1,(Date.now()-battle.revealStart)/(battle.revealAt-battle.revealStart)));
   return from+(to-from)*frac;
 }
+// Фаза 29 — вторая половина осады: армия защитника разбита, тараны взялись
+// за сам город (b.phase==="demolish", см. runDemolishRounds в mp-tick).
+// Полоски войск в этот момент показывать нечего — у обороны их ноль, — зато
+// есть настоящая цель: та постройка, которую ломают прямо сейчас. Та же
+// интерполяция по времени, что и у войск, только между revealFromHp и
+// curHp конкретного здания.
+// revealFromKey/curKey — защита от рывка полоски, когда за один тик успели
+// добить одну постройку и взяться за следующую: интерполировать "с прошлого
+// здания на нынешнее" бессмысленно, показываем сразу текущее значение.
+function mpDemolishLiveHtml(b, mine){
+  const D=b && b.demolish; if(!b || b.phase!=="demolish" || !D) return "";
+  const ruinedN=(D.ruined&&D.ruined.length)||0;
+  let h="<div class='note'>"+
+    (mine?"Стены взяты — тараны разбирают город":"Стены пали — город разбирают таранами")+
+    " · заход "+(D.round||0)+" из "+DEMOLISH_ROUNDS_UI+
+    (ruinedN?" · разрушено: "+ruinedN:"")+"</div>";
+  if(D.curName && D.curMax>0){
+    const from=(D.revealFromKey===D.curKey)?D.revealFromHp:D.curHp;
+    h+=mpHpBarHtml(D.curName, mpBattleInterp(b, from, D.curHp), D.curMax, null);
+  }
+  if(ruinedN) h+="<div class='note ruin-live'>Обрушено: "+
+    D.ruined.map(r=>escHtml(r.bk?buildRuNameUI(r.bk,r.plot):"")).filter(Boolean).join(", ")+"</div>";
+  return h;
+}
+// Те же имена построек, что шлёт mp-tick в письме, — но для живой осады
+// сервер кладёт в ruined только ключи, а не готовую подпись (в письме имя
+// собирается один раз на финале, здесь оно нужно каждый тик).
+function buildRuNameUI(bk,plot){
+  const nm=(BUILDINGS[bk]&&BUILDINGS[bk].name)||bk;
+  return nm+(plot!=null?" ("+(plot+1)+")":"");
+}
+// Зеркало DEMOLISH_ROUNDS из mp-tick/_shared/rules.js — только для подписи
+// "заход N из 8", на расчёт не влияет ничем.
+const DEMOLISH_ROUNDS_UI=8;
 // Быстрый (1с) опрос ТОЛЬКО во время боя, не всегда — автор попросил именно
 // так: "не постоянно, а именно при боях... чтобы не превышать лимиты".
 // Обычный select через уже открытую RLS, БЕЗ вызова mp-tick — на порядок
@@ -15183,6 +15555,28 @@ function mpMailSiegeEntry(m){
     cls: cls==="hot"?"win":cls==="war"?"lose":"", tone: cls==="hot"?"green":cls==="war"?"red":"blue",
     title, sub:note, detailHtml:"<div class='note'>"+note+"</div>"};
 }
+// Фаза 29 — что осада сделала с городом. Данные шлёт mp-tick в
+// summary.demolish (см. finalizePvpBattle): ruined — снесённое до основания,
+// damaged — устоявшее, но побитое. Старые письма (до этого деплоя) поля не
+// несут вовсе — блок тогда просто не рисуется, как и остальные поздние
+// добавления в этом письме.
+function mpDemolishHtml(dem, mine){
+  if(!dem || (!dem.ruined || !dem.ruined.length) && (!dem.damaged || !dem.damaged.length)) return "";
+  const hd = mine ? "Что мы сделали с городом" : "Что стало с нашим городом";
+  let h="<div class='mail-chron'><div class='mail-chron-hd'>"+hd+"</div>";
+  (dem.ruined||[]).forEach(r=>{
+    h+="<div class='ruin-row gone'><i>&#10007;</i><span class='ruin-nm'>"+escHtml(r.name)+"</span>"+
+       "<b>было "+r.lv+" ур.</b></div>";
+  });
+  (dem.damaged||[]).forEach(r=>{
+    const pct=r.max>0?Math.max(0,Math.min(100,r.hp/r.max*100)):0;
+    const tone=pct<=25?" crit":pct<=60?" warn":"";
+    h+="<div class='ruin-row"+tone+"'><i>&#9874;</i><span class='ruin-nm'>"+escHtml(r.name)+"</span>"+
+       "<b>"+fmt(r.hp)+" / "+fmt(r.max)+"</b>"+
+       "<div class='hpbar'><i style='width:"+pct.toFixed(1)+"%'></i></div></div>";
+  });
+  return h+"</div>";
+}
 function mpMailBattleEntry(m){
   const d=m.data, mine=d.role==="attacker";
   const myLoss=mine?d.attLoss:d.defLoss, oppLoss=mine?d.defLoss:d.attLoss;
@@ -15194,7 +15588,11 @@ function mpMailBattleEntry(m){
   const myPower=mine?d.attPower:d.defPower, oppPower=mine?d.defPower:d.attPower;
   const tier=battleOutcomeTier(myStart,myHs.dead||0,myHs.hurt||0,won,myPower,oppPower);
   const title=(mine?"Напали на ":"Напали от ")+(d.opponent_nick||"Безымянный лорд")+" — "+tier.name;
-  const sub="Наши потери: "+RU(lostN(myLoss))+" · потери противника: "+RU(lostN(oppLoss));
+  // Фаза 29 — снесённые постройки важнее потерь: если город разобрали, это
+  // первое, что должно быть видно в строке списка, не разворачивая письмо.
+  const ruinedN=(d.demolish && d.demolish.ruined && d.demolish.ruined.length)||0;
+  const sub=(ruinedN?(mine?"Разрушено построек: ":"Разрушено наших построек: ")+ruinedN+" · ":"")+
+    "Наши потери: "+RU(lostN(myLoss))+" · потери противника: "+RU(lostN(oppLoss));
 
   // attRace/defCoords/... — Фаза 29: раньше сервер их не слал вовсе, старые
   // письма (до этого деплоя) их не несут — тогда честно откатываемся на
@@ -15246,6 +15644,7 @@ function mpMailBattleEntry(m){
         const lootTxt=d.loot&&RES.filter(r=>d.loot[r]).map(r=>resIconSpan(r,RU(d.loot[r]))).join("");
         if(mine&&won&&lootTxt) detailHtml+="<div class='mail-note'>Захвачено: "+lootTxt+"</div>";
         else if(!mine&&!won&&lootTxt) detailHtml+="<div class='mail-note'>Разграблено: "+lootTxt+"</div>";
+        detailHtml+=mpDemolishHtml(d.demolish,mine);
         detailHtml+=mpBattleLogHtml(d.log,mine);
       } else {
         const hospPart=(label,x)=>x.dead!=null?(" · "+label+": легкораненые "+RU(x.slight||0)+", тяжелораненые "+RU(x.hurt||0)+", убито "+RU(x.dead||0)):"";
@@ -15638,9 +16037,11 @@ function foMultiplayer(embedded, only){
         // Фаза 21 — оборона видит СВОЮ полоску как "defHpLeft" в state
         // боя, атакующего — как "attHpLeft" (mpHpBarHtml ниже нейтрален к
         // роли, просто рисует то, что дали).
-        h+="<div class='note'>Бой идёт — раунд "+b.round+(b.weather&&b.weather.id!=="clear"?" · "+b.weather.name:"")+"</div>"+
-           mpHpBarHtml("Наша оборона",mpBattleInterp(b,b.revealFromDefHp,b.defHpLeft),b.defStartHp,mpBattleInterp(b,b.revealFromDefGenFrac,b.defGenHpFrac))+
-           mpHpBarHtml("Противник",mpBattleInterp(b,b.revealFromAttHp,b.attHpLeft),b.attStartHp,mpBattleInterp(b,b.revealFromAttGenFrac,b.attGenHpFrac));
+        h+= b.phase==="demolish"
+          ? mpDemolishLiveHtml(b,false)
+          : "<div class='note'>Бой идёт — раунд "+b.round+(b.weather&&b.weather.id!=="clear"?" · "+b.weather.name:"")+"</div>"+
+            mpHpBarHtml("Наша оборона",mpBattleInterp(b,b.revealFromDefHp,b.defHpLeft),b.defStartHp,mpBattleInterp(b,b.revealFromDefGenFrac,b.defGenHpFrac))+
+            mpHpBarHtml("Противник",mpBattleInterp(b,b.revealFromAttHp,b.attHpLeft),b.attStartHp,mpBattleInterp(b,b.revealFromAttGenFrac,b.attGenHpFrac));
       } else {
         const left=Math.max(0,m.t1-Date.now()/1000);
         h+="<div class='note'>Подход через "+fmtDur(left)+" — состав отряда неизвестен без разведки.</div>";
@@ -15702,9 +16103,12 @@ function foMultiplayer(embedded, only){
       // mp-tick), поэтому вместо "Осталось: ..." — живые полоски HP.
       const b=sieging&&m.data&&m.data.battle;
       if(b){
-        h+="<div class='note'>Бой идёт — раунд "+b.round+(b.weather&&b.weather.id!=="clear"?" · "+b.weather.name:"")+"</div>"+
-           mpHpBarHtml("Наши",mpBattleInterp(b,b.revealFromAttHp,b.attHpLeft),b.attStartHp,mpBattleInterp(b,b.revealFromAttGenFrac,b.attGenHpFrac))+
-           mpHpBarHtml("Противник",mpBattleInterp(b,b.revealFromDefHp,b.defHpLeft),b.defStartHp,mpBattleInterp(b,b.revealFromDefGenFrac,b.defGenHpFrac));
+        h+= b.phase==="demolish"
+          ? mpDemolishLiveHtml(b,true)+
+            mpHpBarHtml("Наши",mpBattleInterp(b,b.revealFromAttHp,b.attHpLeft),b.attStartHp,null)
+          : "<div class='note'>Бой идёт — раунд "+b.round+(b.weather&&b.weather.id!=="clear"?" · "+b.weather.name:"")+"</div>"+
+            mpHpBarHtml("Наши",mpBattleInterp(b,b.revealFromAttHp,b.attHpLeft),b.attStartHp,mpBattleInterp(b,b.revealFromAttGenFrac,b.attGenHpFrac))+
+            mpHpBarHtml("Противник",mpBattleInterp(b,b.revealFromDefHp,b.defHpLeft),b.defStartHp,mpBattleInterp(b,b.revealFromDefGenFrac,b.defGenHpFrac));
       } else if(contested){
         h+="<div class='note'>Бой идёт — раунд "+cb.round+(cb.weather&&cb.weather.id!=="clear"?" · "+cb.weather.name:"")+"</div>"+
            mpHpBarHtml("Наши",mpBattleInterp(cb,cb.revealFromDefHp,cb.defHpLeft),cb.defStartHp,mpBattleInterp(cb,cb.revealFromDefGenFrac,cb.defGenHpFrac))+

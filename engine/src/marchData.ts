@@ -16,6 +16,17 @@
 // сервер кладёт в marches.data.battle (см. runPvpBattleRounds/
 // runRaidBattleRounds в mp-tick): не пересчитываем ничего заново, просто
 // протаскиваем нужные для интерполяции/подписи числа через LiveMarch.
+// Фаза 29 — вторая половина осады: армия защитника разбита, тараны взялись
+// за сам город. Полоска обороны в этот момент показывает ноль и сообщать ей
+// нечего — вместо неё метка показывает ту постройку, которую ломают прямо
+// сейчас, и её прочность (demolish.*, см. runDemolishRounds в mp-tick).
+export interface LiveDemolishInfo {
+  round: number;              // какой заход тарана из DEMOLISH_ROUNDS
+  ruinedN: number;            // сколько построек уже обрушено за эту осаду
+  name: string | null;        // что ломают прямо сейчас
+  hp: number; max: number; revealFromHp: number;
+  sameTarget: boolean;        // цель не сменилась за этот кусок — можно доводить полоску плавно
+}
 export interface LiveBattleInfo {
   round: number;
   revealFromRound: number;
@@ -23,6 +34,7 @@ export interface LiveBattleInfo {
   attHpLeft: number; attStartHp: number; revealFromAttHp: number;
   defHpLeft: number; defStartHp: number; revealFromDefHp: number;
   revealStart: number; revealAt: number;
+  demolish: LiveDemolishInfo | null;
 }
 
 export interface LiveMarchPos {
@@ -178,6 +190,17 @@ export function loadLiveMarches(): LiveMarchPos[] | null {
           attHpLeft: b.attHpLeft ?? 0, attStartHp: b.attStartHp ?? 1, revealFromAttHp: b.revealFromAttHp ?? b.attHpLeft ?? 0,
           defHpLeft: b.defHpLeft ?? 0, defStartHp: b.defStartHp ?? 1, revealFromDefHp: b.revealFromDefHp ?? b.defHpLeft ?? 0,
           revealStart: b.revealStart ?? 0, revealAt: b.revealAt ?? 0,
+          demolish: b.phase === "demolish" && b.demolish
+            ? {
+                round: b.demolish.round ?? 0,
+                ruinedN: (b.demolish.ruined && b.demolish.ruined.length) || 0,
+                name: b.demolish.curName ?? null,
+                hp: b.demolish.curHp ?? 0,
+                max: b.demolish.curMax ?? 0,
+                revealFromHp: b.demolish.revealFromHp ?? b.demolish.curHp ?? 0,
+                sameTarget: b.demolish.revealFromKey === b.demolish.curKey,
+              }
+            : null,
         }
       : null;
     out.push({

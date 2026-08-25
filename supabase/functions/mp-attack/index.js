@@ -489,9 +489,15 @@ Deno.serve(async (req) => {
     if (defenderId === attRow.id) return jsonResponse({ err: "Нельзя атаковать самого себя" }, 400);
 
     const { data: defRow, error: dErr } = await admin
-      .from("players").select("id,x,y,shield_until").eq("world_id", world.id).eq("id", defenderId).maybeSingle();
+      .from("players").select("id,x,y,shield_until,dead_at").eq("world_id", world.id).eq("id", defenderId).maybeSingle();
     if (dErr) return jsonResponse({ err: dErr.message }, 500);
     if (!defRow) return jsonResponse({ err: "Защитник не найден" }, 400);
+    // Фаза 30 — правитель погиб (Ратуша доведена до нуля прочности, см.
+    // markRulerFallen в mp-tick): его города на карте больше нет ни у кого,
+    // и второй раз убить его нельзя. Клиент такую цель и не покажет
+    // (mpRefreshNeighbors фильтрует павших), но на прямой вызов отвечаем
+    // честно, а не отправляем отряд в пустоту.
+    if (defRow.dead_at) return jsonResponse({ err: "Этого правителя больше нет — город пал" }, 400);
     const nowSec = Date.now() / 1000;
     if (defRow.shield_until > nowSec) return jsonResponse({ err: "Город под щитом мира — атака невозможна" }, 400);
 

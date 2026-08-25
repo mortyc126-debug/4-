@@ -439,9 +439,11 @@ Deno.serve(async (req) => {
     if (defenderId === attRow.id) return jsonResponse({ err: "Это ваш город" }, 400);
 
     const { data: defRow, error: dErr } = await admin
-      .from("players").select("id,x,y").eq("world_id", world.id).eq("id", defenderId).maybeSingle();
+      .from("players").select("id,x,y,dead_at").eq("world_id", world.id).eq("id", defenderId).maybeSingle();
     if (dErr) return jsonResponse({ err: dErr.message }, 500);
     if (!defRow) return jsonResponse({ err: "Цель не найдена" }, 400);
+    // Фаза 30 — разведывать нечего: правителя больше нет (см. mp-attack).
+    if (defRow.dead_at) return jsonResponse({ err: "Этого правителя больше нет — город пал" }, 400);
 
     const attP = attRow.state;
     attP.race = attP.race || attRow.race; // самоисцеление легаси-записей, см. mp-attack/mp-train

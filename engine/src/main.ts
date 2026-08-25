@@ -2004,10 +2004,20 @@ async function main() {
       }
       const retreating = b.retreating;
       const deploying = !retreating && b.revealFromRound === 0;
-      parts.root.className = "blabel" + (retreating ? " retreat" : deploying ? " deploy" : "");
-      parts.title.textContent = retreating ? "Отступление" : deploying ? "Развёртывание" : "Бой — раунд " + b.round;
+      // Фаза 29 — снос города: нижняя полоска показывает уже не оборону (её
+      // разбили, там ноль и смотреть не на что), а прочность той постройки,
+      // которую ломают прямо сейчас. Подпись называет её по имени — с земли
+      // видно, ЧТО именно сейчас теряет защитник, а не просто "идёт бой".
+      const dem = b.demolish;
+      parts.root.className = "blabel" + (retreating ? " retreat" : deploying ? " deploy" : dem ? " demolish" : "");
+      parts.title.textContent = retreating ? "Отступление"
+        : deploying ? "Развёртывание"
+        : dem ? (dem.name ? "Таранят: " + dem.name : "Город разбирают")
+        : "Бой — раунд " + b.round;
       const attPct = Math.max(0, Math.min(100, battleInterp(b.revealFromAttHp, b.attHpLeft, b.revealStart, b.revealAt) / Math.max(1, b.attStartHp) * 100));
-      const defPct = Math.max(0, Math.min(100, battleInterp(b.revealFromDefHp, b.defHpLeft, b.revealStart, b.revealAt) / Math.max(1, b.defStartHp) * 100));
+      const defPct = dem
+        ? Math.max(0, Math.min(100, battleInterp(dem.sameTarget ? dem.revealFromHp : dem.hp, dem.hp, b.revealStart, b.revealAt) / Math.max(1, dem.max) * 100))
+        : Math.max(0, Math.min(100, battleInterp(b.revealFromDefHp, b.defHpLeft, b.revealStart, b.revealAt) / Math.max(1, b.defStartHp) * 100));
       parts.atkFill.style.width = attPct.toFixed(1) + "%";
       parts.defFill.style.width = defPct.toFixed(1) + "%";
       parts.root.style.transform = `translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) translate(-50%,-100%)`;
