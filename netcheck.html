@@ -39,6 +39,9 @@
 <div id="verdict">Проверяю…</div>
 <script>
 const SUPABASE_URL="https://xzuwqgpwzlmpglnuijio.supabase.co";
+// Тот же публикуемый ключ, что зашит в саму игру (index.html) — чтобы запрос
+// ниже был не «похожим», а буквально таким же, каким игра стучится на сервер.
+const SUPABASE_ANON_KEY="sb_publishable_OOPvf-dpPbzy4kqC4a88jg_kwgpqkQz";
 const checks=[
   {key:"site",   name:"Сам сайт (наш хостинг)", url:location.origin+"/vendor/supabase-js-2.112.4.min.js",
    note:"если бы он не работал, эта страница не открылась бы вовсе"},
@@ -74,9 +77,13 @@ async function run(c){
     const opts={cache:"no-store",signal:ctrl.signal};
     if(c.method){
       opts.method=c.method; opts.body=c.body;
-      // Те же заголовки, что шлёт сама игра: если посредник режет именно их,
-      // проверка должна это поймать, а не обойти.
-      opts.headers={"Content-Type":"application/json","apikey":"проверка-связи","Authorization":"Bearer проверка-связи"};
+      // Те же заголовки, что шлёт сама игра. ЗНАЧЕНИЯ ТОЛЬКО ASCII: заголовки
+      // HTTP не умеют ничего кроме latin-1, и браузер отвергает такой запрос
+      // ещё до отправки, с TypeError. Здесь на этом уже обожглись — в
+      // значения по недосмотру попала кириллица, проверка показала «не
+      // доступен», и это выглядело как блокировка POST у провайдера, хотя
+      // запрос просто не выходил за пределы браузера.
+      opts.headers={"Content-Type":"application/json","apikey":SUPABASE_ANON_KEY,"Authorization":"Bearer netcheck"};
     }
     const r=await fetch(c.url,opts);
     res[c.key]=true;
@@ -86,7 +93,16 @@ async function run(c){
   }catch(e){
     res[c.key]=false;
     c.el.className="st err";
-    c.el.textContent=(e&&e.name==="AbortError")?"не ответил за 12 с":"не доступен";
+    // Различаем три разные беды, которые раньше все назывались «не доступен»:
+    // запрос не выпустил сам браузер (TypeError — кривой заголовок или URL,
+    // то есть ошибка НАШЕЙ страницы), запрос ушёл и завис (блокировка по
+    // имени хоста), запрос отвергнут сетью. Без этого различия легко искать
+    // блокировку там, где её нет.
+    c.el.textContent =
+      (e && e.name==="AbortError")  ? "не ответил за 12 с" :
+      (e && e.name==="TypeError" && !/fetch/i.test(e.message||"")) ? "браузер не отправил запрос" :
+      "не доступен";
+    if(e && e.message) c.el.title = e.name + ": " + e.message;
   }finally{ clearTimeout(t); }
 }
 Promise.all(checks.map(run)).then(()=>{
