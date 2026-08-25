@@ -70,6 +70,10 @@ const TROOP_SPEED = { inf: 1.00, arc: 1.10, cav: 1.70, sie: 0.60 };
 const RACE_SPEED_MOD = { undead: { sie: 1.20 } }; // index.html RACE_TROOP_MOD — только нежить меняет скорость (осада)
 const troopSpeedMod = (race, t) => (RACE_SPEED_MOD[race] && RACE_SPEED_MOD[race][t]) || 1;
 const MARCH_SPEED_SCALE = 32;
+// Технический пол дорожного времени (секунды) — только чтобы t1 > t0 и
+// событие возвращения не оказалось в прошлом. К пятнадцатисекундной фазе боя
+// отношения не имеет.
+const MIN_TRAVEL = 3;
 // index.html:2854 epochOf — эпоха ратуши (1..5), нужна для bonuses() ниже
 // (расовые эпохальные способности).
 const epochOf = (hall) => (hall >= 25 ? 5 : hall >= 19 ? 4 : hall >= 13 ? 3 : hall >= 7 ? 2 : 1);
@@ -545,8 +549,18 @@ Deno.serve(async (req) => {
       // Дословно marchPos(m)/recallMarch(m) из index.html:4770-4784, по
       // прямой вместо настоящего path[] (см. заголовок файла).
       const f = clamp((nowSec - m.t0) / Math.max(1, m.t1 - m.t0), 0, 1);
-      curX = attRow.x + (m.tx - attRow.x) * f;
-      curY = attRow.y + (m.ty - attRow.y) * f;
+      // Начало текущего отрезка — data.from (его пишет mp-redirect при каждом
+      // переносе цели, и он же пишется ниже). Дом тут годится только для
+      // отряда, который из дома и вышел: у уже перенаправленного пальцем
+      // отряда точка старта совсем другая, и отсчёт от замка давал неверное
+      // место — а с ним и неверную длину обратной дороги.
+      const d0 = m.data || {};
+      const started = d0.from && Number.isFinite(d0.from.x) && Number.isFinite(d0.from.y)
+        ? d0.from
+        : (m.state === "back" ? { x: m.tx, y: m.ty } : { x: attRow.x, y: attRow.y });
+      const to = m.state === "back" ? { x: attRow.x, y: attRow.y } : { x: m.tx, y: m.ty };
+      curX = started.x + (to.x - started.x) * f;
+      curY = started.y + (to.y - started.y) * f;
       // Отозван ещё на подходе — если это gather-марш, резерв узла
       // (data.take) возвращаем узлу: доехать он так и не успел, добывать
       // нечего, но ресурс уже списан на отправке (Фаза 8, кусочек 1) — без
@@ -569,8 +583,15 @@ Deno.serve(async (req) => {
     attP.race = attP.race || attRow.race; // самоисцеление легаси-записей, см. mp-attack/mp-train
     const B = bonuses(attP);
     const spd = marchSpeed(m.units, attRow.race, B.march);
-    const travel = Math.max(15, (dist / spd) * 60);
+    // MIN_TRAVEL вместо прежних 15 — см. одноимённую константу: пятнадцать
+    // секунд это фаза боя, а не пол дорожного времени.
+    const travel = Math.max(MIN_TRAVEL, (dist / spd) * 60);
 
+    // Откуда отряд разворачивается — чтобы клиент вёл линию возврата от места,
+    // где отряд застали, а не от цели, до которой он не дошёл (см. withPath в
+    // index.html). Без этого отозванный с полпути отряд зримо прыгал ВПЕРЁД,
+    // к цели, и только оттуда шёл домой.
+    newData = { ...newData, from: { x: curX, y: curY } };
     const { error: updM } = await admin.from("marches")
       .update({ state: "back", t0: nowSec, t1: nowSec + travel, data: newData }).eq("id", m.id);
     if (updM) return jsonResponse({ err: updM.message }, 500);
