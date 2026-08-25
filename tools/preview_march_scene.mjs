@@ -13,6 +13,9 @@
    поэтому оттенок владельца тут выглядит ЗАМЕТНЕЕ, чем будет в игре — на
    подбор его силы это надо делать поправку.
 
+   Переменные окружения: MODE=normal|center (как раздувать обводку),
+   OW=0.0035 (её толщина в долях высоты кадра).
+
      npm i sharp
      node tools/preview_march_scene.mjs /куда/положить.png
    ========================================================================= */
@@ -52,35 +55,67 @@ const CAM_FOVY=0.72, HMAX=13.0;
 const target=[0,0.6,0], yaw=0.55, pitch=0.5, dist=26;
 const eye=[target[0]+Math.sin(yaw)*Math.cos(pitch)*dist, target[1]+Math.sin(pitch)*dist, target[2]+Math.cos(yaw)*Math.cos(pitch)*dist];
 const VP=mul(persp(CAM_FOVY,W/H,0.5,900), look(eye,target,[0,1,0]));
-function drawModel(m, M, tint){
+// Тот же приём, что и в шейдере (vsOutline в modelRenderer.ts): раздуваем
+// вершину в КЛИП-пространстве вдоль спроецированной нормали и рисуем только
+// задние грани; сама модель ложится поверх, по силуэту остаётся ободок.
+function drawModel(m, M, tint, outline){
   const {pos,nrm,idx}=m;
   const sun=norm([0.62,0.38,0.30]);
-  const px=(x,y,z)=>{const wx=M[0]*x+M[4]*y+M[8]*z+M[12], wy=M[1]*x+M[5]*y+M[9]*z+M[13], wz=M[2]*x+M[6]*y+M[10]*z+M[14];
+  const OW=outline?outline[3]:0, OC=outline||[0,0,0,0];
+  // Центр объекта на экране (для MODE==="center"): проекция начала координат
+  // модели, приподнятая на половину её высоты — иначе «наружу» у верхних
+  // вершин означало бы вверх, а не в стороны.
+  let CEN=[0,0];
+  { const hy=(outline&&outline[4])||0;
+    const wx=M[12], wy=M[13]+hy, wz=M[14];
+    const c0=VP[0]*wx+VP[4]*wy+VP[8]*wz+VP[12], c1=VP[1]*wx+VP[5]*wy+VP[9]*wz+VP[13],
+          c3=VP[3]*wx+VP[7]*wy+VP[11]*wz+VP[15];
+    if(c3>0.01) CEN=[c0/c3, c1/c3]; }
+  const px=(x,y,z,nx,ny,nz)=>{const wx=M[0]*x+M[4]*y+M[8]*z+M[12], wy=M[1]*x+M[5]*y+M[9]*z+M[13], wz=M[2]*x+M[6]*y+M[10]*z+M[14];
     const cx=VP[0]*wx+VP[4]*wy+VP[8]*wz+VP[12], cy=VP[1]*wx+VP[5]*wy+VP[9]*wz+VP[13],
           cz=VP[2]*wx+VP[6]*wy+VP[10]*wz+VP[14], cw=VP[3]*wx+VP[7]*wy+VP[11]*wz+VP[15];
-    return [(cx/cw*0.5+0.5)*W, (1-(cy/cw*0.5+0.5))*H, cz/cw, cw];};
+    let sx=cx, sy=cy;
+    if(OW>0 && nx!==undefined){
+      let dx, dy;
+      if(MODE==="normal"){
+        const wnx=M[0]*nx+M[4]*ny+M[8]*nz, wny=M[1]*nx+M[5]*ny+M[9]*nz, wnz=M[2]*nx+M[6]*ny+M[10]*nz;
+        const nl=Math.hypot(wnx,wny,wnz)||1;
+        dx=VP[0]*wnx/nl+VP[4]*wny/nl+VP[8]*wnz/nl; dy=VP[1]*wnx/nl+VP[5]*wny/nl+VP[9]*wnz/nl;
+      } else {
+        // от центра объекта на экране — раздувается силуэт целиком, а не
+        // каждая деталь по отдельности
+        dx=cx/cw-CEN[0]; dy=cy/cw-CEN[1];
+      }
+      const l=Math.hypot(dx,dy);
+      if(l>1e-6){ const aspect=VP[5]/VP[0];
+        sx += (dx/l)*OW*cw/aspect; sy += (dy/l)*OW*cw; }
+    }
+    return [(sx/cw*0.5+0.5)*W, (1-(sy/cw*0.5+0.5))*H, cz/cw, cw];};
   for(let t=0;t<idx.length;t+=3){
     const A=[]; let ok=true, nx=0,ny=0,nz=0;
-    for(let k=0;k<3;k++){const j=idx[t+k]*3; const q=px(pos[j],pos[j+1],pos[j+2]); if(q[3]<=0.01){ok=false;break;} A.push(q);
+    for(let k=0;k<3;k++){const j=idx[t+k]*3; const q=px(pos[j],pos[j+1],pos[j+2],nrm[j],nrm[j+1],nrm[j+2]); if(q[3]<=0.01){ok=false;break;} A.push(q);
       nx+=nrm[j]; ny+=nrm[j+1]; nz+=nrm[j+2];}
     if(!ok) continue;
     const nl=Math.hypot(nx,ny,nz)||1; nx/=nl; ny/=nl; nz/=nl;
     const ndotl=Math.max(0,nx*sun[0]+ny*sun[1]+nz*sun[2]);
     const hemi=[0.20+0.22*(ny*0.5+0.5), 0.16+0.21*(ny*0.5+0.5), 0.13+0.15*(ny*0.5+0.5)];
     const base=0.82; // текстуры тут нет — ровный светлый альбедо
-    const rgb=[0,1,2].map(i=>{
-      const lit=base*(hemi[i]+[0.85,0.70,0.48][i]*ndotl);
-      return Math.min(255, Math.round(255*lit*(1+(tint[i]-1)*tint[3])));});
+    const rgb=OW>0
+      ? [0,1,2].map(i=>Math.round(255*OC[i]))
+      : [0,1,2].map(i=>{
+          const lit=base*(hemi[i]+[0.85,0.70,0.48][i]*ndotl);
+          return Math.min(255, Math.round(255*lit*(1+(tint[i]-1)*tint[3])));});
     const x0=Math.max(0,Math.floor(Math.min(A[0][0],A[1][0],A[2][0]))), x1=Math.min(W-1,Math.ceil(Math.max(A[0][0],A[1][0],A[2][0])));
     const y0=Math.max(0,Math.floor(Math.min(A[0][1],A[1][1],A[2][1]))), y1=Math.min(H-1,Math.ceil(Math.max(A[0][1],A[1][1],A[2][1])));
     const d=(A[1][0]-A[0][0])*(A[2][1]-A[0][1])-(A[2][0]-A[0][0])*(A[1][1]-A[0][1]); if(!d) continue;
+    if(OW>0 ? d<0 : d>0) continue;   // cullMode: модель — передние грани, обводка — задние
     for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){
       const qx=x+0.5,qy=y+0.5;
       const w0=((A[1][0]-qx)*(A[2][1]-qy)-(A[2][0]-qx)*(A[1][1]-qy))/d;
       const w1=((A[2][0]-qx)*(A[0][1]-qy)-(A[0][0]-qx)*(A[2][1]-qy))/d;
       const w2=1-w0-w1; if(w0<0||w1<0||w2<0) continue;
       const z=w0*A[0][2]+w1*A[1][2]+w2*A[2][2]; const o=y*W+x;
-      if(z<zb[o]){zb[o]=z; img[o*3]=rgb[0]; img[o*3+1]=rgb[1]; img[o*3+2]=rgb[2];}
+      if(z<zb[o]){ if(OW===0) zb[o]=z; img[o*3]=rgb[0]; img[o*3+1]=rgb[1]; img[o*3+2]=rgb[2];}
     }
   }
 }
@@ -98,8 +133,16 @@ const items=[
 // земля — большой тонкий диск из двух треугольников
 {
   const g={pos:new Float32Array([-1,0,-1, 1,0,-1, 1,0,1, -1,0,1]), nrm:new Float32Array([0,1,0, 0,1,0, 0,1,0, 0,1,0]), idx:new Uint16Array([0,1,2, 0,2,3])};
-  drawModel(g, modelMatrix(0,-0.01,0,0,60), [0.75,0.80,0.62,0.9]);
+  drawModel(g, modelMatrix(0,-0.01,0,0,60), [0.75,0.80,0.62,0.9], null);
 }
-for(const [f,x,y,z,yw,s,t] of items) drawModel(load(f), modelMatrix(x,y,z,yw,s), t);
+// Выделены замок и свой генерал — как если бы игрок ткнул в них.
+// Цвет и толщина те же, что в main.ts (OUTLINE_COLOR / OUTLINE_W_*).
+const MODE=process.env.MODE||"normal";
+const OUTLINE=[1.0,0.86,0.42,Number(process.env.OW||0.0048),0];
+const SELECTED=new Set([0,1]);
+const loaded=items.map(([f])=>load(f));
+items.forEach(([f,x,y,z,yw,s,t],i)=> drawModel(loaded[i], modelMatrix(x,y,z,yw,s), t, null));
+items.forEach(([f,x,y,z,yw,s,t],i)=>{ if(SELECTED.has(i))
+  drawModel(loaded[i], modelMatrix(x,y,z,yw,s), t, [OUTLINE[0],OUTLINE[1],OUTLINE[2],OUTLINE[3], s*0.35]); });
 await sharp(Buffer.from(img),{raw:{width:W,height:H,channels:3}}).png().toFile(process.argv[2]);
 console.log("сцена собрана:", process.argv[2]);

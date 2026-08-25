@@ -46,6 +46,11 @@ struct Light { vp: mat4x4f };
 // цвет вовсе; так и живут все статичные постройки).
 struct Inst { model: mat4x4f, tint: vec4f };
 @group(0) @binding(7) var<uniform> inst: Inst;
+// Параметры обводки выделенного объекта: rgb — цвет, a — толщина в долях
+// высоты экрана. ОБЩИЙ буфер, не per-instance: выделен всегда ровно один
+// объект, и обводка рисуется только ему — держать это поле в каждом инстансе
+// значило бы гасить его у всех остальных при каждой смене выбора.
+@group(0) @binding(8) var<uniform> outlineStyle: vec4f;
 
 struct VOut {
   @builtin(position) pos: vec4f,
@@ -66,6 +71,54 @@ fn vs(@location(0) pos: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2
   out.worldPos = world.xyz;
   out.lightClip = light.vp * world;
   return out;
+}
+
+// ---- обводка выделенного (вместо прежней пирамидки-метки над объектом).
+// Приём обычный для стратегий: та же модель рисуется ВТОРОЙ раз, раздутая
+// наружу по нормали и залитая сплошным цветом, и только задними гранями
+// (cullMode: "front" в пайплайне ниже) — передние отсекаются, поэтому сама
+// модель, нарисованная следом, ложится поверх, а по силуэту остаётся ровный
+// ободок.
+//
+// Раздуваем не в мировом пространстве, а в клип-пространстве: смещение на
+// clip.w даёт ОДИНАКОВУЮ толщину в пикселях независимо от расстояния до
+// камеры — иначе обводка у дальнего замка истончалась бы в ничто, а у
+// ближнего расплывалась в кляксу. Соотношение сторон достаём из самой VP
+// (persp кладёт в [0][0] величину t/aspect, а в [1][1] — t), иначе на широком
+// экране горизонтальная часть ободка выходила бы вдвое тоньше вертикальной.
+struct VOutline {
+  @builtin(position) pos: vec4f,
+  @location(0) worldPos: vec3f,
+};
+
+@vertex
+fn vsOutline(@location(0) pos: vec3f, @location(1) normal: vec3f) -> VOutline {
+  var out: VOutline;
+  let world = inst.model * vec4f(pos, 1.0);
+  let clip = vp * world;
+  let n = normalize((inst.model * vec4f(normal, 0.0)).xyz);
+  let clipN = vp * vec4f(n, 0.0);
+  let len = length(clipN.xy);
+  out.worldPos = world.xyz;
+  if (len < 1e-6) {
+    // Нормаль смотрит точно в камеру — сдвигать некуда, оставляем как есть.
+    out.pos = clip;
+    return out;
+  }
+  let dir = clipN.xy / len;
+  let aspect = vp[1][1] / max(1e-6, vp[0][0]);
+  let w = outlineStyle.a * clip.w;
+  out.pos = clip + vec4f(dir.x * w / aspect, dir.y * w, 0.0, 0.0);
+  return out;
+}
+
+@fragment
+fn fsOutline(in: VOutline) -> @location(0) vec4f {
+  // Тот же туман, что и у самой модели — иначе ободок дальнего объекта
+  // светился бы сквозь дымку ярче, чем сам объект.
+  let d = distance(in.worldPos, fog.eye.xyz);
+  let k = d * fog.color.w; let f = clamp(1.0 - exp(-k * k), 0.0, 1.0);
+  return vec4f(mix(outlineStyle.rgb, fog.color.rgb, f), 1.0);
 }
 
 fn shadowFactor(clip: vec4f) -> f32 {
@@ -197,8 +250,26 @@ export async function uploadGLB(device: GPUDevice, parsed: ParsedGLB): Promise<G
 
 export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat, shadow: ShadowResources) {
   const module = device.createShaderModule({ code: MODEL_SHADER });
+  // Раскладка привязок объявлена ЯВНО, а не через layout:"auto". Пайплайнов
+  // теперь два (сама модель и её обводка), а bind group у инстанса одна на
+  // оба — с "auto" каждый пайплайн завёл бы свою несовместимую раскладку, и
+  // группу пришлось бы создавать дважды на каждый объект.
+  const bindGroupLayout = device.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+      { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
+      { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+      { binding: 3, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+      { binding: 4, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+      { binding: 5, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "comparison" } },
+      { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth" } },
+      { binding: 7, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+      { binding: 8, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+    ],
+  });
+  const layout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
   const pipeline = device.createRenderPipeline({
-    layout: "auto",
+    layout,
     vertex: {
       module,
       entryPoint: "vs",
@@ -211,6 +282,35 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat,
     fragment: { module, entryPoint: "fs", targets: [{ format }] },
     primitive: { topology: "triangle-list", cullMode: "back" },
     depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "less" },
+  });
+  // Обводка: только ЗАДНИЕ грани (cullMode "front"), без записи глубины и —
+  // важное — рисуется ПОСЛЕ самой модели, а не до неё.
+  //
+  // Сначала было наоборот, и на первом же предпросмотре стало видно, чем это
+  // плохо: у объекта с решётчатыми деталями (частокол замка, посох в руке)
+  // раздутые задние грани одной детали оказываются ближе, чем передние грани
+  // соседней, и ободок проступал ПОВЕРХ крыш и лица — объект превращался в
+  // золотую сетку вместо контура. Порядок «модель, потом обводка» с обычным
+  // depthCompare "less" решает это сам: там, где модель уже записала свою
+  // глубину, задняя раздутая грань дальше и тест не проходит — внутрь
+  // силуэта ободок не лезет. Снаружи за ним только рельеф и небо, они
+  // дальше, поэтому по краю он рисуется как надо.
+  //
+  // UV обводке не нужны, поэтому вершинных буфера два, а не три (см.
+  // drawOutline ниже — он и ставит только два).
+  const outlinePipeline = device.createRenderPipeline({
+    layout,
+    vertex: {
+      module,
+      entryPoint: "vsOutline",
+      buffers: [
+        { arrayStride: 3 * 4, attributes: [{ shaderLocation: 0, offset: 0, format: "float32x3" }] },
+        { arrayStride: 3 * 4, attributes: [{ shaderLocation: 1, offset: 0, format: "float32x3" }] },
+      ],
+    },
+    fragment: { module, entryPoint: "fsOutline", targets: [{ format }] },
+    primitive: { topology: "triangle-list", cullMode: "front" },
+    depthStencil: { format: "depth24plus", depthWriteEnabled: false, depthCompare: "less" },
   });
   const sampler = device.createSampler({ magFilter: "linear", minFilter: "linear", mipmapFilter: "linear" });
   // Один общий буфер тумана на ВСЕ инстансы (не по одному на инстанс, как
@@ -230,6 +330,15 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat,
   // каждую видимую модель в draw() ниже.
   const vpBuf = device.createBuffer({ size: 16 * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   const fogScratch = new Float32Array(8);
+  // Цвет и толщина обводки — один общий буфер на кадр (см. outlineStyle в
+  // шейдере). Толщина в долях высоты экрана, не в мировых единицах.
+  const outlineBuf = device.createBuffer({ size: 4 * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const outlineScratch = new Float32Array(4);
+  function setOutlineStyle(color: [number, number, number], width: number) {
+    outlineScratch[0] = color[0]; outlineScratch[1] = color[1];
+    outlineScratch[2] = color[2]; outlineScratch[3] = width;
+    device.queue.writeBuffer(outlineBuf, 0, outlineScratch);
+  }
   function setVP(vp: Mat4) {
     device.queue.writeBuffer(vpBuf, 0, vp);
   }
@@ -244,7 +353,7 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat,
   function createInstance(model: GpuModel, modelMat: Mat4, tint?: Tint): ModelInstance {
     const modelBuf = device.createBuffer({ size: INST_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const bindGroup = device.createBindGroup({
-      layout: pipeline.getBindGroupLayout(0),
+      layout: bindGroupLayout,
       entries: [
         { binding: 0, resource: { buffer: vpBuf } },
         { binding: 1, resource: sampler },
@@ -254,6 +363,7 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat,
         { binding: 5, resource: shadow.shadowSampler },
         { binding: 6, resource: shadow.shadowView },
         { binding: 7, resource: { buffer: modelBuf } },
+        { binding: 8, resource: { buffer: outlineBuf } },
       ],
     });
     const instance: ModelInstance = { model, modelBuf, bindGroup, scratch: new Float32Array(INST_FLOATS) };
@@ -299,6 +409,18 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat,
   function beginModels(pass: GPURenderPassEncoder) {
     pass.setPipeline(pipeline);
   }
+  // Проход обводки — строго ПЕРЕД beginModels/draw в том же кадре: раздутая
+  // копия ложится под саму модель, а не поверх неё.
+  function beginOutlines(pass: GPURenderPassEncoder) {
+    pass.setPipeline(outlinePipeline);
+  }
+  function drawOutline(pass: GPURenderPassEncoder, instance: ModelInstance) {
+    pass.setBindGroup(0, instance.bindGroup);
+    pass.setVertexBuffer(0, instance.model.vao.posBuf);
+    pass.setVertexBuffer(1, instance.model.vao.nrmBuf);
+    pass.setIndexBuffer(instance.model.vao.idxBuf, instance.model.vao.indexFormat);
+    pass.drawIndexed(instance.model.vao.indexCount);
+  }
   function draw(pass: GPURenderPassEncoder, instance: ModelInstance) {
     pass.setBindGroup(0, instance.bindGroup);
     pass.setVertexBuffer(0, instance.model.vao.posBuf);
@@ -308,7 +430,8 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat,
     pass.drawIndexed(instance.model.vao.indexCount);
   }
 
-  return { createInstance, updateInstance, destroyInstance, beginModels, draw, setFog, setVP };
+  return { createInstance, updateInstance, destroyInstance, beginModels, draw,
+           beginOutlines, drawOutline, setOutlineStyle, setFog, setVP };
 }
 
 // Оттенок владельца: [r, g, b, сила]. Сила 0 — цвет модели не трогается

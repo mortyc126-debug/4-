@@ -1221,7 +1221,6 @@ async function main() {
   // напрямую через те же fovy/aspect, что и persp() в draw().
   let currentEye: Vec3 = [0, 0, 0];
   const selectedEl = document.getElementById("selected") as HTMLDivElement;
-  const HILITE_COLOR: [number, number, number] = [0.95, 0.78, 0.35];
   // Размер 3D-модели похода. Модели нормированы в рост 1.0 со ступнями в
   // y=0 (см. tools/decimate_glb.mjs), так что scale — это прямо высота в
   // мировых единицах. Для сравнения: замок при своём scale=10 выходит около
@@ -1243,7 +1242,18 @@ async function main() {
   // переменной, пересобираем и отдаём рендереру раз за кадр в draw(), а не
   // раздельными вызовами setMarkers из разных мест (переписывали бы друг
   // друга — сеттер заменяет весь список целиком, а не добавляет).
-  let highlightMarker: MarkerEntity | null = null;
+  // Выделение объекта — ОБВОДКА по силуэту, а не метка над головой. Автор:
+  // «не нужно метку как в Симсе, может свечение или что-то такое». Сама
+  // отрисовка — вторым проходом той же модели в modelRenderer.ts
+  // (beginOutlines/drawOutline), тут только цвет и дыхание толщины.
+  const OUTLINE_COLOR: [number, number, number] = [1.0, 0.86, 0.42];
+  // Толщина в долях высоты экрана. Дышит между двумя значениями — ровный
+  // контур на статичной картинке легко принять за деталь модели, живой
+  // читается как «выбрано» сразу.
+  // Значения выбраны по предпросмотру (tools/preview_march_scene.mjs): на
+  // 0.0062 частокол замка заплывал золотом целиком, на 0.0030…0.0048 контур
+  // читается и на фигуре похода, и на постройке.
+  const OUTLINE_W_MIN = 0.0030, OUTLINE_W_MAX = 0.0048, OUTLINE_PULSE_MS = 1500;
   // Перетаскивание похода пальцем (механика RoK — взял отряд и потащил в
   // нужное место, сколько угодно раз). dragMarchId — что тащим,
   // dragTargetMarker — метка под пальцем, она же предпросмотр новой цели;
@@ -1255,9 +1265,9 @@ async function main() {
   // Выбранный поход (id из W.marches, не bitECS eid — марши не заведены
   // как настоящие сущности, см. syncMarchModels ниже) — отдельное состояние
   // от selectedEid, оба взаимно исключают друг друга (тап по одному сбрасывает
-  // другое, см. controls.onTap). highlightMarker для похода пересчитывается
-  // каждый кадр в draw() (см. lastMarches ниже), а не один раз при тапе —
-  // поход движется, статичная подсветка тут же отстала бы от маркера.
+  // другое, см. controls.onTap). Обводка похода берётся из его же модельного
+  // инстанса каждый кадр (см. outlinedInstance ниже) — поход движется, и
+  // привязать подсветку один раз при тапе не вышло бы.
   let selectedMarchId: number | null = null;
   // Режим слежения камеры за походом — отдельно от selectedMarchId
   // (выбор/подсветка марша тапом): index.html зовёт startFollowMarch() по
@@ -1282,9 +1292,6 @@ async function main() {
     selectedMarchId = null;
     selectedEid = eid;
     const label = (nmOf.get(eid) ?? "?") + " · " + (lvOf.get(eid) ?? "?");
-    const wx = Position.x[eid], wz = Position.y[eid];
-    const wy = heightAt(wx, wz) * HMAX + (modelScaleOf.get(eid) ?? 5) * 0.9 + 2;
-    highlightMarker = { x: wx, y: wy, z: wz, color: HILITE_COLOR };
     (window as any).__markerActive = true;
     (window as any).__selectedLabel = label;
     selectedEl.textContent = label;
@@ -1292,7 +1299,6 @@ async function main() {
   }
   function clearSelection() {
     selectedEid = null;
-    highlightMarker = null;
     (window as any).__markerActive = false;
     (window as any).__selectedLabel = null;
     selectedEl.style.display = "none";
@@ -2250,21 +2256,9 @@ async function main() {
     // Раз за кадр, не по writeBuffer'у на каждую видимую модель — см.
     // комментарий у vpBuf/setVP в modelRenderer.ts.
     modelPipeline.setVP(vp);
-    // Выбранный поход движется — в отличие от showSelection() для
-    // статичных сущностей (город/лагерь/точка), тут нельзя один раз
-    // посчитать highlightMarker при тапе, он бы тут же отстал от
-    // маркера. Пересчитываем из lastMarches (уже обновлён вызовом
-    // refreshMarches() в начале кадра) каждый кадр.
-    if (selectedMarchId !== null) {
-      const sel = lastMarches.find((m) => m.id === selectedMarchId);
-      if (sel) {
-        highlightMarker = { x: sel.x, y: marchTopY(sel) + 1.2, z: sel.y, color: HILITE_COLOR };
-      } else {
-        selectedMarchId = null; // поход прибыл/был отозван — подсветке больше нечего показывать
-        highlightMarker = null;
-      }
-    }
-    if (highlightMarker) markers.push(highlightMarker);
+    // Выбранный поход мог прибыть/быть отозванным, пока панель открыта —
+    // тогда обводить больше нечего.
+    if (selectedMarchId !== null && !lastMarches.some((m) => m.id === selectedMarchId)) selectedMarchId = null;
     if (dragTargetMarker) markers.push(dragTargetMarker);
     renderer.setMarkers(markers);
     // Матрицы моделей походов — ПОСЛЕ setVP/setFog этого кадра и до
@@ -2279,6 +2273,16 @@ async function main() {
     const focalY = 0.5 * ch / Math.tan(CAM_FOVY / 2);
     let modelDrawCount = 0;
     const renderStart = DEBUG_STATUS ? performance.now() : 0;
+    // Что сейчас обводим (рисуется в самом конце прохода, см. ниже).
+    const outlined = selectedEid !== null
+      ? instances.get(selectedEid) ?? null
+      : selectedMarchId !== null
+        ? marchModels.get(selectedMarchId)?.inst ?? null
+        : null;
+    if (outlined) {
+      const pulse = 0.5 - 0.5 * Math.cos((tMs % OUTLINE_PULSE_MS) / OUTLINE_PULSE_MS * Math.PI * 2);
+      modelPipeline.setOutlineStyle(OUTLINE_COLOR, OUTLINE_W_MIN + (OUTLINE_W_MAX - OUTLINE_W_MIN) * pulse);
+    }
     renderer.frame({ r: FOG_COLOR[0], g: FOG_COLOR[1], b: FOG_COLOR[2], a: 1 }, (pass) => {
       // Пайплайн моделей — один раз на всю пачку, а не перед каждой моделью
       // (см. beginModels в modelRenderer.ts).
@@ -2294,6 +2298,15 @@ async function main() {
       // против сотен построек, ради которых isModelOnScreen и заводился.
       for (const mm of marchModels.values()) {
         if (mm.inst) { modelPipeline.draw(pass, mm.inst); modelDrawCount++; }
+      }
+      // Обводка — ПОСЛЕДНЕЙ, после всех моделей: тогда сам объект своей же
+      // глубиной не пускает ободок внутрь силуэта (см. outlinePipeline в
+      // modelRenderer.ts). Выделен всегда ровно один объект — либо сущность
+      // (замок/лагерь/точка), либо поход, — то есть это один лишний вызов
+      // отрисовки на кадр, а не проход по всей сцене.
+      if (outlined) {
+        modelPipeline.beginOutlines(pass);
+        modelPipeline.drawOutline(pass, outlined);
       }
     });
     (window as any).__modelDrawCount = modelDrawCount;
