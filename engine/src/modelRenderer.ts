@@ -38,7 +38,14 @@ struct Light { vp: mat4x4f };
 @group(0) @binding(4) var<uniform> light: Light;
 @group(0) @binding(5) var shadowSamp: sampler_comparison;
 @group(0) @binding(6) var shadowTex: texture_depth_2d;
-@group(0) @binding(7) var<uniform> model: mat4x4f;
+// Раньше тут лежала одна только модельная матрица. Теперь рядом с ней —
+// оттенок владельца (tint): походы рисуются НАСТОЯЩИМИ моделями (генерал/
+// армия/разведчик, см. models/marches/*), а не цветными пирамидками-метками,
+// и «свой/чужой» больше нечем показать — цвет метки исчез вместе с меткой.
+// tint.rgb — множитель поверх текстуры, tint.a — его сила (0 = не трогать
+// цвет вовсе; так и живут все статичные постройки).
+struct Inst { model: mat4x4f, tint: vec4f };
+@group(0) @binding(7) var<uniform> inst: Inst;
 
 struct VOut {
   @builtin(position) pos: vec4f,
@@ -51,11 +58,11 @@ struct VOut {
 @vertex
 fn vs(@location(0) pos: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> VOut {
   var out: VOut;
-  let world = model * vec4f(pos, 1.0);
+  let world = inst.model * vec4f(pos, 1.0);
   out.pos = vp * world;
   out.uv = uv;
   // модельная матрица тут без неравномерного масштаба — обычной 3x3 части достаточно для нормали
-  out.worldNormal = normalize((model * vec4f(normal, 0.0)).xyz);
+  out.worldNormal = normalize((inst.model * vec4f(normal, 0.0)).xyz);
   out.worldPos = world.xyz;
   out.lightClip = light.vp * world;
   return out;
@@ -94,7 +101,12 @@ fn fs(in: VOut) -> @location(0) vec4f {
   let hemi = mix(groundTint, skyTint, clamp(in.worldNormal.y * 0.5 + 0.5, 0.0, 1.0));
   let lighting = hemi + sunLightColor * ndotl * shadow;
   let base = textureSample(tex, samp, in.uv);
-  let lit = base.rgb * lighting;
+  // Оттенок владельца — множителем ПОВЕРХ текстуры, а не подменой цвета:
+  // модель остаётся собой (доспех, ткань, камень постамента читаются как
+  // задумано), просто уходит чуть в зелень у своих и чуть в красноту у
+  // чужих. tint.a=0 у построек — множитель ровно 1, ни одного отличия от
+  // прежнего кадра.
+  let lit = base.rgb * lighting * mix(vec3f(1.0), inst.tint.rgb, inst.tint.a);
   // Туман — тот же расчёт, что и у рельефа/маркеров (см. renderer.ts):
   // здания/лагеря вдали тоже должны таять в дымке, а не обрываться резким
   // контуром на фоне уже затуманенной земли под ними.
@@ -229,9 +241,8 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat,
   // Модельная матрица (позиция здания на карте) не меняется сама по себе
   // после создания — пишется тут ровно один раз и больше никогда не
   // трогается, draw() ниже вообще не делает writeBuffer.
-  function createInstance(model: GpuModel, modelMat: Mat4): ModelInstance {
-    const modelBuf = device.createBuffer({ size: 16 * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    device.queue.writeBuffer(modelBuf, 0, modelMat);
+  function createInstance(model: GpuModel, modelMat: Mat4, tint?: Tint): ModelInstance {
+    const modelBuf = device.createBuffer({ size: INST_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const bindGroup = device.createBindGroup({
       layout: pipeline.getBindGroupLayout(0),
       entries: [
@@ -245,7 +256,22 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat,
         { binding: 7, resource: { buffer: modelBuf } },
       ],
     });
-    return { model, modelBuf, bindGroup };
+    const instance: ModelInstance = { model, modelBuf, bindGroup, scratch: new Float32Array(INST_FLOATS) };
+    updateInstance(instance, modelMat, tint);
+    return instance;
+  }
+
+  // Перезапись матрицы (и оттенка) уже созданного инстанса. Постройкам не
+  // нужна — они не двигаются, потому и комментарий выше про «пишется один
+  // раз». А вот поход ДВИЖЕТСЯ: его матрица пересчитывается каждый кадр, и
+  // пересоздавать ради этого буфер с bind group было бы расточительством на
+  // ровном месте — переписываем те же 80 байт.
+  function updateInstance(instance: ModelInstance, modelMat: Mat4, tint?: Tint) {
+    const d = instance.scratch;
+    d.set(modelMat, 0);
+    d[16] = tint ? tint[0] : 1; d[17] = tint ? tint[1] : 1;
+    d[18] = tint ? tint[2] : 1; d[19] = tint ? tint[3] : 0;
+    device.queue.writeBuffer(instance.modelBuf, 0, d);
   }
 
   // Освобождает GPU-буфер инстанса. Обязательно звать, когда сущность
@@ -282,11 +308,23 @@ export function createModelPipeline(device: GPUDevice, format: GPUTextureFormat,
     pass.drawIndexed(instance.model.vao.indexCount);
   }
 
-  return { createInstance, destroyInstance, beginModels, draw, setFog, setVP };
+  return { createInstance, updateInstance, destroyInstance, beginModels, draw, setFog, setVP };
 }
+
+// Оттенок владельца: [r, g, b, сила]. Сила 0 — цвет модели не трогается
+// вовсе (так рисуются все статичные постройки).
+export type Tint = [number, number, number, number];
+
+// mat4x4f (16) + vec4f tint (4) = 20 float на инстанс.
+const INST_FLOATS = 20;
 
 export interface ModelInstance {
   model: GpuModel;
   modelBuf: GPUBuffer;
   bindGroup: GPUBindGroup;
+  // Переиспользуемый буфер под запись в GPU: у походов updateInstance()
+  // зовётся каждый кадр на каждый отряд — своя Float32Array на вызов дала бы
+  // ровно ту мелкую работу сборщику мусора, от которой в этом движке уже
+  // избавлялись (см. makeClipPoint/transformPointInto в mat4.ts).
+  scratch: Float32Array;
 }

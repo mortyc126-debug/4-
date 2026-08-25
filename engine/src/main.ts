@@ -15,7 +15,7 @@ import { PINE, LEAF, GRASS_TONES, BUSH_TONES, ROCK_TONES } from "./decorMesh";
 import { mul, persp, look, modelMatrix, transformPoint, transformPointInto, makeClipPoint, sub, cross, norm, type Vec3, type Mat4 } from "./mat4";
 import { attachOrbitControls, type OrbitCamera, MAX_DIST } from "./camera";
 import { loadGLB } from "./glb";
-import { uploadGLB, createModelPipeline, type GpuModel, type ModelInstance } from "./modelRenderer";
+import { uploadGLB, createModelPipeline, type GpuModel, type ModelInstance, type Tint } from "./modelRenderer";
 import { loadRealEntities, getOwnCityPos, type RealEntity } from "./realData";
 import { loadLiveMarches, type LiveMarchPos } from "./marchData";
 
@@ -1222,10 +1222,22 @@ async function main() {
   let currentEye: Vec3 = [0, 0, 0];
   const selectedEl = document.getElementById("selected") as HTMLDivElement;
   const HILITE_COLOR: [number, number, number] = [0.95, 0.78, 0.35];
-  // Свой/чужой поход — тот же смысл, что и TINCT-золото/гранат в 2D-карте
-  // index.html: не спутать наступающих с обороняющимися с одного взгляда.
-  const OWN_MARCH_COLOR: [number, number, number] = [0.42, 0.78, 0.46];
-  const ENEMY_MARCH_COLOR: [number, number, number] = [0.82, 0.24, 0.26];
+  // Размер 3D-модели похода. Модели нормированы в рост 1.0 со ступнями в
+  // y=0 (см. tools/decimate_glb.mjs), так что scale — это прямо высота в
+  // мировых единицах. Для сравнения: замок при своём scale=10 выходит около
+  // 2.1 в высоту, лагерь/точка — около 1.6. Отряд чуть выше застройки —
+  // так его видно, ради этого он на карте и есть.
+  // Объявлены ЗДЕСЬ, а не рядом с syncMarchModels ниже, потому что от них
+  // считаются и высота подписи боя, и попадание тапа, и подсветка выбора —
+  // всё это выше по файлу.
+  const MARCH_MODEL_SCALE = 3.2;
+  const MARCH_SCOUT_SCALE = 2.6;      // разведчик — один всадник, а не отряд: помельче
+  // Высота «макушки» модели похода и её видимого центра — общая точка
+  // отсчёта для подписи боя, подсветки выбора и попадания тапа, чтобы все
+  // трое не разъезжались при правке масштаба.
+  const marchScaleOf = (m: LiveMarchPos) => (m.scout ? MARCH_SCOUT_SCALE : MARCH_MODEL_SCALE);
+  const marchTopY = (m: LiveMarchPos) => heightAt(m.x, m.y) * HMAX + marchScaleOf(m);
+  const marchMidY = (m: LiveMarchPos) => heightAt(m.x, m.y) * HMAX + marchScaleOf(m) * 0.5;
   // Маркер подсветки выбора и маркеры походов (ниже) рисуются одним общим
   // instanced-вызовом renderer.setMarkers — держим его состав в одной
   // переменной, пересобираем и отдаём рендереру раз за кадр в draw(), а не
@@ -1241,7 +1253,7 @@ async function main() {
   const DRAG_MARKER_COLOR: [number, number, number] = [0.35, 0.85, 0.45];
   let selectedEid: number | null = null;
   // Выбранный поход (id из W.marches, не bitECS eid — марши не заведены
-  // как настоящие сущности, см. marchMarkers ниже) — отдельное состояние
+  // как настоящие сущности, см. syncMarchModels ниже) — отдельное состояние
   // от selectedEid, оба взаимно исключают друг друга (тап по одному сбрасывает
   // другое, см. controls.onTap). highlightMarker для похода пересчитывается
   // каждый кадр в draw() (см. lastMarches ниже), а не один раз при тапе —
@@ -1465,10 +1477,15 @@ async function main() {
       best = { kind: "entity", eid, distToCam };
     }
     for (const m of lastMarches) {
-      const world: Vec3 = [m.x, heightAt(m.x, m.y) * HMAX + 2.2, m.y];
+      // Целимся в видимый центр МОДЕЛИ (раньше — в висевшую над походом
+      // метку-пирамидку на фиксированной высоте 2.2, её больше нет).
+      const world: Vec3 = [m.x, marchMidY(m), m.y];
       const proj = projectToScreen(world);
       if (!proj) continue;
-      const radiusPx = Math.max(TAP_MIN_RADIUS_PX, (focalY * MARCH_HIT_WORLD_RADIUS) / proj.w);
+      // Радиус попадания — не меньше половины высоты самой модели: по
+      // фигуре в полный рост целятся как по фигуре, а не как по точке.
+      const hitR = Math.max(MARCH_HIT_WORLD_RADIUS, marchScaleOf(m) * 0.5);
+      const radiusPx = Math.max(TAP_MIN_RADIUS_PX, (focalY * hitR) / proj.w);
       const dx = px - proj.sx, dy = py - proj.sy;
       const dist2 = dx * dx + dy * dy;
       if (dist2 > radiusPx * radiusPx || dist2 >= bestDist2) continue;
@@ -1733,23 +1750,109 @@ async function main() {
   // Своей .glb-модели у похода нет — тот же пин-маркер-пирамидка, что и у
   // подсветки выбора, просто сразу несколько штук за раз в одном
   // instanced-вызове.
-  // lastMarches — тот же список, что и последний возврат marchMarkers(),
-  // но НЕ сведённый до голых MarkerEntity: findMarchAtScreen (тап) и
-  // draw() (подсветка выбранного похода, см. selectedMarchId) нужны id/
-  // владелец/состояние, которых у MarkerEntity нет.
+  // lastMarches — позиции всех живых походов на текущий кадр. Нужны сразу
+  // троим: syncMarchModels (модели), тапу по походу и draw() (подсветка
+  // выбранного, слежение камеры) — считаем один раз за кадр.
   let lastMarches: LiveMarchPos[] = [];
-  function marchMarkers(): MarkerEntity[] {
-    if (!usingReal) { lastMarches = []; return []; }
+  function refreshMarches(): void {
+    if (!usingReal) { lastMarches = []; return; }
     const marches = loadLiveMarches();
-    if (!marches) { lastMarches = []; return []; }
-    lastMarches = marches;
-    (window as any).__marchPositions = marches;
-    return marches.map((m) => ({
-      x: m.x,
-      y: heightAt(m.x, m.y) * HMAX + 2.2,
-      z: m.y,
-      color: m.own ? OWN_MARCH_COLOR : ENEMY_MARCH_COLOR,
-    }));
+    lastMarches = marches || [];
+    (window as any).__marchPositions = lastMarches;
+  }
+
+  // ---- 3D-модели походов (models/marches/*.glb) вместо прежней цветной
+  // пирамидки-метки. Правило — как в Total War и как просил автор: идёт с
+  // полководцем — на карте модель ЭТОГО полководца (у каждой расы их двое,
+  // выбор игрока — gen.id, см. GENERALS в index.html); идёт без него —
+  // «армия без генерала» своей расы (это знамя на постаменте); разведка —
+  // своя модель разведчика на расу.
+  //
+  // Исходники автора весили по 17 МБ каждый (полмиллиона треугольников,
+  // три 2K-текстуры, из которых движок читает только базовую) — 269 МБ на
+  // шестнадцать моделей, столько в мир не отдашь. Прогнаны через
+  // tools/decimate_glb.mjs (упрощение сетки meshoptimizer + выброс
+  // неиспользуемых карт + базовая до 1024) — 16 МБ на все, по ~20 тыс.
+  // треугольников на модель, ровно тот же порядок, что и у моделей замков,
+  // которые тут уже живут.
+  const MARCH_RACES = new Set(["human", "dwarf", "elf", "undead"]);
+  // Оттенок владельца вместо потерянного цвета метки — см. Inst.tint в
+  // modelRenderer.ts. Множитель мягкий: модель должна остаться собой.
+  // Сила подобрана по предпросмотру сцены (tools/preview_march_scene.mjs,
+  // тот же modelMatrix/persp/look, что и у движка): на 0.45 фигуры уходили
+  // в пластмассовых солдатиков, на 0.22 своих было не отличить от чужих.
+  const OWN_MARCH_TINT: Tint = [0.62, 1.14, 0.72, 0.32];
+  const ENEMY_MARCH_TINT: Tint = [1.22, 0.55, 0.50, 0.32];
+  function marchModelPath(m: LiveMarchPos): string {
+    const race = MARCH_RACES.has(m.race) ? m.race : "human";
+    if (m.scout) return `/models/marches/scout-${race}.glb`;
+    // hasGen — взят ли полководец В ЭТОТ поход, genId — которого из двух
+    // выбрал игрок. Полководец в походе есть, а КАКОГО именно не знаем
+    // (чужой игрок, чей выбор нам не отдан) — честнее показать первого
+    // полководца расы, чем безликое знамя: с генералом отряд идёт сильнее,
+    // и путать это с обычным нельзя.
+    if (m.hasGen) return `/models/marches/gen-${race}-${m.genId === 1 ? 1 : 0}.glb`;
+    return `/models/marches/army-${race}.glb`;
+  }
+  // Инстанс на поход: своя матрица (поход движется — переписывается каждый
+  // кадр через updateInstance) и своя модель. Путь модели запоминаем рядом —
+  // он может смениться на лету (полководец вернулся домой другим походом,
+  // отряд сменил задачу), тогда инстанс пересоздаётся под новую модель.
+  interface MarchModel { path: string; inst: ModelInstance | null; yaw: number; }
+  const marchModels = new Map<number, MarchModel>();
+  function syncMarchModels(): void {
+    for (const m of lastMarches) {
+      const path = marchModelPath(m);
+      let mm = marchModels.get(m.id);
+      if (mm && mm.path !== path) {
+        modelPipeline.destroyInstance(mm.inst ?? undefined);
+        marchModels.delete(m.id);
+        mm = undefined;
+      }
+      if (!mm) {
+        mm = { path, inst: null, yaw: Number.isFinite(m.yaw) ? m.yaw : 0 };
+        marchModels.set(m.id, mm);
+        // Асинхронно: модель качается и заливается в GPU не мгновенно. Пока
+        // не готова — поход просто не нарисован (доли секунды на самый
+        // первый поход этой модели, дальше getModel отдаёт из кэша сразу).
+        // Проверка marchModels.get(m.id) === mm нужна: пока грузили, поход
+        // мог прибыть и исчезнуть, а то и смениться моделью — вешать инстанс
+        // на выброшенную запись значило бы потерять его буфер навсегда.
+        const claimed = mm;
+        const mid = m.id;
+        getModel(path).then(
+          (gm) => {
+            if (marchModels.get(mid) !== claimed) return;
+            claimed.inst = modelPipeline.createInstance(gm, modelMatrix(0, -1e6, 0, 0, 1), OWN_MARCH_TINT);
+          },
+          () => { /* модели нет/битая — поход останется без 3D-модели, не роняем кадр */ },
+        );
+      }
+      // Курс: стоящий отряд (сбор/осада/"на позиции") своего курса не даёт —
+      // сохраняем тот, с которым он пришёл, иначе на месте прибытия модель
+      // рывком развернулась бы на север.
+      if (Number.isFinite(m.yaw)) mm.yaw = m.yaw;
+      if (mm.inst) {
+        const scale = m.scout ? MARCH_SCOUT_SCALE : MARCH_MODEL_SCALE;
+        modelPipeline.updateInstance(
+          mm.inst,
+          modelMatrix(m.x, heightAt(m.x, m.y) * HMAX, m.y, mm.yaw, scale),
+          m.own ? OWN_MARCH_TINT : ENEMY_MARCH_TINT,
+        );
+      }
+    }
+    // Прибывшие/отозванные походы — освобождаем их GPU-буферы. Тот же
+    // разговор, что и у destroyInstance в modelRenderer.ts: в живом мире
+    // походы приходят и уходят постоянно, полагаться на сборщик мусора для
+    // видеопамяти нельзя.
+    if (marchModels.size > lastMarches.length) {
+      const alive = new Set(lastMarches.map((m) => m.id));
+      for (const [id, mm] of marchModels) {
+        if (alive.has(id)) continue;
+        modelPipeline.destroyInstance(mm.inst ?? undefined);
+        marchModels.delete(id);
+      }
+    }
   }
 
   // ---- ambient-подписи над замками/лагерями/точками (RoK-стиль) — тот же
@@ -1863,10 +1966,9 @@ async function main() {
       if (!b) continue;
       const dx = m.x - cam.target[0], dz = m.y - cam.target[2];
       if (dx * dx + dz * dz > LABEL_MAX_DIST2) continue;
-      // +2.2 — та же высота маркера похода, что и в marchMarkers() выше;
-      // +1.6 сверху — чтобы подпись плавала НАД самим маркером-точкой, не
-      // перекрывая его.
-      const topY = heightAt(m.x, m.y) * HMAX + 2.2 + 1.6;
+      // Над макушкой модели похода (marchTopY), с запасом — чтобы подпись
+      // плавала НАД фигурой, а не перекрывала её.
+      const topY = marchTopY(m) + 1.6;
       const clip = transformPoint(currentVP, [m.x, topY, m.y]);
       if (clip.w <= 0.001) continue;
       const sx = (clip.x / clip.w * 0.5 + 0.5) * cw;
@@ -2077,12 +2179,15 @@ async function main() {
     if (isHidden()) return;   // следующий кадр планирует обёртка draw() выше
     if (controls.isAutoOrbiting()) cam.yaw = tMs * 0.00015;
     controls.update(tMs); // WASD/стрелки — панорама, зажатая клавиша даёт непрерывный сдвиг между кадрами
-    // marchMarkers() тут же (не ниже, как раньше) — followMarchId должен
+    // refreshMarches() тут же (не ниже, как раньше) — followMarchId должен
     // подтянуть cam.target к СВЕЖЕЙ позиции похода ДО того, как из
     // cam.target посчитается eye/vp этого же кадра, иначе слежение
-    // отставало бы на кадр. lastMarches, который marchMarkers() заполняет
-    // попутно, переиспользуется ниже вместо второго вызова.
-    const markers = marchMarkers();
+    // отставало бы на кадр.
+    refreshMarches();
+    // Метки походов теперь пустые: сами походы рисуются моделями (см.
+    // syncMarchModels ниже и marchModelPath выше), а в этот массив попадают
+    // только подсветка выбранного отряда и точка перетаскивания.
+    const markers: MarkerEntity[] = [];
     if (followMarchId !== null) {
       const followed = lastMarches.find((m) => m.id === followMarchId);
       if (followed) {
@@ -2149,11 +2254,11 @@ async function main() {
     // статичных сущностей (город/лагерь/точка), тут нельзя один раз
     // посчитать highlightMarker при тапе, он бы тут же отстал от
     // маркера. Пересчитываем из lastMarches (уже обновлён вызовом
-    // marchMarkers() строкой выше) каждый кадр.
+    // refreshMarches() в начале кадра) каждый кадр.
     if (selectedMarchId !== null) {
       const sel = lastMarches.find((m) => m.id === selectedMarchId);
       if (sel) {
-        highlightMarker = { x: sel.x, y: heightAt(sel.x, sel.y) * HMAX + 3.2, z: sel.y, color: HILITE_COLOR };
+        highlightMarker = { x: sel.x, y: marchTopY(sel) + 1.2, z: sel.y, color: HILITE_COLOR };
       } else {
         selectedMarchId = null; // поход прибыл/был отозван — подсветке больше нечего показывать
         highlightMarker = null;
@@ -2162,7 +2267,12 @@ async function main() {
     if (highlightMarker) markers.push(highlightMarker);
     if (dragTargetMarker) markers.push(dragTargetMarker);
     renderer.setMarkers(markers);
-    (window as any).__marchCount = markers.length - (highlightMarker ? 1 : 0);
+    // Матрицы моделей походов — ПОСЛЕ setVP/setFog этого кадра и до
+    // renderer.frame() ниже: позиция похода уже посчитана refreshMarches()
+    // в начале кадра, а рисовать по ней нужно в этом же кадре, не в
+    // следующем.
+    syncMarchModels();
+    (window as any).__marchCount = lastMarches.length;
     // cw/ch/focalY — см. isModelOnScreen выше (frustum cull моделей),
     // считаются раз на кадр, не на каждую сущность.
     const cw = canvas.clientWidth, ch = canvas.clientHeight;
@@ -2177,6 +2287,13 @@ async function main() {
         if (!isModelOnScreen(eid, vp, cw, ch, focalY)) continue;
         const inst = instances.get(eid);
         if (inst) { modelPipeline.draw(pass, inst); modelDrawCount++; }
+      }
+      // Походы — тем же пайплайном, отдельным списком: они не заведены как
+      // сущности bitECS (см. комментарий у lastMarches выше), и отсечения по
+      // экрану им не делаем — одновременно живых походов единицы-десятки,
+      // против сотен построек, ради которых isModelOnScreen и заводился.
+      for (const mm of marchModels.values()) {
+        if (mm.inst) { modelPipeline.draw(pass, mm.inst); modelDrawCount++; }
       }
     });
     (window as any).__modelDrawCount = modelDrawCount;
