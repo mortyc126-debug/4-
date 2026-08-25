@@ -218,6 +218,59 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    длине результата, а не только сокращаем разряды. */
 .profile-power-chip{position:absolute;top:37%;left:50%;transform:translate(-50%,-50%);
   font-family:var(--data);color:var(--gilt-hi);font-weight:bold;white-space:nowrap}
+/* Значок-иллюстрация в строке-заглушке (Альянс/Магазин) — крупнее обычной
+   иконки строки, но не во всю ширину: строка остаётся строкой. */
+.stub-ico{width:64px;height:64px;object-fit:contain;flex:0 0 auto;
+  filter:drop-shadow(0 2px 5px rgba(0,0,0,.5))}
+
+/* Фаза 34 — разделы профиля. Ряд из четырёх значков автора под гербом мощи:
+   Настройки / Рейтинг / Хроники / Звания. Сетка в две колонки, а не флекс в
+   строку: подписи разной длины ("Настройки" против "Звания") во флексе
+   разъезжались бы по ширине, а тут все четыре плитки одинаковы. */
+.profile-rank{margin-top:6px;font-variant:small-caps;letter-spacing:.08em;
+  color:var(--gilt);font-size:14px}
+.profile-sections{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px;width:100%}
+.psec{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 6px;
+  background:rgba(0,0,0,.18);border:1px solid var(--rule);border-radius:10px;
+  color:var(--vellum);font-size:13px;font-variant:small-caps;letter-spacing:.05em}
+.psec:hover{border-color:var(--gilt-dim);color:var(--gilt-hi);background:rgba(0,0,0,.3)}
+.psec img{width:52px;height:52px;object-fit:contain;
+  filter:drop-shadow(0 2px 4px rgba(0,0,0,.55))}
+.psec:active{transform:scale(.96)}
+
+/* Рейтинг и лестница званий — один и тот же список строк: место, герб, имя,
+   число справа. Табличные цифры, чтобы столбец мощи не плясал. */
+.rank-list{display:flex;flex-direction:column;gap:1px;margin:6px 0 12px}
+.rank-row{display:grid;grid-template-columns:32px auto 1fr auto auto;gap:0 9px;align-items:center;
+  padding:7px 10px;background:rgba(0,0,0,.14);border-bottom:1px solid var(--rule-soft);
+  font-size:13px;color:var(--vellum-dim)}
+.rank-row:last-child{border-bottom:none}
+/* В лестнице званий герба и ратуши нет — там колонок меньше, поэтому имя
+   тянется само, а не упирается в пустые ячейки. */
+.rank-row > .rk-nick{color:var(--vellum);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rk-place{font-family:var(--data);font-size:12px;color:var(--vellum-faint);text-align:right}
+.rk-place.top{color:var(--gilt-hi)}
+.rk-crest{line-height:0}
+.rk-hall{font-size:11.5px;color:var(--vellum-faint);white-space:nowrap}
+.rk-pw{font-family:var(--data);font-size:12.5px;font-weight:normal;color:var(--gilt);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.rank-row.me{background:rgba(194,153,60,.14);border-color:var(--gilt-dim)}
+.rank-row.me .rk-nick{color:var(--gilt-hi)}
+.rank-row.far{opacity:.5}
+
+/* Летопись — строка события: значок слева, текст и подписи справа. */
+.chron-list{display:flex;flex-direction:column;gap:1px;margin:6px 0 12px}
+.chron-row{display:grid;grid-template-columns:44px 1fr;gap:0 10px;align-items:start;
+  padding:9px 10px;background:rgba(0,0,0,.14);border-bottom:1px solid var(--rule-soft)}
+.chron-row:last-child{border-bottom:none}
+.ch-ico{line-height:0}
+.ch-ico img{width:44px;height:44px;object-fit:contain}
+.ch-txt{color:var(--vellum);font-size:13px;line-height:1.45}
+.ch-txt b{color:var(--gilt-hi);font-weight:normal}
+.ch-sub{color:var(--vellum-dim);font-size:12px;margin-top:3px}
+.ch-when{color:var(--vellum-faint);font-size:11.5px;margin-top:3px;font-family:var(--data)}
+.chron-row.fall .ch-ico img{filter:drop-shadow(0 0 4px rgba(150,50,59,.45))}
+
 .gen-portrait-wrap{position:relative}
 .gen-portrait{width:44px;height:44px;object-fit:contain;display:block}
 
@@ -546,6 +599,32 @@ body.mp-gated #app.view-city ~ #mp-build-fab{display:block}
 #mp-rsch-fab img{width:100%;height:100%;object-fit:cover;pointer-events:none}
 #mp-rsch-fab span{display:none}
 #mp-rsch-fab:active{transform:scale(.9)}
+/* Фаза 34 — переход по координатам. Значок живёт в виде "Мир" (в городе
+   координатам делать нечего) и стоит на том же левом столбце, что значки
+   строительства/исследования в городе, — на месте, где в городе стоит
+   строительство: два вида, один столбец, значки не спорят. */
+#mp-locate-fab{display:none;position:fixed;left:21px;bottom:98px;z-index:20;
+  width:56px;height:56px;padding:0;border-radius:50%;border:none;overflow:hidden;
+  background:transparent;color:var(--gilt-hi)}
+#mp-locate-fab img{width:100%;height:100%;object-fit:cover;pointer-events:none}
+#mp-locate-fab span{display:none}
+#mp-locate-fab:active{transform:scale(.9)}
+body.mp-gated #app.view-world ~ #mp-locate-fab{display:block}
+/* Само окошко ввода — маленькая плашка по центру, а не полноэкранная
+   модалка: спросить нужно два числа. */
+#locate-box{display:none;position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
+  z-index:34;width:min(300px,86vw);padding:16px 18px 14px;border-radius:12px;
+  background:rgba(18,13,6,.97);border:1px solid var(--gilt-dim);
+  box-shadow:0 14px 40px rgba(0,0,0,.7)}
+#locate-box.open{display:block}
+#locate-box .title{color:var(--gilt-hi);font-variant:small-caps;letter-spacing:.06em;
+  font-size:16px;margin-bottom:4px}
+#locate-box .note{color:var(--vellum-dim);font-size:12px;margin-bottom:10px}
+#locate-box .row{display:flex;gap:10px;margin-bottom:12px}
+#locate-box label{flex:1;display:flex;align-items:center;gap:6px;color:var(--vellum-dim);font-size:13px}
+#locate-box input{width:100%;min-width:0}
+#locate-box .chips{display:flex;gap:10px;margin:0}
+#locate-err{color:#e08;font-size:12px;margin-bottom:8px;min-height:0}
 /* Тонкое кольцо прогресса вокруг значка — сколько исследованию осталось.
    conic-gradient по --f (0..1), ставится из JS тем же тиком, что и показ.
    Своя обёртка не нужна: псевдоэлемент поверх картинки, не перехватывает
@@ -1422,6 +1501,14 @@ body.mp-placing #place-toolbar{display:flex}
 .bm-hp.warn .hpbar i{background:var(--gilt-dim)}
 .bm-hp.crit .hpbar i{background:var(--garnet)}
 .bm-hp .note{color:#7a6448}
+/* Помощь альянса в карточке здания — та же пергаментная гамма, что у строки
+   прочности рядом: обычная тёмная .seal на светлой карточке выглядела бы
+   заплаткой из другого экрана. */
+.bm-help{margin-top:10px;background:rgba(90,69,48,.12);border:1px solid rgba(90,69,48,.35);
+  color:#5a4530}
+.bm-help:disabled{opacity:.65}
+.bm-help img{width:26px;height:26px}
+.bm-help-note{color:#7a6448;font-size:12px;margin-top:5px;text-align:center}
 
 /* Фаза 34 — кнопки действий со значком. Автор прислал набор иконок и
    расписал, какая куда: разведка, сбор, лагерь, отзыв, осада, разрушение.
@@ -1810,6 +1897,21 @@ body.mp-placing #place-toolbar{display:flex}
      icon-build.png — тот отдельный, занятого слота бригады. -->
 <button id="mp-build-fab" aria-label="Строительство"><img src="images/ui/icon-build-fab.png" alt=""><span>Строить</span></button>
 <button id="mp-rsch-fab" aria-label="Исследование"><img src="images/ui/icon-research.png" alt=""><span>Исследование</span></button>
+<button id="mp-locate-fab" aria-label="Перейти по координатам"><img src="images/ui/icon-locate.png" alt=""><span>Координаты</span></button>
+<div id="locate-box">
+  <div class="title">Перейти по координатам</div>
+  <div class="note">Камера перенесётся в указанную клетку мира.</div>
+  <div id="locate-err"></div>
+  <div class="row">
+    <label>X <input id="locate-x" type="number" step="1" inputmode="numeric"></label>
+    <label>Y <input id="locate-y" type="number" step="1" inputmode="numeric"></label>
+  </div>
+  <div class="chips">
+    <button class="seal" data-act="locatego">Перейти</button>
+    <button class="seal" data-act="locatehome">К своему замку</button>
+    <button class="seal" data-act="locateclose">Отмена</button>
+  </div>
+</div>
 <!-- Призрак здания "в руках" подтверждается/отменяется тут — статичные
      кнопки в шаблоне, а не часть mpRenderFreeformCity(): position:fixed
      внутри динамически пересобираемого #folio рисковал бы поехать, если у
@@ -1825,6 +1927,8 @@ body.mp-placing #place-toolbar{display:flex}
   <button data-menu="army" aria-label="Войско"><img src="images/ui/icon-army.png" alt=""><span>Войско</span><i class="nbadge" id="nb-army"></i></button>
   <button data-menu="gen" aria-label="Генерал"><img src="images/ui/icon-gen.png" alt=""><span>Генерал</span><i class="nbadge" id="nb-gen"></i></button>
   <button data-menu="inv" aria-label="Инвентарь"><img src="images/ui/icon-inv.png" alt=""><span>Инвентарь</span><i class="nbadge" id="nb-inv"></i></button>
+  <button data-menu="alliance" aria-label="Альянс"><img src="images/ui/icon-alliance.png" alt=""><span>Альянс</span><i class="nbadge" id="nb-alliance"></i></button>
+  <button data-menu="shop" aria-label="Магазин"><img src="images/ui/icon-shop.png" alt=""><span>Магазин</span><i class="nbadge" id="nb-shop"></i></button>
 </nav>
 <div id="menu-modal">
   <img class="menu-corner tl" src="images/ui/mail-corner.png" alt="">
@@ -10266,6 +10370,13 @@ function mpBuildingModalHtmlFor(bld,plot){
   } else if(queued){
     const left=Math.max(0,queued.t1-Date.now()/1000);
     h+="<div id='bm-time'>Уже строится — готово через "+fmtDur(left)+"</div>";
+    // Помощь альянса (Фаза 34) — пока заглушка, прямая оговорка автора.
+    // Кнопка стоит ровно там, где она в итоге и будет жить: у идущей
+    // стройки, как в RoK. Отключена и подписана честно — молча ничего не
+    // делающая кнопка была бы хуже, чем её отсутствие.
+    h+="<button class='seal wide ico bm-help' disabled title='Появится вместе с альянсами'>"+
+       "<img src='images/ui/icon-help.png' alt=''>Попросить помощи союза</button>"+
+       "<div class='note bm-help-note'>Соратники смогут подгонять стройку. Союзов в игре пока нет.</div>";
   } else if(gated){
     h+="<div id='bm-time'>"+gateTxt+"</div>";
   }
@@ -11360,8 +11471,240 @@ function profilePowerFontSize(str){
 // его мощи. Сама функция только ПОКАЗЫВАЕТ (правило файла про неприкосновенные
 // интерактивные функции одиночки не нарушено), поэтому хватило параметра
 // вместо отдельной копии.
+/* =========================================================================
+   ФАЗА 34 — разделы профиля: Настройки, Рейтинг, Хроники, Звания.
+   =========================================================================
+   Автор прислал набор значков и расписал, что четыре из них живут в профиле.
+   Каждый — не отдельная вкладка меню, а под-экран ВНУТРИ профиля: профиль и
+   так открывается тапом по гербу в шапке, плодить ради этого четыре пункта
+   в гамбургере незачем (там своё назначение — Почта/Войско/Генерал/
+   Инвентарь/Альянс/Магазин).
+   Открытый раздел помнится в profileScreen; null — сама карточка правителя.
+   Данные разделов (рейтинг, летопись) тянутся с сервера ОДИН раз при входе
+   в раздел, а не на каждый опрос: это не боевые числа, секунда свежести
+   тут ничего не решает, а лишний запрос раз в 5 секунд — решает. */
+let profileScreen=null;                 // null | 'settings' | 'rating' | 'chronicles' | 'ranks'
+let profileRating=null, profileRatingErr=null, profileRatingAt=0;
+let profileChron=null,  profileChronErr=null,  profileChronAt=0;
+const PROFILE_SECTION_TTL=30000;        // мс: повторный вход в раздел за это время не дёргает сервер
+
+const PROFILE_SECTIONS=[
+  {id:"settings",  ico:"icon-settings.png", name:"Настройки", note:"Как игра себя ведёт"},
+  {id:"rating",    ico:"icon-rating.png",   name:"Рейтинг",   note:"Правители мира по мощи"},
+  {id:"chronicles",ico:"icon-reign.png",    name:"Хроники",   note:"Летопись мира"},
+  {id:"ranks",     ico:"icon-rank.png",     name:"Звания",    note:"Ступени по мощи державы"},
+];
+
+/* ---- Звания -------------------------------------------------------------
+   Лестница титулов по мощи державы. Автор просил значок "Звания", но чем
+   именно они меряются, не сказал; очки убийств, на которых их можно было бы
+   строить, он этой же задачей велел убрать целиком — остаётся мощь, и она же
+   названа основой будущих рейтингов ("будут рейтинги в том числе и по мощи").
+   Пороги подобраны по шагу развития (примерно втрое на ступень) и явно
+   рассчитаны на калибровку живым полем — как и всё остальное в балансе,
+   который автор оставил на меня. Менять можно прямо здесь: на расчёты игры
+   лестница не влияет ничем, это подпись. */
+const RANK_LADDER=[
+  {at:0,        name:"Безземельный",   note:"Ни стены, ни знамени — только имя"},
+  {at:5000,     name:"Владетель",      note:"Первый частокол и первая пашня"},
+  {at:25000,    name:"Барон",          note:"Замок держит округу"},
+  {at:100000,   name:"Виконт",         note:"Дружина ходит дальше межи"},
+  {at:400000,   name:"Граф",           note:"С владением считаются соседи"},
+  {at:1500000,  name:"Маркграф",       note:"Порубежье под рукой"},
+  {at:5000000,  name:"Герцог",         note:"Войско решает судьбу земель"},
+  {at:20000000, name:"Государь",       note:"Держава, а не владение"},
+  {at:80000000, name:"Владыка мира",   note:"Выше некуда"},
+];
+function rankAt(pw){
+  let i=0;
+  for(let k=0;k<RANK_LADDER.length;k++) if(pw>=RANK_LADDER[k].at) i=k;
+  return {i, cur:RANK_LADDER[i], next:RANK_LADDER[i+1]||null};
+}
+
+/* ---- Загрузка данных разделов ------------------------------------------ */
+// Рейтинг — живые игроки этого мира по убыванию players.power. Мощь считает
+// СЕРВЕР (mp-join/mp-tick, см. supabase/README.md "Мощь державы переехала на
+// сервер"), поэтому её можно спрашивать прямо запросом, не собирая по чужим
+// состояниям. Индекс players_power_idx (миграция 0008) — ровно под этот
+// порядок. Полсотни строк: рейтинг смотрят, чтобы найти себя и верхушку, а
+// не чтобы листать весь мир.
+async function profileLoadRating(force){
+  if(!mpState.player) return;
+  if(!force && profileRating && Date.now()-profileRatingAt<PROFILE_SECTION_TTL) return;
+  try{
+    const { data, error } = await sb.from("players")
+      .select("id,nick,race,power,hall:state->b->>hall")
+      .eq("world_id", mpState.player.world_id).is("dead_at", null)
+      .order("power", {ascending:false}).limit(50);
+    if(error) throw new Error(error.message);
+    profileRating=data||[]; profileRatingErr=null; profileRatingAt=Date.now();
+  }catch(e){ profileRatingErr=e.message; }
+  refreshProfileIfOpen();
+}
+// Летопись — та самая таблица chronicles (миграция 0007), открытая на чтение
+// всем. Пока в ней записи одного вида (kind='fall', гибель правителя), но
+// таблица заведена как общий свод событий мира, поэтому и разбор ниже идёт
+// по kind, а не в предположении, что запись всегда одна и та же.
+async function profileLoadChronicles(force){
+  if(!mpState.player) return;
+  if(!force && profileChron && Date.now()-profileChronAt<PROFILE_SECTION_TTL) return;
+  try{
+    const { data, error } = await sb.from("chronicles")
+      .select("id,kind,nick,race,data,created_at")
+      .eq("world_id", mpState.player.world_id)
+      .order("created_at", {ascending:false}).limit(50);
+    if(error) throw new Error(error.message);
+    profileChron=data||[]; profileChronErr=null; profileChronAt=Date.now();
+  }catch(e){ profileChronErr=e.message; }
+  refreshProfileIfOpen();
+}
+function profileOpenSection(id){
+  profileScreen=id;
+  if(id==="rating") profileLoadRating(false);
+  if(id==="chronicles") profileLoadChronicles(false);
+  refreshProfileIfOpen();
+}
+
+/* ---- Разделы ------------------------------------------------------------ */
+function profileBackHtml(title){
+  return "<div class='entry'><div class='line'>"+
+    "<button class='seal' data-act='profback'>&larr; Профиль</button>"+
+    "<div class='fill'><div class='title'>"+title+"</div></div></div></div>";
+}
+function profileSettingsHtml(){
+  let h=profileBackHtml("Настройки");
+  h+=rubric("Походы");
+  h+="<div class='entry'><div class='line'><div class='fill'>"+
+     "<div class='title'>Брать полководца по умолчанию</div>"+
+     "<div class='note'>Галочка в окне отправки будет заранее стоять в этом положении. "+
+     "На уже идущие походы не влияет.</div></div>"+
+     "<label class='gen-take'><input type='checkbox' data-act='setgentake'"+
+     (genTakeDefault()?" checked":"")+"><span></span></label></div></div>";
+  h+=rubric("Данные на этом устройстве");
+  h+="<div class='entry'><div class='line'><div class='fill'>"+
+     "<div class='title'>Сбросить местный кэш</div>"+
+     "<div class='note'>Замок и точки сбора показываются мгновенно из памяти браузера, "+
+     "пока не придёт свежий ответ сервера. Если что-то показывается неправильно — "+
+     "сбросьте, всё подтянется заново. Само игровое состояние живёт на сервере и "+
+     "не пострадает.</div></div>"+
+     "<button class='seal' data-act='clearcache'>Сбросить</button></div></div>";
+  h+="<div class='entry'><div class='line'><div class='fill'>"+
+     "<div class='title'>Отметки о прочитанной почте</div>"+
+     "<div class='note'>Тоже хранятся здесь, а не на сервере. Сброс сделает все письма "+
+     "непрочитанными заново.</div></div>"+
+     "<button class='seal' data-act='clearmailread'>Сбросить</button></div></div>";
+  h+=rubric("О мире");
+  h+="<div class='entry'><div class='line'><div class='fill'>"+
+     "<div class='note'>Правитель № "+mpState.player.id+"</div>"+
+     "<div class='note'>Мир "+String(mpState.player.world_id||"").slice(0,8)+"</div>"+
+     "</div></div></div>";
+  return h;
+}
+function profileRatingHtml(meId){
+  let h=profileBackHtml("Рейтинг");
+  if(profileRatingErr) return h+"<div class='entry'><div class='note' style='color:#e08'>Не удалось получить рейтинг: "+escHtml(profileRatingErr)+"</div></div>";
+  if(!profileRating) return h+"<div class='entry'><div class='note'>Считаем…</div></div>";
+  if(!profileRating.length) return h+"<div class='entry'><div class='note'>В мире пока некого выстраивать по мощи.</div></div>";
+  const myPlace=profileRating.findIndex(r=>r.id===meId);
+  h+=rubric("Правители мира", myPlace>=0?"вы "+(myPlace+1)+"-й":"вас нет в первых "+profileRating.length);
+  h+="<div class='rank-list'>";
+  profileRating.forEach((r,i)=>{
+    const me=r.id===meId;
+    h+="<div class='rank-row"+(me?" me":"")+"'>"+
+       "<span class='rk-place"+(i<3?" top":"")+"'>"+(i+1)+"</span>"+
+       "<span class='rk-crest'>"+shieldSvg(r.race,16)+"</span>"+
+       "<span class='rk-nick'>"+escHtml(r.nick||"Безымянный лорд")+"</span>"+
+       "<span class='rk-hall'>ратуша "+(r.hall||0)+"</span>"+
+       "<b class='rk-pw'>"+fmt(r.power||0)+"</b></div>";
+  });
+  h+="</div>";
+  h+="<div class='entry'><div class='note'>Мощь считает сервер — она складывается из построек, "+
+     "войск (дома и в походах), исследований, полководца и его снаряжения. Павшие правители "+
+     "в рейтинг не попадают.</div></div>";
+  return h;
+}
+function profileRanksHtml(pw){
+  const {i:cur, next}=rankAt(pw);
+  let h=profileBackHtml("Звания");
+  h+="<div class='entry hot'><div class='line'><div class='fill'>"+
+     "<div class='title'>"+RANK_LADDER[cur].name+"</div>"+
+     "<div class='note'>"+RANK_LADDER[cur].note+"</div>"+
+     "<div class='note'>Мощь державы: <b>"+fmt(pw)+"</b></div>"+
+     (next?"<div class='note'>До звания «"+next.name+"» — ещё "+fmt(Math.max(0,next.at-pw))+" мощи.</div>"
+          :"<div class='note'>Выше званий нет.</div>")+
+     "</div></div>";
+  if(next){
+    const from=RANK_LADDER[cur].at, f=Math.max(0,Math.min(1,(pw-from)/Math.max(1,next.at-from)));
+    h+="<div class='hpbar'><i style='width:"+(f*100).toFixed(1)+"%'></i></div>";
+  }
+  h+="</div>";
+  h+=rubric("Лестница");
+  h+="<div class='rank-list'>";
+  RANK_LADDER.forEach((r,idx)=>{
+    h+="<div class='rank-row"+(idx===cur?" me":"")+(idx>cur?" far":"")+"'>"+
+       "<span class='rk-place'>"+(idx+1)+"</span>"+
+       "<span class='rk-nick'>"+r.name+"</span>"+
+       "<b class='rk-pw'>"+(r.at?"от "+fmt(r.at):"—")+"</b></div>";
+  });
+  h+="</div>";
+  h+="<div class='entry'><div class='note'>Звание — подпись к мощи, на расчёты игры оно не влияет. "+
+     "Пороги ещё будут выравниваться по живому полю.</div></div>";
+  return h;
+}
+// Строка летописи. Пока единственный вид записи — 'fall': конец правления.
+// Формулировка — ровно та, что просил автор: «такой-то правитель был
+// уничтожен таким-то».
+function chronicleLineHtml(c){
+  const d=c.data||{};
+  const when=new Date(c.created_at);
+  const nick=escHtml(c.nick||"Безымянный лорд");
+  if(c.kind==="fall"){
+    const slayer=escHtml(d.slayer_nick||"");
+    let txt="Правитель <b>"+nick+"</b> был уничтожен"+(slayer?" правителем <b>"+slayer+"</b>":"");
+    const bits=[];
+    if(d.hall) bits.push("ратуша "+d.hall+" ур.");
+    if(d.ruined) bits.push("обрушено построек: "+d.ruined);
+    if(d.peak_power) bits.push("высшая мощь "+fmt(d.peak_power));
+    if(d.ruled_sec) bits.push("правил "+fmtDur(d.ruled_sec));
+    return "<div class='chron-row fall'>"+
+      "<span class='ch-ico'><img src='images/ui/icon-ruin.png' alt=''></span>"+
+      "<div class='ch-body'><div class='ch-txt'>"+txt+"</div>"+
+      (bits.length?"<div class='ch-sub'>"+bits.join(" · ")+"</div>":"")+
+      "<div class='ch-when'>"+when.toLocaleString("ru-RU")+
+      (d.x!=null?" · X:"+d.x+" Y:"+d.y:"")+"</div></div></div>";
+  }
+  // Неизвестный вид записи — показываем честно, а не молча пропускаем: свод
+  // событий мира будет пополняться, и новая запись не должна исчезать из
+  // летописи только потому, что клиент про неё ещё не знает.
+  return "<div class='chron-row'><span class='ch-ico'><img src='images/ui/icon-reign.png' alt=''></span>"+
+    "<div class='ch-body'><div class='ch-txt'>"+nick+"</div>"+
+    "<div class='ch-when'>"+when.toLocaleString("ru-RU")+"</div></div></div>";
+}
+function profileChroniclesHtml(){
+  let h=profileBackHtml("Хроники");
+  if(profileChronErr) return h+"<div class='entry'><div class='note' style='color:#e08'>Не удалось открыть летопись: "+escHtml(profileChronErr)+"</div></div>";
+  if(!profileChron) return h+"<div class='entry'><div class='note'>Листаем…</div></div>";
+  if(!profileChron.length){
+    return h+"<div class='entry'><div class='note'>Летопись пуста — в этом мире ещё ни одно правление "+
+      "не оборвалось. Записи появляются сами, когда чья-то ратуша падёт.</div></div>";
+  }
+  h+=rubric("Летопись мира", profileChron.length+" зап.");
+  h+="<div class='chron-list'>"+profileChron.map(chronicleLineHtml).join("")+"</div>";
+  return h;
+}
+
 function foProfile(pIn){
   const p=pIn||me();
+  // Разделы профиля (Фаза 34) — только в общем мире: рейтинг и летопись
+  // спрашивают сервер, а у невидимой одиночной партии ни того, ни другого
+  // нет. Настройки и звания сами по себе работали бы и там, но разводить
+  // профиль на две разные версии ради этого не стоит.
+  if(profileScreen && !SP_UNLOCKED && mpState.player){
+    if(profileScreen==="settings")   return profileSettingsHtml();
+    if(profileScreen==="rating")     return profileRatingHtml(mpState.player.id);
+    if(profileScreen==="chronicles") return profileChroniclesHtml();
+    if(profileScreen==="ranks")      return profileRanksHtml(mpPower(p));
+  }
   const avSrc=playerAvatarSrc(p);
   let h=rubric("Профиль","в разработке");
   // Круглый аватар в золотом кольце + герб расы маленьким значком поверх
@@ -11397,7 +11740,18 @@ function foProfile(pIn){
      "<div class='note'>"+RACES[p.race].name+"</div>"+
      "<div class='profile-power-wrap'><img class='wreath' src='images/ui/profile-wreath.png' alt=''>"+
      "<span class='profile-power-chip' style='font-size:"+profilePowerFontSize(fmt(power(p)))+"px'>"+fmt(power(p))+"</span></div>"+
+     // Звание — подпись прямо под мощью: оно из неё и считается (см.
+     // RANK_LADDER), стоять им врозь незачем.
+     (!SP_UNLOCKED && mpState.player
+       ? "<div class='profile-rank'>"+rankAt(mpPower(p)).cur.name+"</div>" : "")+
      "</div>";
+  // Разделы профиля — ряд значков от автора (Настройки/Рейтинг/Хроники/
+  // Звания). Только в общем мире, см. развилку в начале функции.
+  if(!SP_UNLOCKED && mpState.player){
+    h+="<div class='profile-sections'>"+PROFILE_SECTIONS.map(sec=>
+      "<button class='psec' data-act='profsec' data-s='"+sec.id+"' title='"+sec.note+"'>"+
+      "<img src='images/ui/"+sec.ico+"' alt=''><span>"+sec.name+"</span></button>").join("")+"</div>";
+  }
   // Предпросмотр экрана летописи — только в одиночке (SP_UNLOCKED): экран
   // относится к её собственной регистрации (runOnboarding/claimChronicle),
   // в общем мире вход идёт через mp-join, этот предпросмотр там ничему не
@@ -12334,6 +12688,37 @@ function refreshProfileIfOpen(){
 function handleAct(e){
   const closeBtn=e.target.closest("[data-act='closemenu']");
   if(closeBtn){ closeMenuModal(); return; }
+  // ---- разделы профиля (Фаза 34) --------------------------------------
+  const locGoBtn=e.target.closest("[data-act='locatego']");
+  if(locGoBtn){ mpDoLocate(); return; }
+  const locHomeBtn=e.target.closest("[data-act='locatehome']");
+  if(locHomeBtn){
+    const p=mpState.player;
+    if(p){ $("#locate-x").value=p.x; $("#locate-y").value=p.y; mpDoLocate(); }
+    return;
+  }
+  const locCloseBtn=e.target.closest("[data-act='locateclose']");
+  if(locCloseBtn){ mpCloseLocate(); return; }
+  const profSecBtn=e.target.closest("[data-act='profsec']");
+  if(profSecBtn){ profileOpenSection(profSecBtn.dataset.s); return; }
+  const profBackBtn=e.target.closest("[data-act='profback']");
+  if(profBackBtn){ profileScreen=null; refreshProfileIfOpen(); return; }
+  const genTakeBox=e.target.closest("[data-act='setgentake']");
+  if(genTakeBox){ setGenTakeDefault(genTakeBox.checked); return; }
+  const clearCacheBtn=e.target.closest("[data-act='clearcache']");
+  if(clearCacheBtn){
+    try{ localStorage.removeItem(MP_CACHE_KEY) }catch(e2){}
+    herald("Местный кэш сброшен — данные подтянутся заново.");
+    return;
+  }
+  const clearMailReadBtn=e.target.closest("[data-act='clearmailread']");
+  if(clearMailReadBtn){
+    mpMailReadIds=new Set();
+    try{ localStorage.removeItem(MP_MAIL_READ_KEY) }catch(e2){}
+    herald("Отметки о прочитанном сброшены.");
+    mpRerender();
+    return;
+  }
   const closeBm=e.target.closest("[data-act='closebuilding']");
   if(closeBm){ closeBuildingModal(); return; }
   const closeCart=e.target.closest("[data-act='closecartouche']");
@@ -13075,7 +13460,8 @@ function openMenuModal(t){
   // этого была единственной иконкой без своего фильтрованного экрана
   // (дублировала "Смотр войск"/"Бой"/"Разведка", уже вынесенные в Войско/
   // Почту). Теперь идёт через тот же диспетчер, что и все остальные.
-  const gatedTab = !SP_UNLOCKED && (t==="army"||t==="gen"||t==="inv"||t==="mail"||t==="profile");
+  const gatedTab = !SP_UNLOCKED && (t==="army"||t==="gen"||t==="inv"||t==="mail"||t==="profile"
+                                   ||t==="alliance"||t==="shop");
   // Сборка содержимого — под try. Раньше исключение отсюда обрывало всю
   // функцию ДО записи в #menu-modal-body и до .classList.add("open"): на
   // экране молча оставалась ПРЕДЫДУЩАЯ вкладка, и это выглядело как "нажал
@@ -13216,6 +13602,14 @@ $("#crest").addEventListener("click",()=>openMenuModal("profile"));
 // внутри #folio — незачем гонять их через делегированный handleMpAct).
 $("#mp-build-fab").addEventListener("click",mpOpenBuildPicker);
 $("#mp-rsch-fab").addEventListener("click",mpOpenAcademyFromFab);
+$("#mp-locate-fab").addEventListener("click",mpOpenLocate);
+// Окошко координат — свой слушатель: оно СОСЕД #app, делегированный
+// handleAct на #menu-modal/#cartouche его не видит.
+$("#locate-box").addEventListener("click",handleAct);
+$("#locate-box").addEventListener("keydown",e=>{
+  if(e.key==="Enter") mpDoLocate();
+  if(e.key==="Escape") mpCloseLocate();
+});
 $("#place-cancel").addEventListener("click",mpCancelPlace);
 $("#place-confirm").addEventListener("click",mpDoPlaceConfirm);
 // Перетаскивание призрака — Pointer Events, делегировано на #folio (сам
@@ -14342,6 +14736,51 @@ async function mpCall(fn, body, tries){
 // экранов для них ещё не заведено, это отдельный кусочек.
 // Одна функция на оба вызывающих места (openMenuModal и mpRerender) — иначе
 // секундный такт немедленно затирал бы открытый экран общей страницей.
+/* =========================================================================
+   Альянс и Магазин — Фаза 34, пока заглушки.
+   =========================================================================
+   Автор поставил их значки в меню-гамбургер и отдельно оговорил, что помощь
+   альянса "пока заглушка". Сами альянсы он делает параллельно с другим
+   помощником, поэтому здесь заведены ровно места под них: экран, который
+   честно говорит, чего ещё нет, и кнопка помощи там, где она в итоге и будет
+   жить. Пустая кнопка, молча ничего не делающая, была бы хуже отсутствия
+   кнопки — поэтому обе говорят вслух.
+   Когда альянсы приедут, эти две функции заменяются настоящими экранами, а
+   разметка меню и диспетчер (mpMenuBodyHtml) уже готовы. */
+function mpAllianceHtml(){
+  let h=rubric("Альянс","скоро");
+  h+="<div class='entry hot'><div class='line'>"+
+     "<img class='stub-ico' src='images/ui/icon-alliance.png' alt=''>"+
+     "<div class='fill'><div class='title'>Вы пока сами по себе</div>"+
+     "<div class='note'>Альянсы ещё строятся. Здесь появятся: свой союз и его знамя, "+
+     "список соратников, общий чат, помощь со стройкой и совместные походы.</div>"+
+     "</div></div></div>";
+  h+=rubric("Помощь союза");
+  h+="<div class='entry'><div class='line'>"+
+     "<img class='stub-ico' src='images/ui/icon-help.png' alt=''>"+
+     "<div class='fill'><div class='title'>Попросить о помощи</div>"+
+     "<div class='note'>Соратники смогут подгонять вашу стройку и исследования — каждый "+
+     "отклик снимает часть оставшегося времени. Кнопка появится у стройки, как только "+
+     "будет кому помогать.</div></div>"+
+     "<button class='seal' disabled>Нет союза</button></div></div>";
+  return h;
+}
+function mpShopHtml(){
+  let h=rubric("Магазин","скоро");
+  h+="<div class='entry hot'><div class='line'>"+
+     "<img class='stub-ico' src='images/ui/icon-shop.png' alt=''>"+
+     "<div class='fill'><div class='title'>Лавка закрыта</div>"+
+     "<div class='note'>Здесь будет обмен за янтарь: ускорения, ресурсные грамоты, "+
+     "снаряжение и наборы. Пока копится только сам янтарь — тратить его ещё некуда.</div>"+
+     "</div></div></div>";
+  const amber=(mpState.player&&mpState.player.state&&mpState.player.state.amber)||0;
+  h+="<div class='entry'><div class='line'>"+
+     "<img class='stub-ico' src='images/ui/res-amber.png' alt=''>"+
+     "<div class='fill'><div class='title'>Янтарь</div>"+
+     "<div class='note'>Ваш запас на сегодня.</div></div>"+
+     "<b class='rk-pw'>"+fmt(amber)+"</b></div></div>";
+  return h;
+}
 function mpMenuBodyHtml(t){
   // only:t (не пусто) — даже в состоянии "ещё не готово" (joined=false,
   // или joined=true/player ещё не пришёл, см. защиту от гонки внутри
@@ -14358,6 +14797,8 @@ function mpMenuBodyHtml(t){
   // Войско и Почта — те же самые блоки общей страницы, собранные фильтром
   // (см. `only` у foMultiplayer): отдельных копий разметки не заводим, иначе
   // страница и экраны разъехались бы при первой же правке.
+  if(t==="alliance") return mpAllianceHtml();
+  if(t==="shop") return mpShopHtml();
   if(t==="army") return foMultiplayer(true,"army");
   if(t==="mail") return foMultiplayer(true,"mail");
   // "mp" тут больше не бьёт ни в какую кнопку меню (боковая кнопка "Общий
@@ -14448,7 +14889,8 @@ function mpRerenderNow(){
   // к разделу (см. scrollIntoView в openMenuModal()) сбрасывалась бы к
   // началу страницы почти сразу же, как и сама эта прокрутка теряла смысл.
   const menuTab=$("#menu-modal").dataset.tab;
-  const showsMp = menuTab==="mp" || (!SP_UNLOCKED && (menuTab==="army"||menuTab==="gen"||menuTab==="inv"||menuTab==="mail"||menuTab==="profile"));
+  const showsMp = menuTab==="mp" || (!SP_UNLOCKED && (menuTab==="army"||menuTab==="gen"||menuTab==="inv"
+                 ||menuTab==="mail"||menuTab==="profile"||menuTab==="alliance"||menuTab==="shop"));
   if($("#menu-modal").classList.contains("open") && showsMp){
     const html=mpMenuBodyHtml(menuTab);
     // Без вырезания таймеров (см. на месте бывшего stripTimers у fmtDur):
@@ -15523,6 +15965,39 @@ function mpGoToLoc(x,y){
   };
   closeMenuModal();
   whenWorld3DReady(apply);      // общая очередь ожидания, см. её заголовок
+}
+/* ---- Переход по координатам (Фаза 34) -------------------------------------
+   Значок из набора автора: ввёл X и Y — камера туда и уехала. Всё нужное уже
+   есть (mpGoToLoc выше переносит камеру и ждёт готовности движка), тут только
+   окошко ввода и проверка, что клетка вообще существует.
+   Границы — те же, что у самого мира высот (WORLD_HALF_X/Z в
+   engine/src/terrain.ts: 1200 по X и 600 по Y): дальше камере ехать некуда,
+   там просто нет рельефа. Числа продублированы сюда, потому что клиент и
+   движок — разные сборки; если границы мира когда-нибудь поменяются, править
+   надо оба места (тот же приём и та же оговорка, что у RW_* выше). */
+const LOCATE_HALF_X=1200, LOCATE_HALF_Y=600;
+function mpOpenLocate(){
+  const box=$("#locate-box"); if(!box) return;
+  const p=mpState.player;
+  // Подставляем свой замок как отправную точку — почти всегда игрок вводит
+  // координаты где-то рядом с собой, а не с нуля.
+  if(p){ $("#locate-x").value=p.x; $("#locate-y").value=p.y; }
+  $("#locate-err").textContent="";
+  box.classList.add("open");
+  $("#locate-x").focus();
+}
+function mpCloseLocate(){ const box=$("#locate-box"); if(box) box.classList.remove("open"); }
+function mpDoLocate(){
+  const x=Math.round(+$("#locate-x").value), y=Math.round(+$("#locate-y").value);
+  const err=$("#locate-err");
+  if(!Number.isFinite(x)||!Number.isFinite(y)){ err.textContent="Впишите оба числа."; return; }
+  if(Math.abs(x)>LOCATE_HALF_X||Math.abs(y)>LOCATE_HALF_Y){
+    err.textContent="Край мира: X от -"+LOCATE_HALF_X+" до "+LOCATE_HALF_X+", Y от -"+LOCATE_HALF_Y+" до "+LOCATE_HALF_Y+".";
+    return;
+  }
+  mpCloseLocate();
+  mpGoToLoc(x,y);
+  herald("Переход к X:"+x+" Y:"+y);
 }
 
 // Прочитанность — только на этом устройстве (localStorage), сервер mail.read
