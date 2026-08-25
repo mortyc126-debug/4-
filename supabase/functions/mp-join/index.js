@@ -989,6 +989,15 @@ Deno.serve(async (req) => {
       .from("players").select("*").eq("world_id", world.id).eq("auth_uid", user.id).maybeSingle();
     if (existing.error) return jsonResponse({ err: existing.error.message }, 500);
     if (existing.data) {
+      // Фаза 30 — правитель погиб (см. markRulerFallen в mp-tick). Строка
+      // ещё жива и помечена dead_at ровно затем, чтобы игрок увидел экран
+      // гибели, а не пустую регистрацию, — но начислять павшему добычу,
+      // достраивать ему layout и вообще что-либо писать в его строку не
+      // нужно и вредно. Отдаём как есть: клиент по dead_at сам покажет
+      // экран гибели, а стирание случится по кнопке (mp-restart).
+      if (existing.data.dead_at) {
+        return jsonResponse({ ok: true, world_id: world.id, player: existing.data });
+      }
       const st = existing.data.state;
       // Самоисцеление легаси-записей, заведённых до Фазы 6 (race тогда не
       // дублировалась в state) — см. комментарий в newPlayerState выше.

@@ -2971,7 +2971,10 @@ async function applyMarchArrive(admin, ev) {
   const nowSec = Date.now() / 1000;
   // Цель пропала или встала под щит уже после отправки марша — бой не
   // случается, отряд просто разворачивается (как recallMarch без боя).
-  if (!defRow || defRow.shield_until > nowSec) {
+  // Фаза 30 — павшего добивать не за чем: его города на карте уже нет ни у
+  // кого, и второй раз убить его нельзя. Отряд разворачивается тем же
+  // способом, что и при пропавшей цели/щите.
+  if (!defRow || defRow.dead_at || defRow.shield_until > nowSec) {
     await sendSurvivorsHome(admin, m, nowSec, m.units, {});
     return;
   }
@@ -3115,6 +3118,30 @@ async function progressOrFinalizePvpBattle(admin, m, attRow, defRow, attP, defP,
 // куска раундов (applyMarchArrive) или спустя несколько events'ов
 // battle_round (applyBattleRound) — на исход это не влияет никак, только
 // на то, сколько реального времени бой занял.
+// Фаза 30 — правитель погиб. Три следствия, и все три обязаны случиться
+// вместе: имя уходит в летопись (единственное, что переживает гибель, —
+// прямая просьба автора), игрок помечается dead_at (с карты он пропадает
+// для всех немедленно, но свою строку ещё видит — иначе тот, кого снесли
+// офлайн, не увидел бы вообще ничего), и его походы распускаются: вести их
+// некому и возвращаться некуда.
+async function markRulerFallen(admin, m, attRow, defRow, defP, nowSec) {
+  const e = defP.epitaph || {};
+  const { error: chErr } = await admin.from("chronicles").insert({
+    world_id: m.world_id, kind: "fall",
+    nick: defRow.nick || "", race: defRow.race || "",
+    data: {
+      slayer_id: attRow.id, slayer_nick: attRow.nick || "", slayer_race: attRow.race || "",
+      x: defRow.x, y: defRow.y, hall: e.hall || 0, kp: e.kp || 0,
+      ruled_sec: e.ruledSec || 0, ruined: e.ruined || 0,
+    },
+  });
+  if (chErr) throw chErr;
+  const { error: dErr } = await admin.from("players")
+    .update({ dead_at: new Date(nowSec * 1000).toISOString() }).eq("id", defRow.id);
+  if (dErr) throw dErr;
+  const { error: mErr } = await admin.from("marches").delete().eq("player_id", defRow.id);
+  if (mErr) throw mErr;
+}
 async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, nowSec) {
   // Снимок ДО единого изменения — на случай отката, см. saveBothPlayersOrThrow.
   const attSnapshot = snapshotState(attP);
@@ -3193,7 +3220,29 @@ async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, no
   // городу работают тараны, каменщики не выходят, а следующий штурм в
   // пределах получаса застаёт постройки ровно там, где их оставил прошлый.
   defP.lastHitAt = nowSec;
+  // Фаза 30 — Ратуша доведена до нуля прочности. Сама она не сносится (с
+  // карты города пропасть не может), но её обнуление и есть конец правления.
+  // Итог правления кладём В СОСТОЯНИЕ игрока, а не только в летопись: экран
+  // гибели читает свою же строку players обычным опросом, без похода в
+  // отдельную таблицу — а строка ещё живёт, помеченная dead_at (почему не
+  // стираем сразу — см. migrations/0007_ruler_death.sql).
+  const rulerFell = !!(state.demolish && state.demolish.hallFell);
+  if (rulerFell) {
+    defP.epitaph = {
+      at: nowSec,
+      slayerNick: attRow.nick || "", slayerRace: attRow.race || "",
+      x: defRow.x, y: defRow.y,
+      hall: buildLvAt(defP, "hall", null),
+      kp: defP.kp || 0,
+      ruledSec: Math.max(0, Math.round(nowSec - new Date(defRow.created_at).getTime() / 1000)),
+      ruined: (state.demolish.ruined || []).length,
+    };
+  }
   await saveBothPlayersOrThrow(admin, attRow, attP, attSnapshot, defRow, defP);
+  // Строго ПОСЛЕ успешной записи состояния: если та отвалится по конфликту
+  // (см. savePlayerState), бой пересчитается заново — а запись в летописи и
+  // метка о гибели должны появиться ровно один раз и только по факту.
+  if (rulerFell) await markRulerFallen(admin, m, attRow, defRow, defP, nowSec);
 
   const summary = {
     winner: state.winner, sent: state.attStartUnits, attLoss: state.attLossTotal, defLoss: state.defLossTotal,

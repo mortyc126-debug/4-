@@ -1039,6 +1039,59 @@ body.mp-placing #place-toolbar{display:flex}
   display:flex;flex-direction:column}
 .ob-seal{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);width:52px;height:auto;
   pointer-events:none;opacity:.8;z-index:71;filter:drop-shadow(0 3px 6px rgba(0,0,0,.5))}
+
+/* Фаза 30 — экран гибели правителя. Тот же пергамент и тот же каркас, что у
+   #onboard (это буквально та же летопись, только последняя её страница), но
+   лист обгорелый: город взят и сожжён, и лист об этом — единственный экран
+   в игре, где пергамент не чистый. Подпалины — слои радиальных градиентов
+   поверх той же текстуры, а не отдельная картинка: рисовать художнику ради
+   одного экрана нечего, а так он собирается из того, что уже есть. */
+#death{position:fixed;inset:0;z-index:75;display:none;align-items:stretch;justify-content:center;
+  padding:0;background:rgba(6,3,1,.92)}
+#death.open{display:flex}
+#death .death-card{position:relative;width:100%;max-width:720px;
+  overflow-y:auto;-webkit-overflow-scrolling:touch;
+  background-image:url(images/ui/mail-parchment.jpg);background-size:cover;background-position:center;
+  box-shadow:0 0 70px rgba(0,0,0,.75);display:flex;flex-direction:column}
+/* Гарь по краям и пятна — поверх пергамента, но ПОД текстом (свой слой,
+   а не ::after у карточки, иначе он лёг бы поверх букв). */
+#death .death-card::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:0;
+  box-shadow:inset 0 0 60px rgba(20,10,3,.85),inset 0 0 160px rgba(58,32,12,.55);
+  background:
+    radial-gradient(46% 26% at 0% 30%,rgba(24,12,4,.8),transparent 72%),
+    radial-gradient(40% 20% at 100% 62%,rgba(24,12,4,.72),transparent 72%),
+    radial-gradient(34% 15% at 58% 102%,rgba(24,12,4,.78),transparent 74%),
+    radial-gradient(30% 13% at 22% -2%,rgba(24,12,4,.68),transparent 76%),
+    linear-gradient(180deg,rgba(24,12,4,.35),transparent 22%,transparent 78%,rgba(24,12,4,.4))}
+.death-seal{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);width:52px;height:auto;
+  pointer-events:none;opacity:.7;z-index:76;filter:drop-shadow(0 3px 6px rgba(0,0,0,.6)) grayscale(.35)}
+#death-body{position:relative;z-index:1;width:100%;max-width:480px;box-sizing:border-box;
+  margin:auto auto;padding:40px 22px 74px;align-self:center}
+#death-hd{text-align:center;margin-bottom:6px;font-size:11px;letter-spacing:.16em;
+  text-transform:uppercase;color:#8a6d2c}
+#death-title{text-align:center;font-size:26px;line-height:1.2;color:#231a11;margin-bottom:10px}
+#death-rule{width:120px;height:1px;margin:0 auto 14px;border:0;
+  background:linear-gradient(90deg,transparent,rgba(122,60,44,.6),transparent)}
+#death-name{text-align:center;font-style:italic;font-size:16px;color:#4a3826;margin-bottom:3px}
+#death-banner{text-align:center;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:#8d7a5c;margin-bottom:20px}
+.death-p{font-size:14.5px;line-height:1.68;color:#3c2e1f;margin:0 0 12px}
+.death-p.solace{color:#54402a}
+.death-ledger{margin:20px 0 24px;border-top:1px solid rgba(122,95,58,.34);
+  border-bottom:1px solid rgba(122,95,58,.34);padding:13px 0;display:grid;gap:9px}
+.death-row{display:flex;align-items:baseline;justify-content:space-between;gap:14px}
+.death-row dt{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:#8d7a5c;
+  white-space:nowrap}
+.death-row dd{margin:0;font-family:var(--data);font-size:12.5px;color:#33271b;text-align:right}
+.death-row dd .slayer{color:var(--garnet)}
+#death-body .death-go{display:block;width:100%;padding:14px 18px;margin-bottom:11px;
+  border:1px solid #5a1c23;background:linear-gradient(180deg,#8c2f37,#6d232b);
+  color:#f6e9cf;font-family:var(--serif);font-size:15px;letter-spacing:.06em;cursor:pointer;
+  box-shadow:0 2px 0 rgba(40,12,14,.5),inset 0 1px 0 rgba(255,220,190,.2)}
+#death-body .death-go:hover{background:linear-gradient(180deg,#9d363e,#7a2830)}
+#death-body .death-go:disabled{opacity:.55;cursor:default}
+.death-fine{text-align:center;font-size:12px;line-height:1.55;color:#8d7a5c;margin:14px 0 0}
+.death-err{text-align:center;font-size:12.5px;color:#8a3c2c;margin:10px 0 0}
 #ob-body{width:100%;max-width:480px;box-sizing:border-box;margin:auto auto;
   padding:40px 22px 74px;align-self:center}
 #ob-hd{text-align:center;margin-bottom:6px;font-size:11px;letter-spacing:.14em;
@@ -1741,6 +1794,25 @@ body.mp-placing #place-toolbar{display:flex}
   <img class="ob-seal" src="images/ui/mail-seal.png" alt="">
   <div class="ob-card">
     <div id="ob-body"></div>
+  </div>
+</div>
+
+<!-- Фаза 30 — экран гибели правителя. Свой оверлей, а НЕ переиспользованный
+     #onboard (как у регистрации): сразу после него игрок уходит в ту самую
+     регистрацию заново, и делить с ней один DOM-узел значило бы гасить экран
+     гибели ровно в тот момент, когда на его месте рисуется следующий шаг —
+     та же гонка за один узел, из-за которой claimChronicle() уже пришлось
+     разводить с runMpOnboarding() (см. start()). z-index 75 — выше #onboard
+     (70), но ниже накидки загрузки (90). Тело рисуется из JS
+     (mpRenderDeath), здесь только каркас с уголками и печатью, как у почты. -->
+<div id="death">
+  <img class="menu-corner tl" src="images/ui/mail-corner.png" alt="">
+  <img class="menu-corner tr" src="images/ui/mail-corner.png" alt="">
+  <img class="menu-corner bl" src="images/ui/mail-corner.png" alt="">
+  <img class="menu-corner br" src="images/ui/mail-corner.png" alt="">
+  <img class="death-seal" src="images/ui/mail-seal.png" alt="">
+  <div class="death-card">
+    <div id="death-body"></div>
   </div>
 </div>
 
@@ -9666,6 +9738,12 @@ function mpNormalizeState(st){
 function mpSetPlayer(pl){
   if(pl && pl.state) mpNormalizeState(pl.state);
   mpState.player=pl;
+  // Фаза 30 — единственная точка, через которую игрок попадает в mpState
+  // (вход, опрос, местный кэш), поэтому проверка гибели стоит именно здесь,
+  // а не в трёх местах по отдельности. Экран показывается сразу, как только
+  // сервер сообщил dead_at, — хоть в первый заход после сноса, хоть прямо
+  // посреди сессии, если игрока добили, пока он смотрел на карту.
+  if(pl && pl.dead_at && !$("#death").classList.contains("open")) mpShowDeath();
   return pl;
 }
 function mpFullShim(mp,st){
@@ -13099,6 +13177,9 @@ function handleMpAct(e){
   }
   const joinBtn=e.target.closest("[data-mp='join']");
   if(joinBtn){ const nickInp=$("#mp-nick"); mpState.nick=nickInp?nickInp.value:""; mpDoJoin(); return; }
+  // Фаза 30 — "Заложить новую летопись" на экране гибели.
+  const restartBtn=e.target.closest("[data-mp='restart']");
+  if(restartBtn){ mpDoRestart(); return; }
   // Фаза 19, кусочек 1 — карусель обучения войск (абсолютная копия
   // одиночных browsetrain/ucfocus/traingo, см. их же ветки в handleAct()).
   const browseTrainBtn=e.target.closest("[data-mp='browsetrain']");
@@ -14030,6 +14111,11 @@ let mpOpenInFlight = false;
 const MP_CACHE_KEY="fourbanners:mpcache1";
 function mpSaveCache(){
   if(!mpState.joined || !mpState.player) return;
+  // Фаза 30 — павшего в кэш не кладём: этот кэш существует ровно затем,
+  // чтобы мгновенно нарисовать город до ответа сервера, а рисовать город
+  // мертвеца незачем — при следующем заходе он должен увидеть экран гибели
+  // (или уже чистую регистрацию, если успел нажать кнопку).
+  if(mpState.player.dead_at) return;
   try{
     localStorage.setItem(MP_CACHE_KEY, JSON.stringify({
       v:1, dev:DEVICE_ID, at:Date.now(),
@@ -14431,8 +14517,12 @@ async function mpRefreshNeighbors(){
   // ИМЕННО ЭТОГО полководца, а не первого попавшегося у расы (см.
   // marchModelPath в engine/src/main.ts). Тот же приём, что и hall строкой
   // выше — вытащить одно поле из JSON, а не тянуть весь state соседа.
+  // Фаза 30 — павшие (dead_at) с карты пропадают немедленно и для всех: их
+  // города больше нет, атаковать/разведывать их нельзя (mp-attack/mp-scout
+  // отвечают отказом), и висеть замком в 3D им незачем. Своя же строка сюда
+  // не попадает вовсе (neq по id) — экран гибели берёт её из mpState.player.
   const { data, error } = await sb.from("players").select("id,nick,race,x,y,is_bot,hall:state->b->>hall,gen:state->gen->>id,shield_until")
-    .eq("world_id", mpState.player.world_id).neq("id", mpState.player.id).order("id");
+    .eq("world_id", mpState.player.world_id).neq("id", mpState.player.id).is("dead_at", null).order("id");
   if(!error && data){ mpState.neighbors=data; mpRerenderData(); }
 }
 // Фаза 4 — свежие боевые отчёты (mail, RLS mail_select_own из миграции
@@ -14504,6 +14594,105 @@ async function mpDoSendMail(){
   }catch(e){
     mpComposeSending=false; mpComposeErr=e.message||"Не удалось отправить письмо"; mpRerender();
   }
+}
+/* =========================================================================
+   Фаза 30 — гибель правителя.
+   =========================================================================
+   Ратушу довели до нуля прочности (см. runDemolishRounds/markRulerFallen в
+   mp-tick). Строка игрока ещё существует, помеченная dead_at, и несёт итог
+   правления в state.epitaph — ровно затем, чтобы тот, кого снесли, пока он
+   был офлайн, увидел честный экран, а не пустую регистрацию. Настоящее
+   стирание — по кнопке (mp-restart), см. её заголовок.
+   ========================================================================= */
+function mpIsDead(){ return !!(mpState.player && mpState.player.dead_at); }
+let mpRestarting=false, mpRestartErr=null;
+// Срок правления словами. fmtDur() тут не годится: она считает часами и
+// минутами (её дело — таймеры стройки), а правление меряется днями, и
+// "154 ч 12 мин" на надгробии читается как ошибка, а не как срок.
+function mpRuledTxt(sec){
+  sec=Math.max(0,Math.round(sec||0));
+  const d=Math.floor(sec/86400), h=Math.floor(sec%86400/3600), m=Math.floor(sec%3600/60);
+  if(d) return d+" "+plural(d,"день","дня","дней")+(h?" "+h+" "+plural(h,"час","часа","часов"):"");
+  if(h) return h+" "+plural(h,"час","часа","часов")+(m?" "+m+" мин":"");
+  return m+" мин";
+}
+function plural(n,one,few,many){
+  const n10=n%10, n100=n%100;
+  if(n10===1 && n100!==11) return one;
+  if(n10>=2 && n10<=4 && (n100<12||n100>14)) return few;
+  return many;
+}
+function mpRenderDeath(){
+  const pl=mpState.player; if(!pl) return;
+  const e=(pl.state && pl.state.epitaph) || {};
+  const raceName=(RACES[pl.race] && RACES[pl.race].name) || "";
+  const slayer=e.slayerNick || "неизвестный полководец";
+  let h="<div id='death-hd'>Летопись окончена</div>"+
+    "<div id='death-title'>Правитель погиб</div>"+
+    "<hr id='death-rule'>"+
+    "<div id='death-name'>"+escHtml(pl.nick||"Безымянный лорд")+"</div>"+
+    "<div id='death-banner'>"+escHtml(raceName)+(e.x!=null?" · "+e.x+" : "+e.y:"")+"</div>";
+  h+="<p class='death-p'>Ворота Ратуши выбиты таранами, знамя снято со шпиля, "+
+     "а последняя дружина полегла на ступенях. Твой род более не правит этими землями.</p>"+
+     "<p class='death-p solace'>Но летописец успел дописать страницу. Имя твоё внесено в свод — "+
+     "и стереть его не властен ни огонь, ни победитель.</p>";
+  h+="<dl class='death-ledger'>"+
+     "<div class='death-row'><dt>Пал от руки</dt><dd><span class='slayer'>"+escHtml(slayer)+"</span></dd></div>"+
+     (e.ruledSec!=null?"<div class='death-row'><dt>Правил</dt><dd>"+mpRuledTxt(e.ruledSec)+"</dd></div>":"")+
+     (e.hall?"<div class='death-row'><dt>Ратуша</dt><dd>"+e.hall+" ур.</dd></div>":"")+
+     (e.ruined?"<div class='death-row'><dt>Обрушено построек</dt><dd>"+e.ruined+"</dd></div>":"")+
+     // RU(), а не fmt(): на надгробии "184.5K" выглядит как сбой округления,
+     // а не как итог правления — тут число должно стоять целиком.
+     (e.kp?"<div class='death-row'><dt>Очков убийств</dt><dd>"+RU(e.kp)+"</dd></div>":"")+
+     "</dl>";
+  h+="<button class='death-go' data-mp='restart'"+(mpRestarting?" disabled":"")+">"+
+     (mpRestarting?"Летопись закрывается…":"Заложить новую летопись")+"</button>";
+  if(mpRestartErr) h+="<div class='death-err'>"+escHtml(mpRestartErr)+"</div>";
+  h+="<p class='death-fine'>Новый правитель начнёт с чистого листа: прежние земли, войска, "+
+     "постройки и союзы утрачены безвозвратно.</p>";
+  setHtml($("#death-body"), h);
+}
+// Показываем экран и глушим всё остальное: опрос сервера павшему не нужен
+// (его строка больше не меняется), а накидка загрузки и открытые модалки
+// закрываются, чтобы не мигать под полупрозрачным фоном.
+function mpShowDeath(){
+  mpStopPolling();
+  mpHideLoading();
+  const bm=$("#building-modal"); if(bm) bm.classList.remove("open");
+  const mm=$("#menu-modal"); if(mm) mm.classList.remove("open");
+  const ob=$("#onboard"); if(ob) ob.classList.remove("open");
+  mpRenderDeath();
+  $("#death").classList.add("open");
+}
+function mpHideDeath(){ $("#death").classList.remove("open"); }
+// "Заложить новую летопись": стереть павшего по-настоящему и тут же пройти
+// регистрацию заново — с выбора расы, как в самый первый раз. Именно поэтому
+// экран гибели живёт в СВОЁМ узле, а не в #onboard: следующий шаг рисуется
+// как раз в #onboard, и делить их было бы нечем.
+async function mpDoRestart(){
+  if(mpRestarting) return;
+  mpRestarting=true; mpRestartErr=null; mpRenderDeath();
+  try{
+    await mpCall("mp-restart",{});
+  }catch(err){
+    mpRestarting=false;
+    mpRestartErr=err.message||"Не удалось начать заново. Попробуйте ещё раз.";
+    mpRenderDeath();
+    return;
+  }
+  mpRestarting=false;
+  // Полный сброс: следующий mpOpen() должен пойти по пути НОВОГО игрока
+  // (mp-join без записи → "Нужна раса" → runMpOnboarding), а не подхватить
+  // остатки павшего из памяти вкладки или из местного кэша.
+  try{ localStorage.removeItem(MP_CACHE_KEY); }catch(_){ }
+  mpState.joined=false; mpState.player=null; mpState.race=null; mpState.err=null;
+  mpState.neighbors=[]; mpState.nodes=[]; mpState.camps=[]; mpState.marches=[]; mpState.incoming=[];
+  mpState.mail=[]; mpState.scoutMail=[]; mpState.raidMail=[]; mpState.siegeMail=[];
+  mpState.nodeBattleMail=[]; mpState.gatherMail=[]; mpState.noteMail=[]; mpState.pmMail=[];
+  mpHideDeath();
+  await mpOpen();
+  mpRenderFolio(); mpRenderTop();
+  if(!mpState.joined) openMenuModal("mp");
 }
 // Открытие вкладки: если этот anon-uid уже заходил в общий мир раньше
 // (сессия сохранена в localStorage), mp-join без указания расы вернёт уже
