@@ -1,54 +1,45 @@
 // =============================================================================
-// mp-recall — Фаза 4, девятый кусочек: отзыв похода на полпути. Зеркало
-// recallMarch(m) из index.html:4770-4780 — до сих пор поход, однажды
-// отправленный, нельзя было ни отменить, ни развернуть раньше срока:
-// оставалось либо ждать исхода, либо просто закрыть вкладку.
+// mp-trade — отправить обоз с ресурсами другому правителю.
 //
-// Фаза 9 (мелкий пробел, не часть боя как такового), продолжение этого же
-// кусочка: раньше отозвать можно было ТОЛЬКО mode:"attack" — источник
-// (index.html:4770-4780) такого ограничения не знает вообще, recallMarch(m)
-// одинаково разворачивает поход ЛЮБОГО режима, единственная проверка —
-// if(m.state==="back")return (уже возвращается — отзывать нечего). Теперь
-// mode:"gather"/"raid" тоже отзываются:
-// - "raid" структурно как "attack" — марш либо ещё в пути (state:"go"),
-//   либо бой уже разрешился (марш пришёл/удалён), отдельного "стоит на
-//   месте" состояния нет — та же формула, никаких новых полей.
-// - "gather" — у него ЕСТЬ промежуточное состояние (state:"gather", отряд
-//   уже стоит на точке и отсчитывает время сбора). marchPos(m) в источнике
-//   (index.html:4783) для state:"gather"|"siege" возвращает координаты
-//   ЦЕЛИ напрямую, без интерполяции по t0/t1 — здесь то же самое (t0/t1 в
-//   этом состоянии означают длительность СБОРА, не дорогу, интерполировать
-//   по ним позицию было бы неверно).
-// - Честная ДОБАВКА к экономике: mp-gather резервирует ресурс узла
-//   (data.take) уже на отправке (Фаза 8, кусочек 1), а не при завершении
-//   сбора — значит, отозванный НА ПОДХОДЕ (state:"go") марш должен вернуть
-//   резерв узлу (иначе ресурс пропадает в никуда — ни игроку, ни узлу).
-//   Отозванный УЖЕ НА ТОЧКЕ (state:"gather") — наоборот, признаём сбор
-//   состоявшимся и сразу простреливаем data.carry той же формулой, что и
-//   applyGathered (mp-tick) в конце таймера — честное упрощение: без
-//   расчёта частичной добычи по доле прошедшего времени, отряд либо ещё в
-//   пути (ничего), либо уже стоял на месте (всё целиком).
+// Автор: «реализуй сразу и торговлю от рынка, торговать можно со всеми
+// правителями, скорость рассчитай от средней скорости всадников и умноженная
+// на 3. Добавь грузоподъёмность (сколько можно максимум перевозить) и налог,
+// по RoK системе».
 //
-// Честное упрощение, продолжающее то же, что и в mp-attack: путь по прямой
-// (Math.hypot), не waterPath() — клетки местности (map_cells) в общем
-// мире не сгенерированы. Текущая точка на маршруте (для state:"go") —
-// линейная интерполяция между домом отправителя и целью по доле пройденного
-// времени (marchPos(m) в клиенте делает то же самое покадрово вдоль
-// настоящего path[], здесь то же самое, просто по прямой).
+// Как это устроено
+// ----------------
+// Обоз — обычная строка в marches с mode:"trade", но без единого воина:
+// units пустой, боя с ним не бывает, слот отряда он не занимает (как и
+// разведка — см. mp-move, где слоты считаются по mode !== "scout"). Дошёл —
+// applyMarchArrive в mp-tick зачисляет груз получателю и шлёт письма обеим
+// сторонам. Обратной дороги у обоза нет: он ушёл с товаром и остался там,
+// это не поход.
 //
-// Поход, уже возвращающийся (state:"back"), отзывать нечего — в клиенте
-// recallMarch(m) тут просто молча выходит (if(m.state==="back") return),
-// но там это фоновый вызов без ответа пользователю; здесь это прямое
-// действие по кнопке — честнее вернуть ошибку, чтобы кнопка не выглядела
-// нерабочей.
+// Скорость — ровно то, что просил автор: средняя скорость всадников,
+// умноженная на три (TRADE_SPEED ниже). Расовые поправки на конницу сюда НЕ
+// входят: это не чья-то конница, а купеческий обоз, и «эльфийские телеги
+// быстрее гномьих» автор не заказывал. А вот исследование на скорость марша
+// (bonuses().march) входит — оно про дороги державы, а не про род войск.
 //
-// Тело запроса: { march_id: number }
+// Грузоподъёмность и налог — от уровня Рынка (TRADE_CAP/TRADE_TAX). Числа
+// поставлены по системе RoK (потолок растёт с уровнем, налог с уровнем
+// падает), но КОНКРЕТНЫЕ значения автор обещал прислать списком — до тех пор
+// это калибруемая заготовка, менять её нужно в трёх местах сразу (здесь,
+// в mp-tick и в index.html), они помечены одинаковым заголовком.
+//
+// Налог удерживается ПРИ ОТПРАВКЕ: со склада списывается всё, что отправили,
+// а до получателя доезжает сумма минус налог. Так же это устроено и в RoK, и
+// так честнее показывать в интерфейсе — игрок видит «отправлено / доедет» до
+// того, как нажал.
+//
+// Тело запроса: { to:int, res:{food?:n, wood?:n, stone?:n, gold?:n} }
+// Обвязка (клиент/бонусы/производство/сохранение игрока) — самодостаточная
+// копия из mp-train, как и во всех остальных функциях этой папки: редактор
+// в Dashboard относительных импортов не тянет.
+// =============================================================================
+
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// Вставлено буквально из ../_shared/cors.js — Dashboard-редактор Edge
-// Functions не подтягивает относительные импорты на общую папку, поэтому
-// здесь код самодостаточен (копия, а не импорт). При деплое через Supabase
-// CLI можно вернуть импорт как в репозитории.
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -65,15 +56,123 @@ function handleOptions(req) {
   return null;
 }
 
-const TKEYS = ["inf", "arc", "cav", "sie"];
-const TROOP_SPEED = { inf: 1.00, arc: 1.10, cav: 1.70, sie: 0.60 };
-const RACE_SPEED_MOD = { undead: { sie: 1.20 } }; // index.html RACE_TROOP_MOD — только нежить меняет скорость (осада)
-const troopSpeedMod = (race, t) => (RACE_SPEED_MOD[race] && RACE_SPEED_MOD[race][t]) || 1;
-const MARCH_SPEED_SCALE = 32;
-// Технический пол дорожного времени (секунды) — только чтобы t1 > t0 и
-// событие возвращения не оказалось в прошлом. К пятнадцатисекундной фазе боя
-// отношения не имеет.
-const MIN_TRAVEL = 3;
+// =============================================================================
+// savePlayerState — запись состояния игрока с проверкой, что его никто не
+// перезаписал, пока мы считали.
+// =============================================================================
+// Каждая функция здесь работает по схеме "прочитал строку игрока -> изменил
+// объект state в памяти -> записал его ЦЕЛИКОМ обратно". Пока запросы к
+// одному игроку идут строго по очереди, это верно. Но они идут не по
+// очереди: клиент опрашивает mp-join каждые пять секунд (а тот пишет строку
+// игрока — начисляет добычу), и тик мира (mp-tick) пишет её же, разрешая
+// события. Если игрок нажал "Строить" в тот же миг, порядок получался
+// такой:
+//     действие  читает state (постройки нет, ресурсы целы)
+//     mp-join   читает state (то же самое)
+//     действие  пишет  state (ресурсы списаны, стройка в очереди)
+//     mp-join   пишет  state — СВОЙ, прочитанный ДО действия
+// и стройка вместе со списанием исчезала бесследно. Обратный порядок так же
+// легко давал зеркальный исход — ресурсы списаны, а стройки нет. Ни ошибки,
+// ни следа в логах: последняя запись просто затирала чужую.
+//
+// Лечится проверкой версии при записи. updated_at и так есть у строки и и
+// так пишется при каждом изменении — используем его как метку версии:
+// обновляем строку ТОЛЬКО если updated_at всё ещё тот, что мы прочитали.
+// Не совпал — значит кто-то записал раньше нас, и наш объект state построен
+// на устаревших данных; сообщаем об этом вызывающему, а не затираем.
+// Отдельная колонка-счётчик не нужна: миграцию пришлось бы накатывать
+// руками через дашборд (см. supabase/README.md), а updated_at уже на месте.
+//
+// Новая метка строго больше прочитанной (Math.max с +1 мс) — время на
+// сервере может идти назад при коррекции часов, а метка версии обязана
+// только расти, иначе устаревшее значение однажды совпало бы снова.
+//
+// Возвращает { ok:true } | { conflict:true } | { error }.
+async function savePlayerState(admin, row, state) {
+  const prev = row.updated_at;
+  if (!prev) {
+    // Строка прочитана без updated_at (старый вызывающий код) — сверять не с
+    // чем; пишем как раньше, чтобы ничего не сломать, но и не притворяемся,
+    // что проверили.
+    const { error } = await admin.from("players")
+      .update({ state, updated_at: new Date().toISOString() }).eq("id", row.id);
+    return error ? { error } : { ok: true };
+  }
+  const nextIso = new Date(Math.max(Date.now(), Date.parse(prev) + 1)).toISOString();
+  const { data, error } = await admin.from("players")
+    .update({ state, updated_at: nextIso })
+    .eq("id", row.id).eq("updated_at", prev).select("id,updated_at");
+  if (error) return { error };
+  if (!data || !data.length) return { conflict: true };
+  // Своя же метка — на случай второй записи той же строки в этом запросе.
+  row.updated_at = data[0].updated_at;
+  return { ok: true };
+}
+
+// Ответ на проигранную гонку. 409 + retry:true — клиент (mpCall в
+// index.html) повторяет такой запрос сам, молча: состояние он перечитает
+// заново, так что повтор посчитается уже по свежим данным. Игрок ничего не
+// замечает, а данные не теряются.
+function conflictResponse() {
+  return jsonResponse({ err: "Состояние изменилось, повторяю…", retry: true }, 409);
+}
+
+const RES = ["food", "wood", "stone", "gold"];
+const TROOP_COST_COMBAT = [
+  { food: 10, wood: 10, stone: 0, gold: 0 },
+  { food: 40, wood: 40, stone: 0, gold: 0 },
+  { food: 100, wood: 100, stone: 20, gold: 0 },
+  { food: 200, wood: 200, stone: 150, gold: 0 },
+  { food: 350, wood: 350, stone: 350, gold: 80 },
+];
+const TROOP_COST_SIEGE = [
+  { food: 0, wood: 20, stone: 0, gold: 0 },
+  { food: 0, wood: 50, stone: 30, gold: 0 },
+  { food: 0, wood: 100, stone: 40, gold: 0 },
+  { food: 0, wood: 250, stone: 100, gold: 0 },
+  { food: 0, wood: 400, stone: 300, gold: 80 },
+];
+const troopCost = (type, tier) => (type === "sie" ? TROOP_COST_SIEGE : TROOP_COST_COMBAT)[tier - 1];
+const TRAIN_TIME = [3.6, 7.2, 12, 24, 48];
+const TRAIN_BLD = { inf: "barracks", arc: "range", cav: "stable", sie: "siege" };
+const TRAIN_CAP = [
+  20, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 550, 600, 700, 800,
+  900, 1000, 1100, 1200, 1300, 1400, 1500, 1600, 1700, 2000,
+];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const tblRow = (tbl, lv) => tbl[clamp(Math.round(lv), 1, tbl.length) - 1];
+const trainCap = (lv) => (lv <= 0 ? 0 : tblRow(TRAIN_CAP, lv));
+const canPay = (res, c) => RES.every((r) => !c[r] || res[r] >= c[r]);
+const pay = (res, c) => RES.forEach((r) => { if (c[r]) res[r] -= c[r]; });
+// trainSpeedBonus — bonuses(p).trainSpeed (Фаза 6, см. ниже), реальный
+// подсчёт по расе/эпохе/дефолтному генералу/дереву исследований.
+function trainDuration(hallLv, type, tier, n, trainSpeedBonus = 0) {
+  return (TRAIN_TIME[tier - 1] * n) / ((1 + hallLv * 0.06) * (1 + trainSpeedBonus));
+}
+// index.html:2154-2158 tierUnlockedFor — какой максимальный тир открыт
+// исследованием mil_tier_<type><N>. Честная добавка к источнику: startTrain
+// сам по себе НЕ проверяет это (в SP только UI прячет тир-выбор выше
+// открытого) — найдено при переносе mp-retrain (кусочек, добавляющий
+// собственно способ получить войска тира 2+), тем же коммитом закрыто и
+// здесь: без этой проверки прямой вызов mp-train с tier>1 обошёл бы
+// исследование полностью, тот же принцип "сервер не доверяет UI-гейтингу",
+// что и в mp-forge/mp-upgrade/mp-craft.
+function tierUnlockedFor(tech, type) {
+  let mx = 1;
+  for (let t = 2; t <= 5; t++) { if ((tech["mil_tier_" + type + t] || 0) >= 1) mx = t; else break; }
+  return mx;
+}
+// Добыча ресурсов по времени (index.html:3790/3813/3838, см. _shared/rules.js)
+// — дергаем перед canPay/pay, чтобы цена набора списывалась с актуального
+// баланса, а не с того, что был на момент последнего join/действия.
+const PROD_TABLE = [
+  400, 430, 470, 520, 580, 650, 730, 830, 950, 1100, 1300, 1550, 1850, 2200, 2700,
+  3200, 3700, 4300, 5000, 5800, 6700, 7800, 9000, 10400, 20800,
+];
+const prodRate = (lv) => (lv <= 0 ? 0 : tblRow(PROD_TABLE, lv));
+const plotCap = (lv) => (lv <= 0 ? 0 : tblRow(PROD_TABLE, lv) * 10);
+const PROD_BLD = { food: "farm", wood: "lumber", stone: "quarry", gold: "mine" };
+const PROD_MULT = { food: 1, wood: 1, stone: 0.75, gold: 0.5 };
 // index.html:2854 epochOf — эпоха ратуши (1..5), нужна для bonuses() ниже
 // (расовые эпохальные способности).
 const epochOf = (hall) => (hall >= 25 ? 5 : hall >= 19 ? 4 : hall >= 13 ? 3 : hall >= 7 ? 2 : 1);
@@ -212,6 +311,7 @@ const ACADEMY_TREE = {
     }))),
   ],
 };
+// =============================================================================
 // bonuses(p, defending) — Фаза 6. Честная (не упрощённая) часть центрального
 // агрегатора бонусов клиента (index.html:3731-3789). Порядок и формулы —
 // дословно оттуда, но перенесена НЕ вся функция целиком: часть слагаемых
@@ -409,41 +509,69 @@ function production(p) {
   });
   return out;
 }
-
-// marchBonus — bonuses(p).march (Фаза 6, настоящий подсчёт), см. bonuses() ниже.
-function marchSpeed(units, race, marchBonus = 1) {
-  let s = 99;
-  TKEYS.forEach((t) => {
-    for (let i = 1; i <= 5; i++) {
-      if ((units[t] && units[t][i]) > 0) s = Math.min(s, TROOP_SPEED[t] * troopSpeedMod(race, t));
-    }
+function plotFillCap(p) {
+  const out = {};
+  RES.forEach((r) => {
+    const plots = p.b[PROD_BLD[r]];
+    let extra = 0;
+    (Array.isArray(plots) ? plots : [plots || 0]).forEach((lv) => { extra += plotCap(lv) * PROD_MULT[r]; });
+    out[r] = Math.round(extra);
   });
-  if (s > 90) s = 1;
-  return s * MARCH_SPEED_SCALE * marchBonus;
+  return out;
 }
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+function syncRes(p, nowSec) {
+  const dt = (nowSec - (p.resAt || 0)) / 3600;
+  if (dt <= 0) { p.resAt = nowSec; return; }
+  const pr = production(p), cap = plotFillCap(p);
+  RES.forEach((r) => {
+    const add = Math.min(pr[r] * dt, cap[r]);
+    p.res[r] = Math.max(0, p.res[r] + add);
+  });
+  p.resAt = nowSec;
+}
 
-// Фаза 21 — вставлено буквально из mp-join/index.js (triggerTick) — тот же
-// AbortController-таймаут (4с), тот же секрет, та же честная защита "тикер
-// недоступен/завис — не блокируем сам отзыв". Используется только веткой
-// "отступить посреди боя" ниже, чтобы отступление применилось сразу, а не
-// ждало до 15с планового pg_cron.
-async function triggerTick(SUPABASE_URL) {
-  const secret = Deno.env.get("MP_TICK_SECRET");
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 4000);
-    try {
-      await fetch(SUPABASE_URL + "/functions/v1/mp-tick", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(secret ? { "x-tick-secret": secret } : {}) },
-        body: "{}",
-        signal: ctrl.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-  } catch (_) { /* тикер недоступен/завис/упал — не блокируем сам отзыв, см. заголовок выше */ }
+
+// =============================================================================
+// ТОРГОВЛЯ — грузоподъёмность, налог, скорость обоза.
+// =============================================================================
+// ЗАГОТОВКА ПОД КАЛИБРОВКУ. Автор обещал прислать точные числа списком
+// («налог, по RoK системе, дам тебе список с ними»); до тех пор здесь
+// работающая раскладка в духе RoK: потолок одного обоза растёт с уровнем
+// Рынка, налог с уровнем падает. Три копии этого блока — здесь, в mp-tick и
+// в index.html — обязаны совпадать, ищите по заголовку «ТОРГОВЛЯ».
+//
+// Потолок — суммарно по всем четырём ресурсам за одну отправку.
+const TRADE_CAP = [
+  10000, 16000, 25000, 40000, 62000, 95000, 145000, 215000, 320000,
+  470000, 690000, 1000000, 1450000, 2050000, 2900000, 4000000, 5500000,
+  7400000, 9900000, 13000000, 17000000, 22000000, 28000000, 36000000, 45000000,
+];
+// Налог в долях: 1 уровень — четверть груза, 25-й — двадцатая часть.
+const TRADE_TAX = [
+  0.25, 0.24, 0.23, 0.22, 0.21, 0.20, 0.19, 0.18, 0.17, 0.16,
+  0.15, 0.14, 0.13, 0.12, 0.115, 0.11, 0.10, 0.095, 0.09, 0.085,
+  0.08, 0.075, 0.07, 0.06, 0.05,
+];
+const tradeCap = (lv) => (lv <= 0 ? 0 : tblRow(TRADE_CAP, lv));
+const tradeTax = (lv) => (lv <= 0 ? 1 : tblRow(TRADE_TAX, lv));
+// Средняя скорость всадников (TROOP_TYPES.cav.speed в index.html — 1.70,
+// одна и та же у всех тиров, поэтому «средняя» и есть она сама), умноженная
+// на три — прямое указание автора.
+const CAV_SPEED = 1.70;
+const TRADE_SPEED_MULT = 3;
+// Тот же масштаб, что у обычных маршей (MARCH_SPEED_SCALE в index.html:6442
+// и во всех функциях походов) — иначе обоз жил бы в другой системе измерения.
+const MARCH_SPEED_SCALE = 32;
+// Технический пол дорожного времени (секунды), тот же, что в mp-move/
+// mp-recall/mp-redirect/mp-tick: только чтобы t1 > t0 и событие прибытия не
+// оказалось в прошлом на соседней клетке.
+const MIN_TRAVEL = 3;
+const emptyUnits = () => ({ inf: {}, arc: {}, cav: {}, sie: {} });
+// marchBonus — МНОЖИТЕЛЬ (bonuses().march возвращает 1 при отсутствии
+// исследований, а не 0), поэтому умножаем на него, а не на 1+него: та же
+// семантика, что у marchSpeed в mp-move и у bonuses(p).march в index.html.
+function tradeSpeed(marchBonus) {
+  return CAV_SPEED * TRADE_SPEED_MULT * MARCH_SPEED_SCALE * (marchBonus || 1);
 }
 
 Deno.serve(async (req) => {
@@ -451,6 +579,8 @@ Deno.serve(async (req) => {
   if (pre) return pre;
   try {
     const authHeader = req.headers.get("Authorization") || "";
+    if (!authHeader) return jsonResponse({ err: "no auth" }, 401);
+
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
     const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -458,158 +588,108 @@ Deno.serve(async (req) => {
     const callerClient = createClient(SUPABASE_URL, ANON_KEY, {
       global: { headers: { Authorization: authHeader } },
     });
-    const { data: { user }, error: userErr } = await callerClient.auth.getUser();
-    if (userErr || !user) return jsonResponse({ err: "Не авторизован" }, 401);
+    const { data: { user }, error: uErr } = await callerClient.auth.getUser();
+    if (uErr || !user) return jsonResponse({ err: "bad token" }, 401);
 
-    let body = {};
-    try { body = await req.json(); } catch (_) { /* noop */ }
-    const marchId = Number(body.march_id);
-    if (!Number.isFinite(marchId)) return jsonResponse({ err: "Не указан поход" }, 400);
+    const body = await req.json().catch(() => ({}));
+    const toId = Math.round(Number(body.to));
+    if (!Number.isFinite(toId)) return jsonResponse({ err: "не указан получатель" }, 400);
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
-
     const { data: world, error: wErr } = await admin
-      .from("worlds").select("id").order("created_at", { ascending: true }).limit(1).maybeSingle();
-    if (wErr || !world) return jsonResponse({ err: "Мир ещё не создан — сначала mp-join" }, 400);
+      .from("worlds").select("*").order("created_at", { ascending: true }).limit(1).maybeSingle();
+    if (wErr) return jsonResponse({ err: wErr.message }, 500);
+    if (!world) return jsonResponse({ err: "мира нет" }, 400);
 
-    const { data: attRow, error: aErr } = await admin
+    const { data: fromRow, error: fErr } = await admin
       .from("players").select("*").eq("world_id", world.id).eq("auth_uid", user.id).maybeSingle();
-    if (aErr) return jsonResponse({ err: aErr.message }, 500);
-    if (!attRow) return jsonResponse({ err: "Игрок не найден — сначала mp-join" }, 400);
+    if (fErr) return jsonResponse({ err: fErr.message }, 500);
+    if (!fromRow) return jsonResponse({ err: "Игрок не найден — сначала mp-join" }, 400);
+    if (fromRow.dead_at) return jsonResponse({ err: "Правитель погиб" }, 400);
+    if (toId === fromRow.id) return jsonResponse({ err: "Себе слать нечего" }, 400);
 
-    const { data: m, error: mErr } = await admin
-      .from("marches").select("*").eq("id", marchId).eq("player_id", attRow.id).maybeSingle();
-    if (mErr) return jsonResponse({ err: mErr.message }, 500);
-    if (!m) return jsonResponse({ err: "Поход не найден" }, 400);
-    // Фаза 21 — отступление посреди боя. state:"siege" (marches, зеркало
-    // mp-tick/index.js: initPvpBattle/initRaidBattle+applyBattleRound) —
-    // марш уже стоит под чужим городом ИЛИ у лагеря варваров, и бой идёт
-    // несколько тиков подряд (живые полоски HP, см.
-    // supabase/migrations/0005_realtime_battles.sql), а не разрешается
-    // мгновенно, как раньше. И то, и другое — mode:"attack"/"raid" —
-    // устроено на сервере абсолютно одинаково (initRaidBattle/
-    // runRaidBattleRounds — прямое зеркало PvP-версии, см. mp-tick),
-    // поэтому одна и та же ветка ниже обслуживает оба режима. Автор
-    // попросил именно такую кнопку: "отступить, если видишь что
-    // проигрываешь, или до конца воевать" — и то же самое для лагерей.
-    //
-    // НЕ дублируем сюда логику завершения боя (hospitalSplit/addXp/loot/
-    // mail — см. finalizePvpBattle/finalizeRaidBattle в mp-tick, десятки
-    // строк на каждую) — тот же принцип, что уже был явно заявлен в
-    // mp-join про triggerTick(): "дублировать логику применения событий
-    // рискованно, разъедется багфиксами при следующей правке". Вместо
-    // этого просто помечаем m.data.battle retreatRequested:true и толкаем
-    // тикер тем же способом, что и mp-join — applyBattleRound (mp-tick)
-    // сам увидит флаг на следующем же вызове (обычно доли секунды, а не до
-    // 15с планового тика) и честно завершит бой УЖЕ ИМЕЮЩИМСЯ, проверенным
-    // кодом: сторона отступающего забирает ровно то, что уцелело К ЭТОМУ
-    // МОМЕНТУ (ни одного нового раунда после нажатия кнопки), противник
-    // формально победитель (штурм/рейд не удался), но без трофеев — как и
-    // при обычном поражении атакующего.
-    // Фаза 25 — тем же способом отступает и mode:"gather" в state:"siege" —
-    // марш, отправленный собирать, застал точку занятой и завязал бой за
-    // право сбора (см. applyNodeContestArrive в mp-tick). Обычный
-    // "gather"+state:"gather" (уже спокойно собирает, боя нет) сюда не
-    // попадает — ветка ниже, без изменений.
-    if ((m.mode === "attack" || m.mode === "raid" || m.mode === "gather") && m.state === "siege") {
-      if (!(m.data && m.data.battle)) return jsonResponse({ err: "Бой уже завершается — подождите" }, 400);
-      if (!m.data.battle.retreatRequested) {
-        const battle = { ...m.data.battle, retreatRequested: true };
-        const { error: updM } = await admin.from("marches").update({ data: { ...m.data, battle } }).eq("id", m.id);
-        if (updM) return jsonResponse({ err: updM.message }, 500);
-      }
-      await triggerTick(SUPABASE_URL);
-      return jsonResponse({ ok: true, retreating: true });
-    }
-    // "move" — отряд, отправленный просто в клетку (mp-move). Его тут не
-    // было, хотя комментарий про state:"hold" ниже уже был написан в расчёте
-    // на него: отряд, вставший в пустоши, невозможно было позвать домой
-    // вообще — только перетащить на новую цель (mp-redirect). Обоз
-    // ("trade") в список НЕ входит намеренно: у него нет обратной дороги,
-    // а возврат провёл бы его через applyMarchHome, где груз (он лежит в
-    // data.net, а не в data.carry) просто пропал бы.
-    if (!["attack", "gather", "raid", "move"].includes(m.mode)) return jsonResponse({ err: "Этот поход нельзя отозвать" }, 400);
-    if (m.state === "back") return jsonResponse({ err: "Отряд уже возвращается" }, 400);
-    // "go" — в пути, отзывается всегда; "gather" — уже стоит на точке сбора,
-    // отзывается ТОЛЬКО у mode:"gather" (у attack/raid такого состояния нет
-    // вообще). Любое другое сочетание сюда дойти не должно.
-    // state:"hold" — отряд стоит на позиции, куда его привели перетаскиванием
-    // (см. mode:"move" в mp-tick). Отзывается как обычный: он никуда не идёт,
-    // так что текущая точка — это и есть его координаты цели.
-    if (m.state !== "go" && m.state !== "hold" && !(m.mode === "gather" && m.state === "gather")) {
-      return jsonResponse({ err: "Отряд уже возвращается" }, 400);
-    }
+    // Получатель — только живой: у павшего города больше нет, обозу некуда
+    // приехать (та же проверка, что у mp-attack/mp-scout, см. миграцию 0007).
+    const { data: toRow, error: tErr } = await admin
+      .from("players").select("id,nick,race,x,y,state,updated_at,dead_at")
+      .eq("world_id", world.id).eq("id", toId).maybeSingle();
+    if (tErr) return jsonResponse({ err: tErr.message }, 500);
+    if (!toRow || toRow.dead_at) return jsonResponse({ err: "Получателя больше нет" }, 400);
 
+    const fromP = fromRow.state;
+    fromP.race = fromP.race || fromRow.race;   // самоисцеление легаси-записей, как в mp-move
+
+    // Рынок — здание из p.layout, уровень может лежать скаляром или массивом
+    // (multi-участки), поэтому берём так же осторожно, как везде.
+    const rawMk = fromP.b && fromP.b.market;
+    const marketLv = Array.isArray(rawMk) ? Math.max(0, ...rawMk.map((v) => v || 0)) : (rawMk || 0);
+    if (marketLv <= 0) return jsonResponse({ err: "Нужен Рынок" }, 400);
+
+    // Начисляем добычу ДО списания: иначе игрок, не заходивший час, не смог
+    // бы отправить то, что у него по факту уже накопилось.
     const nowSec = Date.now() / 1000;
-    let curX, curY, newData = m.data || {};
-    if (m.mode === "gather" && m.state === "gather") {
-      // index.html:4783 marchPos — на точке сбора координаты цели напрямую,
-      // без интерполяции (t0/t1 в этом состоянии — длительность СБОРА, не
-      // дорога). Отозван уже на месте — признаём сбор состоявшимся и
-      // простреливаем carry той же формулой, что и applyGathered в конце
-      // таймера (см. заголовок файла — без частичной добычи по времени).
-      curX = m.tx; curY = m.ty;
-      const carry = {};
-      if (m.data && m.data.res) carry[m.data.res] = m.data.take || 0;
-      newData = { ...(m.data || {}), carry };
-    } else {
-      // Дословно marchPos(m)/recallMarch(m) из index.html:4770-4784, по
-      // прямой вместо настоящего path[] (см. заголовок файла).
-      const f = clamp((nowSec - m.t0) / Math.max(1, m.t1 - m.t0), 0, 1);
-      // Начало текущего отрезка — data.from (его пишет mp-redirect при каждом
-      // переносе цели, и он же пишется ниже). Дом тут годится только для
-      // отряда, который из дома и вышел: у уже перенаправленного пальцем
-      // отряда точка старта совсем другая, и отсчёт от замка давал неверное
-      // место — а с ним и неверную длину обратной дороги.
-      const d0 = m.data || {};
-      const started = d0.from && Number.isFinite(d0.from.x) && Number.isFinite(d0.from.y)
-        ? d0.from
-        : (m.state === "back" ? { x: m.tx, y: m.ty } : { x: attRow.x, y: attRow.y });
-      const to = m.state === "back" ? { x: attRow.x, y: attRow.y } : { x: m.tx, y: m.ty };
-      curX = started.x + (to.x - started.x) * f;
-      curY = started.y + (to.y - started.y) * f;
-      // Отозван ещё на подходе — если это gather-марш, резерв узла
-      // (data.take) возвращаем узлу: доехать он так и не успел, добывать
-      // нечего, но ресурс уже списан на отправке (Фаза 8, кусочек 1) — без
-      // возврата он бы пропал в никуда, ни игроку, ни узлу.
-      if (m.mode === "gather" && m.data && m.data.cell_x != null && m.data.cell_y != null && m.data.take > 0) {
-        const { data: cell } = await admin.from("map_cells")
-          .select("data").eq("world_id", world.id).eq("x", m.data.cell_x).eq("y", m.data.cell_y).maybeSingle();
-        // Точка могла успеть исчезнуть (истощилась начисто кем-то другим,
-        // respawn ещё не подоспел) — тогда возвращать резерв некуда, честно
-        // теряется, тот же исход, что и опоздавший на пустую точку игрок.
-        if (cell) {
-          await admin.from("map_cells")
-            .update({ data: { ...(cell.data || {}), amount: ((cell.data && cell.data.amount) || 0) + m.data.take } })
-            .eq("world_id", world.id).eq("x", m.data.cell_x).eq("y", m.data.cell_y);
-        }
-      }
+    syncRes(fromP, nowSec);
+
+    const cap = tradeCap(marketLv), tax = tradeTax(marketLv);
+    const send = {}; let total = 0;
+    for (const r of RES) {
+      const want = Math.max(0, Math.floor(Number((body.res && body.res[r]) || 0)));
+      const have = Math.floor(fromP.res[r] || 0);
+      const n = Math.min(want, have);
+      send[r] = n; total += n;
     }
-    const dist = Math.hypot(attRow.x - curX, attRow.y - curY);
-    const attP = attRow.state;
-    attP.race = attP.race || attRow.race; // самоисцеление легаси-записей, см. mp-attack/mp-train
-    const B = bonuses(attP);
-    const spd = marchSpeed(m.units, attRow.race, B.march);
-    // MIN_TRAVEL вместо прежних 15 — см. одноимённую константу: пятнадцать
-    // секунд это фаза боя, а не пол дорожного времени.
+    if (total <= 0) return jsonResponse({ err: "Обоз пуст" }, 400);
+    if (total > cap) {
+      return jsonResponse({ err: "Рынок " + marketLv + " ур. поднимает за раз " + cap + ", а в обозе " + total }, 400);
+    }
+
+    // Налог — с каждого ресурса отдельно, вниз: так сумма «доедет» никогда не
+    // окажется больше отправленного из-за округления вверх.
+    const net = {}; let netTotal = 0;
+    for (const r of RES) {
+      net[r] = Math.floor(send[r] * (1 - tax));
+      netTotal += net[r];
+    }
+
+    const B = bonuses(fromP);
+    const dist = Math.hypot(toRow.x - fromRow.x, toRow.y - fromRow.y);
+    const spd = tradeSpeed(B.march);
     const travel = Math.max(MIN_TRAVEL, (dist / spd) * 60);
 
-    // Откуда отряд разворачивается — чтобы клиент вёл линию возврата от места,
-    // где отряд застали, а не от цели, до которой он не дошёл (см. withPath в
-    // index.html). Без этого отозванный с полпути отряд зримо прыгал ВПЕРЁД,
-    // к цели, и только оттуда шёл домой.
-    newData = { ...newData, from: { x: curX, y: curY } };
-    const { error: updM } = await admin.from("marches")
-      .update({ state: "back", t0: nowSec, t1: nowSec + travel, data: newData }).eq("id", m.id);
-    if (updM) return jsonResponse({ err: updM.message }, 500);
+    const { data: march, error: mErr } = await admin.from("marches").insert({
+      world_id: world.id, player_id: fromRow.id, mode: "trade", state: "go",
+      tx: toRow.x, ty: toRow.y, t0: nowSec, t1: nowSec + travel,
+      units: emptyUnits(),          // обоз без воинов — но поле не пустое, как ждёт остальной код
+      data: {
+        dist, spd, to_id: toRow.id, to_nick: toRow.nick || "", to_race: toRow.race || "",
+        from_nick: fromRow.nick || "", from_race: fromRow.race || "",
+        sent: send, net, tax, market_lv: marketLv,
+        from: { x: fromRow.x, y: fromRow.y },
+      },
+    }).select().single();
+    if (mErr) return jsonResponse({ err: mErr.message }, 500);
+
+    for (const r of RES) fromP.res[r] = Math.max(0, (fromP.res[r] || 0) - send[r]);
+    const saved = await savePlayerState(admin, fromRow, fromP);
+    // Проигранная гонка за строку игрока: обоз уже создан — убираем, иначе
+    // повтор запроса отправит второй такой же, а ресурсы спишутся дважды.
+    // Тот же приём, что в mp-move/mp-attack.
+    if (saved.conflict) {
+      await admin.from("marches").delete().eq("id", march.id);
+      return conflictResponse();
+    }
+    if (saved.error) {
+      await admin.from("marches").delete().eq("id", march.id);
+      return jsonResponse({ err: saved.error.message }, 500);
+    }
 
     const { error: evErr } = await admin.from("events").insert({
       world_id: world.id, fire_at: new Date((nowSec + travel) * 1000).toISOString(),
-      type: "march_home", data: { march_id: m.id },
+      type: "march_arrive", data: { march_id: march.id },
     });
     if (evErr) return jsonResponse({ err: evErr.message }, 500);
 
-    return jsonResponse({ ok: true, eta: travel });
+    return jsonResponse({ ok: true, march_id: march.id, eta: travel, sent: send, net, tax, total, net_total: netTotal });
   } catch (e) {
     return jsonResponse({ err: String(e && e.message || e) }, 500);
   }

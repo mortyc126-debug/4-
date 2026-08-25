@@ -3228,6 +3228,11 @@ async function applyMarchArrive(admin, ev) {
     await admin.from("marches").update({ state: "hold", t0: nowSec2, t1: nowSec2 }).eq("id", m.id);
     return;
   }
+  // Фаза 34 — торговый обоз (mp-trade). Дошёл — груз ложится получателю на
+  // склад, обоим приходит письмо, сам обоз исчезает: обратной дороги у него
+  // нет, он ушёл с товаром и остался. Налог удержан ещё при отправке (см.
+  // заголовок mp-trade), сюда доезжает уже чистая сумма m.data.net.
+  if (m.mode === "trade") { await applyTradeArrive(admin, m); return; }
 
   const { data: attRow, error: aErr } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
   if (aErr) throw aErr;
@@ -3915,6 +3920,67 @@ async function applyGatherStart(admin, m) {
 // списано с точки авансом при отправке, здесь пересчитывать нечего).
 // Зеркало EV.gathered (index.html:4970-4977) — без переноса respawn
 // истощённой точки (см. заголовок mp-gather, честное упрощение №3).
+// =============================================================================
+// Торговый обоз доехал — Фаза 34.
+// =============================================================================
+// Груз зачисляется получателю СВЕРХ его склада, без потолка: потолок
+// (plotFillCap) ограничивает НАКОПЛЕНИЕ добычи со временем, а не то, что
+// принесли извне — ровно так же ведут себя возвращающиеся с добычей отряды
+// (см. applyMarchHome). Иначе подарок союзника с полным складом просто
+// сгорал бы молча, и игрок не понял бы, куда делись ресурсы.
+//
+// Получатель мог погибнуть, пока обоз был в пути. Тогда груз не зачисляем
+// никому, а отправителю приходит письмо о том, что везти оказалось некуда:
+// молча растворять чужие ресурсы нельзя.
+async function applyTradeArrive(admin, m) {
+  const d = m.data || {};
+  const net = d.net || {};
+  const toId = d.to_id;
+
+  const { data: fromRow, error: fErr } = await admin.from("players").select("id,nick").eq("id", m.player_id).maybeSingle();
+  if (fErr) throw fErr;
+
+  const { data: toRow, error: tErr } = await admin.from("players").select("*").eq("id", toId).maybeSingle();
+  if (tErr) throw tErr;
+
+  const nowSec = Date.now() / 1000;
+  const mailRows = [];
+  if (!toRow || toRow.dead_at) {
+    // Везти некуда. Отправителю — честное письмо; вернуть груз назад мы не
+    // можем без второго обоза, а заводить его ради редкого случая ни к чему.
+    if (fromRow) {
+      mailRows.push({ world_id: m.world_id, player_id: fromRow.id, kind: "trade",
+        data: { role: "sender", lost: true, to_nick: d.to_nick || "", sent: d.sent || {}, net } });
+    }
+  } else {
+    const toP = toRow.state;
+    // Начисляем добычу получателя до зачисления — иначе следующий syncRes
+    // посчитал бы час производства уже от новой суммы и потолок склада
+    // применился бы не к тому числу.
+    syncRes(toP, nowSec);
+    for (const r of RES) toP.res[r] = Math.max(0, (toP.res[r] || 0) + (net[r] || 0));
+    // Тот же приём, что у applyMarchHome: пишем напрямую, без
+    // savePlayerState-гонки — тик мира и так единственный писатель в этот
+    // момент, а обоз ждать не может.
+    const { error: upErr } = await admin.from("players")
+      .update({ state: toP, updated_at: new Date().toISOString() }).eq("id", toRow.id);
+    if (upErr) throw upErr;
+
+    mailRows.push({ world_id: m.world_id, player_id: toRow.id, kind: "trade",
+      data: { role: "receiver", from_nick: d.from_nick || "", from_race: d.from_race || "",
+              got: net, tax: d.tax || 0, x: (d.from && d.from.x), y: (d.from && d.from.y) } });
+    if (fromRow) {
+      mailRows.push({ world_id: m.world_id, player_id: fromRow.id, kind: "trade",
+        data: { role: "sender", to_nick: d.to_nick || "", to_race: d.to_race || "",
+                sent: d.sent || {}, net, tax: d.tax || 0, x: m.tx, y: m.ty } });
+    }
+  }
+  if (mailRows.length) {
+    const { error: mailErr } = await admin.from("mail").insert(mailRows);
+    if (mailErr) throw mailErr;
+  }
+  await admin.from("marches").delete().eq("id", m.id);
+}
 async function applyGathered(admin, ev) {
   const marchId = ev.data && ev.data.march_id;
   if (marchId == null) return;

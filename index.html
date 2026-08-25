@@ -218,6 +218,40 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    длине результата, а не только сокращаем разряды. */
 .profile-power-chip{position:absolute;top:37%;left:50%;transform:translate(-50%,-50%);
   font-family:var(--data);color:var(--gilt-hi);font-weight:bold;white-space:nowrap}
+/* Фаза 34 — форма торгового обоза (mpTradeSheetHtml). Живёт в
+   #building-modal, то есть на светлом пергаменте карточки здания, — поэтому
+   свои чернила, как у .bm-hp рядом, а не тёмная гамма остальных экранов. */
+.trade-hd{margin:14px 0 6px;color:#5a4530;font-variant:small-caps;letter-spacing:.08em;
+  font-size:13px;border-bottom:1px solid rgba(90,69,48,.25);padding-bottom:3px}
+.trade-q{width:100%;margin-bottom:8px}
+.trade-list{max-height:190px;overflow-y:auto;display:flex;flex-direction:column;gap:1px;
+  border:1px solid rgba(90,69,48,.25);border-radius:8px;padding:2px}
+.trade-row{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;
+  width:100%;padding:7px 9px;background:transparent;border:none;border-radius:6px;
+  color:#3a2c1c;font-size:13px;text-align:left}
+.trade-row:hover{background:rgba(90,69,48,.12)}
+.tr-nick{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tr-dist{font-family:var(--data);font-size:11.5px;color:#7a6448;white-space:nowrap}
+.trade-to{display:flex;align-items:center;gap:10px;padding:9px 10px;
+  background:rgba(90,69,48,.12);border:1px solid rgba(90,69,48,.3);border-radius:8px}
+.trade-to .fill{flex:1;min-width:0}
+.trade-to .title{color:#3a2c1c;font-size:14px}
+.trade-to .note{color:#7a6448;font-size:12px}
+.trade-res{display:flex;align-items:center;gap:10px;padding:6px 0;
+  border-bottom:1px dotted rgba(90,69,48,.25)}
+.trade-res:last-of-type{border-bottom:none}
+.trade-res img{width:34px;height:34px;object-fit:contain;flex:0 0 auto}
+.trade-res .fill{flex:1;min-width:0}
+.trade-res .tr-nm{color:#3a2c1c;font-size:13.5px}
+.trade-res .note{color:#7a6448;font-size:12px}
+.trade-res input{width:112px;flex:0 0 auto}
+/* Итоговая табличка обоза — на пергаменте, поэтому свои чернила поверх
+   общих .roll (те рассчитаны на тёмную подложку). */
+#bm-body .roll td{color:#7a6448;border-bottom-color:rgba(90,69,48,.25)}
+#bm-body .roll td:last-child{color:#3a2c1c}
+#bm-body .roll td.good:last-child{color:#2f6b46}
+#bm-body .roll td.bad:last-child{color:#8f2230}
+
 /* Значок-иллюстрация в строке-заглушке (Альянс/Магазин) — крупнее обычной
    иконки строки, но не во всю ширину: строка остаётся строкой. */
 .stub-ico{width:64px;height:64px;object-fit:contain;flex:0 0 auto;
@@ -8799,8 +8833,13 @@ function renderCartoucheMp(){
         // одиночки (см. mpWorldSnapshot()) — иначе "прибытие через" считало
         // бы от чужих часов и показывало бы бессмыслицу.
         (m.state!=="gather"?"<div class='co'><span>Прибытие через</span><b>"+fmtDur(Math.max(0,m.t1-Date.now()/1000))+"</b></div>":"");
-      if(mine){
+      // Обоз отозвать нельзя: обратной дороги у него нет, груз уже списан со
+      // склада и едет получателю (см. mp-trade). Сервер такой отзыв всё равно
+      // отклоняет — не показываем кнопку, чтобы не звать на заведомый отказ.
+      if(mine && m.mode!=="trade"){
         body+="<button class='seal wide ico' style='margin-top:9px' data-mp='cartrecall' data-id='"+m.id+"'><img src='images/ui/icon-recall.png' alt=''>Отозвать</button>";
+      } else if(mine){
+        body+="<div class='hint'>Обоз в пути — вернуть его нельзя.</div>";
       } else {
         body+="<div class='hint'>Разведка чужих отрядов в пути в общем мире пока не поддержана.</div>";
       }
@@ -9135,6 +9174,7 @@ function mpRenderBrigadesWorld(){
 // Возврат домой (state:"back") остаётся общей иконкой марша: это уже не
 // занятие, а дорога.
 function mpMarchIcon(m){
+  if(m.mode==="trade") return "images/ui/icon-trade.png";
   if(m.mode==="scout") return "images/ui/icon-scout.png";
   if(m.state==="gather") return "images/ui/icon-gather.png";
   if(m.state==="hold") return "images/ui/icon-camp.png";
@@ -10305,6 +10345,170 @@ function mpResearchCarouselHtml(){
 // зовут этот код по bk/plot напрямую, ни одна строчка логики модалки не
 // продублирована. img/desc берутся напрямую по bld, не через cityCellImg(c)
 // (та принимает {bk,pl}, а не отдельные bld/plot — тот же вид данных).
+/* =========================================================================
+   ТОРГОВЛЯ — Фаза 34.
+   =========================================================================
+   Автор: «реализуй сразу и торговлю от рынка, торговать можно со всеми
+   правителями, скорость рассчитай от средней скорости всадников и умноженная
+   на 3. Добавь грузоподъёмность (сколько можно максимум перевозить) и налог,
+   по RoK системе».
+   Обоз уходит от Рынка, воинов не берёт, слот отряда не занимает и обратно
+   не возвращается — груз доехал, и всё. Считает и проводит его сервер
+   (supabase/functions/mp-trade), здесь — форма отправки и те же числа для
+   предпросмотра.
+   ЗАГОТОВКА ПОД КАЛИБРОВКУ: точные числа автор обещал прислать списком, до
+   тех пор здесь раскладка в духе RoK. Три копии обязаны совпадать — эта,
+   mp-trade и mp-tick; ищите по заголовку «ТОРГОВЛЯ». */
+const TRADE_CAP=[
+  10000, 16000, 25000, 40000, 62000, 95000, 145000, 215000, 320000,
+  470000, 690000, 1000000, 1450000, 2050000, 2900000, 4000000, 5500000,
+  7400000, 9900000, 13000000, 17000000, 22000000, 28000000, 36000000, 45000000,
+];
+const TRADE_TAX=[
+  0.25, 0.24, 0.23, 0.22, 0.21, 0.20, 0.19, 0.18, 0.17, 0.16,
+  0.15, 0.14, 0.13, 0.12, 0.115, 0.11, 0.10, 0.095, 0.09, 0.085,
+  0.08, 0.075, 0.07, 0.06, 0.05,
+];
+const tradeCap=lv=>lv<=0?0:tblRow(TRADE_CAP,lv);
+const tradeTax=lv=>lv<=0?1:tblRow(TRADE_TAX,lv);
+// Средняя скорость всадников (TROOP_TYPES.cav.speed — одна и та же у всех
+// тиров, поэтому «средняя» и есть она сама), умноженная на три. Расовые
+// поправки на конницу сюда не входят — это купеческий обоз, а не чья-то
+// конница; исследование на скорость марша входит (оно про дороги державы).
+const TRADE_SPEED_MULT=3;
+function tradeSpeed(p){
+  return TROOP_TYPES.cav.speed*TRADE_SPEED_MULT*MARCH_SPEED_SCALE*bonuses(p).march;
+}
+function mpMarketLv(st){
+  const raw=st&&st.b&&st.b.market;
+  return Array.isArray(raw)?Math.max(0,...raw.map(v=>v||0)):(raw||0);
+}
+// Цифры Рынка в его карточке + кнопка "Отправить обоз".
+function mpMarketInfoHtml(lv){
+  const cap=tradeCap(lv), tax=tradeTax(lv);
+  const nextCap=lv<TRADE_CAP.length?tradeCap(lv+1):null, nextTax=lv<TRADE_TAX.length?tradeTax(lv+1):null;
+  let h="<table id='bm-stats'>"+
+    "<tr><td>Поднимает обоз</td><td>"+fmt(cap)+(nextCap!=null?" &rarr; "+fmt(nextCap):"")+"</td></tr>"+
+    "<tr><td>Налог с провоза</td><td>"+(tax*100).toFixed(1).replace(/\.0$/,"")+"%"+
+      (nextTax!=null?" &rarr; "+(nextTax*100).toFixed(1).replace(/\.0$/,"")+"%":"")+"</td></tr>"+
+    "</table>";
+  h+="<button class='seal wide ico' data-mp='tradeopen'>"+
+     "<img src='images/ui/icon-trade.png' alt=''>Отправить обоз</button>";
+  return h;
+}
+/* ---- Форма отправки обоза ------------------------------------------------
+   Своя модалка, а не карточка здания: тут выбор получателя и четыре ползунка,
+   в тесную карточку это не влезает. Получатель — ЛЮБОЙ живой правитель мира
+   (прямое условие автора «торговать можно со всеми правителями»), список —
+   те же соседи, что уже приходят опросом. */
+let mpTradeCtx=null;
+function mpOpenTradeModal(){
+  const st=mpState.player&&mpState.player.state; if(!st) return;
+  const lv=mpMarketLv(st);
+  if(lv<=0){ herald("Нужен Рынок."); return; }
+  mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
+  mpForgeTab=null; mpForgeRarity=null;
+  mpTradeCtx={ to:null, res:{food:0,wood:0,stone:0,gold:0}, err:null, q:"" };
+  setHtml($("#bm-body"), mpTradeSheetHtml());
+  $("#building-modal").classList.add("open");
+}
+function mpTradeTotals(){
+  const st=mpState.player.state, lv=mpMarketLv(st);
+  const cap=tradeCap(lv), tax=tradeTax(lv);
+  let total=0, net=0;
+  RES.forEach(r=>{ const n=mpTradeCtx.res[r]||0; total+=n; net+=Math.floor(n*(1-tax)); });
+  return {lv,cap,tax,total,net,over:total>cap};
+}
+function mpTradeSheetHtml(){
+  if(!mpTradeCtx) return "";
+  const p=mpState.player, st=p.state;
+  const {lv,cap,tax,total,net,over}=mpTradeTotals();
+  const to=mpState.neighbors.find(n=>n.id===mpTradeCtx.to);
+  let h="<div id='bm-title'>Торговый обоз</div>"+
+        "<div id='bm-sub'>Рынок "+lv+" ур. · поднимает "+fmt(cap)+" · налог "+
+        (tax*100).toFixed(1).replace(/\.0$/,"")+"%</div>";
+  if(mpTradeCtx.err) h+="<div class='note' style='color:#e08'>"+escHtml(mpTradeCtx.err)+"</div>";
+
+  // ---- получатель ----
+  h+="<div class='trade-hd'>Кому</div>";
+  if(to){
+    const dist=Math.round(Math.hypot(to.x-p.x,to.y-p.y));
+    const eta=dist/Math.max(0.001,tradeSpeed(mpFullShim(p,st)))*60;
+    h+="<div class='trade-to'>"+shieldSvg(to.race,18)+
+       "<div class='fill'><div class='title'>"+escHtml(to.nick||"Безымянный лорд")+"</div>"+
+       "<div class='note'>X:"+to.x+" Y:"+to.y+" · "+dist+" клет. · в пути "+fmtDur(eta)+"</div></div>"+
+       "<button class='seal' data-mp='tradepick' data-id=''>Сменить</button></div>";
+  } else {
+    const q=(mpTradeCtx.q||"").toLowerCase();
+    const list=mpState.neighbors
+      .filter(n=>!q||String(n.nick||"").toLowerCase().includes(q))
+      .slice()
+      .sort((a,b)=>Math.hypot(a.x-p.x,a.y-p.y)-Math.hypot(b.x-p.x,b.y-p.y))
+      .slice(0,40);
+    h+="<input id='trade-q' class='trade-q' type='text' placeholder='Поиск по нику' value='"+
+       escHtml(mpTradeCtx.q||"")+"'>";
+    if(!list.length){
+      h+="<div class='note'>Никого не нашлось. В мире пока некому возить товар.</div>";
+    } else {
+      h+="<div class='trade-list'>"+list.map(n=>{
+        const d=Math.round(Math.hypot(n.x-p.x,n.y-p.y));
+        return "<button class='trade-row' data-mp='tradepick' data-id='"+n.id+"'>"+
+          shieldSvg(n.race,16)+"<span class='tr-nick'>"+escHtml(n.nick||"Безымянный лорд")+"</span>"+
+          "<span class='tr-dist'>"+d+" клет.</span></button>";
+      }).join("")+"</div>";
+    }
+  }
+
+  // ---- груз ----
+  h+="<div class='trade-hd'>Что везём</div>";
+  RES.forEach(r=>{
+    const have=Math.floor((st.res&&st.res[r])||0);
+    const val=mpTradeCtx.res[r]||0;
+    h+="<div class='trade-res'>"+
+      "<img src='images/ui/res-"+r+".png' alt=''>"+
+      "<div class='fill'><div class='tr-nm'>"+RES_NAME[r]+"</div>"+
+      "<div class='note'>на складе "+fmt(have)+"</div></div>"+
+      "<input type='number' min='0' max='"+have+"' step='1' value='"+val+"' data-trade='"+r+"'>"+
+      "</div>";
+  });
+  h+="<div class='chips' style='margin:8px 0'>"+
+     "<button class='seal' data-mp='tradefill' data-f='cap'>Полный обоз</button>"+
+     "<button class='seal' data-mp='tradefill' data-f='0'>Сбросить</button></div>";
+
+  h+="<table class='roll'>"+
+     "<tr><td>В обозе</td><td class='"+(over?"bad":"")+"'>"+fmt(total)+" из "+fmt(cap)+"</td></tr>"+
+     "<tr><td>Налог</td><td class='bad'>&minus;"+fmt(total-net)+"</td></tr>"+
+     "<tr><td>Доедет</td><td class='good'>"+fmt(net)+"</td></tr></table>";
+
+  const canGo=!!to && total>0 && !over && !mpState.loading;
+  h+="<div class='chips' style='margin-top:12px'>"+
+     "<button class='seal ico' data-mp='tradego'"+(canGo?"":" disabled")+">"+
+     "<img src='images/ui/icon-trade.png' alt=''>Отправить</button>"+
+     "<button class='seal' data-act='closebuilding'>Отмена</button></div>";
+  return h;
+}
+function mpTradeRepaint(){
+  if(!mpTradeCtx) return;
+  setHtml($("#bm-body"), mpTradeSheetHtml());
+}
+async function mpDoTrade(){
+  if(!mpTradeCtx || mpState.loading) return;
+  const {total,over}=mpTradeTotals();
+  if(!mpTradeCtx.to){ mpTradeCtx.err="Выберите, кому везти."; mpTradeRepaint(); return; }
+  if(total<=0){ mpTradeCtx.err="Обоз пуст."; mpTradeRepaint(); return; }
+  if(over){ mpTradeCtx.err="Столько Рынок за раз не поднимет."; mpTradeRepaint(); return; }
+  mpState.loading=true; mpTradeCtx.err=null; mpTradeRepaint();
+  try{
+    const r=await mpCall("mp-trade", { to:mpTradeCtx.to, res:mpTradeCtx.res });
+    await mpRefreshPlayer();
+    mpTradeCtx=null;
+    $("#building-modal").classList.remove("open");
+    herald("Обоз вышел — доедет "+fmt(r&&r.net_total||0)+".");
+  }catch(e){
+    mpTradeCtx.err=e.message;
+  }
+  finally{ mpState.loading=false; if(mpTradeCtx) mpTradeRepaint(); else mpRerender(); }
+}
 function mpBuildingModalHtmlFor(bld,plot){
   const st=mpState.player.state, pShim=mpCityShim();
   const isMultiBld=BUILD_MP_MULTI.has(bld);
@@ -10419,6 +10623,10 @@ function mpBuildingModalHtmlFor(bld,plot){
     const pShim2={race:pShim.race,b:Object.assign({portal:0},st.b),gen:st.gen||{id:null},tech:st.tech||{}};
     h+=mpAcademyHtml(pShim2,st);
   }
+  // Фаза 34 — Рынок: отсюда уходит торговый обоз. Сама форма отправки —
+  // отдельный экран (mpOpenTradeModal), тут только вход в неё и цифры,
+  // ради которых Рынок и поднимают: сколько поднимает обоз и какой налог.
+  if(bld==="market" && lv>0) h+=mpMarketInfoHtml(lv);
   return h;
 }
 // Старая карта с фиксированными слотами (CITY_CELLS) — тонкая обёртка над
@@ -13189,8 +13397,42 @@ $("#building-modal").addEventListener("input",e=>{
   } else if((s==="mp-hqty-range"||s==="mp-hqty-num")&&mpHealCtx){
     mpHealCtx.n=clamp(Math.round(+e.target.value||0),0,mpHealCtx.max);
     mpUpdateHealSheet();
+  // Фаза 34 — поля торгового обоза. Числа правим БЕЗ пересборки экрана:
+  // перерисовка на каждый набранный символ уводила бы фокус из поля, в
+  // которое игрок печатает. Пересчитываем только итоговую табличку.
+  } else if(e.target.dataset && e.target.dataset.trade && mpTradeCtx){
+    const r=e.target.dataset.trade;
+    const st=mpState.player.state;
+    const have=Math.floor((st.res&&st.res[r])||0);
+    mpTradeCtx.res[r]=clamp(Math.round(+e.target.value||0),0,have);
+    mpUpdateTradeTotals();
+  } else if(s==="trade-q" && mpTradeCtx){
+    mpTradeCtx.q=e.target.value;
+    // Список получателей ПЕРЕСОБИРАЕМ (он и есть результат поиска), но
+    // фокус и позицию курсора возвращаем на место — иначе набрать больше
+    // одной буквы было бы невозможно.
+    const pos=e.target.selectionStart;
+    mpTradeRepaint();
+    const again=$("#trade-q");
+    if(again){ again.focus(); try{ again.setSelectionRange(pos,pos) }catch(e2){} }
   }
 });
+// Пересчёт только итоговых строк обоза (в обозе / налог / доедет) и
+// доступности кнопки — без пересборки всей формы, см. выше.
+function mpUpdateTradeTotals(){
+  if(!mpTradeCtx) return;
+  const body=$("#bm-body"); if(!body) return;
+  const {cap,total,net,over}=mpTradeTotals();
+  const cells=body.querySelectorAll(".roll td:last-child");
+  if(cells.length>=3){
+    cells[0].textContent=fmt(total)+" из "+fmt(cap);
+    cells[0].className=over?"bad":"";
+    cells[1].textContent="−"+fmt(total-net);
+    cells[2].textContent=fmt(net);
+  }
+  const go=body.querySelector("[data-mp='tradego']");
+  if(go) go.disabled=!(mpTradeCtx.to && total>0 && !over && !mpState.loading);
+}
 
 /* ---- Витрина юнитов: все тиры листаются вправо-влево, обучение — прямо с той же карточки ---- */
 let carouselCtx=null, trainCtx=null;
@@ -13797,6 +14039,38 @@ function handleMpAct(e){
   if(raidBtn){ mpDoRaid(+raidBtn.dataset.x, +raidBtn.dataset.y); return; }
   const moveBtn=e.target.closest("[data-mp='move']");
   if(moveBtn){ mpDoMove(+moveBtn.dataset.x, +moveBtn.dataset.y); return; }
+  // ---- торговля (Фаза 34) --------------------------------------------
+  const tradeOpenBtn=e.target.closest("[data-mp='tradeopen']");
+  if(tradeOpenBtn){ mpOpenTradeModal(); return; }
+  const tradePickBtn=e.target.closest("[data-mp='tradepick']");
+  if(tradePickBtn && mpTradeCtx){
+    const id=tradePickBtn.dataset.id;
+    mpTradeCtx.to = id==="" ? null : +id;      // пустой data-id — кнопка "Сменить"
+    mpTradeCtx.err=null;
+    mpTradeRepaint();
+    return;
+  }
+  const tradeFillBtn=e.target.closest("[data-mp='tradefill']");
+  if(tradeFillBtn && mpTradeCtx){
+    const st=mpState.player.state;
+    if(tradeFillBtn.dataset.f==="0"){
+      RES.forEach(r=>{ mpTradeCtx.res[r]=0; });
+    } else {
+      // "Полный обоз" — набиваем до потолка, начиная с того, чего больше:
+      // так игрок одним нажатием вывозит излишки, а не размазывает потолок
+      // поровну по четырём ресурсам, из которых трёх у него почти нет.
+      const cap=tradeCap(mpMarketLv(st));
+      let left=cap;
+      RES.map(r=>({r,have:Math.floor((st.res&&st.res[r])||0)}))
+         .sort((a,b)=>b.have-a.have)
+         .forEach(({r,have})=>{ const n=Math.min(have,left); mpTradeCtx.res[r]=n; left-=n; });
+    }
+    mpTradeCtx.err=null;
+    mpTradeRepaint();
+    return;
+  }
+  const tradeGoBtn=e.target.closest("[data-mp='tradego']");
+  if(tradeGoBtn){ mpDoTrade(); return; }
   const scoutBtn=e.target.closest("[data-mp='scout']");
   if(scoutBtn){ mpDoScout(+scoutBtn.dataset.id); return; }
   const recallBtn=e.target.closest("[data-mp='recall']");
@@ -14600,7 +14874,7 @@ async function claimChronicle(){
    восполняются со временem — серверное производство ещё не перенесено,
    стартовых 100000 хватает на несколько заказов набора для проверки.
    ========================================================================= */
-let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[], siegeMail:[], nodeBattleMail:[], worldBattles:[], gatherMail:[], noteMail:[], pmMail:[] };
+let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[], siegeMail:[], nodeBattleMail:[], worldBattles:[], gatherMail:[], tradeMail:[], noteMail:[], pmMail:[] };
 let mpPollTimer = null;
 // Идёт ли прямо сейчас вход/авто-резюме в общий мир (см. mpOpen) — защита
 // от повторного запуска при быстрых переключениях вкладок меню.
@@ -14631,7 +14905,8 @@ function mpSaveCache(){
       player:mpState.player, neighbors:mpState.neighbors, nodes:mpState.nodes,
       camps:mpState.camps, marches:mpState.marches, incoming:mpState.incoming,
       mail:mpState.mail, scoutMail:mpState.scoutMail, raidMail:mpState.raidMail, siegeMail:mpState.siegeMail,
-      nodeBattleMail:mpState.nodeBattleMail, gatherMail:mpState.gatherMail, noteMail:mpState.noteMail,
+      nodeBattleMail:mpState.nodeBattleMail, gatherMail:mpState.gatherMail,
+      tradeMail:mpState.tradeMail, noteMail:mpState.noteMail,
       pmMail:mpState.pmMail,
     }));
   }catch(e){ /* приватный режим/переполнение — кэш не обязателен, молча живём без него */ }
@@ -14646,7 +14921,8 @@ function mpLoadCache(){
     mpState.neighbors=c.neighbors||[]; mpState.nodes=c.nodes||[]; mpState.camps=c.camps||[];
     mpState.marches=c.marches||[]; mpState.incoming=c.incoming||[];
     mpState.mail=c.mail||[]; mpState.scoutMail=c.scoutMail||[]; mpState.raidMail=c.raidMail||[]; mpState.siegeMail=c.siegeMail||[];
-    mpState.nodeBattleMail=c.nodeBattleMail||[]; mpState.gatherMail=c.gatherMail||[]; mpState.noteMail=c.noteMail||[];
+    mpState.nodeBattleMail=c.nodeBattleMail||[]; mpState.gatherMail=c.gatherMail||[];
+    mpState.tradeMail=c.tradeMail||[]; mpState.noteMail=c.noteMail||[];
     mpState.pmMail=c.pmMail||[];
     return true;
   }catch(e){ return false }
@@ -15041,7 +15317,8 @@ async function mpRefreshAll(includeSlowLane){
     ];
     if(includeSlowLane) jobs.push(
       mpRefreshMail(), mpRefreshScoutMail(), mpRefreshRaidMail(), mpRefreshSiegeMail(),
-      mpRefreshNodeBattleMail(), mpRefreshGatherMail(), mpRefreshNoteMail(), mpRefreshPmMail()
+      mpRefreshNodeBattleMail(), mpRefreshGatherMail(), mpRefreshTradeMail(),
+      mpRefreshNoteMail(), mpRefreshPmMail()
     );
     // allSettled, не all: одна упавшая выборка (сеть моргнула на одной из
     // пятнадцати) не должна отменять остальные — раньше цепочка await
@@ -15142,6 +15419,13 @@ async function mpRefreshGatherMail(){
 // вовсе — генерал честно повышался (addXp на сервере), но игрок об этом
 // никогда не узнавал, в отличие от одиночки. Своя рубрика, та же схема
 // выборки, что и у остальной почты.
+// Письма об обозах (mail, kind:"trade") — та же схема, что у gather/scout.
+async function mpRefreshTradeMail(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
+    .eq("kind","trade").order("created_at",{ascending:false}).limit(10);
+  if(!error && data){ mpState.tradeMail=data; mpRerenderData(); }
+}
 async function mpRefreshNoteMail(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
@@ -15275,7 +15559,7 @@ async function mpDoRestart(){
   mpState.joined=false; mpState.player=null; mpState.race=null; mpState.err=null;
   mpState.neighbors=[]; mpState.nodes=[]; mpState.camps=[]; mpState.marches=[]; mpState.incoming=[];
   mpState.mail=[]; mpState.scoutMail=[]; mpState.raidMail=[]; mpState.siegeMail=[];
-  mpState.nodeBattleMail=[]; mpState.gatherMail=[]; mpState.noteMail=[]; mpState.pmMail=[];
+  mpState.nodeBattleMail=[]; mpState.gatherMail=[]; mpState.tradeMail=[]; mpState.noteMail=[]; mpState.pmMail=[];
   mpHideDeath();
   await mpOpen();
   mpRenderFolio(); mpRenderTop();
@@ -16042,7 +16326,7 @@ function mpUnreadByCat(){
   const n=a=>a.filter(unread).length;
   return {
     report: n(mpState.mail)+n(mpState.scoutMail)+n(mpState.raidMail)+
-            n(mpState.nodeBattleMail)+n(mpState.gatherMail),
+            n(mpState.nodeBattleMail)+n(mpState.gatherMail)+n(mpState.tradeMail),
     personal: n(mpState.noteMail)+
             mpState.pmMail.filter(m=>m.data&&m.data.role==="recipient"&&unread(m)).length,
     system: n(mpState.siegeMail),
@@ -16410,6 +16694,34 @@ function mpMailGatherEntry(m){
   return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-march.png", cls:"", tone:"green",
     title:"Обоз вернулся с добычей", sub, detailHtml};
 }
+// Обоз доехал (mail, kind:"trade", см. applyTradeArrive в mp-tick) — одно и
+// то же письмо для обеих сторон, разное только по d.role. Отдельный вид:
+// у сбора обоз возвращается СВОЙ и со своей же добычей, а тут груз меняет
+// хозяина, и обеим сторонам важно разное — отправителю сколько ушло и
+// сколько съел налог, получателю сколько пришло и от кого.
+function mpMailTradeEntry(m){
+  const d=m.data, mine=d.role==="sender";
+  const who=(mine?d.to_nick:d.from_nick)||"Безымянный лорд";
+  const goods=mine?(d.net||{}):(d.got||{});
+  const sum=RES.reduce((a,r)=>a+(goods[r]||0),0);
+  if(mine && d.lost){
+    return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-trade.png", cls:"lose", tone:"red",
+      title:"Обозу некуда было ехать", sub:who+" не дожил до его прихода — груз пропал",
+      detailHtml:"<div class='note'>Правителя "+escHtml(who)+" не стало, пока обоз был в пути. "+
+        "Груз пропал вместе с городом, куда его везли.</div>"};
+  }
+  const rows="<div class='mail-res-row'>"+
+    (d.x!=null?mpLocLink(d.x,d.y,who):"<span>"+escHtml(who)+"</span>")+
+    RES.filter(r=>goods[r]).map(r=>resIconSpan(r,fmt(goods[r]))).join("")+"</div>";
+  const taxLine = (mine && d.tax)
+    ? "<div class='note'>Отправлено "+fmt(RES.reduce((a,r)=>a+((d.sent&&d.sent[r])||0),0))+
+      ", налог "+(d.tax*100).toFixed(1).replace(/\.0$/,"")+"% — доехало "+fmt(sum)+".</div>"
+    : "";
+  return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-trade.png", cls:"", tone:"green",
+    title: mine?("Обоз доставлен: "+who):("Обоз от "+who),
+    sub: RES.filter(r=>goods[r]).map(r=>RES_NAME[r]+" "+fmt(goods[r])).join(" · ")||"пусто",
+    detailHtml: rows+taxLine};
+}
 function mpMailNoteEntry(m){
   const d=m.data;
   return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-gen.png", cls:"", tone:"gold",
@@ -16453,7 +16765,8 @@ function mpMailReportEntries(){
     mpState.scoutMail.map(m=>mpMailCached(m,mpMailScoutEntry)),
     mpState.raidMail.map(m=>mpMailCached(m,mpMailRaidEntry)),
     mpState.nodeBattleMail.map(m=>mpMailCached(m,mpMailNodeEntry)),
-    mpState.gatherMail.map(m=>mpMailCached(m,mpMailGatherEntry))
+    mpState.gatherMail.map(m=>mpMailCached(m,mpMailGatherEntry)),
+    mpState.tradeMail.map(m=>mpMailCached(m,mpMailTradeEntry))
   ).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
 }
 // "Личное" — повышения генерала + входящие письма от игроков.

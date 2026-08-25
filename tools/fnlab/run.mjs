@@ -51,6 +51,10 @@ const world = { id: "w-1", seed: 12345, epoch0: new Date(Date.now() - 864e5 * 5)
 const mkPlayer = (state) => ({ id: 7, world_id: "w-1", auth_uid: "uid-1", is_bot: false, race: "undead",
   nick: "Мармелад", name: "", x: 1420, y: 830, shield_until: 0, power: 0, state,
   created_at: new Date(Date.now() - 864e5 * 3).toISOString(), updated_at: past, dead_at: null });
+// Второй правитель — получатель обоза (mp-trade/сценарии торговли ниже).
+const mkOther = (over) => Object.assign({ id: 8, world_id: "w-1", auth_uid: "uid-2", is_bot: false,
+  race: "human", nick: "Сосед", name: "", x: 1460, y: 870, shield_until: 0, power: 0, state: baseState(),
+  created_at: new Date(Date.now() - 864e5 * 3).toISOString(), updated_at: past, dead_at: null }, over || {});
 const buildEvent = (slot) => ({ id: 1, world_id: "w-1", fire_at: past, type: "build",
   data: { player_id: 7, slot }, processed: false, claimed_at: null, created_at: past });
 
@@ -62,6 +66,28 @@ const SCENARIOS = {
       marches:[{ id:3, world_id:"w-1", player_id:7, mode:"gather", state:"go", tx:1430, ty:840, t0:0, t1:0,
                  units:{ inf:{1:120}, arc:{1:80}, cav:{}, sie:{} }, data:{} }] } }),
   },
+  "mp-trade": {
+    // Рынок 5 ур.: потолок 62 000, налог 21%.
+    ok: () => { const st = baseState(); st.b.market = 5;
+      return { tables: { worlds:[world], players:[mkPlayer(st), mkOther()], marches:[], map_cells:[], mail:[], events:[] },
+               body: { to: 8, res: { food: 5000, wood: 5000 } } }; },
+    // Больше, чем поднимает обоз — должно быть отказано.
+    over: () => { const st = baseState(); st.b.market = 1;   // потолок 10 000
+      return { tables: { worlds:[world], players:[mkPlayer(st), mkOther()], marches:[], map_cells:[], mail:[], events:[] },
+               body: { to: 8, res: { food: 50000 } } }; },
+    // Рынка нет вовсе.
+    nomarket: () => { const st = baseState(); st.b.market = 0;
+      return { tables: { worlds:[world], players:[mkPlayer(st), mkOther()], marches:[], map_cells:[], mail:[], events:[] },
+               body: { to: 8, res: { food: 1000 } } }; },
+    // Получатель погиб.
+    dead: () => { const st = baseState(); st.b.market = 5;
+      return { tables: { worlds:[world], players:[mkPlayer(st), mkOther({ dead_at: past })], marches:[], map_cells:[], mail:[], events:[] },
+               body: { to: 8, res: { food: 1000 } } }; },
+    // Сам себе.
+    self: () => { const st = baseState(); st.b.market = 5;
+      return { tables: { worlds:[world], players:[mkPlayer(st), mkOther()], marches:[], map_cells:[], mail:[], events:[] },
+               body: { to: 7, res: { food: 1000 } } }; },
+  },
   "mp-tick": {
     build: () => { const st = baseState();
       st.queues[0] = { b:"lumber", plot:0, lv:3, t0:Date.now()/1000-60, t1:Date.now()/1000-1 };
@@ -69,6 +95,39 @@ const SCENARIOS = {
     "build-new": () => { const st = baseState();
       st.queues[1] = { b:"forge", plot:null, lv:1, t0:Date.now()/1000-60, t1:Date.now()/1000-1 };
       return { tables:{ worlds:[world], players:[mkPlayer(st)], marches:[], map_cells:[], mail:[], events:[buildEvent(1)] } }; },
+    // Обоз доехал: груз ложится получателю на склад, обоим письма, обоз исчезает.
+    trade: () => {
+      const st = baseState();
+      const to = mkOther();
+      to.state.res = { food: 1000, wood: 1000, stone: 1000, gold: 1000 };
+      to.state.resAt = Date.now() / 1000;          // без начисления за час — чтобы видеть чистое зачисление
+      const march = { id: 55, world_id: "w-1", player_id: 7, mode: "trade", state: "go",
+        tx: 1460, ty: 870, t0: Date.now()/1000 - 60, t1: Date.now()/1000 - 1,
+        units: { inf:{}, arc:{}, cav:{}, sie:{} },
+        data: { dist: 57, spd: 163, to_id: 8, to_nick: "Сосед", to_race: "human",
+                from_nick: "Мармелад", from_race: "undead",
+                sent: { food: 5000, wood: 5000, stone: 0, gold: 0 },
+                net:  { food: 3950, wood: 3950, stone: 0, gold: 0 },
+                tax: 0.21, market_lv: 5, from: { x: 1420, y: 830 } } };
+      const ev = { id: 2, world_id: "w-1", fire_at: past, type: "march_arrive",
+                   data: { march_id: 55 }, processed: false, claimed_at: null, created_at: past };
+      return { tables: { worlds:[world], players:[mkPlayer(st), to], marches:[march], map_cells:[], mail:[], events:[ev] } };
+    },
+    // Тот же обоз, но получатель погиб, пока он был в пути.
+    "trade-dead": () => {
+      const st = baseState();
+      const to = mkOther({ dead_at: past });
+      const march = { id: 55, world_id: "w-1", player_id: 7, mode: "trade", state: "go",
+        tx: 1460, ty: 870, t0: Date.now()/1000 - 60, t1: Date.now()/1000 - 1,
+        units: { inf:{}, arc:{}, cav:{}, sie:{} },
+        data: { dist: 57, spd: 163, to_id: 8, to_nick: "Сосед",
+                sent: { food: 5000, wood: 0, stone: 0, gold: 0 },
+                net:  { food: 3950, wood: 0, stone: 0, gold: 0 }, tax: 0.21,
+                from: { x: 1420, y: 830 } } };
+      const ev = { id: 2, world_id: "w-1", fire_at: past, type: "march_arrive",
+                   data: { march_id: 55 }, processed: false, claimed_at: null, created_at: past };
+      return { tables: { worlds:[world], players:[mkPlayer(st), to], marches:[march], map_cells:[], mail:[], events:[ev] } };
+    },
     legacy: () => { const st = legacyState();
       st.queues[0] = { b:"lumber", plot:0, lv:3, t0:Date.now()/1000-60, t1:Date.now()/1000-1 };
       return { tables:{ worlds:[world], players:[mkPlayer(st)], marches:[], map_cells:[], mail:[], events:[buildEvent(0)] } }; },
@@ -91,7 +150,7 @@ const modPath = join(dir, "fn.mjs");
 writeFileSync(modPath, src + "\nexport const handler = globalThis.__HANDLER__;\n");
 
 // ---- прогон -----------------------------------------------------------------
-const { tables } = make();
+const { tables, body: reqBody } = make();
 const { client, db, log } = makeDb(tables);
 globalThis.__FAKE_CLIENT__ = client;
 globalThis.__ENV__ = { SUPABASE_URL: "http://x", SUPABASE_ANON_KEY: "anon",
@@ -99,7 +158,8 @@ globalThis.__ENV__ = { SUPABASE_URL: "http://x", SUPABASE_ANON_KEY: "anon",
 
 const { handler } = await import(pathToFileURL(modPath).href);
 const req = new Request("http://x/" + fnName, { method: "POST",
-  headers: { Authorization: "Bearer tok", "Content-Type": "application/json" }, body: "{}" });
+  headers: { Authorization: "Bearer tok", "Content-Type": "application/json" },
+  body: JSON.stringify(reqBody || {}) });
 
 console.log("функция: " + fnName + "   сценарий: " + (scenarioName || Object.keys(list)[0]) + "\n");
 try {
@@ -120,5 +180,23 @@ if (p) {
   console.log("  очередь:   " + JSON.stringify(p.state.queues));
   console.log("  прочность: " + JSON.stringify(p.state.bhp || {}));
   console.log("  мощь:      " + p.power + " (высшая " + (p.state.peakPower ?? "—") + ")");
+}
+if (p) {
+  console.log("  ресурсы:   " + JSON.stringify(p.state.res));
+}
+const p2 = db.players[1];
+if (p2) {
+  console.log("получатель " + p2.nick + ": " + JSON.stringify(p2.state.res));
+}
+if (db.marches && db.marches.length) {
+  console.log("\nобозы/походы в базе:");
+  for (const m of db.marches) {
+    console.log("  #" + m.id + " " + m.mode + "/" + m.state + " -> " + m.tx + "," + m.ty +
+      "  в пути " + Math.round((m.t1 - m.t0)) + " с" +
+      (m.data && m.data.net ? "  доедет " + JSON.stringify(m.data.net) : ""));
+  }
+}
+if (db.mail && db.mail.length) {
+  console.log("\nписьма: " + db.mail.map((x) => x.kind + "/" + (x.data && x.data.role || "")).join(", "));
 }
 console.log("\nобращений к базе: " + log.length);
