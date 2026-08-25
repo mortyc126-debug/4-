@@ -113,7 +113,7 @@ struct Light { vp: mat4x4f };
 // regions-v1.bin), 2400×1200, 1 клетка мира = 1 тексель, та же сетка/те же
 // оси, что и у heightmap/*.bin (engine/src/terrain.ts:toPixel) — прозрачно
 // всюду, кроме самой линии.
-@group(0) @binding(17) var texRegionBorders: texture_2d<f32>;
+@group(0) @binding(17) var texRegions: texture_2d<f32>;
 
 struct VOut {
   @builtin(position) pos: vec4f, @location(0) waterColor: vec3f, @location(1) worldPos: vec3f,
@@ -339,19 +339,38 @@ fn fs(in: VOut) -> @location(0) vec4f {
     albedo = mix(withMoss, snowC, snowT);
   }
 
-  // Линия границы региона — поверх ГОТОВОГО albedo (не разбирает воду/сушу
-  // отдельно, граница по построению никогда не заходит в воду, см.
-  // bake_borders_texture.py), затем ОБА идут через общее освещение/туман
-  // ниже — линия должна лечь на рельеф как нарисованная на карте вручную, а
-  // не светиться поверх него ровным неосвещённым цветом. 1200.0/2400.0/
-  // 600.0/1200.0 — WORLD_HALF_X/WORLD_W/WORLD_HALF_Z/WORLD_H из
+  // Разметка регионов — поверх ГОТОВОГО albedo, но ДО общего освещения и
+  // тумана ниже: и заливка территории, и линия границы должны лечь на рельеф
+  // как нарисованные на карте, а не светиться поверх него ровным
+  // неосвещённым цветом.
+  //
+  // Раньше тут была ОДНА ТОЛЬКО линия границы. Автор сообщил: «полупрозрачная
+  // разметка на территории как бы уже наложена на карту, но я её почему-то не
+  // вижу» — и был прав по сути: регионов шестнадцать на весь мир 2400×1200,
+  // каждый около 380×380 клеток, а камера охватывает полсотни. По замеру
+  // прежней текстуры в кадре вокруг (0,0) линия занимала 16% площади, а
+  // вокруг (200,-150) и (-400,-200) — ровно 0%. Из середины региона границу
+  // нельзя было увидеть в принципе. Теперь текстура несёт ещё и слабую
+  // заливку территории своим цветом (см. bake_regions_overlay.py) — она
+  // читается в любой точке, а граница стала сменой цвета, заметной даже краем
+  // кадра.
+  //
+  // Воду не трогаем: заливка накрывала бы открытое море (regions-v1.bin делит
+  // на регионы весь мир, а не только сушу). Маска суши уже вшита в саму
+  // текстуру, но здесь есть точный per-fragment признак — waterFlag, тот же,
+  // по которому выше выбиралась ветка воды; берём его, чтобы на береговой
+  // линии заливка не вылезала в воду из-за расхождения в клетку-другую.
+  //
+  // 1200.0/2400.0/600.0/1200.0 — WORLD_HALF_X/WORLD_W/WORLD_HALF_Z/WORLD_H из
   // engine/src/terrain.ts, держать в синхроне вручную (тот же приём
   // дублирования констант рельефа, что и во всём остальном этом файле).
-  let borderUV = vec2f((in.worldPos.x + 1200.0) / 2400.0, (in.worldPos.z + 600.0) / 1200.0);
-  let inRegionBounds = in.worldPos.x > -1200.0 && in.worldPos.x < 1200.0 && in.worldPos.z > -600.0 && in.worldPos.z < 600.0;
-  let borderC = textureSampleLevel(texRegionBorders, samp, borderUV, 0.0);
-  let borderA = select(0.0, borderC.a, inRegionBounds);
-  albedo = mix(albedo, borderC.rgb, borderA);
+  let regionUV = vec2f((in.worldPos.x + 1200.0) / 2400.0, (in.worldPos.z + 600.0) / 1200.0);
+  let inRegionBounds = in.worldPos.x > -1200.0 && in.worldPos.x < 1200.0
+                    && in.worldPos.z > -600.0 && in.worldPos.z < 600.0
+                    && in.waterFlag <= 0.5;
+  let regionC = textureSampleLevel(texRegions, samp, regionUV, 0.0);
+  let regionA = select(0.0, regionC.a, inRegionBounds);
+  albedo = mix(albedo, regionC.rgb, regionA);
 
   let lit = albedo * lighting;
   let d = distance(in.worldPos, fog.eye.xyz);
@@ -813,7 +832,7 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   // комментарий выше TERRAIN_SHADER): раньше снег был плоским процедурным
   // тоном (mix к белому), лесная подстилка не существовала вовсе (густой
   // лес стоял на обычной grass/dry_meadow, как и открытое поле).
-  const [texSand, texGrass, texDry, texScree, texRock, texSnow, texForestFloor, texDesert, texMarsh, texTundraMoss, texWaterDetail, texRegionBorders] = await Promise.all([
+  const [texSand, texGrass, texDry, texScree, texRock, texSnow, texForestFloor, texDesert, texMarsh, texTundraMoss, texWaterDetail, texRegions] = await Promise.all([
     loadTexture(device, "/textures/ground/sand.jpg"),
     loadTexture(device, "/textures/ground/grass.jpg"),
     loadTexture(device, "/textures/ground/dry_meadow.jpg"),
@@ -829,7 +848,7 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     // тонкая запечённая линия шириной в несколько текселей (см. её
     // комментарий у binding 17): даунсемпл к 1024 (~0.43×) заметно смазал
     // бы линию, местами до полной потери.
-    loadTexture(device, "/textures/world/regions_borders.png", 2400),
+    loadTexture(device, "/textures/world/regions_overlay.png", 2400),
   ]);
   const groundSampler = device.createSampler({ addressModeU: "repeat", addressModeV: "repeat", magFilter: "linear", minFilter: "linear" });
   const terrainModule = device.createShaderModule({ code: TERRAIN_SHADER });
@@ -887,7 +906,7 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
       { binding: 14, resource: texMarsh.createView() },
       { binding: 15, resource: texTundraMoss.createView() },
       { binding: 16, resource: texWaterDetail.createView() },
-      { binding: 17, resource: texRegionBorders.createView() },
+      { binding: 17, resource: texRegions.createView() },
     ],
   });
 
