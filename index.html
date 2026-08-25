@@ -15390,7 +15390,14 @@ function foMultiplayer(embedded, only){
   // а компактный свиток похода (mpOpenMarchModal/mpMarchSheetHtml) открывается
   // прямо оттуда, без прыжка на отдельную длинную страницу.
   if(show("army") && mpState.marches.length){
-    h+=rubric("Отряды в поле",mpState.marches.length+" из "+mpMarchSlots(st.b.hall||0));
+    // Разведчики слот похода не занимают (у них свой потолок, см. mp-scout) —
+    // в одиночке этот счётчик их и не считает (index.html:11278,
+    // !isScoutMarch). Раньше вопрос не стоял: разведчики в mpState.marches
+    // вообще не попадали. Теперь попадают (иначе им негде показать модель
+    // разведчика в 3D), так что счётчик надо было привести к одиночке —
+    // иначе он показывал бы «3 из 2».
+    const inSlots=mpState.marches.filter(m=>m.mode!=="scout"&&m.mode!=="scoutmarch").length;
+    h+=rubric("Отряды в поле",inSlots+" из "+mpMarchSlots(st.b.hall||0));
     mpState.marches.forEach(m=>{
       const going=m.state==="go", gathering=m.state==="gather", sieging=m.state==="siege";
       const isGather=m.mode==="gather", isRaid=m.mode==="raid";
