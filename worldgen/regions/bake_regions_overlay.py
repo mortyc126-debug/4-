@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Печёт наложение регионов на карту (regions_overlay.png) поверх УЖЕ
+посчитанного regions-v1.bin — заливка территории своим цветом плюс линия
+границы. Заменяет прежний bake_borders_texture.py, который рисовал ОДНУ
+ТОЛЬКО линию.
+
+Почему одной линии оказалось мало. Автор сообщил: «полупрозрачная разметка
+на территории как бы уже наложена на карту, но я её почему-то не вижу».
+Линии на месте и вполне заметные, но регионов всего шестнадцать на весь мир
+2400×1200 — каждый примерно 380×380 клеток, а камера охватывает полсотни.
+Замер по готовой текстуре: в кадре вокруг (0,0) линии занимают 16% площади,
+вокруг (200,-150) и (-400,-200) — ровно 0%. То есть увидеть границу можно
+было только случайно забредя на неё; из середины региона — никогда.
+
+Заливка это чинит по существу: территория читается в любой точке, а граница
+становится сменой цвета, которую видно даже краем кадра.
+
+Соседние регионы красятся ЗАВЕДОМО разными цветами: строим граф соседства по
+самой карте и раскрашиваем его жадно (обычная раскраска графа, вершины по
+убыванию степени). Без этого две соседние области могли получить соседние же
+оттенки палитры, и граница между ними стала бы неразличимой — ровно то, от
+чего уходим.
+
+Формат выхода — тот же, что у heightmap/*.bin и прежней текстуры границ
+(см. engine/src/terrain.ts:toPixel — world_x = px-1200, world_z = py-600):
+2400×1200, 1 клетка мира = 1 тексель, RGBA. Вода и клетки вне регионов
+прозрачны — море остаётся морем.
+
+Запуск:
+  python3 worldgen/regions/bake_regions_overlay.py
+Дальше файл нужно руками скопировать в textures/world/regions_overlay.png —
+именно оттуда его грузит движок (см. TERRAIN_SHADER в renderer.ts).
+"""
+from pathlib import Path
+
+import numpy as np
+from PIL import Image, ImageFilter
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parents[1]
+WORLD_W, WORLD_H = 2400, 1200
+
+# Уровень моря в heightmap/elevation-v6.bin — тот же порог, что и у движка
+# (engine/src/terrain.ts) и у клиентского isRealWater в index.html.
+SEA = 0.235
+
+# Ширина сплошного ядра линии границы, в клетках мира (=текселях, тут 1:1), и
+# мягкое размытие поверх — "растёкшиеся чернила" вместо жёсткого пиксельного
+# края. Значения те же, что были у линии до заливки: они уже проверены на
+# игровой камере (camera.ts: MIN_DIST=9..MAX_DIST=140).
+DILATE_PX = 4
+SOFT_BLUR_PX = 2.2
+
+# Насколько сильно наложение вмешивается в цвет земли. Заливка нарочно очень
+# слабая: это подсказка «чья территория», а не перекраска мира — рельеф,
+# текстуры и постройки должны остаться собой. Линия границы, наоборот,
+# заметная.
+FILL_ALPHA = 40      # ~16% — territory tint
+BORDER_ALPHA = 232
+
+# Тёмно-коричневые чернила границы — тон в духе темы интерфейса игры
+# (GILT/пергамент, см. renderTop/renderFolio в index.html), не чистый чёрный:
+# линия должна читаться как нарисованная на карте, не как трещина в рельефе.
+LINE_RGB = (42, 28, 18)
+
+# Палитра заливки. Цвета насыщенные (при альфе 16% бледные превратились бы в
+# неразличимую грязь), но подобраны так, чтобы вместе выглядели как раскраска
+# старой карты, а не как диаграмма. Порядок значения не имеет — раскраска
+# графа ниже сама решает, кому какой достанется.
+PALETTE = [
+    (196,  74,  62),   # киноварь
+    ( 74, 118, 176),   # индиго
+    (206, 152,  62),   # охра
+    ( 92, 150,  92),   # мох
+    (150,  96, 168),   # пурпур
+    ( 78, 158, 160),   # вердигри
+    (198, 110, 140),   # марена
+    (128, 128,  92),   # оливка
+]
+
+
+def neighbours(rm: np.ndarray) -> dict:
+    """Кто с кем граничит — по самой карте, а не по расстоянию между центрами:
+    у выпуклых областей центры могут быть близки, не касаясь друг друга."""
+    adj = {}
+    for a, b in (
+        (rm[:, :-1], rm[:, 1:]),
+        (rm[:-1, :], rm[1:, :]),
+    ):
+        m = (a != b) & (a >= 0) & (b >= 0)
+        for u, v in np.unique(np.stack([a[m], b[m]], axis=1), axis=0):
+            adj.setdefault(int(u), set()).add(int(v))
+            adj.setdefault(int(v), set()).add(int(u))
+    return adj
+
+
+def colour_regions(ids, adj) -> dict:
+    """Жадная раскраска: берём вершины по убыванию числа соседей и даём
+    каждой первый цвет палитры, которого ещё нет ни у одного её соседа."""
+    order = sorted(ids, key=lambda r: -len(adj.get(r, ())))
+    chosen = {}
+    for r in order:
+        taken = {chosen[n] for n in adj.get(r, ()) if n in chosen}
+        for c in range(len(PALETTE)):
+            if c not in taken:
+                chosen[r] = c
+                break
+        else:
+            chosen[r] = 0   # соседей больше, чем цветов — до такого тут далеко
+    return chosen
+
+
+def main():
+    bin_path = SCRIPT_DIR / "regions-v1.bin"
+    raw = np.fromfile(bin_path, dtype=np.uint8)
+    assert raw.size == WORLD_W * WORLD_H, (
+        f"{bin_path} не совпадает по размеру с {WORLD_W}x{WORLD_H} — "
+        "сначала запустите generate_regions.py, чтобы его создать/обновить"
+    )
+    rm = raw.reshape(WORLD_H, WORLD_W).astype(np.int16)
+    rm[rm == 255] = -1  # 255 = вода/вне региона (см. generate_regions.py)
+
+    # Красим ТОЛЬКО СУШУ. regions-v1.bin делит на регионы весь мир, включая
+    # открытое море: 255 там стоит далеко не везде, и без этой маски заливка
+    # накрывала 82% карты при доле суши всего 20.6% — то есть 62% карты
+    # оказывалось залитым морем. Море должно остаться морем.
+    #
+    # Маска по heightmap, а не по 255 из самого regions-v1.bin: тот про воду
+    # знает лишь приблизительно, а высоты — исходные данные, по которым воду
+    # рисует и сам движок. Шейдер вдобавок гасит наложение по своему
+    # waterFlag (см. TERRAIN_SHADER в renderer.ts) — двойная страховка от
+    # расхождения на береговой линии в клетку-другую.
+    elev_path = REPO_ROOT / "heightmap" / "elevation-v6.bin"
+    elev = np.fromfile(elev_path, dtype="<u2")
+    assert elev.size == WORLD_W * WORLD_H, f"{elev_path}: не {WORLD_W}x{WORLD_H}"
+    sea_mask = (elev.reshape(WORLD_H, WORLD_W).astype(np.float32) / 65535.0) <= SEA
+    rm[sea_mask] = -1
+
+    ids = sorted(int(v) for v in np.unique(rm) if v >= 0)
+    adj = neighbours(rm)
+    colour_of = colour_regions(ids, adj)
+    worst = max((len({colour_of[n] for n in adj.get(r, ())} & {colour_of[r]}) for r in ids), default=0)
+    print("регионов:", len(ids), "| цветов в палитре:", len(PALETTE),
+          "| соседей одного цвета:", worst, "(должно быть 0)")
+
+    # ---- заливка территорий
+    lut = np.zeros((max(ids) + 2, 3), dtype=np.uint8)
+    for r in ids:
+        lut[r] = PALETTE[colour_of[r]]
+    land = rm >= 0
+    rgba = np.zeros((WORLD_H, WORLD_W, 4), dtype=np.uint8)
+    rgba[..., :3] = lut[np.clip(rm, 0, None)]
+    rgba[..., 3] = np.where(land, FILL_ALPHA, 0)
+
+    # ---- линия границы поверх заливки. Граница ТОЛЬКО между двумя разными
+    # настоящими регионами, не по берегу (вода не считается соседом).
+    border = np.zeros((WORLD_H, WORLD_W), dtype=bool)
+    diff_h = (rm[:, :-1] != rm[:, 1:]) & (rm[:, :-1] >= 0) & (rm[:, 1:] >= 0)
+    diff_v = (rm[:-1, :] != rm[1:, :]) & (rm[:-1, :] >= 0) & (rm[1:, :] >= 0)
+    border[:, :-1] |= diff_h
+    border[:, 1:] |= diff_h
+    border[:-1, :] |= diff_v
+    border[1:, :] |= diff_v
+
+    core = Image.fromarray((border * 255).astype(np.uint8)).filter(ImageFilter.MaxFilter(2 * DILATE_PX + 1))
+    soft = np.array(core.filter(ImageFilter.GaussianBlur(SOFT_BLUR_PX))).astype(np.float32) / 255.0
+    soft = soft[..., None]
+
+    ink = np.array(LINE_RGB, dtype=np.float32)
+    rgb = rgba[..., :3].astype(np.float32)
+    rgba[..., :3] = np.clip(rgb * (1.0 - soft) + ink * soft, 0, 255).astype(np.uint8)
+    a = rgba[..., 3].astype(np.float32)
+    rgba[..., 3] = np.clip(a + (BORDER_ALPHA - a) * soft[..., 0], 0, 255).astype(np.uint8)
+
+    out_path = SCRIPT_DIR / "regions_overlay.png"
+    Image.fromarray(rgba, "RGBA").save(out_path)
+    print("написано:", out_path)
+    print("залито территорий:", round(100 * float(land.mean()), 1), "% карты",
+          "| линия границы (alpha>128):", int((rgba[..., 3] > 128).sum()), "текселей")
+
+
+if __name__ == "__main__":
+    main()
