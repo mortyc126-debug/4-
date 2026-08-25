@@ -5881,21 +5881,22 @@ const WPATH_DIRS=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
 // построенная лениво один раз за партию (CFG.MAP×CFG.MAP). При бесконечном
 // мире держать такую сетку негде — да и незачем: подавляющее большинство
 // походов огибает воду в маленькой области у собственного маршрута.
-// Строим маленькую сетку под конкретный поход — по ограничивающему
-// прямоугольнику начала/конца плюс запас (margin), тот же A* (miniHeap/
-// WPATH_DIRS/simplifyWaterPath), просто с локальными, а не глобальными
-// индексами. isRealWater(x,y) уже сама берёт центр клетки (+0.5 внутри
-// неё) — прибавлять здесь ещё раз нельзя, иначе сетка A* сдвинется на
-// целую клетку относительно настоящей воды.
+// Считаем окно под конкретный поход — по ограничивающему прямоугольнику
+// начала/конца плюс запас (margin), тот же A* (miniHeap/WPATH_DIRS/
+// simplifyWaterPath), просто с локальными, а не глобальными индексами.
+//
+// Раньше функция ещё и заполняла Uint8Array «вода/суша» по центрам клеток —
+// и этот массив НИКТО не читал ни разу: поиск ниже спрашивает воду не по
+// центрам клеток, а по четвертям вдоль рёбер (edgeWet), поэтому в сетку не
+// заглядывал. Стоило это 69 000 лишних проб воды и 144 мс на тринадцати
+// маршрутах — впустую. Осталось только окно; имя оставлено прежним, чтобы
+// не трогать вызовы.
 function buildLocalWaterGrid(x0,y0,x1,y1,margin){
   const ox=Math.floor(Math.min(x0,x1))-margin;
   const oy=Math.floor(Math.min(y0,y1))-margin;
   const ex=Math.ceil(Math.max(x0,x1))+margin;
   const ey=Math.ceil(Math.max(y0,y1))+margin;
-  const w=ex-ox+1, h=ey-oy+1;
-  const grid=new Uint8Array(w*h);
-  for(let yy=0;yy<h;yy++)for(let xx=0;xx<w;xx++) grid[yy*w+xx]=isRealWater(ox+xx,oy+yy)?1:0;
-  return {grid,ox,oy,w,h};
+  return {ox,oy,w:ex-ox+1,h:ey-oy+1};
 }
 // Пробует найти обход в пределах локальной сетки заданного запаса;
 // null — не нашли (преграда крупнее запаса, либо сам старт/финиш в воде) —
@@ -5950,6 +5951,27 @@ function tryWaterPath(x0,y0,x1,y1,margin){
   const gx0=Math.round(x0), gy0=Math.round(y0);
   const gx1=Math.round(x1), gy1=Math.round(y1);
   if(!inb(gx0,gy0)||!inb(gx1,gy1)) return null;
+  // Память проб воды на время поиска. Пробы ложатся не куда попало: ax, ay —
+  // целые клетки, bx-ax и by-ay всегда -1, 0 или 1, а t кратно
+  // 1/WPATH_EDGE_SAMPLES, — то есть все точки проб сидят на решётке с шагом
+  // в четверть клетки, и её можно адресовать целым числом (доли вида i/4
+  // представимы в double точно, округление ниже не «почти», а ровно).
+  // Без памяти одна и та же точка щупалась снова и снова: каждое ребро
+  // осматривается с обоих концов, а клетки ещё и переоткрываются, когда до
+  // них находится путь получше, — 753 000 проб isRealWater на тринадцати
+  // маршрутах, и это (не куча и не сетка) было главной статьёй расхода.
+  // 0 — не пробовали, 1 — вода, 2 — суша.
+  const SUB=WPATH_EDGE_SAMPLES;
+  const sw=(g.w+2)*SUB, sh=(g.h+2)*SUB;
+  const wetMemo=new Uint8Array(sw*sh);
+  const wetAt=(x,y)=>{
+    const sx=Math.round((x-g.ox+1)*SUB), sy=Math.round((y-g.oy+1)*SUB);
+    if(sx<0||sy<0||sx>=sw||sy>=sh) return isRealWater(x,y);   // вылезли за окно — считаем как раньше
+    const k=sy*sw+sx;
+    let v=wetMemo[k];
+    if(v===0) v=wetMemo[k]=isRealWater(x,y)?1:2;
+    return v===1;
+  };
   // Доля мокрых проб на ребре — цена ребра растёт плавно от неё, а не скачком
   // "клетка-центр мокрая/сухая": узкая протока между двумя сухими центрами
   // (тот самый случай, ради которого раньше поднимали WPATH_SAMPLE_DENSITY)
@@ -5958,7 +5980,7 @@ function tryWaterPath(x0,y0,x1,y1,margin){
     let n=0;
     for(let i=1;i<=WPATH_EDGE_SAMPLES;i++){
       const t=i/WPATH_EDGE_SAMPLES;
-      if(isRealWater(ax+(bx-ax)*t, ay+(by-ay)*t)) n++;
+      if(wetAt(ax+(bx-ax)*t, ay+(by-ay)*t)) n++;
     }
     return n/WPATH_EDGE_SAMPLES;
   };
@@ -6090,15 +6112,71 @@ function waterPathUncached(x0,y0,x1,y1){
   // технический сбой. Прямая лучше, чем не дать походу случиться.
   return [{x:x0,y:y0},{x:x1,y:y1}];
 }
+const wpKey=(x0,y0,x1,y1)=>{ const r=v=>Math.round(v*100)/100;
+  return r(x0)+","+r(y0)+","+r(x1)+","+r(y1); };
 function waterPath(x0,y0,x1,y1){
-  const r=v=>Math.round(v*100)/100;
-  const k=r(x0)+","+r(y0)+","+r(x1)+","+r(y1);
+  const k=wpKey(x0,y0,x1,y1);
   const hit=waterPathCache.get(k);
   if(hit) return hit;
   const path=waterPathUncached(x0,y0,x1,y1);
   if(waterPathCache.size>=WATER_PATH_CACHE_MAX) waterPathCache.clear();
   waterPathCache.set(k,path);
   return path;
+}
+/* ---- Маршрут похода для 3D: считается ВНЕ кадра ---------------------------
+   Здесь была настоящая причина рывков объёмной карты, и автор указал на неё
+   верно: «связано со вкладками по отправке отрядов… всегда одна причина —
+   пересборка».
+   Замер на живом мире (60 соседей, 220 точек, 90 лагерей, 13 походов,
+   настоящие высоты, координаты вокруг нуля — там pickSpawn и сажает
+   игроков): первая пересборка снимка — 88 мс, и почти всё это waterPath,
+   A* по воде. А снимок читает 3D-движок КАЖДЫЙ КАДР (бюджет 16.7 мс), и
+   пересобирается он при любой замене массива опросом — то есть раз в пять
+   секунд, а во время боя раз в секунду. За пределами запечённой области
+   высот проба воды считается процедурным шумом и стоит в разы дороже —
+   там один маршрут доходил до 450 мс.
+   Отправка отряда добивала: новый поход — новый, ещё не посчитанный
+   маршрут, и весь этот A* случался разом, синхронно, посреди кадра.
+   Кэш пути тут не спасал: он снимает ПОВТОРНЫЙ расчёт, а первый всё равно
+   приходился на кадр.
+   Лечение: из кадра расчёт убран совсем. Нет готового маршрута — прямо
+   сейчас отдаём прямую (ровно то, что рисовалось до появления рельефных
+   обходов) и ставим настоящий расчёт в очередь на потом. Посчитался —
+   сбрасываем кэш снимка, следующая пересборка возьмёт настоящий путь.
+   Видно это как «полсекунды отряд идёт по прямой, потом линия ложится на
+   брод» — за это время он проходит считанные пиксели.
+   Кэшируется ГОТОВЫЙ маршрут целиком (путь + разрез по местности +
+   накопленные веса), а не только сырой путь: разрез и веса сами по себе
+   стоили ещё 9-17 мс на пересборку, и считать их заново при каждом опросе
+   было незачем — от опроса они не меняются. */
+const mpRouteCache=new Map(), mpRoutePending=new Set();
+const MP_ROUTE_CACHE_MAX=400;
+function mpRouteFor(x0,y0,x1,y1){
+  const k=wpKey(x0,y0,x1,y1);
+  const hit=mpRouteCache.get(k);
+  if(hit) return hit;
+  if(!mpRoutePending.has(k)){
+    mpRoutePending.add(k);
+    // setTimeout, а не сразу: пусть кадр закончится. requestIdleCallback был
+    // бы уместнее, но его нет в Safari, а именно там и играют с телефона.
+    setTimeout(()=>{
+      try{
+        const path=waterPath(x0,y0,x1,y1);
+        const sp=splitPathByTerrain(path);
+        const cum=[0]; let total=0;
+        for(let i=1;i<sp.length;i++){ total+=segmentTravelCost(sp[i-1],sp[i]); cum.push(total); }
+        if(mpRouteCache.size>=MP_ROUTE_CACHE_MAX) mpRouteCache.clear();
+        mpRouteCache.set(k,{path:sp,cum,len:total});
+        // Снимок пересоберётся сам и подхватит настоящий маршрут.
+        mpSnapCache=null;
+      }catch(e){ console.warn("маршрут похода:", e); }
+      finally{ mpRoutePending.delete(k); }
+    },0);
+  }
+  // Заглушка на время расчёта: прямая из двух точек, вес — её длина.
+  const straight=[{x:x0,y:y0},{x:x1,y:y1}];
+  const len=Math.hypot(x1-x0,y1-y0)||1;
+  return {path:straight,cum:[0,len],len,pending:true};
 }
 function pathLength(path){
   let total=0;
@@ -13527,7 +13605,7 @@ function mpBuildWorldSnapshot(){
       ? {x:d.from.x,y:d.from.y}
       : (back?{x:m.tx,y:m.ty}:home);
     const to=back?home:{x:m.tx,y:m.ty};
-    const path=waterPath(from.x,from.y,to.x,to.y);
+    const route=mpRouteFor(from.x,from.y,to.x,to.y);
     // Тот же взвешенный pathCum, что и у одиночной игры (см. setMarchPath) —
     // отряд в общем мире так же ползёт через брод и вверх по склону, а по
     // равнине идёт нормально. ВРЕМЯ прибытия (t0/t1) при этом по-прежнему
@@ -13541,10 +13619,7 @@ function mpBuildWorldSnapshot(){
     // отрезка времени распределяется по местности, а не равномерно.
     // Тот же разрез по границам местности, что и в setMarchPath — иначе в
     // общем мире замедление снова размазалось бы по длинному звену.
-    const sp=splitPathByTerrain(path);
-    const cum=[0]; let total=0;
-    for(let i=1;i<sp.length;i++){ total+=segmentTravelCost(sp[i-1],sp[i]); cum.push(total); }
-    return Object.assign({}, m, { path:sp, pathCum:cum, pathLen:total });
+    return Object.assign({}, m, { path:route.path, pathCum:route.cum, pathLen:route.len });
   }
   const marches=[];
   const seenIds=new Set();
