@@ -162,6 +162,64 @@ def main():
     sea_mask = height < SEA
     rm[sea_mask] = -1
 
+    # ---- карта БЕЗ дыр, только для расчёта границы ------------------------
+    # Автор: "разметка границ бывает прерывается в некоторых местах и
+    # непонятно где она там проходит".
+    #
+    # Причина: в regions-v1.bin вся вода помечена 255 = "вне региона" — это
+    # ровно 17.6% карты, и совпадает с долей воды. Линия же рисуется только
+    # там, где соприкоснулись ДВА НАСТОЯЩИХ региона. Значит везде, где границу
+    # пересекает река или озеро, у соседей нет общего ребра — и линии нет.
+    # Рвало её как раз в самых приметных местах: у русла, где глазу и нужна
+    # подсказка, куда граница идёт дальше.
+    #
+    # Чиним не линию, а карту, по которой её считают: разливаем регионы по
+    # воде до встречи — обычный поиск в ширину сразу от всех берегов
+    # одновременно, каждая водная клетка достаётся ближайшему региону. Река
+    # делится между соседями по середине, у них появляется общее ребро, и
+    # граница проходит через воду не прерываясь.
+    #
+    # Только для ЛИНИИ: заливка территории (FILL_ALPHA) считает по rm с
+    # маской моря, как и раньше, — море остаётся морем.
+    rm_line = rm.copy()
+    hole = rm_line < 0
+    if hole.any():
+        from collections import deque
+        H, W = rm_line.shape
+        flat = rm_line.reshape(-1)
+        holef = hole.reshape(-1)
+        q = deque()
+        # Стартуем от клеток региона, у которых есть сосед-дыра: гнать в
+        # очередь все 2.4 млн клеток суши незачем.
+        seed = np.zeros((H, W), dtype=bool)
+        seed[:, :-1] |= hole[:, 1:]
+        seed[:, 1:] |= hole[:, :-1]
+        seed[:-1, :] |= hole[1:, :]
+        seed[1:, :] |= hole[:-1, :]
+        seed &= ~hole
+        for i in np.flatnonzero(seed.reshape(-1)):
+            q.append(int(i))
+        while q:
+            i = q.popleft()
+            v = flat[i]
+            y, x = divmod(i, W)
+            if x > 0:
+                j = i - 1
+                if holef[j]: holef[j] = False; flat[j] = v; q.append(j)
+            if x < W - 1:
+                j = i + 1
+                if holef[j]: holef[j] = False; flat[j] = v; q.append(j)
+            if y > 0:
+                j = i - W
+                if holef[j]: holef[j] = False; flat[j] = v; q.append(j)
+            if y < H - 1:
+                j = i + W
+                if holef[j]: holef[j] = False; flat[j] = v; q.append(j)
+        left = int(holef.sum())
+        if left:
+            print("предупреждение: клеток без региона осталось", left,
+                  "(вода, не касающаяся ни одного берега)")
+
     ids = sorted(int(v) for v in np.unique(rm) if v >= 0)
     adj = neighbours(rm)
     colour_of = colour_regions(ids, adj)
@@ -186,10 +244,11 @@ def main():
         rgba[..., :3] = LINE_RGB
 
     # ---- линия границы поверх заливки. Граница ТОЛЬКО между двумя разными
-    # настоящими регионами, не по берегу (вода не считается соседом).
+    # регионами, не по берегу — по карте rm_line, где вода уже разлита между
+    # соседями (см. её заголовок выше), иначе линия рвётся на каждой реке.
     border = np.zeros((WORLD_H, WORLD_W), dtype=bool)
-    diff_h = (rm[:, :-1] != rm[:, 1:]) & (rm[:, :-1] >= 0) & (rm[:, 1:] >= 0)
-    diff_v = (rm[:-1, :] != rm[1:, :]) & (rm[:-1, :] >= 0) & (rm[1:, :] >= 0)
+    diff_h = (rm_line[:, :-1] != rm_line[:, 1:]) & (rm_line[:, :-1] >= 0) & (rm_line[:, 1:] >= 0)
+    diff_v = (rm_line[:-1, :] != rm_line[1:, :]) & (rm_line[:-1, :] >= 0) & (rm_line[1:, :] >= 0)
     border[:, :-1] |= diff_h
     border[:, 1:] |= diff_h
     border[:-1, :] |= diff_v
@@ -208,8 +267,11 @@ def main():
     out_path = SCRIPT_DIR / "regions_overlay.png"
     Image.fromarray(rgba, "RGBA").save(out_path)
     print("написано:", out_path)
+    line_mask = rgba[..., 3] > 128
     print("залито территорий:", round(100 * float(land.mean()), 1), "% карты",
-          "| линия границы (alpha>128):", int((rgba[..., 3] > 128).sum()), "текселей")
+          "| линия границы (alpha>128):", int(line_mask.sum()), "текселей")
+    print("из них над водой:", int((line_mask & sea_mask).sum()), "текселей",
+          "— это и есть те самые бывшие разрывы на реках")
 
 
 if __name__ == "__main__":

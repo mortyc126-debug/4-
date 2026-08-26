@@ -88,6 +88,41 @@ const SCENARIOS = {
       return { tables: { worlds:[world], players:[mkPlayer(st), mkOther()], marches:[], map_cells:[], mail:[], events:[] },
                body: { to: 7, res: { food: 1000 } } }; },
   },
+  "mp-recall": {
+    // Отряд стоит на янтарной жиле и накопал ровно половину. Отзыв должен
+    // отдать ему половину, а вторую вернуть жиле — иначе она уходит в ноль
+    // и уборщик сносит её насовсем.
+    gather: () => {
+      const st = baseState();
+      const now = Date.now() / 1000;
+      const march = { id: 77, world_id: "w-1", player_id: 7, mode: "gather", state: "gather",
+        tx: 1430, ty: 840, t0: now - 1800, t1: now + 1800,   // ровно половина срока
+        units: { inf:{1:120}, arc:{}, cav:{}, sie:{} },
+        data: { dist: 40, spd: 1, res: "amber", take: 1000, cell_x: 1430, cell_y: 840,
+                from: { x: 1420, y: 830 } } };
+      const cell = { world_id: "w-1", x: 1430, y: 840, t: "node",
+                     data: { lv: 3, res: "amber", amount: 0 } };   // резерв уже списан на отправке
+      return { tables: { worlds:[world], players:[mkPlayer(st)], marches:[march],
+                         map_cells:[cell], mail:[], events:[] },
+               body: { march_id: 77 } };
+    },
+    // Тот же отряд, но уже везёт добычу с прошлой жилы — она не должна
+    // потеряться (его могли перетащить сюда через mp-redirect).
+    "gather-carry": () => {
+      const st = baseState();
+      const now = Date.now() / 1000;
+      const march = { id: 77, world_id: "w-1", player_id: 7, mode: "gather", state: "gather",
+        tx: 1430, ty: 840, t0: now - 1800, t1: now + 1800,
+        units: { inf:{1:120}, arc:{}, cav:{}, sie:{} },
+        data: { dist: 40, spd: 1, res: "food", take: 1000, cell_x: 1430, cell_y: 840,
+                carry: { wood: 5000 }, from: { x: 1420, y: 830 } } };
+      const cell = { world_id: "w-1", x: 1430, y: 840, t: "node",
+                     data: { lv: 3, res: "food", amount: 0 } };
+      return { tables: { worlds:[world], players:[mkPlayer(st)], marches:[march],
+                         map_cells:[cell], mail:[], events:[] },
+               body: { march_id: 77 } };
+    },
+  },
   "mp-tick": {
     build: () => { const st = baseState();
       st.queues[0] = { b:"lumber", plot:0, lv:3, t0:Date.now()/1000-60, t1:Date.now()/1000-1 };
@@ -193,7 +228,15 @@ if (db.marches && db.marches.length) {
   for (const m of db.marches) {
     console.log("  #" + m.id + " " + m.mode + "/" + m.state + " -> " + m.tx + "," + m.ty +
       "  в пути " + Math.round((m.t1 - m.t0)) + " с" +
-      (m.data && m.data.net ? "  доедет " + JSON.stringify(m.data.net) : ""));
+      (m.data && m.data.net ? "  доедет " + JSON.stringify(m.data.net) : "") +
+      (m.data && m.data.carry ? "  везёт " + JSON.stringify(m.data.carry) : "") +
+      (m.data && m.data.take != null ? "  резерв за нами " + m.data.take : ""));
+  }
+}
+if (db.map_cells && db.map_cells.length) {
+  console.log("\nточки на карте:");
+  for (const c of db.map_cells) {
+    console.log("  " + c.x + "," + c.y + " " + c.t + " " + JSON.stringify(c.data));
   }
 }
 if (db.mail && db.mail.length) {
