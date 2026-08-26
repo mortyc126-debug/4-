@@ -12144,13 +12144,22 @@ function pctTxt(v){ return (v>=0?"+":"")+(v*100).toFixed(1)+"%"; }
 // сторон рядом (та же таблица .mail-stats, что и у потерь выше), плюс
 // общее здоровье последней строкой (см. комментарий у battleBuffSnapshot —
 // в нашей модели оно не зависит от рода войск).
+// sb/ob — снимки бонусов сторон на момент боя (battleBuffSnapshotMp в
+// mp-tick). Вызывающий проверял их только на "не пусто", а читалось отсюда
+// sb[t].atk по каждому роду войск: снимок без какого-нибудь рода (письмо,
+// написанное до появления поля, укороченная запись) ронял ВСЮ карточку
+// письма, а вместе с ней и весь экран почты — см. try/catch в
+// mpMailScreenHtml. Пустая клетка честнее пустого экрана.
 function battleStatsRows(sb,ob){
+  sb=sb||{}; ob=ob||{};
+  const v=(o,t,k)=>(o&&o[t]&&typeof o[t][k]==="number")?pctTxt(o[t][k]):"—";
+  const hp=o=>(o&&typeof o.hp==="number")?pctTxt(o.hp):"—";
   let h="";
   TKEYS.forEach(t=>{
-    h+="<tr><td>"+TROOP_TYPES[t].name+" · атака</td><td>"+pctTxt(sb[t].atk)+"</td><td>"+pctTxt(ob[t].atk)+"</td></tr>";
-    h+="<tr><td>"+TROOP_TYPES[t].name+" · защита</td><td>"+pctTxt(sb[t].def)+"</td><td>"+pctTxt(ob[t].def)+"</td></tr>";
+    h+="<tr><td>"+TROOP_TYPES[t].name+" · атака</td><td>"+v(sb,t,"atk")+"</td><td>"+v(ob,t,"atk")+"</td></tr>";
+    h+="<tr><td>"+TROOP_TYPES[t].name+" · защита</td><td>"+v(sb,t,"def")+"</td><td>"+v(ob,t,"def")+"</td></tr>";
   });
-  h+="<tr><td>Здоровье</td><td>"+pctTxt(sb.hp)+"</td><td>"+pctTxt(ob.hp)+"</td></tr>";
+  h+="<tr><td>Здоровье</td><td>"+hp(sb)+"</td><td>"+hp(ob)+"</td></tr>";
   return h;
 }
 // Полководец в шапке отчёта — имя/уровень уже были, добавились звёзды (та
@@ -13372,6 +13381,9 @@ function toggleView(){
   // строительства) — переключение вида должно снимать/возвращать его сразу,
   // не дожидаясь следующего опроса.
   if(!SP_UNLOCKED) mpUpdateResearchFab();
+  // Пауза мира зависит и от вида тоже (см. mpSyncWorld3DPause): наблюдатель
+  // за модалками смены вкладки не видит — тут меняется класс #app.
+  mpSyncWorld3DPause();
   if(showingCity){
     // 3D-мир грузим лениво, при первом заходе во вкладку — ни к чему тянуть
     // WebGPU, загрузку моделей и рельефа, пока игрок вообще не открыл "Мир".
@@ -13824,6 +13836,38 @@ function closeMenuModal(){
   $("#menu-modal").classList.remove("open");
   if(SP_UNLOCKED) mpStopPolling();
 }
+/* ---- Пауза объёмного мира под открытым экраном (Фаза 36) ------------------
+   Автор: "почта чуть подвисает из вкладки мира". Замер показал, что дело не
+   в самой почте — собрать её экран стоит доли миллисекунды, открыть 3-4 мс,
+   и это одинаково в городе и в мире. Дорого другое: пока поверх мира открыт
+   полноэкранный экран, движок под ним продолжает рисовать полный кадр
+   шестьдесят раз в секунду. Модалка перекрывает всё, но канву не схлопывает
+   (её фон rgba(8,5,2,.72), мир нарочно просвечивает) — поэтому собственная
+   проверка движка isHidden(), рассчитанная на вкладку "Город" с
+   display:none, тут не срабатывала. На телефоне этот кадр и есть весь
+   бюджет, отсюда и рывки при прокрутке письма.
+   Флаг читает сам движок (см. parentPaused в engine/src/main.ts) и просто
+   пропускает кадр. Канва сохраняет последнее нарисованное, так что мир под
+   полупрозрачной модалкой выглядит как раньше — застывшим, а не пропавшим.
+   Ставим на window, а не в mpState: движок читает родителя снаружи, ему
+   нужен предсказуемый глобальный адрес. */
+function mpSyncWorld3DPause(){
+  const covered = $("#menu-modal").classList.contains("open")
+               || $("#building-modal").classList.contains("open");
+  window.__world3dPaused = covered && inWorldView();
+}
+// Открытий/закрытий модалок в файле больше двух десятков (карточка здания,
+// карусели набора и лечения, Горн, свиток похода, пикер построек...), и
+// дописывать вызов в каждое — верный способ однажды забыть. Наблюдатель за
+// классом делает это за все разом, включая те места, которых ещё нет.
+// attributeFilter — только class: другие атрибуты этих узлов нам не нужны,
+// и на них наблюдатель просыпаться не должен.
+(function watchModalsForWorld3DPause(){
+  const obs=new MutationObserver(mpSyncWorld3DPause);
+  ["#menu-modal","#building-modal"].forEach(sel=>{
+    const el=$(sel); if(el) obs.observe(el,{attributes:true,attributeFilter:["class"]});
+  });
+})();
 /* ---- Живое обновление открытых окошек раз в секунду, без переоткрытия ---- */
 function refreshOpenModal(){
   if($("#building-modal").classList.contains("open")){
@@ -16741,8 +16785,13 @@ function mpMailNodeEntry(m){
 }
 function mpMailGatherEntry(m){
   const d=m.data;
-  const siteName=MP_NODE_TYPE_NAME[d.res]||RES_NAME[d.res];
-  const sub=RES_NAME[d.res]+" "+fmt(d.amount)+" · "+siteName+" X:"+d.x+" Y:"+d.y;
+  // resName(), а не RES_NAME[...]: янтарь не входит в четвёрку ресурсов
+  // (см. AMBER_NAME), и прямое обращение к таблице давало "undefined 65"
+  // вместо "Янтарь 65" — ровно то, что автор поймал на скриншоте. Точки
+  // янтаря собираются наравне с остальными (applyGathered в mp-tick кладёт
+  // res:"amber"), так что случай не редкий.
+  const siteName=MP_NODE_TYPE_NAME[d.res]||resName(d.res)||"Точка сбора";
+  const sub=(resName(d.res)||d.res)+" "+fmt(d.amount)+" · "+siteName+" X:"+d.x+" Y:"+d.y;
   // Координаты первыми, по центру, кликабельны (см. mpLocLink) — автор
   // явно попросил "не точка, а Ферма/Каменоломня/…" плюс переход камерой.
   const detailHtml="<div class='mail-res-row'>"+mpLocLink(d.x,d.y,siteName)+resIconSpan(d.res,fmt(d.amount))+"</div>";
@@ -16894,9 +16943,16 @@ function mpMailScreenHtml(){
   }).join("")+"</div>";
   h+="<img class='mail-divider' src='images/ui/mail-divider.png' alt=''>";
   if(openEntry){
+    let detail;
+    try{ detail=openEntry.detailHtml; }
+    catch(e){
+      console.error("письмо #"+openEntry.id+":", e);
+      detail="<div class='mail-note'>Это донесение не удалось разобрать — оно пришло в неизвестном виде. "+
+             "Остальная почта в порядке.</div>";
+    }
     h+="<div class='mail-detail'><div class='mail-back' data-mp='mpmailback'>&#8592; Назад к списку</div>"+
        "<div class='mail-note' style='font-size:14.5px;font-weight:bold;color:#2c2114;margin-bottom:6px'>"+openEntry.title+"</div>"+
-       openEntry.detailHtml+"</div>";
+       detail+"</div>";
   } else if(mpMailCat==="compose"){
     h+="<div class='mail-compose'>"+
        "<div class='mail-compose-hd'><span class='qu'>&#9998;</span>Королевская канцелярия</div>"+
@@ -16916,10 +16972,19 @@ function mpMailScreenHtml(){
        "</div>";
   } else {
     const spec = MP_MAIL_ENTRY_FNS[mpMailCat] || MP_MAIL_ENTRY_FNS.report;
-    const list = spec.fn();
+    let list;
+    try{ list=spec.fn(); }
+    catch(e){ console.error("список писем ("+mpMailCat+"):", e); list=[]; }
+    // Строка тоже под защитой: испорченная запись пропускается, а не уносит
+    // с собой весь список (та же причина, что и у деталей выше).
+    const rows=[];
+    for(const e of list){
+      try{ rows.push(mpMailRowHtml(e)); }
+      catch(err){ console.error("строка письма #"+(e&&e.id)+":", err); }
+    }
     h+="<div class='mail-list'>"+
-       (list.length ? list.map(mpMailRowHtml).join("")
-                     : "<div class='mail-empty'>"+spec.empty+"</div>")+
+       (rows.length ? rows.join("")
+                    : "<div class='mail-empty'>"+spec.empty+"</div>")+
        "</div>";
   }
   h+="</div></div>";
@@ -17320,7 +17385,7 @@ function foMultiplayer(embedded, only){
       const d=m.data;
       h+="<div class='entry calm'><div class='line'><div class='fill'>"+
          "<div class='title'>Обоз вернулся с добычей</div>"+
-         "<div class='note'>"+RES_NAME[d.res]+" "+fmt(d.amount)+" · точка "+d.x+"·"+d.y+"</div>"+
+         "<div class='note'>"+(resName(d.res)||d.res)+" "+fmt(d.amount)+" · точка "+d.x+"·"+d.y+"</div>"+
          "</div></div></div>";
     });
   }
