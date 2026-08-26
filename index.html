@@ -253,6 +253,28 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .bt-res.on{border-color:#8a6d2c;background:rgba(138,109,44,.16);color:#3a2c1c}
 .bt-res.off{opacity:.35}
 .bt-res.off:hover{opacity:.5}
+/* Строка "сколько меняем". Своя, а не .mp-troop/.mt-* от окон отправки
+   войск: те нарисованы светлыми чернилами под ТЁМНУЮ подложку (см. их
+   комментарий), а вкладка обмена живёт на светлом пергаменте карточки
+   здания — подпись и "Всё" там выходили светлым по светлому, то есть их
+   попросту не было видно. */
+.bt-amt{margin:12px 0 2px}
+.bt-amt-hd{display:flex;justify-content:space-between;align-items:baseline;gap:10px;
+  margin-bottom:6px;color:#5a4530;font-size:13px}
+.bt-amt-max{font-family:var(--data);font-size:11.5px;color:#7a6448;white-space:nowrap}
+.bt-amt-row{display:flex;align-items:center;gap:9px}
+/* Кнопки формы Рынка. Общий .seal нарисован золотом по тёмному (var(--gilt)),
+   а форма лежит на светлом пергаменте — "Всё", "Обменять", "Отмена" там
+   почти сливались с подложкой. Тот же приём уже применён к #cartouche .seal
+   и .mail-compose button.seal, здесь он просто повторён. */
+.trade-sheet .seal{border-color:#8a6d2c;color:#5a4530;
+  background:linear-gradient(180deg,rgba(138,109,44,.16),rgba(138,109,44,.05))}
+.trade-sheet .seal:hover:not(:disabled){background:rgba(138,109,44,.28);
+  color:#2c2114;border-color:#6b5230}
+.trade-sheet .seal:disabled{border-color:rgba(90,69,48,.28);color:#a3907a;background:none}
+.bt-range{flex:1 1 auto;min-width:0;accent-color:#6b5230;height:20px}
+.bt-num{flex:0 0 84px;width:84px;text-align:right}
+.bt-all{flex:0 0 auto;padding:4px 10px;font-size:12px}
 
 /* Строка выбора войск в окнах отправки (mpTroopRowHtml): подпись сверху,
    под ней ползунок, число и "Всё" одной строкой. Тёмная гамма — эти окна
@@ -10596,11 +10618,19 @@ function mpMarketInfoHtml(lv){
   const nextCap=lv<TRADE_CAP.length?tradeCap(lv+1):null, nextTax=lv<TRADE_TAX_PCT.length?tradeTax(lv+1):null;
   let h="<table id='bm-stats'>"+
     "<tr><td>Поднимает обоз</td><td>"+fmt(cap)+(nextCap!=null?" &rarr; "+fmt(nextCap):"")+"</td></tr>"+
+    "<tr><td>Меняет за раз</td><td>"+fmt(cap)+(nextCap!=null?" &rarr; "+fmt(nextCap):"")+"</td></tr>"+
     "<tr><td>Налог с провоза</td><td>"+(tax*100).toFixed(1).replace(/\.0$/,"")+"%"+
       (nextTax!=null?" &rarr; "+(nextTax*100).toFixed(1).replace(/\.0$/,"")+"%":"")+"</td></tr>"+
     "</table>";
-  h+="<button class='seal wide ico' data-mp='tradeopen'>"+
+  h+="<button class='seal wide ico' data-mp='tradeopen' data-t='send'>"+
      "<img src='images/ui/icon-trade.png' alt=''>Отправить обоз</button>";
+  // Меняльная лавка — вторая половина Рынка, и до неё игрок раньше мог
+  // добраться только через вкладку внутри окна обоза: в самой карточке
+  // Рынка обмен не был показан вовсе. Своя кнопка сюда же, рядом.
+  h+="<button class='seal wide ico' data-mp='tradeopen' data-t='barter'>"+
+     "<img src='images/ui/icon-trade.png' alt=''>Обменять ресурсы</button>";
+  h+="<div class='note'>Обмен идёт на месте, без обоза: еду и дерево меняют один к одному, "+
+     "на камень 1:0,75, на золото 1:0,5. С обмена берётся тот же налог.</div>";
   return h;
 }
 /* ---- Форма отправки обоза ------------------------------------------------
@@ -10609,14 +10639,18 @@ function mpMarketInfoHtml(lv){
    (прямое условие автора «торговать можно со всеми правителями»), список —
    те же соседи, что уже приходят опросом. */
 let mpTradeCtx=null, lastTradeSheet="";
-function mpOpenTradeModal(){
+function mpOpenTradeModal(tab){
   const st=mpState.player&&mpState.player.state; if(!st) return;
   const lv=mpMarketLv(st);
   if(lv<=0){ herald("Нужен Рынок."); return; }
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpForgeTab=null; mpForgeRarity=null;
   mpCitySel=-1; mpLayoutSel=-1; mpFixedSel=null; mpPickerOpen=false;
-  mpTradeCtx={ tab:"send", to:null, res:{food:0,wood:0,stone:0,gold:0}, err:null, q:"",
+  // Свиток похода гасим тоже: в разборе рендера по опросу его ветка стоит
+  // ВЫШЕ ветки этой формы, и забытый непустым mpMarchCtx через секунду
+  // затирал бы уже открытый обмен свитком похода.
+  mpMarchCtx=null; lastMarchSheet="";
+  mpTradeCtx={ tab:(tab==="barter"?"barter":"send"), to:null, res:{food:0,wood:0,stone:0,gold:0}, err:null, q:"",
                bFrom:"food", bTo:"stone", bAmount:0 };
   lastTradeSheet=mpTradeSheetHtml();
   setHtml($("#bm-body"), lastTradeSheet);
@@ -10643,7 +10677,7 @@ function mpTradeSheetHtml(){
      "<button class='"+(barter?"on":"")+"' data-mp='tradetab' data-t='barter'>Обмен</button>"+
      "</div>";
   if(mpTradeCtx.err) h+="<div class='note' style='color:#e08'>"+escHtml(mpTradeCtx.err)+"</div>";
-  if(barter) return h+mpBarterBodyHtml(st,lv,cap,tax);
+  if(barter) return "<div class='trade-sheet'>"+h+mpBarterBodyHtml(st,lv,cap,tax)+"</div>";
 
   // ---- получатель ----
   h+="<div class='trade-hd'>Кому</div>";
@@ -10701,7 +10735,7 @@ function mpTradeSheetHtml(){
      "<button class='seal ico' data-mp='tradego'"+(canGo?"":" disabled")+">"+
      "<img src='images/ui/icon-trade.png' alt=''>Отправить</button>"+
      "<button class='seal' data-act='closebuilding'>Отмена</button></div>";
-  return h;
+  return "<div class='trade-sheet'>"+h+"</div>";
 }
 // Тело вкладки "Обмен". Две строки выбора ресурса (что отдаём / что берём),
 // количество ползунком и живой расчёт: ставка, налог, сколько выйдет.
@@ -10722,14 +10756,14 @@ function mpBarterBodyHtml(st,lv,cap,tax){
   let h="<div class='trade-hd'>Отдаём</div>"+picker(from,"from")+
         "<div class='note'>На складе "+fmt(have)+" · за раз Рынок меняет не больше "+fmt(cap)+"</div>";
   h+="<div class='trade-hd'>Получаем</div>"+picker(to,"to");
-  h+="<div class='mp-troop' style='margin-top:12px'>"+
-     "<div class='mt-hd'><span class='mt-nm'>Сколько меняем</span>"+
-     "<span class='mt-have'>до "+fmt(maxGive)+"</span></div>"+
-     "<div class='mt-row'>"+
-       "<input class='mt-range' type='range' min='0' max='"+maxGive+"' value='"+amount+"' data-btqty='1'>"+
-       "<input id='bt-amount' class='mt-num' type='number' min='0' max='"+maxGive+"' value='"+amount+"' "+
+  h+="<div class='bt-amt'>"+
+     "<div class='bt-amt-hd'><span>Сколько меняем</span>"+
+     "<span class='bt-amt-max'>до "+fmt(maxGive)+"</span></div>"+
+     "<div class='bt-amt-row'>"+
+       "<input class='bt-range' type='range' min='0' max='"+maxGive+"' value='"+amount+"' data-btqty='1'>"+
+       "<input id='bt-amount' class='bt-num' type='number' min='0' max='"+maxGive+"' value='"+amount+"' "+
          "data-btqty-num='1' inputmode='numeric'>"+
-       "<button class='seal mt-all' data-mp='btall' data-max='"+maxGive+"'>Всё</button>"+
+       "<button class='seal bt-all' data-mp='btall' data-max='"+maxGive+"'>Всё</button>"+
      "</div></div>";
   h+="<table class='roll'>"+
      "<tr><td>Ставка</td><td>1 "+RES_NAME[from].toLowerCase()+" &rarr; "+
@@ -10767,7 +10801,12 @@ async function mpDoBarter(){
 }
 function mpTradeRepaint(){
   if(!mpTradeCtx) return;
-  setHtml($("#bm-body"), mpTradeSheetHtml());
+  // lastTradeSheet ведём и отсюда, а не только из опроса: иначе после
+  // переключения вкладки слепок оставался от прошлой, и ближайший же опрос
+  // считал форму изменившейся и перерисовывал её заново — с потерей
+  // фокуса и набранного в поле числа.
+  lastTradeSheet=mpTradeSheetHtml();
+  setHtml($("#bm-body"), lastTradeSheet);
 }
 async function mpDoTrade(){
   if(!mpTradeCtx || mpState.loading) return;
@@ -11370,6 +11409,7 @@ let mpMarchCtx=null, lastMarchSheet="";
 function mpOpenMarchModal(mode,target){
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpForgeTab=null; mpForgeRarity=null; mpCitySel=-1;
+  mpTradeCtx=null; lastTradeSheet="";     // и наоборот — см. mpOpenTradeModal
   mpMarchCtx={mode};
   if(mode==="attack") mpState.attackTarget=target;
   else if(mode==="gather") mpState.gatherTarget=target;
@@ -14428,7 +14468,7 @@ function handleMpAct(e){
     return;
   }
   const tradeOpenBtn=e.target.closest("[data-mp='tradeopen']");
-  if(tradeOpenBtn){ mpOpenTradeModal(); return; }
+  if(tradeOpenBtn){ mpOpenTradeModal(tradeOpenBtn.dataset.t); return; }
   const tradeTabBtn=e.target.closest("[data-mp='tradetab']");
   if(tradeTabBtn && mpTradeCtx){ mpTradeCtx.tab=tradeTabBtn.dataset.t; mpTradeCtx.err=null; mpTradeRepaint(); return; }
   const btPickBtn=e.target.closest("[data-mp='btpick']");
