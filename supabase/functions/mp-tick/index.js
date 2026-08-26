@@ -4348,8 +4348,12 @@ async function applyGathered(admin, ev) {
     // на сбор отряд мог попасть перетаскиванием (mp-redirect ставит там
     // mode:"gather" и своё from), и старое значение увело бы обратный путь
     // от места, где отряда давно нет.
+    // booked:false — резерв точки ВЫБРАН: он только что стал добычей в carry.
+    // Без этого отзыв отряда уже с гружёной дороги вернул бы точке то, что
+    // отряд везёт домой, — ресурсы появились бы из воздуха (см. gatherBooked
+    // в mp-redirect/mp-recall).
     .update({ state: "back", t0: nowSec, t1: nowSec + travelBack,
-              data: { ...m.data, carry, gather_report: gatherReport, from: { x: m.tx, y: m.ty } } }).eq("id", m.id);
+              data: { ...m.data, carry, gather_report: gatherReport, booked: false, from: { x: m.tx, y: m.ty } } }).eq("id", m.id);
   if (updM) throw updM;
   // Донесение о сборе — зеркало pushMail({cat:"report",kind:"gather",...})
   // в EV.gathered одиночки (index.html) — автор сообщил: «я собрал

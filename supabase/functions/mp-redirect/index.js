@@ -78,6 +78,26 @@ function handleOptions(req) {
 }
 
 const TKEYS = ["inf", "arc", "cav", "sie"];
+// Числится ли за отрядом НЕВЫБРАННЫЙ резерв точки. Резерв списывается с точки
+// при отправке (mp-gather) и гасится ровно в трёх местах: когда сбор доведён
+// до конца (applyGathered в mp-tick), когда отряд сняли со сбора досрочно и
+// остаток вернули, и когда отряд увели с дороги, так и не начав копать.
+//
+// Отдельный флаг, а не «take > 0», потому что take переживает сбор: у отряда,
+// уже уходящего домой с добычей (state:"back"), он тот же самый, и возврат
+// «остатка» тут выдумал бы точке ресурсы из воздуха.
+//
+// Марши, созданные до появления флага, его не несут. Для них считаем резерв
+// невыбранным только пока отряд идёт к точке или копает — это в точности их
+// прежнее поведение, ничего задним числом не ломается.
+function gatherBooked(m) {
+  const d = m && m.data;
+  if (!d || !(d.take > 0) || d.cell_x == null || d.cell_y == null) return false;
+  if (d.booked === true) return true;
+  if (d.booked === false) return false;
+  return m.state === "go" || m.state === "gather";
+}
+
 // ---- Подготовка сбора: те же таблицы и формулы, что в mp-gather ------------
 // Перетащить отряд НА точку и чтобы он там собирал — прямая просьба автора
 // («нужно, чтобы отряд и собирал, а то как-то неполноценно»). Расчёт «сколько
@@ -607,6 +627,33 @@ Deno.serve(async (req) => {
         : (newData.gather_report ? [newData.gather_report] : []);
       if (kept > 0 && newData.res) reports.push({ res: newData.res, amount: kept, x: m.tx, y: m.ty });
       newData.gather_report = reports.length ? reports : null;
+      newData.booked = false;
+    } else if (gatherBooked(m)) {
+      // НАЙДЕН реальный баг (автор: «при отмене либо наведении вручную отряда
+      // на ресурсную точку всё так же показывает, что она истощена»).
+      //
+      // Резерв точки списывается ПРИ ОТПРАВКЕ (mp-gather уменьшает amount
+      // сразу), а возвращала его тут только ветка выше — то есть лишь у
+      // отряда, который УЖЕ КОПАЕТ. Отряд, который ещё ШЁЛ к точке
+      // (state:"go") и которого перетащили на другую цель, уносил бронь с
+      // собой: на точке навсегда оставалось ноль, и она показывалась
+      // истощённой, хотя копать её никто не собирался. Достаточно было пару
+      // раз передумать — и жила пропадала до самого респауна.
+      //
+      // Возвращаем ВЕСЬ объём: копать ещё не начинали, накопанного нет.
+      const cx = m.data.cell_x, cy = m.data.cell_y, back = m.data.take || 0;
+      const { data: cell } = await admin.from("map_cells")
+        .select("data").eq("world_id", world.id).eq("x", cx).eq("y", cy).maybeSingle();
+      // Точки могло уже не быть (истощил кто-то другой, уборщик снёс) — тогда
+      // возвращать некуда, тот же честный исход, что и у ветки выше.
+      if (cell) {
+        const d2 = { ...(cell.data || {}) };
+        d2.amount = ((d2.amount || 0) + back);
+        await admin.from("map_cells").update({ data: d2 })
+          .eq("world_id", world.id).eq("x", cx).eq("y", cy);
+      }
+      newData.take = 0;
+      newData.booked = false;
     }
 
     // ---- что под новой целью → какой это режим ------------------------------
@@ -673,6 +720,7 @@ Deno.serve(async (req) => {
           .eq("world_id", world.id).eq("x", nx).eq("y", ny);
         newData.res = res; newData.take = take; newData.gather_secs = gatherSecs;
         newData.cell_x = nx; newData.cell_y = ny;
+        newData.booked = true;    // за нами числится резерв точки, см. gatherBooked
         // carry ЗДЕСЬ не трогаем: он копит уже увезённое (см. снятие со сбора
         // выше), а добычу с ЭТОЙ точки допишет applyGathered, когда отряд
         // закончит копать — ровно как при обычной отправке через mp-gather.

@@ -450,6 +450,19 @@ async function triggerTick(SUPABASE_URL) {
   } catch (_) { /* тикер недоступен/завис/упал — не блокируем сам отзыв, см. заголовок выше */ }
 }
 
+// Числится ли за отрядом НЕВЫБРАННЫЙ резерв точки. Дословная копия
+// gatherBooked из mp-redirect (тот же принцип самодостаточных копий, что и у
+// остального в этой папке) — там же полный разбор, зачем нужен отдельный флаг
+// вместо «take > 0»: take переживает сбор, и у отряда, уже уходящего домой с
+// добычей, он тот же самый.
+function gatherBooked(m) {
+  const d = m && m.data;
+  if (!d || !(d.take > 0) || d.cell_x == null || d.cell_y == null) return false;
+  if (d.booked === true) return true;
+  if (d.booked === false) return false;
+  return m.state === "go" || m.state === "gather";
+}
+
 Deno.serve(async (req) => {
   const pre = handleOptions(req);
   if (pre) return pre;
@@ -577,6 +590,7 @@ Deno.serve(async (req) => {
       const back = take - kept;
       newData = { ...(m.data || {}) };
       newData.take = 0;                       // резерв точки за нами больше не числится
+      newData.booked = false;                 // см. gatherBooked
       // Складываем, а не заменяем: отряд мог уже везти добычу с прошлой точки
       // (его могли перетащить сюда с другой жилы, см. mp-redirect).
       const carried = { ...(newData.carry || {}) };
@@ -618,7 +632,10 @@ Deno.serve(async (req) => {
       // (data.take) возвращаем узлу: доехать он так и не успел, добывать
       // нечего, но ресурс уже списан на отправке (Фаза 8, кусочек 1) — без
       // возврата он бы пропал в никуда, ни игроку, ни узлу.
-      if (m.mode === "gather" && m.data && m.data.cell_x != null && m.data.cell_y != null && m.data.take > 0) {
+      // gatherBooked, а не «take > 0»: take переживает сбор, и у отряда, уже
+      // уходящего домой с добычей, он тот же самый — возврат «остатка» тут
+      // выдумал бы точке ресурсы из воздуха.
+      if (m.mode === "gather" && gatherBooked(m)) {
         const { data: cell } = await admin.from("map_cells")
           .select("data").eq("world_id", world.id).eq("x", m.data.cell_x).eq("y", m.data.cell_y).maybeSingle();
         // Точка могла успеть исчезнуть (истощилась начисто кем-то другим,
@@ -629,6 +646,8 @@ Deno.serve(async (req) => {
             .update({ data: { ...(cell.data || {}), amount: ((cell.data && cell.data.amount) || 0) + m.data.take } })
             .eq("world_id", world.id).eq("x", m.data.cell_x).eq("y", m.data.cell_y);
         }
+        newData.take = 0;
+        newData.booked = false;
       }
     }
     const dist = Math.hypot(attRow.x - curX, attRow.y - curY);

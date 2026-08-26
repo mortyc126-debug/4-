@@ -12133,7 +12133,6 @@ const PROFILE_SECTION_TTL=30000;        // мс: повторный вход в 
 
 const PROFILE_SECTIONS=[
   {id:"settings",  ico:"icon-settings.png", name:"Настройки", note:"Как игра себя ведёт"},
-  {id:"graphics",  ico:"icon-world.png",    name:"Графика",   note:"Картинка и производительность"},
   {id:"rating",    ico:"icon-rating.png",   name:"Рейтинг",   note:"Правители мира по мощи"},
   {id:"chronicles",ico:"icon-reign.png",    name:"Хроники",   note:"Летопись мира"},
   // Фаза 43 — звание. Прежняя лестница по мощи державы (Безземельный →
@@ -12372,10 +12371,12 @@ function segHtml(key,opts){
     "<button class='"+(String(gfxState[key])===String(o.v)?"on":"")+"' "+
     "data-act='gfxset' data-g='"+key+"' data-v='"+o.v+"'>"+o.t+"</button>").join("")+"</div>";
 }
-function profileGraphicsHtml(){
+// Блок графики — ЧАСТЬ экрана настроек, а не свой раздел меню: автор
+// попросил «не заводить отдельную вкладку, она должна быть внутри настроек».
+// Своей шапки (profileBackHtml) поэтому не рисует — она уже есть у настроек.
+function gfxBlockHtml(){
   const preset=gfxPresetId();
-  let h=profileBackHtml("Графика");
-  h+=rubric("Качество", preset==="custom"?"своё":"");
+  let h=rubric("Качество картинки", preset==="custom"?"своё":"");
   h+="<div class='entry'><div class='seg wide'>"+GFX_PRESETS.map(p=>
      "<button class='"+(preset===p.id?"on":"")+"' data-act='gfxpreset' data-p='"+p.id+"'>"+p.name+"</button>").join("")+
      (preset==="custom"?"<button class='on' disabled>Своё</button>":"")+
@@ -12403,12 +12404,13 @@ function profileGraphicsHtml(){
     "Ники над замками, названия точек и полосы боя. Это разметка поверх картинки, и на телефоне она стоит заметно.",
     segHtml("labels",[{v:false,t:"Выкл"},{v:true,t:"Вкл"}]));
 
-  h+="<div class='entry'><div class='note'>Настройки хранятся на этом устройстве и применяются сразу, "+
-     "перезагружать страницу не нужно. На телефоне и на настольном они свои.</div></div>";
+  h+="<div class='entry'><div class='note'>Настройки картинки хранятся на этом устройстве и "+
+     "применяются сразу, перезагружать страницу не нужно. На телефоне и на настольном они свои.</div></div>";
   return h;
 }
 function profileSettingsHtml(){
   let h=profileBackHtml("Настройки");
+  h+=gfxBlockHtml();
   h+=rubric("Походы");
   h+="<div class='entry'><div class='line'><div class='fill'>"+
      "<div class='title'>Брать полководца по умолчанию</div>"+
@@ -12658,7 +12660,6 @@ function foProfile(pIn){
     if(profileScreen==="settings")   return profileSettingsHtml();
     if(profileScreen==="rating")     return profileRatingHtml(mpState.player.id);
     if(profileScreen==="chronicles") return profileChroniclesHtml();
-    if(profileScreen==="graphics")   return profileGraphicsHtml();
     if(profileScreen==="battlerank") return profileBattleRankHtml();
   }
   const avSrc=playerAvatarSrc(p);

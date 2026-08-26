@@ -368,7 +368,12 @@ Deno.serve(async (req) => {
     const { data: march, error: mErr } = await admin.from("marches").insert({
       world_id: world.id, player_id: attRow.id, mode: "gather", state: "go",
       tx, ty, t0: nowSec, t1: nowSec + travel,
-      units: sendUnits, data: { res, take, dist, spd, gather_secs: gatherSecs, cell_x: tx, cell_y: ty },
+      // booked — за отрядом числится НЕВЫБРАННЫЙ резерв точки (amount уже
+      // уменьшен парой строк выше). Гасится в трёх местах: applyGathered
+      // (сбор доведён до конца), mp-redirect и mp-recall (остаток возвращён).
+      // Без флага «резерв ещё за нами» приходилось угадывать по take, а он
+      // переживает сбор — см. gatherBooked в mp-redirect.
+      units: sendUnits, data: { res, take, dist, spd, gather_secs: gatherSecs, cell_x: tx, cell_y: ty, booked: true },
     }).select().single();
     if (mErr) { await unbookCell(); await restoreTroops(); return jsonResponse({ err: mErr.message }, 500); }
 
