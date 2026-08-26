@@ -252,6 +252,11 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .profile-brank.high,.brank.high{color:var(--gilt-hi)}
 .profile-brank.calib,.brank.calib{color:var(--vellum-faint)}
 .rank-row.shame .rk-nick{color:#c0525b}
+/* Знак звания — временная графика (см. mpRankMarkSrc). Выравнивание по
+   середине строки, чтобы стоял вровень с подписью, а не съезжал по базовой
+   линии текста. */
+.rank-mark{vertical-align:middle;margin-right:6px;object-fit:contain;flex:0 0 auto;
+  filter:drop-shadow(0 1px 3px rgba(0,0,0,.7))}
 /* Итог сезона в летописи: десятка мира отдельным блоком внутри строки. */
 .ch-season{margin-top:6px;display:flex;flex-direction:column;gap:1px}
 .ch-season-row{display:grid;grid-template-columns:22px auto 1fr auto;gap:0 8px;align-items:center;
@@ -353,8 +358,6 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    Настройки / Рейтинг / Хроники / Звания. Сетка в две колонки, а не флекс в
    строку: подписи разной длины ("Настройки" против "Звания") во флексе
    разъезжались бы по ширине, а тут все четыре плитки одинаковы. */
-.profile-rank{margin-top:6px;font-variant:small-caps;letter-spacing:.08em;
-  color:var(--gilt);font-size:14px}
 .profile-sections{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px;width:100%}
 .psec{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 6px;
   background:rgba(0,0,0,.18);border:1px solid var(--rule);border-radius:10px;
@@ -9117,7 +9120,8 @@ function renderCartoucheMp(){
       // Звание соперника — то, ради чего его вообще видно всем: по нему
       // решают, свой ли это бой. Число рейтинга тут не нужно, оно есть в
       // мировой таблице.
-      (qRank?"<div class='co'><span>Звание</span><b class='brank"+(qRank.down?" shame":"")+"'>"+escHtml(qRank.full)+"</b></div>"
+      (qRank?"<div class='co'><span>Звание</span><b class='brank"+(qRank.down?" shame":"")+"'>"+
+             mpRankMarkByRating(q.rating,18)+escHtml(qRank.full)+"</b></div>"
             :"<div class='co'><span>Звание</span><b style='color:var(--vellum-faint)'>нет</b></div>")+
       // Остаток потолка пары. Считается по СВОИМ же письмам о боях — сервер
       // за этим ходить незачем, а журнал rating_events игроку закрыт нарочно
@@ -12100,7 +12104,7 @@ function profilePowerFontSize(str){
    Данные разделов (рейтинг, летопись) тянутся с сервера ОДИН раз при входе
    в раздел, а не на каждый опрос: это не боевые числа, секунда свежести
    тут ничего не решает, а лишний запрос раз в 5 секунд — решает. */
-let profileScreen=null;                 // null | 'settings' | 'rating' | 'chronicles' | 'ranks'
+let profileScreen=null;                 // null | 'settings' | 'rating' | 'chronicles' | 'battlerank'
 let profileRating=null, profileRatingErr=null, profileRatingAt=0;
 // Фаза 43 — в «Рейтинге» теперь две таблицы: по мощи державы (как было) и по
 // боевому рейтингу. Свой кэш у каждой: у них разный порядок и разный смысл,
@@ -12114,11 +12118,10 @@ const PROFILE_SECTIONS=[
   {id:"settings",  ico:"icon-settings.png", name:"Настройки", note:"Как игра себя ведёт"},
   {id:"rating",    ico:"icon-rating.png",   name:"Рейтинг",   note:"Правители мира по мощи"},
   {id:"chronicles",ico:"icon-reign.png",    name:"Хроники",   note:"Летопись мира"},
-  {id:"ranks",     ico:"icon-rank.png",     name:"Титул",     note:"Ступени по мощи державы"},
-  // Фаза 43 — боевое звание. Отдельный раздел от «Титула» нарочно: тот про
-  // РАЗМЕР державы (Барон, Граф, Герцог — это и есть феодальные титулы), а
-  // это про то, каков ты в бою. Раньше по мощи назывались «Звания», и после
-  // появления боевых званий два разных смысла делили бы одно слово.
+  // Фаза 43 — звание. Прежняя лестница по мощи державы (Безземельный →
+  // Владыка мира) отсюда убрана целиком по решению автора: «титулы убери, это
+  // как раз таки и есть звания». Одно слово — один смысл, и смысл теперь
+  // боевой.
   {id:"battlerank",ico:"icon-rank.png",     name:"Звание",    note:"Боевой рейтинг и ступени"},
 ];
 
@@ -12177,32 +12180,6 @@ const MP_SEASON_NAMES={winter:"Зимы",spring:"Весны",summer:"Лета",a
 function mpSeasonTitle(key){
   const parts=String(key||"").split("-");
   return MP_SEASON_NAMES[parts[1]]?"Сезон "+MP_SEASON_NAMES[parts[1]]+" "+parts[0]:"";
-}
-
-/* ---- Звания -------------------------------------------------------------
-   Лестница титулов по мощи державы. Автор просил значок "Звания", но чем
-   именно они меряются, не сказал; очки убийств, на которых их можно было бы
-   строить, он этой же задачей велел убрать целиком — остаётся мощь, и она же
-   названа основой будущих рейтингов ("будут рейтинги в том числе и по мощи").
-   Пороги подобраны по шагу развития (примерно втрое на ступень) и явно
-   рассчитаны на калибровку живым полем — как и всё остальное в балансе,
-   который автор оставил на меня. Менять можно прямо здесь: на расчёты игры
-   лестница не влияет ничем, это подпись. */
-const RANK_LADDER=[
-  {at:0,        name:"Безземельный",   note:"Ни стены, ни знамени — только имя"},
-  {at:5000,     name:"Владетель",      note:"Первый частокол и первая пашня"},
-  {at:25000,    name:"Барон",          note:"Замок держит округу"},
-  {at:100000,   name:"Виконт",         note:"Дружина ходит дальше межи"},
-  {at:400000,   name:"Граф",           note:"С владением считаются соседи"},
-  {at:1500000,  name:"Маркграф",       note:"Порубежье под рукой"},
-  {at:5000000,  name:"Герцог",         note:"Войско решает судьбу земель"},
-  {at:20000000, name:"Государь",       note:"Держава, а не владение"},
-  {at:80000000, name:"Владыка мира",   note:"Выше некуда"},
-];
-function rankAt(pw){
-  let i=0;
-  for(let k=0;k<RANK_LADDER.length;k++) if(pw>=RANK_LADDER[k].at) i=k;
-  return {i, cur:RANK_LADDER[i], next:RANK_LADDER[i+1]||null};
 }
 
 /* ---- Загрузка данных разделов ------------------------------------------ */
@@ -12328,7 +12305,7 @@ function profileRatingHtml(meId){
          "<span class='rk-place"+(i<3?" top":"")+"'>"+(i+1)+"</span>"+
          "<span class='rk-crest'>"+shieldSvg(r.race,16)+"</span>"+
          "<span class='rk-nick'>"+escHtml(r.nick||"Безымянный лорд")+"</span>"+
-         "<span class='rk-hall brank"+mpBattleRankCls(r)+"'>"+escHtml(k.full)+"</span>"+
+         "<span class='rk-hall brank"+mpBattleRankCls(r)+"'>"+mpRankMarkHtml(r,18)+escHtml(k.full)+"</span>"+
          "<b class='rk-pw'>"+(r.rating||0)+"</b></div>";
     });
     h+="</div>";
@@ -12383,6 +12360,37 @@ function mpPairBattlesLeft(oppId){
   scan(mpState.mail); scan(mpState.nodeBattleMail);
   return Math.max(0, MP_PAIR_CAP_BATTLES-n);
 }
+/* ---- Знак звания ---------------------------------------------------------
+   images/ranks/rank-<ключ>.png. ВРЕМЕННАЯ ГРАФИКА: знаки нарисованы скриптом
+   tools/gen_rank_marks.py, чтобы интерфейс не стоял пустым до настоящих
+   ассетов. Заменяются простой заменой файлов — имена и размеры менять не
+   придётся. rank-none — «звания ещё нет», пока идёт калибровка. */
+function mpRankMarkSrc(row){
+  const r=row||mpState.player;
+  if(!r || (r.rating_battles||0)<MP_CALIBRATION_BATTLES) return "images/ranks/rank-none.png";
+  return "images/ranks/rank-"+mpRankOf(r.rating||0).key+".png";
+}
+function mpRankMarkHtml(row,size){
+  const px=size||20;
+  return "<img class='rank-mark' src='"+mpRankMarkSrc(row)+"' alt='' "+
+         "style='width:"+px+"px;height:"+px+"px'>";
+}
+// Знак по одному только числу рейтинга — там, где строки игрока нет (печати
+// сезона, летопись сезона): в таких местах калибровки уже не бывает.
+// nameFallback — на случай печати, записанной до того, как в неё стали класть
+// число: имя звания в ней есть всегда, и по нему знак восстанавливается точно.
+function mpRankKeyByName(name){
+  const n=String(name||"").split(" ")[0];
+  const b=MP_RANKS_UP.concat(MP_RANKS_DOWN).find(r=>r.name===n);
+  return b?b.key:null;
+}
+function mpRankMarkByRating(rating,size,nameFallback){
+  const px=size||20;
+  const key=(rating==null&&nameFallback) ? (mpRankKeyByName(nameFallback)||"recruit")
+                                         : mpRankOf(rating||0).key;
+  return "<img class='rank-mark' src='images/ranks/rank-"+key+".png' alt='' "+
+         "style='width:"+px+"px;height:"+px+"px'>";
+}
 // Класс окраски боевого звания: позорные — гранатом, обычные — как есть,
 // три высших — золотом. Отдельная функция, потому что зовётся и с карточки
 // профиля, и с экрана звания.
@@ -12405,7 +12413,9 @@ function profileBattleRankHtml(){
   const k=mpRankOf(rating);
   let h=profileBackHtml("Звание");
 
-  h+="<div class='entry hot'><div class='line'><div class='fill'>"+
+  h+="<div class='entry hot'><div class='line'>"+
+     mpRankMarkHtml(row,54)+
+     "<div class='fill'>"+
      "<div class='title brank"+mpBattleRankCls()+"'>"+escHtml(calib?"Без звания":k.full)+"</div>";
   if(calib){
     h+="<div class='note'>Идёт калибровка: осталось "+(MP_CALIBRATION_BATTLES-battles)+
@@ -12437,7 +12447,7 @@ function profileBattleRankHtml(){
   MP_RANKS_UP.slice().reverse().forEach(r=>{
     const me=!calib&&!k.down&&r.key===k.key;
     h+="<div class='rank-row"+(me?" me":"")+"'>"+
-       "<span class='rk-nick'>"+r.name+"</span>"+
+       "<span class='rk-nick'><img class='rank-mark' src='images/ranks/rank-"+r.key+".png' alt='' style='width:20px;height:20px'>"+r.name+"</span>"+
        "<b class='rk-pw'>"+(r.to!=null?r.from+" … "+r.to:"от "+r.from)+"</b></div>";
   });
   h+="</div>";
@@ -12446,7 +12456,7 @@ function profileBattleRankHtml(){
   MP_RANKS_DOWN.forEach(r=>{
     const me=!calib&&k.down&&r.key===k.key;
     h+="<div class='rank-row shame"+(me?" me":"")+"'>"+
-       "<span class='rk-nick'>"+r.name+"</span>"+
+       "<span class='rk-nick'><img class='rank-mark' src='images/ranks/rank-"+r.key+".png' alt='' style='width:20px;height:20px'>"+r.name+"</span>"+
        "<b class='rk-pw'>"+(r.to!=null?"−"+r.to+" … −"+r.from:"ниже −"+r.from)+"</b></div>";
   });
   h+="</div>";
@@ -12457,7 +12467,8 @@ function profileBattleRankHtml(){
   if(seals.length){
     h+=rubric("Печати сезонов");
     h+="<div class='rank-list ladder'>"+seals.slice().reverse().map(sl=>
-      "<div class='rank-row'><span class='rk-nick'>"+escHtml(mpSeasonTitle(sl.season)||sl.season)+"</span>"+
+      "<div class='rank-row'><span class='rk-nick'>"+mpRankMarkByRating(sl.rating==null?null:sl.rating,22,sl.rank)+
+      escHtml(mpSeasonTitle(sl.season)||sl.season)+"</span>"+
       "<b class='rk-pw'>"+escHtml(sl.rank||"")+"</b></div>").join("")+"</div>";
   }
 
@@ -12465,34 +12476,6 @@ function profileBattleRankHtml(){
      "осада города и бой за точку сбора. Лагеря и крепости варваров не считаются. "+
      "За равный бой ±25; в неравном рейтинг движется в пользу слабого, а зачинщик, "+
      "разбивший заведомо слабейшего, теряет 2% своего рейтинга.</div></div>";
-  return h;
-}
-function profileRanksHtml(pw){
-  const {i:cur, next}=rankAt(pw);
-  let h=profileBackHtml("Звания");
-  h+="<div class='entry hot'><div class='line'><div class='fill'>"+
-     "<div class='title'>"+RANK_LADDER[cur].name+"</div>"+
-     "<div class='note'>"+RANK_LADDER[cur].note+"</div>"+
-     "<div class='note'>Мощь державы: <b>"+fmt(pw)+"</b></div>"+
-     (next?"<div class='note'>До звания «"+next.name+"» — ещё "+fmt(Math.max(0,next.at-pw))+" мощи.</div>"
-          :"<div class='note'>Выше званий нет.</div>")+
-     "</div></div>";
-  if(next){
-    const from=RANK_LADDER[cur].at, f=Math.max(0,Math.min(1,(pw-from)/Math.max(1,next.at-from)));
-    h+="<div class='hpbar'><i style='width:"+(f*100).toFixed(1)+"%'></i></div>";
-  }
-  h+="</div>";
-  h+=rubric("Лестница");
-  h+="<div class='rank-list'>";
-  RANK_LADDER.forEach((r,idx)=>{
-    h+="<div class='rank-row"+(idx===cur?" me":"")+(idx>cur?" far":"")+"'>"+
-       "<span class='rk-place'>"+(idx+1)+"</span>"+
-       "<span class='rk-nick'>"+r.name+"</span>"+
-       "<b class='rk-pw'>"+(r.at?"от "+fmt(r.at):"—")+"</b></div>";
-  });
-  h+="</div>";
-  h+="<div class='entry'><div class='note'>Звание — подпись к мощи, на расчёты игры оно не влияет. "+
-     "Пороги ещё будут выравниваться по живому полю.</div></div>";
   return h;
 }
 // Строка летописи. Пока единственный вид записи — 'fall': конец правления.
@@ -12527,7 +12510,7 @@ function chronicleLineHtml(c){
       "<span class='rk-place"+(i<3?" top":"")+"'>"+(i+1)+"</span>"+
       "<span class='rk-crest'>"+shieldSvg(r.race,14)+"</span>"+
       "<span class='rk-nick'>"+escHtml(r.nick||"Безымянный лорд")+"</span>"+
-      "<b class='rk-pw'>"+escHtml(mpRankOf(r.rating||0).full)+"</b></div>").join("");
+      "<b class='rk-pw'>"+mpRankMarkByRating(r.rating,16)+escHtml(mpRankOf(r.rating||0).full)+"</b></div>").join("");
     return "<div class='chron-row season'>"+
       "<span class='ch-ico'><img src='images/ui/icon-rank.png' alt=''></span>"+
       "<div class='ch-body'><div class='ch-txt'><b>"+escHtml(d.title||mpSeasonTitle(d.season)||"Сезон")+"</b> завершён</div>"+
@@ -12564,7 +12547,6 @@ function foProfile(pIn){
     if(profileScreen==="settings")   return profileSettingsHtml();
     if(profileScreen==="rating")     return profileRatingHtml(mpState.player.id);
     if(profileScreen==="chronicles") return profileChroniclesHtml();
-    if(profileScreen==="ranks")      return profileRanksHtml(mpPower(p));
     if(profileScreen==="battlerank") return profileBattleRankHtml();
   }
   const avSrc=playerAvatarSrc(p);
@@ -12602,14 +12584,12 @@ function foProfile(pIn){
      "<div class='note'>"+RACES[p.race].name+"</div>"+
      "<div class='profile-power-wrap'><img class='wreath' src='images/ui/profile-wreath.png' alt=''>"+
      "<span class='profile-power-chip' style='font-size:"+profilePowerFontSize(fmt(power(p)))+"px'>"+fmt(power(p))+"</span></div>"+
-     // Звание — подпись прямо под мощью: оно из неё и считается (см.
-     // RANK_LADDER), стоять им врозь незачем.
+     // Звание — прямо под мощью, со своим знаком. Прежняя лестница титулов по
+     // мощи отсюда убрана: автор решил, что это одно и то же слово про разные
+     // вещи, и оставил боевое.
      (!SP_UNLOCKED && mpState.player
-       ? "<div class='profile-rank'>"+rankAt(mpPower(p)).cur.name+"</div>"+
-         // Боевое звание — второй строкой, своим цветом: титул говорит, велика
-         // ли держава, звание — каков ты в бою. Это разные вещи, и путать их
-         // одним видом нельзя.
-         "<div class='profile-brank"+(mpBattleRankCls())+"'>"+escHtml(mpRankLabel(mpState.player))+"</div>"
+       ? "<div class='profile-brank"+mpBattleRankCls()+"'>"+
+         mpRankMarkHtml(mpState.player,26)+escHtml(mpRankLabel(mpState.player))+"</div>"
        : "")+
      "</div>";
   // Разделы профиля — ряд значков от автора (Настройки/Рейтинг/Хроники/
