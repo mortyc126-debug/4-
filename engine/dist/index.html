@@ -23,19 +23,6 @@
      #top: top:10px + аватар 78px + отступы карточки), а не поверх неё —
      этот документ открыт внутри iframe и ничего не знает о вёрстке
      родителя, кроме этого захардкоженного отступа. */
-  #coordBar{position:fixed;left:50%;top:100px;transform:translateX(-50%);
-    display:flex;align-items:center;gap:6px;z-index:15;
-    background:rgba(22,17,11,.84);border:1px solid #3d3121;border-radius:8px;
-    padding:7px 10px;box-shadow:0 8px 30px rgba(0,0,0,.65);backdrop-filter:blur(3px)}
-  #coordBar label{font-size:12px;color:#a2967b;display:flex;align-items:center;gap:4px}
-  #coordBar input{width:64px;background:#1c160e;border:1px solid #4a3b26;border-radius:4px;
-    color:#ece2ca;font:inherit;font-size:13px;padding:3px 5px}
-  #coordBar button{background:#3d3121;border:1px solid #4a3b26;border-radius:4px;
-    color:#e6c273;font:inherit;font-size:12.5px;padding:4px 10px;cursor:pointer}
-  #coordBar button:active{background:#4a3b26}
-  @media (max-width:760px){
-    #coordBar{padding:6px 8px;gap:4px}
-    #coordBar input{width:52px;font-size:12px}
   }
   #selected{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);
     color:#f2e4c4;font:14px/1.3 -apple-system,sans-serif;background:rgba(20,16,10,.82);
@@ -93,16 +80,11 @@
   #hmVersion{position:fixed;right:6px;bottom:4px;color:rgba(230,194,115,.55);
     font:10px monospace;pointer-events:none;z-index:20;text-shadow:0 1px 2px rgba(0,0,0,.8)}
 </style>
-  <script type="module" crossorigin src="./assets/index-DvMQVp9X.js"></script>
+  <script type="module" crossorigin src="./assets/index-DviAXocS.js"></script>
 </head>
 <body>
 <canvas id="gpu"></canvas>
 <div id="status">инициализация…</div>
-<div id="coordBar">
-  <label>X: <input id="coordX" type="number" step="any" inputmode="decimal"></label>
-  <label>Y: <input id="coordY" type="number" step="any" inputmode="decimal"></label>
-  <button id="coordGo">Перейти</button>
-</div>
 <div id="selected"></div>
 <div id="labels"></div>
 <div id="hmVersion"></div>

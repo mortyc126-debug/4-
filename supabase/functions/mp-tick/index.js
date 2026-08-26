@@ -377,8 +377,17 @@ async function applyScoutArrive(admin, ev) {
   const total = unitsTotal(defP.troops || {});
   const nowSec = Date.now() / 1000;
 
+  // Автор про донесение: "для визуала указывается расположение ратуши
+  // (координаты) как на ресурсных точках, уровень ратуши и мощь правителя.
+  // Щит не нужен". Координаты и мощь сюда раньше не клались вовсе — письмо
+  // умело показать уровень ратуши и щит, и всё.
+  // Мощь берём ту же, что и рейтинг (powerOf, см. players.power) — числа
+  // сходятся, и это не утечка: мощь и так открыта в рейтинге всем.
+  // shielded оставлен в данных, но клиент его больше не печатает: щит автор
+  // сделает видимым сам, а старые письма ломать выкидыванием поля незачем.
   const data = {
     found: true, opponent_id: defRow.id, opponent_nick: defRow.nick,
+    x: defRow.x, y: defRow.y, power: powerOf(defP, []),
     hall: hallLv, shielded: defRow.shield_until > nowSec, total, se,
   };
   const bAt = (bk) => Array.isArray(defP.b && defP.b[bk]) ? Math.max(0, ...defP.b[bk]) : ((defP.b && defP.b[bk]) || 0);

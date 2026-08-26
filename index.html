@@ -644,20 +644,7 @@ body.mp-gated #app.view-city ~ #mp-build-fab{display:block}
    mpEnterPlaceMode/mpCancelPlace/mpDoPlaceConfirm — надёжнее, чем гонка
    специфичности между двумя классовыми правилами на разных предках. */
 #mp-build-fab span{display:none}
-/* Фаза 34 — значок исследования. Автор: "иконка как и строительство, но
-   появляется она только при действующем исследовании, а если нет, то и
-   иконки нет". Поэтому те же размеры/место/условия показа, что у
-   #mp-build-fab (общий мир + вид города), НО с одной добавкой: показ
-   включает JS по st.rsch (см. mpUpdateResearchFab) — состояние академии
-   из CSS не видно.
-   Стоит НАД значком строительства: 98 (его bottom) + 56 (его высота) +
-   14 (тот же зазор, что между строительством и #view-toggle) = 168. */
-#mp-rsch-fab{display:none;position:fixed;left:21px;bottom:168px;z-index:20;
-  width:56px;height:56px;padding:0;border-radius:50%;border:none;overflow:hidden;
-  background:transparent;color:var(--gilt-hi)}
-#mp-rsch-fab img{width:100%;height:100%;object-fit:cover;pointer-events:none}
-#mp-rsch-fab span{display:none}
-#mp-rsch-fab:active{transform:scale(.9)}
+
 /* Фаза 34 — переход по координатам. Значок живёт в виде "Мир" (в городе
    координатам делать нечего) и стоит на том же левом столбце, что значки
    строительства/исследования в городе, — на месте, где в городе стоит
@@ -684,15 +671,7 @@ body.mp-gated #app.view-world ~ #mp-locate-fab{display:block}
 #locate-box input{width:100%;min-width:0}
 #locate-box .chips{display:flex;gap:10px;margin:0}
 #locate-err{color:#e08;font-size:12px;margin-bottom:8px;min-height:0}
-/* Тонкое кольцо прогресса вокруг значка — сколько исследованию осталось.
-   conic-gradient по --f (0..1), ставится из JS тем же тиком, что и показ.
-   Своя обёртка не нужна: псевдоэлемент поверх картинки, не перехватывает
-   тапы (pointer-events наследовать нечему — он не в потоке событий). */
-#mp-rsch-fab::after{content:"";position:absolute;inset:-3px;border-radius:50%;
-  background:conic-gradient(var(--gilt-hi) calc(var(--f,0)*360deg),transparent 0);
-  -webkit-mask:radial-gradient(closest-side,transparent calc(100% - 3px),#000 calc(100% - 3px));
-  mask:radial-gradient(closest-side,transparent calc(100% - 3px),#000 calc(100% - 3px));
-  pointer-events:none}
+
 #place-toolbar{display:none;position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:20;gap:16px}
 body.mp-placing #place-toolbar{display:flex}
 .place-btn{width:56px;height:56px;border-radius:50%;font-size:26px;line-height:1;padding:0;
@@ -1568,6 +1547,13 @@ body.mp-placing #place-toolbar{display:flex}
 .bm-help:disabled{opacity:.65}
 .bm-help img{width:26px;height:26px}
 .bm-help-note{color:#7a6448;font-size:12px;margin-top:5px;text-align:center}
+/* "Переместить" — последняя строка карточки здания и служебная: отделена
+   линейкой от содержательной части (набор, лечение, исследования), см.
+   комментарий у неё в mpBuildingModalHtmlFor. Пергаментные чернила, как у
+   соседней .bm-help — карточка светлая. */
+.bm-relocate{display:block;width:100%;margin-top:18px;padding-top:14px;
+  border-top:1px solid rgba(90,69,48,.25);background:transparent;color:#7a6448}
+.bm-relocate:hover{color:#3a2c1c}
 
 /* Вторая кнопка на карточке юнита ("Переобучить" под "Обучить", см.
    mpUnitCarouselHtml) — только отступ, вид тот же. */
@@ -1905,12 +1891,9 @@ body.mp-placing #place-toolbar{display:flex}
    там, где полосы нет, так что на десктопе и на старых телефонах разметка
    не меняется ни на пиксель.
    Значения bottom оставлены прежними и просто складываются с отступом —
-   иначе пришлось бы держать два набора чисел (см. #mp-rsch-fab: 168 = 98 у
-   строительства + 56 его высоты + 14 зазора, эта арифметика должна
-   сохраниться). */
+   иначе пришлось бы держать два набора чисел. */
 #menu-btn,#view-toggle,#place-toolbar{bottom:calc(14px + env(safe-area-inset-bottom,0px))}
 #mp-build-fab,#mp-locate-fab{bottom:calc(98px + env(safe-area-inset-bottom,0px))}
-#mp-rsch-fab{bottom:calc(168px + env(safe-area-inset-bottom,0px))}
 #side-menu{bottom:calc(90px + env(safe-area-inset-bottom,0px))}
 #brigades,#fieldarmy{bottom:calc(14px + env(safe-area-inset-bottom,0px))}
 </style>
@@ -1975,7 +1958,6 @@ body.mp-placing #place-toolbar{display:flex}
      Иконка — icon-build-fab.png (круглый медальон от автора), не путать с
      icon-build.png — тот отдельный, занятого слота бригады. -->
 <button id="mp-build-fab" aria-label="Строительство"><img src="images/ui/icon-build-fab.png" alt=""><span>Строить</span></button>
-<button id="mp-rsch-fab" aria-label="Исследование"><img src="images/ui/icon-research.png" alt=""><span>Исследование</span></button>
 <button id="mp-locate-fab" aria-label="Перейти по координатам"><img src="images/ui/icon-locate.png" alt=""><span>Координаты</span></button>
 <div id="locate-box">
   <div class="title">Перейти по координатам</div>
@@ -9163,8 +9145,15 @@ function mpRenderFreeformCity(){
 // mpCellPanelHtml (queued.t1-Date.now()/1000) чуть ниже по файлу.
 // Вынесено ради mpRenderBrigadesWorld — тот же приём, что и
 // mpFieldArmyCellHtml/brigadeSlotCellHtml (одиночка) ниже/выше по файлу.
+// q.t1 уже прошло — стройка кончилась, и слот свободен ПРЯМО СЕЙЧАС, что бы
+// ни лежало в состоянии. Очередь чистит сервер (applyBuild в mp-tick) по
+// своему событию, а до клиента это доезжает только следующим опросом — до
+// пяти секунд иконка стояла с нулевым таймером. Автор: "иконки при окончании
+// строительства так и зависают... лучше чтобы сразу, не дожидаясь ответа
+// сервера". Здесь никакой отсебятины: время окончания известно заранее и
+// одинаково у обеих сторон, мы просто не притворяемся, что ещё строим.
 function mpBrigadeSlotCellHtml(q,p,nowSec){
-  if(!q) return "<div class='slotcell empty' title='Бригада свободна'><img src='images/ui/icon-free.png'></div>";
+  if(!q || q.t1<=nowSec) return "<div class='slotcell empty' title='Бригада свободна'><img src='images/ui/icon-free.png'></div>";
   const f=(nowSec-q.t0)/Math.max(1,q.t1-q.t0);
   const idx=cityCellIndexFor(q.b,q.plot);
   return "<div class='slotcell' data-mpcell='"+idx+"' "+
@@ -9172,9 +9161,30 @@ function mpBrigadeSlotCellHtml(q,p,nowSec){
      "<img src='images/ui/icon-build.png'><span class='timer'>"+fmtDur(q.t1-nowSec)+"</span>"+
      "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
 }
+// Слот идущего исследования — ПОД слотами бригад, в том же левом столбце и
+// тем же кирпичиком (.slotcell): автор про прежний плавающий значок сказал
+// прямо — "должен появляться под иконками строительства, а не над иконкой
+// меню строительства, и там должен быть таймер и полоска исследования как
+// при строительстве зданий". Раньше это была отдельная круглая кнопка внизу
+// экрана со своим кольцом прогресса — теперь обычная ячейка столбца, ничем
+// не отличающаяся по устройству от стройки.
+// Пусто, когда академия свободна: слота нет вовсе (то же правило, что автор
+// задал изначально — "нет исследования, нет и иконки"), в отличие от пустых
+// слотов бригад, у которых свой смысл "бригада свободна".
+function mpResearchSlotCellHtml(st,nowSec){
+  const r=st&&st.rsch; if(!r) return "";
+  if(r.t1<=nowSec) return "";        // доисследовали — слот пропадает сразу, см. mpBrigadeSlotCellHtml
+  const f=(nowSec-r.t0)/Math.max(1,r.t1-r.t0);
+  const rn=findNode(r.id);
+  return "<div class='slotcell' data-act='rschslot' "+
+     "title='"+escHtml((rn?nodeTitle(rn):r.id)+" \u2192 ур. "+r.lv)+" — готово через "+fmtDur(Math.max(0,r.t1-nowSec))+"'>"+
+     "<img src='images/ui/icon-research.png'><span class='timer'>"+fmtDur(Math.max(0,r.t1-nowSec))+"</span>"+
+     "<div class='progress'><i style='width:"+(Math.max(0,Math.min(1,f))*100).toFixed(1)+"%'></i></div></div>";
+}
 function mpRenderBrigades(){
   const p=mpCityShim(), st=mpState.player.state, nowSec=Date.now()/1000;
-  return "<div id='brigades'>"+st.queues.map(q=>mpBrigadeSlotCellHtml(q,p,nowSec)).join("")+"</div>";
+  return "<div id='brigades'>"+st.queues.map(q=>mpBrigadeSlotCellHtml(q,p,nowSec)).join("")+
+     mpResearchSlotCellHtml(st,nowSec)+"</div>";
 }
 // Та же панель, что и mpRenderBrigades, но поверх 3D-мира (#brigades-world,
 // зеркально mpRenderFieldArmyWorld) — автор: «странно будет, что в городе
@@ -9186,7 +9196,8 @@ function mpRenderBrigadesWorld(){
   const el=$("#brigades-world"); if(!el) return;
   if(!mpState.player) return;
   const p=mpCityShim(), st=mpState.player.state, nowSec=Date.now()/1000;
-  const h=st.queues.map(q=>mpBrigadeSlotCellHtml(q,p,nowSec)).join("");
+  const h=st.queues.map(q=>mpBrigadeSlotCellHtml(q,p,nowSec)).join("")+
+          mpResearchSlotCellHtml(st,nowSec);
   if(h!==lastMpBrigadesWorld){ lastMpBrigadesWorld=h; setHtml(el,h); }
 }
 // Отряды в поле общего мира — тот же #fieldarmy/.slotcell, что и в
@@ -10660,15 +10671,6 @@ function mpBuildingModalHtmlFor(bld,plot){
   const actionLabel=lv<=0?"Построить":"Улучшить";
   h+="<button id='bm-btn' data-mp='build' data-bk='"+bld+"' "+(plot!=null?"data-plot='"+plot+"' ":"")+
      (canGo&&!mpState.loading?"":"disabled")+">"+(maxed?"Предел уровня":queued?"Уже строится":canGo?actionLabel:"Недоступно")+"</button>";
-  // Свободная застройка (Фаза 5) — "Переместить" видна только у уже
-  // стоящих (lv>0) размещаемых зданий (не Ратуша/Стена — не в PLACEABLE_BKEYS,
-  // у них своих координат в p.layout вообще нет). Мидстройка (queued) —
-  // сервер (mp-relocate-building) её всё равно отклонит, прячем кнопку сразу,
-  // чтобы не гонять заведомо неудачный запрос.
-  if(PLACEABLE_BKEYS.includes(bld) && lv>0 && !queued){
-    h+="<button class='seal' style='margin-top:8px;width:100%' data-mp='relocatestart' data-bk='"+bld+"' "+
-       (plot!=null?"data-plot='"+plot+"' ":"")+(mpState.loading?"disabled":"")+">Переместить</button>";
-  }
   // Фаза 19, кусочек 4 — Ратуша/Склад: раньше клик по ним в модалке
   // показывал ТОЛЬКО базовую карточку (арт/уровень/мощь/цена) — hallInfoHtml
   // (эпоха, отряды в поле, вместимость марша, черты расы, список эпох
@@ -10700,6 +10702,22 @@ function mpBuildingModalHtmlFor(bld,plot){
   // отдельный экран (mpOpenTradeModal), тут только вход в неё и цифры,
   // ради которых Рынок и поднимают: сколько поднимает обоз и какой налог.
   if(bld==="market" && lv>0) h+=mpMarketInfoHtml(lv);
+  // Свободная застройка (Фаза 5) — "Переместить" видна только у уже стоящих
+  // (lv>0) размещаемых зданий (не Ратуша/Стена — не в PLACEABLE_BKEYS, у них
+  // своих координат в p.layout вообще нет). Мидстройка (queued) — сервер
+  // (mp-relocate-building) её всё равно отклонит, прячем кнопку сразу, чтобы
+  // не гонять заведомо неудачный запрос.
+  //
+  // Стоит В САМОМ НИЗУ карточки, последней. Раньше она была сразу под
+  // "Улучшить", то есть посреди экрана, выше набора войск, лазарета и
+  // дерева исследований. Автор: "перемести вниз всех зданий, чтобы оно не
+  // было по середине... лучше их располагать по иерархии/востребованию, а
+  // «переместить» навряд ли кому-то будет хотеться больше, чем тренировать
+  // или исследовать".
+  if(PLACEABLE_BKEYS.includes(bld) && lv>0 && !queued){
+    h+="<button class='seal bm-relocate' data-mp='relocatestart' data-bk='"+bld+"' "+
+       (plot!=null?"data-plot='"+plot+"' ":"")+(mpState.loading?"disabled":"")+">Переместить</button>";
+  }
   return h;
 }
 // Старая карта с фиксированными слотами (CITY_CELLS) — тонкая обёртка над
@@ -10756,27 +10774,8 @@ function mpCloseBuildingModal(){
 // (клик по слоту бригады всё ещё резолвится через CITY_CELLS-индекс, см.
 // заголовок mpRenderFreeformCity), своя переменная для карты, чтобы не
 // путать два независимых источника индекса.
-// Фаза 34 — значок исследования (#mp-rsch-fab). Показывается ТОЛЬКО пока
-// академия занята: нет st.rsch — нет и значка (прямая формулировка автора).
-// Из CSS это не видно (состояние живёт в mpState), поэтому показ ставит JS
-// на каждом опросе — там же, где перерисовывается всё остальное.
-// Условия видимости в остальном те же, что у #mp-build-fab: общий мир, вид
-// города, не режим размещения здания.
-function mpUpdateResearchFab(){
-  const el=$("#mp-rsch-fab"); if(!el) return;
-  const st=mpState.player&&mpState.player.state;
-  const rsch=st&&st.rsch;
-  const show = !!rsch && !SP_UNLOCKED && $("#app").classList.contains("view-city")
-            && !document.body.classList.contains("mp-placing");
-  el.style.display=show?"block":"none";
-  if(!show) return;
-  const now=Date.now()/1000;
-  const f=Math.max(0,Math.min(1,1-(rsch.t1-now)/Math.max(1,rsch.t1-rsch.t0)));
-  el.style.setProperty("--f",f.toFixed(3));
-  const rn=findNode(rsch.id);
-  el.title=(rn?nodeTitle(rn):rsch.id)+" \u2192 ур. "+rsch.lv+" · готово через "+fmtDur(Math.max(0,rsch.t1-now));
-}
-// Тап по значку исследования открывает карточку Академии — ту же самую, что
+
+// Тап по слоту исследования открывает карточку Академии — ту же самую, что
 // и тап по самому зданию на карте города (mpOpenLayoutModal), а не отдельный
 // экран: исследование живёт в академии, второго места для него заводить
 // незачем. Академия — обычное здание из p.layout, ищем её там же.
@@ -11013,7 +11012,6 @@ function mpEnterPlaceMode(bk,plot){
   mpPlaceCtx={mode:'new', b:bk, plot, gx, gy, valid:collisionOk(layout,fp,gx,gy,-1), li:-1};
   document.body.classList.add("mp-placing");
   $("#mp-build-fab").style.display="none";
-  mpUpdateResearchFab();
   mpRenderFolio();
 }
 // Свободная застройка (Фаза 5) — перенос уже стоящего здания: "в руки"
@@ -11032,14 +11030,12 @@ function mpEnterRelocateMode(bk,plot){
   mpPlaceCtx={mode:'relocate', b:bk, plot, gx:entry.gx, gy:entry.gy, valid:true, li};
   document.body.classList.add("mp-placing");
   $("#mp-build-fab").style.display="none";
-  mpUpdateResearchFab();
   mpRenderFolio();
 }
 function mpCancelPlace(){
   mpPlaceCtx=null;
   document.body.classList.remove("mp-placing");
   $("#mp-build-fab").style.display="";
-  mpUpdateResearchFab();
   mpRenderFolio();
 }
 // Фаза 6 — {b,plot,gx,gy,at} свежепоставленного/перенесённого здания или
@@ -11066,7 +11062,6 @@ async function mpDoPlaceConfirm(){
     mpPlaceCtx=null;
     document.body.classList.remove("mp-placing");
     $("#mp-build-fab").style.display="";
-    mpUpdateResearchFab();
     herald(mode==="relocate"?"Перенесено.":"Заложено.");
     mpJustPlaced={b,plot,gx,gy,at:Date.now()};
     setTimeout(()=>{ mpJustPlaced=null; },LAND_MS);
@@ -13038,6 +13033,10 @@ function handleAct(e){
   // картой (Фаза 14, кусочек 4 — mpCellPanelHtml, теперь не вызывается
   // отсюда, но осталась нетронутой). Повторный клик по той же ячейке
   // закрывает модалку.
+  // Слот идущего исследования — сосед слотов бригад в том же столбце
+  // (mpResearchSlotCellHtml): тап открывает карточку Академии.
+  const rschSlot=e.target.closest("[data-act='rschslot']");
+  if(rschSlot){ mpOpenAcademyFromFab(); return; }
   const mpCell=e.target.closest("[data-mpcell]");
   if(mpCell){
     const idx=+mpCell.dataset.mpcell;
@@ -13395,10 +13394,6 @@ function toggleView(){
   app.classList.toggle("view-world", showingCity);
   img.src = showingCity ? "images/ui/icon-city.png" : "images/ui/icon-world.png";
   img.alt = showingCity ? "Город" : "Мир";
-  // Значок исследования живёт только в виде города (как и значок
-  // строительства) — переключение вида должно снимать/возвращать его сразу,
-  // не дожидаясь следующего опроса.
-  if(!SP_UNLOCKED) mpUpdateResearchFab();
   // Пауза мира зависит и от вида тоже (см. mpSyncWorld3DPause): наблюдатель
   // за модалками смены вкладки не видит — тут меняется класс #app.
   mpSyncWorld3DPause();
@@ -13872,7 +13867,12 @@ function closeMenuModal(){
    нужен предсказуемый глобальный адрес. */
 function mpSyncWorld3DPause(){
   const covered = $("#menu-modal").classList.contains("open")
-               || $("#building-modal").classList.contains("open");
+               || $("#building-modal").classList.contains("open")
+               // Окно перехода по координатам открывается ПОВЕРХ мира и
+               // прямо просит ввести числа — а движок под ним продолжал
+               // рисовать полный кадр. Автор: "перейти по координатам — при
+               // открытии тоже начинаются лаги".
+               || $("#locate-box").classList.contains("open");
   window.__world3dPaused = covered && inWorldView();
 }
 // Открытий/закрытий модалок в файле больше двух десятков (карточка здания,
@@ -13883,7 +13883,7 @@ function mpSyncWorld3DPause(){
 // и на них наблюдатель просыпаться не должен.
 (function watchModalsForWorld3DPause(){
   const obs=new MutationObserver(mpSyncWorld3DPause);
-  ["#menu-modal","#building-modal"].forEach(sel=>{
+  ["#menu-modal","#building-modal","#locate-box"].forEach(sel=>{
     const el=$(sel); if(el) obs.observe(el,{attributes:true,attributeFilter:["class"]});
   });
 })();
@@ -13961,7 +13961,6 @@ $("#crest").addEventListener("click",()=>openMenuModal("profile"));
 // и у #view-toggle/#menu-btn чуть выше (статичные элементы шаблона, не
 // внутри #folio — незачем гонять их через делегированный handleMpAct).
 $("#mp-build-fab").addEventListener("click",mpOpenBuildPicker);
-$("#mp-rsch-fab").addEventListener("click",mpOpenAcademyFromFab);
 $("#mp-locate-fab").addEventListener("click",mpOpenLocate);
 // Окошко координат — свой слушатель: оно СОСЕД #app, делегированный
 // handleAct на #menu-modal/#cartouche его не видит.
@@ -15325,9 +15324,6 @@ function mpRerenderNow(){
   // они есть, а на мире их нет» — теперь и бригады строительства видны
   // поверх 3D-мира (#brigades-world), не только на вкладке "Город".
   if(!SP_UNLOCKED) mpRenderBrigadesWorld();
-  // Значок исследования — тот же тик: академия могла освободиться (значок
-  // должен пропасть) или, наоборот, принять новое исследование.
-  if(!SP_UNLOCKED) mpUpdateResearchFab();
   // Фаза 17, кусочек 1 — тот же довод для открытого меню здания
   // (mpOpenBuildingModal): постройка могла завершиться, набор/лечение/ковка
   // подойти к концу, ресурсы истратиться — без этого кнопка "Улучшить"
@@ -15406,9 +15402,50 @@ function mpRerenderNow(){
   // откроет меню и не увидит её текстом.
   if(!SP_UNLOCKED) renderBadges();
 }
-function mpStartPolling(){ mpStopPolling(); mpPollTimer=setInterval(mpPollTick,5000); }
+/* ---- Секундный тик слотов (Фаза 38) --------------------------------------
+   Опрос ходит раз в пять секунд, и до этой правки таймеры бригад/отрядов
+   обновлялись вместе с ним: отсчёт прыгал через четыре секунды, а
+   закончившаяся стройка ещё несколько секунд стояла нулём. Автор:
+   "иконки при окончании строительства так и зависают... лучше чтобы сразу,
+   не дожидаясь ответа сервера".
+   Тик НЕ ходит в сеть и не пересобирает город целиком — правит ровно четыре
+   маленьких узла со слотами, и то лишь когда их разметка изменилась. */
+let mpSlotTimer=null, lastMpBrigadesCity="", lastMpFieldArmyCity="", mpFinishedSeen="";
+function mpTickSlots(){
+  if(!mpState.player) return;
+  const st=mpState.player.state, p=mpCityShim(), nowSec=Date.now()/1000;
+  const bc=$("#brigades");
+  if(bc){
+    const h=st.queues.map(q=>mpBrigadeSlotCellHtml(q,p,nowSec)).join("")+mpResearchSlotCellHtml(st,nowSec);
+    if(h!==lastMpBrigadesCity){ lastMpBrigadesCity=h; setHtml(bc,h); }
+  }
+  const fc=$("#fieldarmy");
+  if(fc){
+    const h=mpState.marches.map(m=>mpFieldArmyCellHtml(m,nowSec,"mpmarchinfo")).join("");
+    if(h!==lastMpFieldArmyCity){ lastMpFieldArmyCity=h; setHtml(fc,h); }
+  }
+  mpRenderBrigadesWorld();   // обе сами проверяют, что мы в объёмной карте
+  mpRenderFieldArmyWorld();
+  // Что-то ТОЛЬКО ЧТО кончилось — просим свежее состояние сразу, не дожидаясь
+  // очередного опроса: иначе новый уровень здания или готовое исследование
+  // появятся в карточках на несколько секунд позже, чем слот освободился.
+  // Подпись из завершившихся дел, чтобы не дёргать сервер повторно за одно
+  // и то же.
+  const done=st.queues.map(q=>q&&q.t1<=nowSec?(q.b+(q.plot??"")+q.t1):"").join("|")
+    + "|" + (st.rsch&&st.rsch.t1<=nowSec?st.rsch.id+st.rsch.t1:"");
+  if(done!==mpFinishedSeen){
+    mpFinishedSeen=done;
+    if(/[a-z0-9]/i.test(done)) mpRefreshPlayer();
+  }
+}
+function mpStartPolling(){
+  mpStopPolling();
+  mpPollTimer=setInterval(mpPollTick,5000);
+  mpSlotTimer=setInterval(mpTickSlots,1000);
+}
 function mpStopPolling(){
   if(mpPollTimer){ clearInterval(mpPollTimer); mpPollTimer=null; }
+  if(mpSlotTimer){ clearInterval(mpSlotTimer); mpSlotTimer=null; }
   // Фаза 21 — быстрый (1с) опрос боя не должен пережить выход из вкладки
   // общего мира: без этого он продолжал бы дёргать sb.from("marches")
   // каждую секунду вхолостую, пока игрок вообще не в мультиплеере.
@@ -16707,8 +16744,19 @@ function mpMailScoutEntry(m){
     detailHtml="<div class='note'>"+sub+"</div>";
   } else {
     const se=d.se||0;
-    sub="Ратуша "+d.hall+" ур."+(d.shielded?" · под щитом мира":"");
-    detailHtml+="<div class='note'>"+sub+"</div>";
+    // Автор: "для визуала указывается расположение ратуши (координаты) как
+    // на ресурсных точках, уровень ратуши и мощь правителя. Щит не нужен —
+    // когда я щит добавлю, он будет визуально виден".
+    // Координаты — та же кликабельная "пилюля" (mpLocLink), что и у писем о
+    // сборе: тап переносит камеру к месту.
+    sub="Ратуша "+d.hall+" ур."+(d.power?" · мощь "+fmt(d.power):"");
+    // Письма, отправленные ДО этой правки, координат и мощи не несут — тогда
+    // просто не показываем строку, а не рисуем "undefined".
+    if(d.x!=null && d.y!=null){
+      detailHtml+="<div class='mail-res-row'>"+mpLocLink(d.x,d.y,d.opponent_nick||"Столица")+"</div>";
+    }
+    detailHtml+="<div class='note'>Ратуша: "+d.hall+" ур.</div>";
+    if(d.power) detailHtml+="<div class='note'>Мощь правителя: "+fmt(d.power)+"</div>";
     if(se>=1){
       detailHtml+="<div class='note'>Войск: "+(se>=3?RU(d.total):"около "+RU(Math.round(d.total/100)*100))+"</div>";
       if(se>=3 && d.byType && d.byType.length){
@@ -16719,9 +16767,11 @@ function mpMailScoutEntry(m){
         }).join(" · ")+"</div>";
       }
       detailHtml+="<div class='note'>Запасы: "+RES.map(r=>RES_NAME[r]+" "+RU(d.res[r])).join(" · ")+"</div>";
-    } else {
-      detailHtml+="<div class='note'>Без очков в «Маскировку» (mil_scout2) видно только ратушу и щит.</div>";
     }
+    // Прежняя ветка "иначе" печатала подсказку с сырым id исследования
+    // ("Без очков в «Маскировку» (mil_scout2)...") — автор попросил убрать и
+    // подсказки, и теги. Разведка первой ступени просто показывает меньше,
+    // объяснять это в каждом письме незачем.
     if(se>=2) detailHtml+="<div class='note'>Стена: "+d.wall+" ур. · Полководец: "+(d.genLv!=null?"ур. "+d.genLv:"не выбран")+"</div>";
     if(se>=3) detailHtml+="<div class='note'>Академия: "+d.academy+" ур.</div>";
     if(se>=4) detailHtml+="<div class='note'>Гарнизон (башня): "+d.garrison+" ур.</div>";

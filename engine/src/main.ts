@@ -1193,35 +1193,17 @@ async function main() {
   (window as any).__camState = () => ({ yaw: cam.yaw, pitch: cam.pitch, dist: cam.dist, target: [...cam.target] });
   (window as any).__isAutoOrbiting = () => controls.isAutoOrbiting();
 
-  // ---- координатная строка: в мире без края и без списка городов это
-  // единственный способ и найти себя ("какие у меня координаты, чтобы
-  // позвать друга"), и попасть в произвольную точку по чужим координатам.
-  // Порт того же механизма из старого прототипа (obyom-3d-infinite.html,
-  // см. коммит f04872e), включая обход одного и того же бага: пока поле
-  // "живое" (каждый кадр показывает текущую позицию), таб с X на Y стирал
-  // бы только что введённый X ещё до нажатия "Перейти" — coordDirty
-  // останавливает перезапись сразу, как только начали печатать, и снимается
-  // только после успешного перехода.
-  const coordX = document.getElementById("coordX") as HTMLInputElement;
-  const coordY = document.getElementById("coordY") as HTMLInputElement;
-  const coordGo = document.getElementById("coordGo") as HTMLButtonElement;
-  let coordDirty = false;
-  for (const inp of [coordX, coordY]) inp.addEventListener("input", () => { coordDirty = true; });
-  function goToCoords() {
-    const x = parseFloat(coordX.value), y = parseFloat(coordY.value);
-    if (!isFinite(x) || !isFinite(y)) return;
-    // Тот же клэмп по границе мира, что и у ручной панорамы (camera.ts,
-    // panTargetBy) — иначе игрок вводом координат обходил бы ограничение.
-    cam.target[0] = Math.max(-WORLD_HALF_X, Math.min(WORLD_HALF_X, x));
-    cam.target[2] = Math.max(-WORLD_HALF_Z, Math.min(WORLD_HALF_Z, y));
-    cam.target[1] = heightAt(cam.target[0], cam.target[2]) * HMAX + 2;
-    controls.stopAuto();
-    coordDirty = false;
-  }
-  coordGo.addEventListener("click", goToCoords);
-  for (const inp of [coordX, coordY]) inp.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); goToCoords(); inp.blur(); }
-  });
+  // ---- координатной строки здесь БОЛЬШЕ НЕТ (Фаза 38).
+  // Она была портом из старого прототипа и висела плашкой вверху по центру
+  // поверх мира. Теперь переход по координатам живёт в самой игре — значок и
+  // окно ввода в index.html (mpOpenLocate), с проверкой границ мира и
+  // кнопкой "к своему замку", — а вторая такая же плашка поверх карты
+  // только мешала. Автор: "убери вторую плашку перехода по координатам,
+  // что вверху в центре статично стоит, так как теперь она не нужна и всё
+  // выполняется по кнопкам".
+  // Заодно ушла её цена: поля X/Y переписывались КАЖДЫЙ КАДР (60 раз в
+  // секунду присвоение в input.value, а это стиль и раскладка), просто
+  // чтобы показывать текущую позицию камеры.
 
   // ---- клик/тап по сущности: RoK-стиль (см. вживую уже реализованное
   // tryTap()+renderCartouche() в obyom-3d-infinite.html/index.html) — тут,
@@ -1745,7 +1727,22 @@ async function main() {
     (window as any).__ecsFound = found.length;
     (window as any).__syncCount = syncCount;
   }
-  if (usingReal) {
+  // Интервал заводится ВСЕГДА, а не только при usingReal.
+  //
+  // usingReal решается ОДИН РАЗ, в момент запуска движка: есть ли прямо
+  // сейчас что читать у родителя. А движок поднимается лениво, при первом
+  // заходе во вкладку "Мир", и данные общего мира к этой миллисекунде могут
+  // быть ещё не готовы (mpWorldSnapshot возвращает null, пока mpState.joined
+  // не выставлен и не пришёл первый опрос). Достаточно было проиграть эту
+  // гонку — и синхронизация не заводилась ВООБЩЕ: сцена оставалась с тем,
+  // что успела прочитать при старте, новые замки и точки не появлялись до
+  // перезагрузки страницы. Автор ровно это и сообщил: "чтобы новые игроки
+  // (замки) и точки ресурсов появлялись самостоятельно в реальном времени,
+  // без надобности обновлять страницу".
+  // Ошибиться в другую сторону дёшево: syncLiveEntities сама молча выходит,
+  // если читать нечего (fresh === null), — раз в три секунды это ничего не
+  // стоит, зато мир оживает сам, как только данные появятся.
+  {
     setInterval(() => {
       // Во вкладке "Город" 3D не видно — полный обход сущностей и подгрузка
       // моделей здесь ни к чему. При возврате всё равно синхронизируемся: в
@@ -1780,7 +1777,9 @@ async function main() {
   // выбранного, слежение камеры) — считаем один раз за кадр.
   let lastMarches: LiveMarchPos[] = [];
   function refreshMarches(): void {
-    if (!usingReal) { lastMarches = []; return; }
+    // Та же гонка, что и у синхронизации сущностей выше: usingReal мог
+    // оказаться false просто потому, что движок поднялся раньше первого
+    // опроса. loadLiveMarches сама вернёт пусто, если читать нечего.
     const marches = loadLiveMarches();
     lastMarches = marches || [];
     (window as any).__marchPositions = lastMarches;
@@ -2233,10 +2232,7 @@ async function main() {
         followMarchId = null; // поход прибыл/был отозван, пока за ним следили — слежению больше нечего показывать
       }
     }
-    if (!coordDirty) {
-      coordX.value = cam.target[0].toFixed(1);
-      coordY.value = cam.target[2].toFixed(1);
-    }
+(cam.target[0], cam.target[2]); // no-op, пока камера внутри того же чанка — дёшево звать каждый кадр
     updateTerrainChunks(cam.target[0], cam.target[2]); // no-op, пока камера внутри того же чанка — дёшево звать каждый кадр
     updateFarTerrain(cam.target[0], cam.target[2]); // то же самое, но для дальнего грубого кольца
     // Стройка чанков из очереди (см. pendingNear/pendingFar выше) — общий
