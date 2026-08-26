@@ -741,17 +741,26 @@ body.mp-placing #place-toolbar{display:flex}
    padding каждой кнопки сверху и снизу (кнопки прозрачные, своей рамки не
    видно, так что глаз читает именно суммарный зазор).
    Фаза 40 — разделов стало шесть (добавились Альянс и Магазин), и столбец
-   в 66px с отступами перестал помещаться на телефоне. Автор: "сделай
-   иконки в два раза меньше и зазоры в них меньше, чтобы они все
-   поместились компактно". Иконка 66 -> 33, отступ 4 -> 2: столбец из шести
-   теперь занимает 6*(33+4)=222px против прежних 6*(66+8)=444px у четырёх
-   с лишним. */
+   в 66px с отступами перестал помещаться на телефоне: иконку урезали до
+   33px, отступ до 2px. Вышло слишком мелко ("совсем маленькие"), поэтому
+   размер вернулся к 66px — но уже переменной --sm-ico, а не намертво.
+   Тесные отступы (2px) при этом остались: столбец из шести занимает
+   6*(66+4)=420px вместо прежних 6*(66+8)=444px, то есть влезает туда же,
+   где не влезал раньше. Ниже двух порогов высоты окна переменная сама
+   отступает к 52 и 40px — это ровно те телефоны, ради которых иконки
+   когда-то и урезали, и на них столбец по-прежнему не упирается в шапку.
+   Метка непрочитанного (.nbadge) тоже подросла — на иконке 66px она
+   висела крошечной точкой. */
+#side-menu{--sm-ico:66px}
+@media (max-height:760px){ #side-menu{--sm-ico:52px} }
+@media (max-height:620px){ #side-menu{--sm-ico:40px} }
 #side-menu button{position:relative;display:flex;align-items:center;gap:14px;padding:2px 4px;background:transparent;
-  border:none;color:var(--vellum);font-size:33px;font-variant:small-caps;letter-spacing:.06em;
+  border:none;color:var(--vellum);font-size:var(--sm-ico);font-variant:small-caps;letter-spacing:.06em;
   text-align:left;text-shadow:0 2px 6px rgba(0,0,0,.9),0 0 10px rgba(0,0,0,.85);border-radius:6px}
 #side-menu button:hover{background:rgba(0,0,0,.35);color:var(--gilt-hi)}
-#side-menu button img{width:33px;height:33px;object-fit:contain;flex:0 0 auto;
+#side-menu button img{width:var(--sm-ico);height:var(--sm-ico);object-fit:contain;flex:0 0 auto;
   filter:drop-shadow(0 2px 5px rgba(0,0,0,.9))}
+#side-menu .nbadge{min-width:20px;height:20px;line-height:17px;font-size:12px;top:0;right:0}
 /* Только иконки, без подписи (пользователь явно попросил) — текст
    остаётся в разметке как aria-label на самой кнопке, а не потерян для
    скринридеров, просто визуально скрыт. */
@@ -10780,6 +10789,20 @@ function mpBarterBodyHtml(st,lv,cap,tax){
      "Обмен обратим: без налога круг «еда — камень — еда» возвращает ровно исходное.</div>";
   return h;
 }
+// Живое значение <input> морфер не трогает НАРОЧНО (см. morphNode: там
+// это набранное игроком, которого нет в разметке) — поэтому после удачного
+// обмена ползунок и число оставались стоять на прежней сумме, хотя в
+// mpTradeCtx.bAmount уже ноль. Игрок видел в поле нужное число, жал
+// "Обменять" — и получал "Укажите, сколько меняем", то есть приходилось
+// вбивать сумму заново. Пишем оба поля руками, ровно из контекста.
+function mpSyncBarterInputs(){
+  if(!mpTradeCtx || mpTradeCtx.tab!=="barter") return;
+  const body=$("#bm-body"); if(!body) return;
+  const v=Math.max(0,Math.floor(mpTradeCtx.bAmount||0));
+  const range=body.querySelector("[data-btqty]"), num=$("#bt-amount");
+  if(range) range.value=v;
+  if(num) num.value=v;
+}
 async function mpDoBarter(){
   if(!mpTradeCtx || mpState.loading) return;
   const {lv,cap}=mpTradeTotals();
@@ -10796,8 +10819,16 @@ async function mpDoBarter(){
     await Promise.all([mpRefreshPlayer(), mpRefreshBarterMail()]);
     mpTradeCtx.bAmount=0;
     herald("Обменяно: "+fmt(r&&r.got||0)+" "+RES_NAME[mpTradeCtx.bTo].toLowerCase()+".");
+    // Сервер пишет квитанцию ПОСЛЕ самого обмена и его ошибку нарочно не
+    // считает провалом обмена (ресурсы уже переложены, откатывать нечего) —
+    // но молчать об этом тоже нельзя, иначе "писем не приходит" выглядит как
+    // отсутствие механики, а не как сбой записи.
+    if(r && r.mail_err) herald("Обмен прошёл, но квитанцию записать не удалось.");
   }catch(e){ mpTradeCtx.err=e.message; }
-  finally{ mpState.loading=false; if(mpTradeCtx) mpTradeRepaint(); else mpRerender(); }
+  finally{
+    mpState.loading=false;
+    if(mpTradeCtx){ mpTradeRepaint(); mpSyncBarterInputs(); } else mpRerender();
+  }
 }
 function mpTradeRepaint(){
   if(!mpTradeCtx) return;
