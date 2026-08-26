@@ -557,26 +557,34 @@ Deno.serve(async (req) => {
     }).select().single();
     if (mErr) return jsonResponse({ err: mErr.message }, 500);
 
+    // Событие прибытия создаём ДО записи состояния игрока, а не после.
+    // Раньше порядок был обратный, и сорвавшаяся вставка события оставляла
+    // марш, который никогда не придёт: тик мира событийный, никакого обхода
+    // просроченных маршей у него нет (см. его цикл по events) — отряд с
+    // войсками и занятым слотом висел бы в пути вечно. Теперь всё, что
+    // может сорваться, стоит ДО единственного необратимого шага, и откат
+    // сводится к удалению двух строк.
+    const { data: evRow, error: evErr } = await admin.from("events").insert({
+      world_id: world.id, fire_at: new Date((nowSec + travel) * 1000).toISOString(),
+      type: "march_arrive", data: { march_id: march.id },
+    }).select("id").single();
+    if (evErr) {
+      await admin.from("marches").delete().eq("id", march.id);
+      return jsonResponse({ err: evErr.message }, 500);
+    }
+    const rollback = async () => {
+      if (evRow) await admin.from("events").delete().eq("id", evRow.id);
+      await admin.from("marches").delete().eq("id", march.id);
+    };
+
     if (takeGen) attP.gen.away = march.id; // index.html:4666
     const saved = await savePlayerState(admin, attRow, attP);
     // Проигранная гонка за строку игрока (см. savePlayerState). Отряд к
     // этому моменту уже создан — его надо убрать, иначе повтор запроса
     // (клиент повторяет молча, см. mpCall в index.html) отправит ВТОРОЙ
     // такой же поход, а войска за него спишутся дважды.
-    if (saved.conflict) {
-      await admin.from("marches").delete().eq("id", march.id);
-      return conflictResponse();
-    }
-    if (saved.error) {
-      await admin.from("marches").delete().eq("id", march.id);
-      return jsonResponse({ err: saved.error.message }, 500);
-    }
-
-    const { error: evErr } = await admin.from("events").insert({
-      world_id: world.id, fire_at: new Date((nowSec + travel) * 1000).toISOString(),
-      type: "march_arrive", data: { march_id: march.id },
-    });
-    if (evErr) return jsonResponse({ err: evErr.message }, 500);
+    if (saved.conflict) { await rollback(); return conflictResponse(); }
+    if (saved.error) { await rollback(); return jsonResponse({ err: saved.error.message }, 500); }
 
     return jsonResponse({ ok: true, march_id: march.id, eta: travel, has_gen: takeGen });
   } catch (e) {

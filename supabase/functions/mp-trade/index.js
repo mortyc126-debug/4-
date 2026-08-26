@@ -700,25 +700,30 @@ Deno.serve(async (req) => {
     }).select().single();
     if (mErr) return jsonResponse({ err: mErr.message }, 500);
 
+    // Событие прибытия создаём ДО списания ресурсов (см. тот же разбор в
+    // mp-attack): тик мира событийный, обхода просроченных маршей у него
+    // нет, и обоз без своего события вёз бы груз вечно — ресурсы списаны,
+    // получателю ничего, слот отряда занят навсегда.
+    const { data: evRow, error: evErr } = await admin.from("events").insert({
+      world_id: world.id, fire_at: new Date((nowSec + travel) * 1000).toISOString(),
+      type: "march_arrive", data: { march_id: march.id },
+    }).select("id").single();
+    if (evErr) {
+      await admin.from("marches").delete().eq("id", march.id);
+      return jsonResponse({ err: evErr.message }, 500);
+    }
+    const rollback = async () => {
+      if (evRow) await admin.from("events").delete().eq("id", evRow.id);
+      await admin.from("marches").delete().eq("id", march.id);
+    };
+
     for (const r of RES) fromP.res[r] = Math.max(0, (fromP.res[r] || 0) - send[r]);
     const saved = await savePlayerState(admin, fromRow, fromP);
     // Проигранная гонка за строку игрока: обоз уже создан — убираем, иначе
     // повтор запроса отправит второй такой же, а ресурсы спишутся дважды.
     // Тот же приём, что в mp-move/mp-attack.
-    if (saved.conflict) {
-      await admin.from("marches").delete().eq("id", march.id);
-      return conflictResponse();
-    }
-    if (saved.error) {
-      await admin.from("marches").delete().eq("id", march.id);
-      return jsonResponse({ err: saved.error.message }, 500);
-    }
-
-    const { error: evErr } = await admin.from("events").insert({
-      world_id: world.id, fire_at: new Date((nowSec + travel) * 1000).toISOString(),
-      type: "march_arrive", data: { march_id: march.id },
-    });
-    if (evErr) return jsonResponse({ err: evErr.message }, 500);
+    if (saved.conflict) { await rollback(); return conflictResponse(); }
+    if (saved.error) { await rollback(); return jsonResponse({ err: saved.error.message }, 500); }
 
     return jsonResponse({ ok: true, march_id: march.id, eta: travel, sent: send, net, tax, total, net_total: netTotal });
   } catch (e) {

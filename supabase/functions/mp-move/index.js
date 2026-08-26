@@ -396,25 +396,30 @@ Deno.serve(async (req) => {
     TKEYS.forEach((t) => {
       for (let i = 1; i <= 5; i++) attP.troops[t][i] = Math.max(0, (attP.troops[t][i] || 0) - sendUnits[t][i]);
     });
+    // Событие прибытия создаём ДО записи состояния игрока (см. тот же
+    // разбор в mp-attack): тик мира событийный, обхода просроченных маршей
+    // у него нет, и марш без своего события висел бы в пути вечно, держа
+    // войска и слот отряда.
+    const { data: evRow, error: evErr } = await admin.from("events").insert({
+      world_id: world.id, fire_at: new Date((nowSec + travel) * 1000).toISOString(),
+      type: "march_arrive", data: { march_id: march.id },
+    }).select("id").single();
+    if (evErr) {
+      await admin.from("marches").delete().eq("id", march.id);
+      return jsonResponse({ err: evErr.message }, 500);
+    }
+    const rollback = async () => {
+      if (evRow) await admin.from("events").delete().eq("id", evRow.id);
+      await admin.from("marches").delete().eq("id", march.id);
+    };
+
     if (takeGen) attP.gen.away = march.id;
     const saved = await savePlayerState(admin, attRow, attP);
     // Проигранная гонка за строку игрока: отряд уже создан — убираем, иначе
     // повтор запроса (клиент повторяет молча, см. mpCall) отправит второй
     // такой же поход, а войска спишутся дважды. Тот же приём, что в mp-attack.
-    if (saved.conflict) {
-      await admin.from("marches").delete().eq("id", march.id);
-      return conflictResponse();
-    }
-    if (saved.error) {
-      await admin.from("marches").delete().eq("id", march.id);
-      return jsonResponse({ err: saved.error.message }, 500);
-    }
-
-    const { error: evErr } = await admin.from("events").insert({
-      world_id: world.id, fire_at: new Date((nowSec + travel) * 1000).toISOString(),
-      type: "march_arrive", data: { march_id: march.id },
-    });
-    if (evErr) return jsonResponse({ err: evErr.message }, 500);
+    if (saved.conflict) { await rollback(); return conflictResponse(); }
+    if (saved.error) { await rollback(); return jsonResponse({ err: saved.error.message }, 500); }
 
     return jsonResponse({ ok: true, march_id: march.id, eta: travel, has_gen: takeGen });
   } catch (e) {
