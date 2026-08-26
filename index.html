@@ -1569,6 +1569,10 @@ body.mp-placing #place-toolbar{display:flex}
 .bm-help img{width:26px;height:26px}
 .bm-help-note{color:#7a6448;font-size:12px;margin-top:5px;text-align:center}
 
+/* Вторая кнопка на карточке юнита ("Переобучить" под "Обучить", см.
+   mpUnitCarouselHtml) — только отступ, вид тот же. */
+.uc-go2{margin-top:8px}
+
 /* Фаза 34 — кнопки действий со значком. Автор прислал набор иконок и
    расписал, какая куда: разведка, сбор, лагерь, отзыв, осада, разрушение.
    Значок идёт ПЕРЕД подписью и не заменяет её: подпись — то, что кнопка
@@ -10105,9 +10109,21 @@ function mpUnitCarouselHtml(){
       (locked?"<div class='uc-lock'>&#128274; чтобы обучить, нужно исследование в академии</div>":"")+
       unitCardStatsHtml(pShim,type,tier)+
       (have>0?"<div class='uc-have'>в строю: "+RU(have)+"</div>":"");
+    // Автор: "вкладки тренировки держатся на Т5, при перелистывании до Т1
+    // сразу переносят меня на Т5, не давая ничего сделать". Так и было:
+    // "Обучить" стояла ТОЛЬКО на высшем открытом тире, а на младших —
+    // "Переобучить", да и та лишь когда воины этого тира уже есть. На пустом
+    // Т1 не было ни одной кнопки: единственной живой карточкой оставалась
+    // Т5, и карусель выглядела так, будто сама туда возвращает.
+    // Теперь набор доступен на ЛЮБОМ открытом тире (младшие дешевле и
+    // быстрее — это нормальная тактика, а не поблажка), а "Переобучить"
+    // остаётся сверху там, где есть кого переобучать.
     if(!locked && active) h+=mpTrainInlineHtml();
-    else if(!locked && tier===maxT) h+="<button class='rnode-go uc-go' data-mp='ucfocus' data-mode='train' data-tier='"+tier+"'>Обучить</button>";
-    else if(!locked && tier<maxT && have>0) h+="<button class='rnode-go uc-go' data-mp='ucfocus' data-mode='retrain' data-tier='"+tier+"'>Переобучить</button>";
+    else if(!locked){
+      h+="<button class='rnode-go uc-go' data-mp='ucfocus' data-mode='train' data-tier='"+tier+"'>Обучить</button>";
+      if(tier<maxT && have>0)
+        h+="<button class='rnode-go uc-go uc-go2' data-mp='ucfocus' data-mode='retrain' data-tier='"+tier+"'>Переобучить</button>";
+    }
     h+="</div>";
   }
   h+="</div>";
@@ -10456,15 +10472,17 @@ function mpMarketInfoHtml(lv){
    в тесную карточку это не влезает. Получатель — ЛЮБОЙ живой правитель мира
    (прямое условие автора «торговать можно со всеми правителями»), список —
    те же соседи, что уже приходят опросом. */
-let mpTradeCtx=null;
+let mpTradeCtx=null, lastTradeSheet="";
 function mpOpenTradeModal(){
   const st=mpState.player&&mpState.player.state; if(!st) return;
   const lv=mpMarketLv(st);
   if(lv<=0){ herald("Нужен Рынок."); return; }
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpForgeTab=null; mpForgeRarity=null;
+  mpCitySel=-1; mpLayoutSel=-1; mpFixedSel=null; mpPickerOpen=false;
   mpTradeCtx={ to:null, res:{food:0,wood:0,stone:0,gold:0}, err:null, q:"" };
-  setHtml($("#bm-body"), mpTradeSheetHtml());
+  lastTradeSheet=mpTradeSheetHtml();
+  setHtml($("#bm-body"), lastTradeSheet);
   $("#building-modal").classList.add("open");
 }
 function mpTradeTotals(){
@@ -13434,6 +13452,7 @@ function closeBuildingModal(){
   // Тот же довод — крестик/подложка могут закрыть свиток похода (mpOpenMarchModal)
   // без прохода через mpDoAttack/mpDoGather/mpDoRaid, сбрасываем цель вручную.
   if(!SP_UNLOCKED && mpMarchCtx){ mpMarchCtx=null; mpState.attackTarget=null; mpState.gatherTarget=null; mpState.raidTarget=null; }
+  if(!SP_UNLOCKED && mpTradeCtx){ mpTradeCtx=null; lastTradeSheet=""; }
   // Свободная застройка (Фаза 4) — тот же довод: крестик/подложка могут
   // закрыть модалку здания с новой карты или сам пикер построек, минуя
   // mpOpenLayoutModal/mpOpenFixedModal/mpOpenBuildPicker — сбрасываем
@@ -15358,6 +15377,27 @@ function mpRerenderNow(){
     } else if(mpMarchCtx){
       const html=mpMarchSheetHtml();
       if(html!==lastMarchSheet){ lastMarchSheet=html; setHtml($("#bm-body"), html); }
+    // Форма обоза (mpOpenTradeModal) — тот же диф и по той же причине:
+    // складские остатки меняются каждый опрос, а в полях уже набраны числа,
+    // и в поле поиска получателя стоит курсор. Перезапись без диффа стирала
+    // бы и то, и другое.
+    } else if(mpTradeCtx){
+      const html=mpTradeSheetHtml();
+      if(html!==lastTradeSheet){
+        const act=document.activeElement;
+        const key=act&&act.dataset&&act.dataset.trade ? "trade:"+act.dataset.trade
+                : act&&act.id==="trade-q" ? "q" : null;
+        const pos=key&&act.selectionStart!=null?act.selectionStart:null;
+        lastTradeSheet=html;
+        setHtml($("#bm-body"), html);
+        // Возвращаем фокус и курсор туда, где игрок печатал: без этого
+        // набор числа обрывался бы на каждом опросе.
+        if(key){
+          const again=key==="q" ? $("#trade-q")
+                    : $("#bm-body").querySelector("[data-trade='"+key.slice(6)+"']");
+          if(again){ again.focus(); try{ again.setSelectionRange(pos,pos) }catch(e){} }
+        }
+      }
     }
   }
   // Фаза 17, кусочек 2 — #side-menu значки (см. menuBadges()) должны
