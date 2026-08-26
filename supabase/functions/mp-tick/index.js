@@ -2229,6 +2229,24 @@ function applyPower(p, row, marchUnits) {
 }
 
 // =============================================================================
+// Счётчики для таблиц мира — Фаза 44.
+// =============================================================================
+// Накопительные числа (сколько собрано за всё правление, сколько отправлено
+// обозами, сколько лагерей варваров взято) считаются ТАМ, ГДЕ СОБЫТИЕ
+// ПРОИСХОДИТ, и складываются в state.stats. В колонки, по которым идёт
+// сортировка таблиц, их зеркалит mp-join на обычном опросе (см. там
+// applyBoardStats) — здесь ходить в колонки незачем, они всё равно
+// перепишутся через несколько секунд.
+//
+// Только вверх и никогда вниз: это «за всё время», а не «сейчас». Ограбили
+// склад — собранного не убыло, оно было собрано.
+function bumpStat(p, key, amount) {
+  if (!(amount > 0)) return;
+  if (!p.stats) p.stats = {};
+  p.stats[key] = Math.round((p.stats[key] || 0) + amount);
+}
+
+// =============================================================================
 // Боевой рейтинг и звания — Фаза 43.
 // =============================================================================
 // Дословная копия ../_shared/rating.js (тот же принцип самодостаточных копий,
@@ -4116,6 +4134,17 @@ async function applyMarchHome(admin, ev) {
     // undefined) — ничего не меняется, как и раньше.
     if (m.data && m.data.carry) {
       RES.forEach((r) => { if (m.data.carry[r]) p.res[r] = (p.res[r] || 0) + m.data.carry[r]; });
+      // Счётчик «собрано за всё время» — здесь, а не в applyGathered: там
+      // добыча только забронирована, а доехать домой обоз может и не успеть
+      // (перехватят по дороге). Считаем то, что реально легло на склад.
+      // Награбленное в бою и взятое у варваров сюда не идёт: это другой
+      // счётчик и другая доблесть — у сбора своя таблица.
+      if (m.mode === "gather") {
+        let got = 0;
+        RES.forEach((r) => { got += m.data.carry[r] || 0; });
+        got += m.data.carry.amber || 0;
+        bumpStat(p, "gathered", got);
+      }
       // Янтарь — отдельное поле p.amber, не часть p.res (см. index.html:
       // 2823/4963 p.amber=(p.amber||0)+m.carryAmber) — RES.forEach выше его
       // не задевает, иначе добыча жилы молча терялась бы при возврате марша.
@@ -4188,7 +4217,9 @@ async function applyTradeArrive(admin, m) {
   const net = d.net || {};
   const toId = d.to_id;
 
-  const { data: fromRow, error: fErr } = await admin.from("players").select("id,nick").eq("id", m.player_id).maybeSingle();
+  // Раньше отправитель читался только ради ника. Теперь нужен и его state:
+  // в него ложится счётчик «довезено обозами» для таблицы торговли.
+  const { data: fromRow, error: fErr } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
   if (fErr) throw fErr;
 
   const { data: toRow, error: tErr } = await admin.from("players").select("*").eq("id", toId).maybeSingle();
@@ -4217,6 +4248,21 @@ async function applyTradeArrive(admin, m) {
       .update({ state: toP, updated_at: new Date().toISOString() }).eq("id", toRow.id);
     if (upErr) throw upErr;
 
+    // Счётчик торговли — отправителю и по ДОВЕЗЁННОМУ (net), а не по
+    // отправленному: налог Рынка съел часть груза ещё в дороге, и хвалиться
+    // им не за что. Пропавший обоз (получатель погиб) не считается вовсе —
+    // ветка выше сюда не заходит.
+    if (fromRow && fromRow.state) {
+      let delivered = 0;
+      for (const r of RES) delivered += net[r] || 0;
+      if (delivered > 0) {
+        bumpStat(fromRow.state, "traded", delivered);
+        const { error: fUpErr } = await admin.from("players")
+          .update({ state: fromRow.state, updated_at: new Date().toISOString() }).eq("id", fromRow.id);
+        // Счётчик таблицы — не повод ронять уже вручённый груз.
+        if (fUpErr) console.error("mp-tick: счётчик торговли не записался —", fUpErr.message);
+      }
+    }
     mailRows.push({ world_id: m.world_id, player_id: toRow.id, kind: "trade",
       data: { role: "receiver", from_nick: d.from_nick || "", from_race: d.from_race || "",
               got: net, tax: d.tax || 0, x: (d.from && d.from.x), y: (d.from && d.from.y) } });
@@ -4654,6 +4700,10 @@ async function finalizeRaidBattle(admin, m, attRow, attP, state, nowSec) {
   const campLv = (m.data && m.data.camp_lv) || 1;
   let carry = {}, tomeDrops = {}, genLeveledTo = null;
   if (state.winner === "att") {
+    // Счётчик «взято лагерей и крепостей варваров» — таблица для тех, кто
+    // воюет не с игроками. Считается только победа: подошёл и отступил — не
+    // взял.
+    bumpStat(attP, "camps", 1);
     carry = banditLoot(campLv);
     genLeveledTo = addXp(attP, BANDIT_XP[Math.max(1, Math.min(25, campLv)) - 1]); // Фаза 10, кусочек 1 (25 = CFG.MAX_LEVEL, см. BANDIT_TROOPS выше)
     // index.html:5074-5077 — книги опыта СВЕРХ обычного addXp выше.
