@@ -692,6 +692,41 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 /* ─────────────── Переключение Город/Мир ─────────────── */
 #app.view-city #chart{display:none}
 #app.view-city #ledger{width:100%;flex:1;border-left:none;box-shadow:none}
+/* ---- Плавность интерфейса ------------------------------------------------
+   Автор: «сделай более плавные переходы, чтобы игра смотрелась цельной».
+   Всё на CSS-АНИМАЦИЯХ, а не на переходах свойства display: анимация
+   проигрывается сама в момент появления элемента, и городить отложенное
+   снятие класса (а с ним и окно, когда модалка уже закрыта для игрока, но
+   ещё «open» для кода) не приходится.
+     • ui-veil — затемнение под модалкой;
+     • ui-rise — само содержимое приподнимается на пару пикселей;
+     • ui-swap — короткое проявление при СМЕНЕ содержимого (вкладка, раздел),
+       навешивается из JS через uiSwap().
+   prefers-reduced-motion уважаем целиком: у кого системная настройка просит
+   покоя, анимаций нет вовсе. */
+@keyframes ui-veil{from{opacity:0}to{opacity:1}}
+@keyframes ui-rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes ui-swap{from{opacity:.35}to{opacity:1}}
+.ui-swap{animation:ui-swap .18s ease-out}
+/* Полоски-заглушки на время ожидания ответа (см. skeletonRowsHtml): держат
+   разметку на месте, чтобы экран не схлопывался в одну строчку и обратно. */
+@keyframes ui-pulse{0%,100%{opacity:.30}50%{opacity:.55}}
+.rank-row.skel{grid-template-columns:1fr auto;pointer-events:none}
+.sk{display:block;height:11px;border-radius:5px;background:var(--rule-soft);animation:ui-pulse 1.4s ease-in-out infinite}
+.sk-a{width:58%}
+.sk-b{width:54px}
+#menu-modal.open #menu-modal-body{animation:ui-rise .2s ease-out}
+#building-modal.open #bm-sheet{animation:ui-rise .2s ease-out}
+/* Переключение Город <-> Мир: то, что становится видимым, проявляется, а не
+   возникает рывком. Это самый заметный переход в игре — им пользуются чаще
+   любого другого. */
+#app.view-world #chart{animation:ui-swap .22s ease-out}
+#app.view-city #ledger{animation:ui-swap .22s ease-out}
+@media (prefers-reduced-motion:reduce){
+  #menu-modal.open,#building-modal.open,#menu-modal.open #menu-modal-body,
+  #building-modal.open #bm-sheet,.ui-swap,
+  #app.view-world #chart,#app.view-city #ledger{animation:none!important}
+}
 /* Снова скрыты — дублировали гамбургер-меню (пользователь явно попросил
    убрать именно эту панель целиком, не подписи внутри неё). Единственный
    путь, который раньше уводил tab с "city" без клика по самим ribbons
@@ -811,7 +846,7 @@ body.mp-placing #place-toolbar{display:flex}
 
 #menu-modal{position:fixed;inset:0;z-index:25;display:none;background:rgba(8,5,2,.72);
   overflow-y:auto}
-#menu-modal.open{display:block}
+#menu-modal.open{display:block;animation:ui-veil .16s ease-out}
 /* Золотые уголки поверх тёмной подложки #menu-modal — тот же ассет, что и
    в почте (.mail-corner), не нужно менять тёмную цветовую схему Войска/
    Генерала/Инвентаря/Профиля целиком ради декора: золото на тёмном фоне
@@ -883,7 +918,7 @@ body.mp-placing #place-toolbar{display:flex}
 /* ─────────────── Модалка здания (пергамент) ─────────────── */
 #building-modal{position:fixed;inset:0;z-index:27;display:none;background:rgba(8,5,2,.78);
   align-items:stretch;justify-content:center;padding:0}
-#building-modal.open{display:flex}
+#building-modal.open{display:flex;animation:ui-veil .16s ease-out}
 /* Раньше фон #bm-sheet тянулся ОДНОЙ картинкой parchment.jpg с двумя
    РАЗНЫМИ процентами по осям (139.13% ширина / 107.84% высота) — грубый
    ручной подбор, чтобы декор (уголки, круглая печать), запечённый ПРЯМО В
@@ -8582,6 +8617,77 @@ function setHtml(el,html){
   tpl.innerHTML=html;
   morphChildren(el,tpl.content);
 }
+/* Заглушка на время ожидания ответа сервера. Раньше на её месте стояла строка
+   «Считаем…» — экран схлопывался в одну строчку и через долю секунды
+   разворачивался обратно, и это читалось как «вкладка догружается». Полоски
+   той же высоты, что и настоящие строки, держат разметку на месте: меняется
+   только содержимое, а не размер экрана. */
+function skeletonRowsHtml(n){
+  let h="<div class='rank-list'>";
+  for(let i=0;i<n;i++) h+="<div class='rank-row skel'><span class='sk sk-a'></span><span class='sk sk-b'></span></div>";
+  return h+"</div>";
+}
+/* Короткое проявление при СМЕНЕ содержимого — вкладка меню, раздел профиля,
+   таблица мира. Класс снимается по окончании анимации, иначе следующая смена
+   не проиграла бы её заново (браузер не перезапускает уже идущую анимацию у
+   того же элемента с тем же классом).
+   Именно перезапуск и есть вся хитрость: reflow между снятием и постановкой
+   класса обязателен, без него браузер склеит две правки в одну и анимации не
+   будет вовсе. offsetWidth — самый дешёвый способ его вызвать. */
+function uiSwap(el){
+  if(!el) return;
+  el.classList.remove("ui-swap");
+  void el.offsetWidth;
+  el.classList.add("ui-swap");
+  // Снимаем по окончании — чтобы класс не оставался висеть на узле навсегда.
+  // На повтор это не влияет (перезапуск и так вынужден reflow'ом выше), просто
+  // не держим лишнего в разметке. once — слушатель снимается сам.
+  el.addEventListener("animationend",()=>el.classList.remove("ui-swap"),{once:true});
+}
+/* ---- Предзагрузка значков ------------------------------------------------
+   Автор: «загружать вкладки полностью, а не подгружать их по мере
+   необходимости». Причина была не в разметке, а в весе: значки интерфейса
+   лежали PNG-32 по 135 КБ штука при показе в 20-66 пикселей, и на телефоне
+   вкладка успевала открыться раньше, чем приходили её картинки, — сначала
+   текст, потом значки один за другим. Сами файлы пережаты (см.
+   tools/optimize_art.py, впятеро), а здесь второй половина решения: то, что
+   встречается на каждом экране, скачивается ОДИН РАЗ заранее, в простое, и
+   дальше берётся из кэша браузера мгновенно.
+
+   Именно в простое (requestIdleCallback), а не при загрузке страницы: на
+   критическом пути стоит вход в мир, и полтора мегабайта украшений там ни к
+   чему. По шесть за раз — столько браузер и так держит соединений к домену,
+   больше просто выстроится в очередь и задержит то, что игроку нужнее.
+
+   Список — то, что видно постоянно: значки действий, ресурсы, гербы, знаки
+   званий, рамки герба и почты. Полный набор (аватары, снаряжение, юниты,
+   постройки) сюда НЕ входит: он и показывается редко, и весит вчетверо
+   больше, чем всё остальное вместе. */
+const UI_PRELOAD_ICONS=["army","alliance","build","build-fab","camp","city","durability","gather",
+  "gen","help","inv","locate","mail","march","rank","rating","recall","reign","research","ruin",
+  "scout","settings","shop","siege","trade","world"];
+const UI_PRELOAD_OTHER=["mail-seal.png","mail-corner.png","profile-ring.png",
+  "profile-wreath.png","profile-shield-frame.png","icon-siege.png"];
+function preloadUiArt(){
+  const list=[];
+  UI_PRELOAD_ICONS.forEach(n=>list.push("images/ui/icon-"+n+".png"));
+  RES.concat(["amber"]).forEach(r=>list.push("images/ui/res-"+r+".png"));
+  Object.keys(RACE_CREST||{}).forEach(k=>list.push("images/ui/"+RACE_CREST[k]+"-badge.png"));
+  MP_RANKS_UP.concat(MP_RANKS_DOWN).forEach(r=>list.push("images/ranks/rank-"+r.key+".png"));
+  list.push("images/ranks/rank-none.png");
+  UI_PRELOAD_OTHER.forEach(n=>list.push("images/ui/"+n));
+  let i=0, inflight=0;
+  const pump=()=>{
+    while(inflight<6 && i<list.length){
+      const src=list[i++]; inflight++;
+      const im=new Image();
+      const done=()=>{ inflight--; pump(); };
+      im.onload=done; im.onerror=done;   // нет файла — не беда, это украшение
+      im.src=src;
+    }
+  };
+  pump();
+}
 // Тот же довод, что у isHidden() в engine/src/main.ts (см. её комментарий):
 // пока открыта вкладка "Город", панели поверх 3D-мира (#brigades-world/
 // #fieldarmy-world) просто не видны (#app.view-city #chart{display:none}),
@@ -10916,6 +11022,7 @@ function mpTradeRepaint(){
   // фокуса и набранного в поле числа.
   lastTradeSheet=mpTradeSheetHtml();
   setHtml($("#bm-body"), lastTradeSheet);
+  uiSwap($("#bm-body"));
 }
 async function mpDoTrade(){
   if(!mpTradeCtx || mpState.loading) return;
@@ -12295,6 +12402,7 @@ async function profileLoadChronicles(force){
 }
 function profileOpenSection(id){
   profileScreen=id;
+  uiSwap($("#menu-modal-body"));
   if(id==="rating") profileLoadBoard(profileBoard,false);
   if(id==="chronicles") profileLoadChronicles(false);
   refreshProfileIfOpen();
@@ -12524,7 +12632,7 @@ function profileRatingHtml(meId){
   }
   const err=profileBoardErr[b.id], rows=profileBoardData[b.id];
   if(err) return h+"<div class='entry'><div class='note' style='color:#e08'>Не удалось получить таблицу: "+escHtml(err)+"</div></div>";
-  if(!rows) return h+"<div class='entry'><div class='note'>Считаем…</div></div>";
+  if(!rows) return h+skeletonRowsHtml(6);
   if(!rows.length) return h+"<div class='entry'><div class='note'>"+escHtml(b.empty)+"</div></div>";
 
   const myPlace=rows.findIndex(r=>r.id===meId);
@@ -12710,7 +12818,7 @@ function chronicleLineHtml(c){
 function profileChroniclesHtml(){
   let h=profileBackHtml("Хроники");
   if(profileChronErr) return h+"<div class='entry'><div class='note' style='color:#e08'>Не удалось открыть летопись: "+escHtml(profileChronErr)+"</div></div>";
-  if(!profileChron) return h+"<div class='entry'><div class='note'>Листаем…</div></div>";
+  if(!profileChron) return h+skeletonRowsHtml(5);
   if(!profileChron.length){
     return h+"<div class='entry'><div class='note'>Летопись пуста — в этом мире ещё ни одно правление "+
       "не оборвалось. Записи появляются сами, когда чья-то ратуша падёт.</div></div>";
@@ -13757,11 +13865,12 @@ function handleAct(e){
   if(boardBtn){
     profileBoard=boardBtn.dataset.b;
     profileLoadBoard(profileBoard,false);
+    uiSwap($("#menu-modal-body"));
     refreshProfileIfOpen();
     return;
   }
   const profBackBtn=e.target.closest("[data-act='profback']");
-  if(profBackBtn){ profileScreen=null; refreshProfileIfOpen(); return; }
+  if(profBackBtn){ profileScreen=null; uiSwap($("#menu-modal-body")); refreshProfileIfOpen(); return; }
   const genTakeBox=e.target.closest("[data-act='setgentake']");
   if(genTakeBox){ setGenTakeDefault(genTakeBox.checked); return; }
   const clearCacheBtn=e.target.closest("[data-act='clearcache']");
@@ -14629,6 +14738,9 @@ function openMenuModal(t){
   }
   lastMenuBody = html;
   setHtml($("#menu-modal-body"), html);
+  // Проявление на СМЕНУ вкладки, а не на каждый тик: сюда приходят только по
+  // нажатию значка меню, а живое обновление идёт своим путём (mpRerenderData).
+  uiSwap($("#menu-modal-body"));
   // setHtml (в отличие от прежнего innerHTML) не пересоздаёт контейнер, а
   // значит и не обнуляет его прокрутку сам — при СМЕНЕ вкладки её нужно
   // сбросить явно, иначе новая вкладка открывалась бы прокрученной на
@@ -18827,6 +18939,13 @@ function foMultiplayer(embedded, only){
     const w3d=$("#world3d");
     if(w3d && !w3d.src) w3d.src="engine/dist/index.html";
   }
+  // Значки интерфейса — в простое, последним делом (см. preloadUiArt): к
+  // моменту, когда игрок откроет первую вкладку, они уже в кэше, и вкладка
+  // показывается целиком, а не дорисовывается по одной картинке.
+  // requestIdleCallback есть не везде (Safari до 16-й) — тогда просто с
+  // задержкой, лишь бы не в критическом пути входа.
+  if(window.requestIdleCallback) requestIdleCallback(preloadUiArt,{timeout:4000});
+  else setTimeout(preloadUiArt,2500);
 })();
 </script>
 </body>
