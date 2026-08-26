@@ -243,6 +243,17 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    длине результата, а не только сокращаем разряды. */
 .profile-power-chip{position:absolute;top:37%;left:50%;transform:translate(-50%,-50%);
   font-family:var(--data);color:var(--gilt-hi);font-weight:bold;white-space:nowrap}
+/* Выбор ресурса в обмене на Рынке (mpBarterBodyHtml) — четыре плитки в ряд.
+   Пергаментная гамма, как у остальной карточки здания. */
+.bt-pick{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:4px}
+.bt-res{display:flex;flex-direction:column;align-items:center;gap:3px;padding:7px 2px;
+  border:1px solid rgba(90,69,48,.3);border-radius:8px;background:transparent;
+  color:#5a4530;font-size:11.5px}
+.bt-res img{width:30px;height:30px;object-fit:contain}
+.bt-res.on{border-color:#8a6d2c;background:rgba(138,109,44,.16);color:#3a2c1c}
+.bt-res.off{opacity:.35}
+.bt-res.off:hover{opacity:.5}
+
 /* Строка выбора войск в окнах отправки (mpTroopRowHtml): подпись сверху,
    под ней ползунок, число и "Всё" одной строкой. Тёмная гамма — эти окна
    рисуются в #building-modal, но своим фоном, не на пергаменте карточки
@@ -5340,6 +5351,13 @@ function bonuses(p, defending){
   Object.keys(multAcc2).forEach(f=>b[f]*=(1+multAcc2[f]));
   return b;
 }
+// Вес ресурса: во сколько раз его добывают медленнее еды. 0.75 у камня и
+// 0.5 у золота — не оценка, а точное отношение по всей табличке PROD_TABLE
+// (см. комментарий в production ниже). Одна таблица на весь файл: те же
+// числа нужны ёмкости участков (plotFillCap), карточкам зданий и обмену
+// ресурсов на Рынке (barterRate) — четыре одинаковых литерала по месту
+// разъехались бы при первой же правке баланса.
+const PROD_MULT={food:1,wood:1,stone:0.75,gold:0.5};
 function production(p){ // единиц в час
   const B=bonuses(p), out={};
   const map={food:"farm",wood:"lumber",stone:"quarry",gold:"mine"};
@@ -5350,7 +5368,7 @@ function production(p){ // единиц в час
   // нужна отдельная кривая — та же PROD_TABLE с фиксированным множителем.
   for(const r of RES){
     let base=0; p.b[map[r]].forEach(lv=>{ if(lv>0) base+=prodRate(lv); });
-    let v=base * ({food:1,wood:1,stone:0.75,gold:0.5}[r]) * handicap;
+    let v=base * PROD_MULT[r] * handicap;
     v*=1+B.prodAll;
     v*=1+(r==="food"?B.prodFood:r==="wood"?B.prodWood:r==="stone"?B.prodStone:B.prodGold);
     v*=1+((r==="food"||r==="wood")?B.prodFW:B.prodSG);
@@ -5365,9 +5383,8 @@ function production(p){ // единиц в час
 // Здесь она используется для обоих механик — см. capacity()/syncRes() ниже.
 function plotFillCap(p){
   const map={food:"farm",wood:"lumber",stone:"quarry",gold:"mine"};
-  const mult={food:1,wood:1,stone:0.75,gold:0.5};   // тот же множитель ресурса, что и в production()
   const out={};
-  RES.forEach(r=>{ let extra=0; p.b[map[r]].forEach(lv=>extra+=plotCap(lv)*mult[r]); out[r]=Math.round(extra); });
+  RES.forEach(r=>{ let extra=0; p.b[map[r]].forEach(lv=>extra+=plotCap(lv)*PROD_MULT[r]); out[r]=Math.round(extra); });
   return out;
 }
 function capacity(p){    // своя вместимость на каждый ресурс — склад + защита самих участков (при набеге)
@@ -9887,7 +9904,7 @@ function mpInvHtml(pShim,st){
 function mpBuildingStatDeltaHtml(bk,lv,nx,hallLv){
   const B=BUILDINGS[bk];
   if(B.prod){
-    const mult={food:1,wood:1,stone:0.75,gold:0.5}[B.prod];
+    const mult=PROD_MULT[B.prod];
     const cur=Math.round(prodRate(lv)*mult), next=Math.round(prodRate(nx)*mult);
     return "<table id='bm-stats'><tr><td>Добыча "+RES_NAME[B.prod].toLowerCase()+"/ч</td><td>"+fmt(cur)+" &rarr; "+fmt(next)+"</td></tr></table>";
   }
@@ -10507,6 +10524,24 @@ const TRADE_SPEED_MULT=3;
 function tradeSpeed(p){
   return TROOP_TYPES.cav.speed*TRADE_SPEED_MULT*MARCH_SPEED_SCALE*bonuses(p).march;
 }
+/* ---- Обмен ресурсов (бартер) — Фаза 39 -----------------------------------
+   Автор: «менять ресурсы внутри города, так же со ставкой налога и... с
+   балансом, не 1:1: дерево и еду можно менять 1:1, еда/дерево на камень
+   1:0,75, еда/дерево на золото 1:0,5, а камень на золото — тут уже твоя
+   математика от тех значений что есть».
+   Названные числа — это в точности PROD_MULT, множители добычи, уже
+   существующие в игре. Смысл прямой: золота добывается вдвое меньше, чем
+   еды, значит единица золота вдвое дороже. Отсюда одна формула на все пары —
+   ставка(из A в B) = вес(B)/вес(A), — и она сама доводит те пары, которые
+   автор оставил на меня: камень->золото 0.667, золото->камень 1.5,
+   золото->еда 2. Система обратима: без налога круг "еда -> камень -> еда"
+   возвращает ровно исходное, выигрыша из воздуха нет, платится только налог.
+   Считает и проводит обмен сервер (supabase/functions/mp-barter) — здесь те
+   же числа для предпросмотра. */
+const barterRate=(from,to)=>PROD_MULT[to]/PROD_MULT[from];
+function barterGet(amount,from,to,pct){
+  return Math.floor((amount*barterRate(from,to)*(100-pct))/100);
+}
 function mpMarketLv(st){
   const raw=st&&st.b&&st.b.market;
   return Array.isArray(raw)?Math.max(0,...raw.map(v=>v||0)):(raw||0);
@@ -10537,7 +10572,8 @@ function mpOpenTradeModal(){
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpForgeTab=null; mpForgeRarity=null;
   mpCitySel=-1; mpLayoutSel=-1; mpFixedSel=null; mpPickerOpen=false;
-  mpTradeCtx={ to:null, res:{food:0,wood:0,stone:0,gold:0}, err:null, q:"" };
+  mpTradeCtx={ tab:"send", to:null, res:{food:0,wood:0,stone:0,gold:0}, err:null, q:"",
+               bFrom:"food", bTo:"stone", bAmount:0 };
   lastTradeSheet=mpTradeSheetHtml();
   setHtml($("#bm-body"), lastTradeSheet);
   $("#building-modal").classList.add("open");
@@ -10554,10 +10590,16 @@ function mpTradeSheetHtml(){
   const p=mpState.player, st=p.state;
   const {lv,cap,tax,total,net,over}=mpTradeTotals();
   const to=mpState.neighbors.find(n=>n.id===mpTradeCtx.to);
-  let h="<div id='bm-title'>Торговый обоз</div>"+
-        "<div id='bm-sub'>Рынок "+lv+" ур. · поднимает "+fmt(cap)+" · налог "+
+  const barter=mpTradeCtx.tab==="barter";
+  let h="<div id='bm-title'>"+(barter?"Меняльная лавка":"Торговый обоз")+"</div>"+
+        "<div id='bm-sub'>Рынок "+lv+" ур. · "+(barter?"меняет за раз ":"поднимает ")+fmt(cap)+" · налог "+
         (tax*100).toFixed(1).replace(/\.0$/,"")+"%</div>";
+  h+="<div id='ac-tabs'>"+
+     "<button class='"+(barter?"":"on")+"' data-mp='tradetab' data-t='send'>Обоз</button>"+
+     "<button class='"+(barter?"on":"")+"' data-mp='tradetab' data-t='barter'>Обмен</button>"+
+     "</div>";
   if(mpTradeCtx.err) h+="<div class='note' style='color:#e08'>"+escHtml(mpTradeCtx.err)+"</div>";
+  if(barter) return h+mpBarterBodyHtml(st,lv,cap,tax);
 
   // ---- получатель ----
   h+="<div class='trade-hd'>Кому</div>";
@@ -10616,6 +10658,65 @@ function mpTradeSheetHtml(){
      "<img src='images/ui/icon-trade.png' alt=''>Отправить</button>"+
      "<button class='seal' data-act='closebuilding'>Отмена</button></div>";
   return h;
+}
+// Тело вкладки "Обмен". Две строки выбора ресурса (что отдаём / что берём),
+// количество ползунком и живой расчёт: ставка, налог, сколько выйдет.
+function mpBarterBodyHtml(st,lv,cap,tax){
+  const from=mpTradeCtx.bFrom, to=mpTradeCtx.bTo;
+  const have=Math.floor((st.res&&st.res[from])||0);
+  const maxGive=Math.min(have,cap);
+  const amount=Math.max(0,Math.min(maxGive,Math.floor(mpTradeCtx.bAmount||0)));
+  const pct=tradeTaxPct(lv);
+  const got=barterGet(amount,from,to,pct);
+  const rate=barterRate(from,to);
+
+  const picker=(sel,which)=>"<div class='bt-pick'>"+RES.map(r=>
+      "<button class='bt-res"+(r===sel?" on":"")+(which==='to'&&r===from?" off":"")+
+      (which==='from'&&r===to?" off":"")+"' data-mp='btpick' data-w='"+which+"' data-r='"+r+"'>"+
+      "<img src='images/ui/res-"+r+".png' alt=''><span>"+RES_NAME[r]+"</span></button>").join("")+"</div>";
+
+  let h="<div class='trade-hd'>Отдаём</div>"+picker(from,"from")+
+        "<div class='note'>На складе "+fmt(have)+" · за раз Рынок меняет не больше "+fmt(cap)+"</div>";
+  h+="<div class='trade-hd'>Получаем</div>"+picker(to,"to");
+  h+="<div class='mp-troop' style='margin-top:12px'>"+
+     "<div class='mt-hd'><span class='mt-nm'>Сколько меняем</span>"+
+     "<span class='mt-have'>до "+fmt(maxGive)+"</span></div>"+
+     "<div class='mt-row'>"+
+       "<input class='mt-range' type='range' min='0' max='"+maxGive+"' value='"+amount+"' data-btqty='1'>"+
+       "<input id='bt-amount' class='mt-num' type='number' min='0' max='"+maxGive+"' value='"+amount+"' "+
+         "data-btqty-num='1' inputmode='numeric'>"+
+       "<button class='seal mt-all' data-mp='btall' data-max='"+maxGive+"'>Всё</button>"+
+     "</div></div>";
+  h+="<table class='roll'>"+
+     "<tr><td>Ставка</td><td>1 "+RES_NAME[from].toLowerCase()+" &rarr; "+
+       (rate>=1?rate.toFixed(rate%1?3:0):rate.toFixed(3)).replace(/\.?0+$/,"")+" "+RES_NAME[to].toLowerCase()+"</td></tr>"+
+     "<tr><td>Отдаём</td><td>"+fmt(amount)+"</td></tr>"+
+     "<tr><td>Налог</td><td class='bad'>&minus;"+fmt(Math.floor(amount*rate)-got)+"</td></tr>"+
+     "<tr><td>Получим</td><td class='good'>"+fmt(got)+"</td></tr></table>";
+  h+="<div class='chips' style='margin-top:12px'>"+
+     "<button class='seal ico' data-mp='btgo'"+((amount>0&&got>0&&!mpState.loading)?"":" disabled")+">"+
+     "<img src='images/ui/icon-trade.png' alt=''>Обменять</button>"+
+     "<button class='seal' data-act='closebuilding'>Закрыть</button></div>";
+  h+="<div class='note'>Ставка идёт от того, насколько быстро ресурс добывается: "+
+     "золота копится вдвое медленнее еды — значит и стоит оно вдвое дороже. "+
+     "Обмен обратим: без налога круг «еда — камень — еда» возвращает ровно исходное.</div>";
+  return h;
+}
+async function mpDoBarter(){
+  if(!mpTradeCtx || mpState.loading) return;
+  const {lv,cap}=mpTradeTotals();
+  const st=mpState.player.state;
+  const have=Math.floor((st.res&&st.res[mpTradeCtx.bFrom])||0);
+  const amount=Math.max(0,Math.min(Math.min(have,cap),Math.floor(mpTradeCtx.bAmount||0)));
+  if(amount<=0){ mpTradeCtx.err="Укажите, сколько меняем."; mpTradeRepaint(); return; }
+  mpState.loading=true; mpTradeCtx.err=null; mpTradeRepaint();
+  try{
+    const r=await mpCall("mp-barter",{from:mpTradeCtx.bFrom,to:mpTradeCtx.bTo,amount});
+    await mpRefreshPlayer();
+    mpTradeCtx.bAmount=0;
+    herald("Обменяно: "+fmt(r&&r.got||0)+" "+RES_NAME[mpTradeCtx.bTo].toLowerCase()+".");
+  }catch(e){ mpTradeCtx.err=e.message; }
+  finally{ mpState.loading=false; if(mpTradeCtx) mpTradeRepaint(); else mpRerender(); }
 }
 function mpTradeRepaint(){
   if(!mpTradeCtx) return;
@@ -11703,7 +11804,7 @@ function hospitalInfoHtml(p){
 function buildingStatDeltaHtml(bk,lv,nx){
   const B=BUILDINGS[bk];
   if(B.prod){
-    const mult={food:1,wood:1,stone:0.75,gold:0.5}[B.prod];   // см. те же числа в production()
+    const mult=PROD_MULT[B.prod];
     const cur=Math.round(prodRate(lv)*mult), next=Math.round(prodRate(nx)*mult);
     return "<table id='bm-stats'><tr><td>Добыча "+RES_NAME[B.prod].toLowerCase()+"/ч</td><td>"+fmt(cur)+" &rarr; "+fmt(next)+"</td></tr></table>";
   }
@@ -13552,6 +13653,18 @@ $("#building-modal").addEventListener("input",e=>{
   // Ползунок и число в окнах отправки — две стороны одного значения.
   // Пишем НАПРЯМУЮ в соседа, не пересобирая экран: иначе поле теряло бы
   // фокус на каждом движении пальца.
+  } else if(e.target.dataset && (e.target.dataset.btqty||e.target.dataset.btqtyNum) && mpTradeCtx){
+    // Обмен: ползунок и число — две стороны одного значения. Пишем в
+    // контекст и в соседний узел напрямую, без пересборки: иначе поле
+    // теряло бы фокус на каждом движении пальца (та же причина, что у
+    // строк выбора войск ниже).
+    const v=Math.max(0,Math.round(+e.target.value||0));
+    mpTradeCtx.bAmount=v;
+    const other=e.target.dataset.btqty
+      ? $("#bt-amount")
+      : $("#bm-body").querySelector("[data-btqty]");
+    if(other) other.value=v;
+    mpUpdateBarterTotals();
   } else if(e.target.dataset && e.target.dataset.mpqty){
     const num=$("#"+e.target.dataset.mpqty);
     if(num) num.value=e.target.value;
@@ -13581,6 +13694,26 @@ $("#building-modal").addEventListener("input",e=>{
 });
 // Пересчёт только итоговых строк обоза (в обозе / налог / доедет) и
 // доступности кнопки — без пересборки всей формы, см. выше.
+// Пересчёт только итоговых строк обмена — без пересборки вкладки, см. выше.
+function mpUpdateBarterTotals(){
+  if(!mpTradeCtx) return;
+  const body=$("#bm-body"); if(!body) return;
+  const {lv,cap}=mpTradeTotals();
+  const st=mpState.player.state;
+  const have=Math.floor((st.res&&st.res[mpTradeCtx.bFrom])||0);
+  const amount=Math.max(0,Math.min(Math.min(have,cap),Math.floor(mpTradeCtx.bAmount||0)));
+  const pct=tradeTaxPct(lv);
+  const got=barterGet(amount,mpTradeCtx.bFrom,mpTradeCtx.bTo,pct);
+  const rate=barterRate(mpTradeCtx.bFrom,mpTradeCtx.bTo);
+  const cells=body.querySelectorAll(".roll td:last-child");
+  if(cells.length>=4){
+    cells[1].textContent=fmt(amount);
+    cells[2].textContent="−"+fmt(Math.floor(amount*rate)-got);
+    cells[3].textContent=fmt(got);
+  }
+  const go=body.querySelector("[data-mp='btgo']");
+  if(go) go.disabled=!(amount>0&&got>0&&!mpState.loading);
+}
 function mpUpdateTradeTotals(){
   if(!mpTradeCtx) return;
   const body=$("#bm-body"); if(!body) return;
@@ -14249,6 +14382,26 @@ function handleMpAct(e){
   }
   const tradeOpenBtn=e.target.closest("[data-mp='tradeopen']");
   if(tradeOpenBtn){ mpOpenTradeModal(); return; }
+  const tradeTabBtn=e.target.closest("[data-mp='tradetab']");
+  if(tradeTabBtn && mpTradeCtx){ mpTradeCtx.tab=tradeTabBtn.dataset.t; mpTradeCtx.err=null; mpTradeRepaint(); return; }
+  const btPickBtn=e.target.closest("[data-mp='btpick']");
+  if(btPickBtn && mpTradeCtx){
+    const r=btPickBtn.dataset.r;
+    if(btPickBtn.dataset.w==="from"){
+      if(r===mpTradeCtx.bTo) mpTradeCtx.bTo=mpTradeCtx.bFrom;   // выбрали то же, что справа — меняем их местами
+      mpTradeCtx.bFrom=r;
+    } else {
+      if(r===mpTradeCtx.bFrom) mpTradeCtx.bFrom=mpTradeCtx.bTo;
+      mpTradeCtx.bTo=r;
+    }
+    mpTradeCtx.bAmount=0; mpTradeCtx.err=null;
+    mpTradeRepaint();
+    return;
+  }
+  const btAllBtn=e.target.closest("[data-mp='btall']");
+  if(btAllBtn && mpTradeCtx){ mpTradeCtx.bAmount=+btAllBtn.dataset.max||0; mpTradeRepaint(); return; }
+  const btGoBtn=e.target.closest("[data-mp='btgo']");
+  if(btGoBtn){ mpDoBarter(); return; }
   const tradePickBtn=e.target.closest("[data-mp='tradepick']");
   if(tradePickBtn && mpTradeCtx){
     const id=tradePickBtn.dataset.id;
