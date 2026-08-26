@@ -714,6 +714,11 @@ export interface Renderer {
   // локальный меш свой у дерева и у камня). Вызывающая сторона (main.ts)
   // не обязана знать про это разделение.
   setDecor(entities: DecorEntity[]): void;
+  // Тени включены или выключены (настройка «Графика» у родителя). Выключенные
+  // не значит «пропустить проход»: проход открывается и очищает карту в 1.0,
+  // и shadowFactor во всех шейдерах сам возвращает полный свет — ветки в
+  // шейдерах не нужны, а стоит это один clear и только когда карта грязная.
+  setShadowsEnabled(on: boolean): void;
   setVP(vp: Float32Array): void;
   // Позиция камеры + цвет/плотность тумана — общие для рельефа и маркеров.
   // density — коэффициент экспоненциального затухания (см. TERRAIN_SHADER):
@@ -1491,6 +1496,12 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
         colorAttachments: [],
         depthStencilAttachment: { view: shadowView, depthClearValue: 1.0, depthLoadOp: "clear", depthStoreOp: "store" },
       });
+      // Тени выключены в настройках — проход всё равно открываем, но ничего в
+      // него не рисуем. Карта остаётся очищенной в 1.0, то есть «дальше
+      // некуда», и shadowFactor у всех шейдеров возвращает полный свет: ни
+      // одной ветки в самих шейдерах для этого не нужно. Стоит это один clear
+      // и только когда shadowDirty — то есть практически ничего.
+      if (!shadowsOn) { shadowPass.end(); } else {
       if (mergedTiers.near.vertexCount > 0 && tierBufs.near) {
         shadowPass.setPipeline(terrainShadowPipeline);
         shadowPass.setBindGroup(0, terrainShadowBindGroup);
@@ -1521,6 +1532,7 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
         }
       }
       shadowPass.end();
+      }
       // Раньше флаг снимался с оглядкой на троттл пересборки слоя: тень
       // могла быть нарисована по ещё старому буферу. Слой теперь всегда
       // свежий на момент кадра (см. setTerrainChunk) — тень нарисована по
@@ -1589,9 +1601,19 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     device.queue.submit([encoder.finish()]);
   }
 
+  // Тени выключаются из настроек (см. GFX в main.ts). shadowDirty поднимаем
+  // на переключении сам: иначе выключение не показалось бы, пока камера стоит
+  // — теневая карта осталась бы с прошлого прохода.
+  let shadowsOn = true;
+  function setShadowsEnabled(on: boolean) {
+    if (shadowsOn === on) return;
+    shadowsOn = on;
+    shadowDirty = true;
+  }
+
   function getShadowResources(): ShadowResources {
     return { lightBuf, shadowView, shadowSampler };
   }
 
-  return { setTerrainChunk, removeTerrainChunk, setMarkers, setDecor, setVP, setFog, setSunTarget, setSkyCamera, getShadowResources, frame };
+  return { setTerrainChunk, removeTerrainChunk, setMarkers, setDecor, setVP, setFog, setSunTarget, setSkyCamera, getShadowResources, setShadowsEnabled, frame };
 }
