@@ -71,6 +71,15 @@ function handleOptions(req) {
 // прежние вызывающие места (их тут ещё несколько) работают как работали.
 async function savePlayerState(admin, row, state, power) {
   const extra = (power == null) ? {} : { power: Math.round(power) };
+  // Смена сезона и затухание правят рейтинговые колонки (см.
+  // applyRatingUpkeep) — уезжают тем же обновлением, что и состояние, чтобы
+  // проверка версии по updated_at накрывала их тоже.
+  if (row && row.__ratingDirty) {
+    extra.rating = Math.round(row.rating || 0);
+    extra.rating_peak = Math.round(row.rating_peak || 0);
+    extra.rating_season = row.rating_season || "";
+    if (row.rating_last_at) extra.rating_last_at = row.rating_last_at;
+  }
   const prev = row.updated_at;
   if (!prev) {
     // Строка прочитана без updated_at (старый вызывающий код) — сверять не с
@@ -1204,6 +1213,102 @@ async function seedCampsAround(admin, worldId, cx, cy, avoid) {
   if (error) throw error;
 }
 
+// =============================================================================
+// Боевой рейтинг: смена сезона и затухание — Фаза 43.
+// =============================================================================
+// Дословная копия нужной части ../_shared/rating.js (тот же принцип
+// самодостаточных копий). Полное описание правил — docs/RANKS.md.
+//
+// Почему именно здесь. И то и другое — работа «по календарю», а не по
+// действию: сезон кончился, пока игрока не было; рейтинг тает, пока он молчит.
+// Отдельная задача в pg_cron ради этого не нужна — mp-join и так дёргается на
+// каждом пятисекундном опросе, то есть у любого живого игрока это применится
+// в первые же секунды после захода, а у неживого — ровно тогда, когда он
+// вернётся и это станет видно.
+function seasonKeyAt(date) {
+  const d = date instanceof Date ? date : new Date(date || Date.now());
+  const m = d.getUTCMonth() + 1, y = d.getUTCFullYear();
+  if (m === 12) return (y + 1) + "-winter";
+  if (m <= 2) return y + "-winter";
+  if (m <= 5) return y + "-spring";
+  if (m <= 8) return y + "-summer";
+  return y + "-autumn";
+}
+const SEASON_KEEP_UP = 0.6, SEASON_KEEP_DOWN = 0.9;
+const DECAY_FROM = 3850, DECAY_GRACE_DAYS = 14, DECAY_PER_DAY = 25;
+const RANK_STEPS = 5;
+const RANKS_UP = [
+  { key: "recruit",  name: "Рекрут",     from: 0,    to: 769 },
+  { key: "guard",    name: "Страж",      from: 770,  to: 1539 },
+  { key: "knight",   name: "Рыцарь",     from: 1540, to: 2309 },
+  { key: "hero",     name: "Герой",      from: 2310, to: 3079 },
+  { key: "legend",   name: "Легенда",    from: 3080, to: 3849 },
+  { key: "overlord", name: "Властелин",  from: 3850, to: 4619 },
+  { key: "deity",    name: "Божество",   from: 4620, to: 5499 },
+  { key: "titan",    name: "Титан",      from: 5500, to: null },
+];
+const RANKS_DOWN = [
+  { key: "dishonoured", name: "Бесчестный",         from: 1,    to: 769 },
+  { key: "branded",     name: "Заклеймённый",       from: 770,  to: 1539 },
+  { key: "oathbreaker", name: "Клятвопреступник",   from: 1540, to: 2309 },
+  { key: "darkadept",   name: "Адепт тьмы",         from: 2310, to: 3079 },
+  { key: "cursed",      name: "Проклятый",          from: 3080, to: 3849 },
+  { key: "destroyer",   name: "Разрушитель",        from: 3850, to: 4619 },
+  { key: "chaoslord",   name: "Властитель Хаоса",   from: 4620, to: 5499 },
+  { key: "worldender",  name: "Уничтожитель миров", from: 5500, to: null },
+];
+const RANK_ROMAN = ["I", "II", "III", "IV", "V"];
+function rankOf(rating) {
+  const r = Math.round(rating || 0), down = r < 0, mag = Math.abs(r);
+  const table = down ? RANKS_DOWN : RANKS_UP;
+  let band = table[0];
+  for (const b of table) { if (mag >= b.from) band = b; }
+  let roman = "";
+  if (band.to != null) {
+    const per = (band.to - band.from + 1) / RANK_STEPS;
+    const idx = Math.min(RANK_STEPS - 1, Math.floor((mag - band.from) / per));
+    roman = RANK_ROMAN[RANK_STEPS - idx - 1];
+  }
+  return { key: band.key, name: band.name, down, full: roman ? band.name + " " + roman : band.name };
+}
+
+function applyRatingUpkeep(row, st, nowMs) {
+  const season = seasonKeyAt(new Date(nowMs));
+  // Первый заход после появления рейтинга вообще: сезон просто проставляется,
+  // пересчитывать нечего.
+  if (!row.rating_season) { row.rating_season = season; row.__ratingDirty = true; }
+  else if (row.rating_season !== season) {
+    // Печать сезона: высшее ЗА СЕЗОН звание застывает навсегда. Берём peak, а
+    // не текущее: текущее на момент смены всегда занижено пересчётом прошлых
+    // сезонов и затуханием. Кто за сезон так и не поднялся выше нуля, печати
+    // не получает — иначе профиль зарастал бы «Рекрут V» каждые три месяца.
+    if ((row.rating_peak || 0) > 0) {
+      if (!Array.isArray(st.seals)) st.seals = [];
+      st.seals.push({ season: row.rating_season, rating: Math.round(row.rating_peak || 0),
+                      rank: rankOf(row.rating_peak || 0).full });
+      if (st.seals.length > 40) st.seals = st.seals.slice(-40);
+    }
+    // Мягкий пересчёт: слава тускнеет быстро, позор — медленно.
+    const r = Math.round(row.rating || 0);
+    row.rating = Math.round(r > 0 ? r * SEASON_KEEP_UP : r * SEASON_KEEP_DOWN);
+    row.rating_peak = row.rating > 0 ? row.rating : 0;
+    row.rating_season = season;
+    row.__ratingDirty = true;
+  }
+  // Затухание: только с Властелина и выше, 14 суток запаса, пол на той же
+  // границе, с которой начинается. Отметку сдвигаем ровно на списанные сутки —
+  // иначе следующий же опрос снял бы за те же дни второй раз.
+  const lastMs = row.rating_last_at ? Date.parse(row.rating_last_at) : 0;
+  if ((row.rating || 0) > DECAY_FROM && lastMs) {
+    const idleDays = Math.floor((nowMs - lastMs) / 86400000) - DECAY_GRACE_DAYS;
+    if (idleDays > 0) {
+      row.rating = Math.max(DECAY_FROM, Math.round(row.rating) - DECAY_PER_DAY * idleDays);
+      row.rating_last_at = new Date(lastMs + idleDays * 86400000).toISOString();
+      row.__ratingDirty = true;
+    }
+  }
+}
+
 Deno.serve(async (req) => {
   const pre = handleOptions(req);
   if (pre) return pre;
@@ -1305,6 +1410,9 @@ Deno.serve(async (req) => {
       const marchRows = await admin.from("marches").select("units").eq("player_id", existing.data.id);
       if (marchRows.error) return jsonResponse({ err: marchRows.error.message }, 500);
       const pw = applyPower(st, null, (marchRows.data || []).map((r) => r.units));
+      // Работа «по календарю»: сменился сезон — мягкий пересчёт и печать,
+      // молчит выше Властелина — затухание. См. applyRatingUpkeep.
+      applyRatingUpkeep(existing.data, st, Date.now());
       // Эта запись — самая частая в игре: клиент дёргает mp-join на КАЖДОМ
       // пятисекундном опросе. Именно она чаще всего и затирала чужие правки
       // (см. подробности у savePlayerState выше): пока mp-join считал

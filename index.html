@@ -243,6 +243,21 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    длине результата, а не только сокращаем разряды. */
 .profile-power-chip{position:absolute;top:37%;left:50%;transform:translate(-50%,-50%);
   font-family:var(--data);color:var(--gilt-hi);font-weight:bold;white-space:nowrap}
+/* Боевое звание (Фаза 43). Своя окраска, чтобы не путалось с феодальным
+   титулом строкой выше: позор — гранатом, три высших — золотом, калибровка —
+   приглушённо. */
+.profile-brank{font-variant:small-caps;letter-spacing:.08em;font-size:13px;
+  color:var(--vellum);margin-top:2px}
+.profile-brank.shame,.brank.shame{color:#c0525b}
+.profile-brank.high,.brank.high{color:var(--gilt-hi)}
+.profile-brank.calib,.brank.calib{color:var(--vellum-faint)}
+.rank-row.shame .rk-nick{color:#c0525b}
+/* Столб боевых званий (profileBattleRankHtml) — в отличие от таблицы мира,
+   здесь нет ни номера места, ни герба: только название и диапазон рейтинга.
+   Своя сетка на две колонки, иначе название сжималось бы до "Ти…" в первой
+   колонке общей пятиколоночной раскладки. */
+.rank-list.ladder .rank-row{grid-template-columns:1fr auto}
+.rank-list.ladder .rk-nick{font-size:14px}
 /* Выбор ресурса в обмене на Рынке (mpBarterBodyHtml) — четыре плитки в ряд.
    Пергаментная гамма, как у остальной карточки здания. */
 .bt-pick{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:4px}
@@ -12069,8 +12084,70 @@ const PROFILE_SECTIONS=[
   {id:"settings",  ico:"icon-settings.png", name:"Настройки", note:"Как игра себя ведёт"},
   {id:"rating",    ico:"icon-rating.png",   name:"Рейтинг",   note:"Правители мира по мощи"},
   {id:"chronicles",ico:"icon-reign.png",    name:"Хроники",   note:"Летопись мира"},
-  {id:"ranks",     ico:"icon-rank.png",     name:"Звания",    note:"Ступени по мощи державы"},
+  {id:"ranks",     ico:"icon-rank.png",     name:"Титул",     note:"Ступени по мощи державы"},
+  // Фаза 43 — боевое звание. Отдельный раздел от «Титула» нарочно: тот про
+  // РАЗМЕР державы (Барон, Граф, Герцог — это и есть феодальные титулы), а
+  // это про то, каков ты в бою. Раньше по мощи назывались «Звания», и после
+  // появления боевых званий два разных смысла делили бы одно слово.
+  {id:"battlerank",ico:"icon-rank.png",     name:"Звание",    note:"Боевой рейтинг и ступени"},
 ];
+
+/* ---- Боевые звания (Фаза 43) --------------------------------------------
+   Зеркало supabase/functions/_shared/rating.js — при правке ЛЮБОГО числа
+   править обе серверные копии (mp-tick, mp-join) и этот блок. Полное описание
+   правил с доводами — docs/RANKS.md.
+   Считает и начисляет всё сервер; здесь только показ. */
+const MP_RANK_STEPS=5;
+const MP_RANKS_UP=[
+  {key:"recruit", name:"Рекрут",    from:0,    to:769},
+  {key:"guard",   name:"Страж",     from:770,  to:1539},
+  {key:"knight",  name:"Рыцарь",    from:1540, to:2309},
+  {key:"hero",    name:"Герой",     from:2310, to:3079},
+  {key:"legend",  name:"Легенда",   from:3080, to:3849},
+  {key:"overlord",name:"Властелин", from:3850, to:4619},
+  {key:"deity",   name:"Божество",  from:4620, to:5499},
+  {key:"titan",   name:"Титан",     from:5500, to:null},
+];
+const MP_RANKS_DOWN=[
+  {key:"dishonoured",name:"Бесчестный",        from:1,    to:769},
+  {key:"branded",    name:"Заклеймённый",      from:770,  to:1539},
+  {key:"oathbreaker",name:"Клятвопреступник",  from:1540, to:2309},
+  {key:"darkadept",  name:"Адепт тьмы",        from:2310, to:3079},
+  {key:"cursed",     name:"Проклятый",         from:3080, to:3849},
+  {key:"destroyer",  name:"Разрушитель",       from:3850, to:4619},
+  {key:"chaoslord",  name:"Властитель Хаоса",  from:4620, to:5499},
+  {key:"worldender", name:"Уничтожитель миров",from:5500, to:null},
+];
+const MP_RANK_ROMAN=["I","II","III","IV","V"];
+const MP_CALIBRATION_BATTLES=10;
+function mpRankOf(rating){
+  const r=Math.round(rating||0), down=r<0, mag=Math.abs(r);
+  const table=down?MP_RANKS_DOWN:MP_RANKS_UP;
+  let band=table[0];
+  for(const b of table){ if(mag>=b.from) band=b; }
+  let step=0, roman="";
+  if(band.to!=null){
+    const per=(band.to-band.from+1)/MP_RANK_STEPS;
+    const idx=Math.min(MP_RANK_STEPS-1,Math.floor((mag-band.from)/per));
+    step=MP_RANK_STEPS-idx;
+    roman=MP_RANK_ROMAN[step-1];
+  }
+  return {key:band.key,name:band.name,down,step,roman,band,
+          full:roman?band.name+" "+roman:band.name};
+}
+// Пока идёт калибровка, звания нет вовсе — ни своего, ни чужого. Это не
+// украшение: столб начинается с нуля, и первое же поражение свежего игрока
+// без этого делало бы его Бесчестным.
+function mpRankLabel(row){
+  if(!row) return "";
+  if((row.rating_battles||0)<MP_CALIBRATION_BATTLES) return "Без звания";
+  return mpRankOf(row.rating||0).full;
+}
+const MP_SEASON_NAMES={winter:"Зимы",spring:"Весны",summer:"Лета",autumn:"Осени"};
+function mpSeasonTitle(key){
+  const parts=String(key||"").split("-");
+  return MP_SEASON_NAMES[parts[1]]?"Сезон "+MP_SEASON_NAMES[parts[1]]+" "+parts[0]:"";
+}
 
 /* ---- Звания -------------------------------------------------------------
    Лестница титулов по мощи державы. Автор просил значок "Звания", но чем
@@ -12200,6 +12277,90 @@ function profileRatingHtml(meId){
      "в рейтинг не попадают.</div></div>";
   return h;
 }
+// Класс окраски боевого звания: позорные — гранатом, обычные — как есть,
+// три высших — золотом. Отдельная функция, потому что зовётся и с карточки
+// профиля, и с экрана звания.
+function mpBattleRankCls(row){
+  const r=row||mpState.player;
+  if(!r || (r.rating_battles||0)<MP_CALIBRATION_BATTLES) return " calib";
+  const k=mpRankOf(r.rating||0);
+  if(k.down) return " shame";
+  return (k.key==="overlord"||k.key==="deity"||k.key==="titan") ? " high" : "";
+}
+/* ---- Экран "Звание" ------------------------------------------------------
+   Показ, и только показ: рейтинг считает и начисляет сервер в конце каждого
+   боя правитель против правителя (mp-tick, см. computeBattleRating).
+   Правила целиком — docs/RANKS.md. */
+function profileBattleRankHtml(){
+  const row=mpState.player||{};
+  const rating=Math.round(row.rating||0);
+  const battles=row.rating_battles||0;
+  const calib=battles<MP_CALIBRATION_BATTLES;
+  const k=mpRankOf(rating);
+  let h=profileBackHtml("Звание");
+
+  h+="<div class='entry hot'><div class='line'><div class='fill'>"+
+     "<div class='title brank"+mpBattleRankCls()+"'>"+escHtml(calib?"Без звания":k.full)+"</div>";
+  if(calib){
+    h+="<div class='note'>Идёт калибровка: осталось "+(MP_CALIBRATION_BATTLES-battles)+
+       " боёв из "+MP_CALIBRATION_BATTLES+". Пока она идёт, рейтинг не опускается ниже нуля.</div>"+
+       "<div class='note'>Рейтинг: <b>"+rating+"</b></div>";
+    const f=Math.max(0,Math.min(1,battles/MP_CALIBRATION_BATTLES));
+    h+="</div></div><div class='hpbar'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
+  } else {
+    h+="<div class='note'>Рейтинг: <b>"+rating+"</b></div>";
+    // До следующей ступени. У безграничного звания (Титан, Уничтожитель
+    // миров) ступеней нет — и полосы тоже.
+    if(k.band.to!=null){
+      const per=(k.band.to-k.band.from+1)/MP_RANK_STEPS;
+      const mag=Math.abs(rating);
+      const idx=MP_RANK_STEPS-k.step;                 // 0 у ближней к нулю
+      const lo=k.band.from+per*idx, hi=lo+per;
+      const f=Math.max(0,Math.min(1,(mag-lo)/per));
+      h+="<div class='note'>До следующей ступени — "+Math.max(0,Math.ceil(hi-mag))+"</div>"+
+         "</div></div><div class='hpbar'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
+    } else {
+      h+="<div class='note'>Выше подниматься некуда.</div></div></div></div>";
+    }
+  }
+
+  // Столб целиком: вверх сверху вниз, чтобы вершина была вверху, как и
+  // положено; позорные — ниже нуля, отдельным блоком.
+  h+=rubric("Восхождение");
+  h+="<div class='rank-list ladder'>";
+  MP_RANKS_UP.slice().reverse().forEach(r=>{
+    const me=!calib&&!k.down&&r.key===k.key;
+    h+="<div class='rank-row"+(me?" me":"")+"'>"+
+       "<span class='rk-nick'>"+r.name+"</span>"+
+       "<b class='rk-pw'>"+(r.to!=null?r.from+" … "+r.to:"от "+r.from)+"</b></div>";
+  });
+  h+="</div>";
+  h+=rubric("Ниже нуля");
+  h+="<div class='rank-list ladder'>";
+  MP_RANKS_DOWN.forEach(r=>{
+    const me=!calib&&k.down&&r.key===k.key;
+    h+="<div class='rank-row shame"+(me?" me":"")+"'>"+
+       "<span class='rk-nick'>"+r.name+"</span>"+
+       "<b class='rk-pw'>"+(r.to!=null?"−"+r.to+" … −"+r.from:"ниже −"+r.from)+"</b></div>";
+  });
+  h+="</div>";
+
+  // Печати сезонов — то, что от рейтинга остаётся навсегда. Пересчёт на смене
+  // сезона их не трогает (см. applyRatingUpkeep в mp-join).
+  const seals=(row.state&&Array.isArray(row.state.seals))?row.state.seals:[];
+  if(seals.length){
+    h+=rubric("Печати сезонов");
+    h+="<div class='rank-list ladder'>"+seals.slice().reverse().map(sl=>
+      "<div class='rank-row'><span class='rk-nick'>"+escHtml(mpSeasonTitle(sl.season)||sl.season)+"</span>"+
+      "<b class='rk-pw'>"+escHtml(sl.rank||"")+"</b></div>").join("")+"</div>";
+  }
+
+  h+="<div class='entry'><div class='note'>Рейтинг меняют только бои правитель против правителя — "+
+     "осада города и бой за точку сбора. Лагеря и крепости варваров не считаются. "+
+     "За равный бой ±25; в неравном рейтинг движется в пользу слабого, а зачинщик, "+
+     "разбивший заведомо слабейшего, теряет 2% своего рейтинга.</div></div>";
+  return h;
+}
 function profileRanksHtml(pw){
   const {i:cur, next}=rankAt(pw);
   let h=profileBackHtml("Звания");
@@ -12281,6 +12442,7 @@ function foProfile(pIn){
     if(profileScreen==="rating")     return profileRatingHtml(mpState.player.id);
     if(profileScreen==="chronicles") return profileChroniclesHtml();
     if(profileScreen==="ranks")      return profileRanksHtml(mpPower(p));
+    if(profileScreen==="battlerank") return profileBattleRankHtml();
   }
   const avSrc=playerAvatarSrc(p);
   let h=rubric("Профиль","в разработке");
@@ -12320,7 +12482,12 @@ function foProfile(pIn){
      // Звание — подпись прямо под мощью: оно из неё и считается (см.
      // RANK_LADDER), стоять им врозь незачем.
      (!SP_UNLOCKED && mpState.player
-       ? "<div class='profile-rank'>"+rankAt(mpPower(p)).cur.name+"</div>" : "")+
+       ? "<div class='profile-rank'>"+rankAt(mpPower(p)).cur.name+"</div>"+
+         // Боевое звание — второй строкой, своим цветом: титул говорит, велика
+         // ли держава, звание — каков ты в бою. Это разные вещи, и путать их
+         // одним видом нельзя.
+         "<div class='profile-brank"+(mpBattleRankCls())+"'>"+escHtml(mpRankLabel(mpState.player))+"</div>"
+       : "")+
      "</div>";
   // Разделы профиля — ряд значков от автора (Настройки/Рейтинг/Хроники/
   // Звания). Только в общем мире, см. развилку в начале функции.
@@ -17147,6 +17314,50 @@ function mpDemolishHtml(dem, mine){
   });
   return h+"</div>";
 }
+/* ---- Рейтинг в письме о бое (Фаза 43) -------------------------------------
+   Сервер кладёт разбор в d.rating (см. ratingMailPart в mp-tick). Старые
+   письма его не несут вовсе — тогда молчим, а не пишем "+0".
+   Скрытого коэффициента по мощи держав тут нет и быть не должно: он на то и
+   скрытый, иначе по письму вычислялось бы, каким маршем пролезть под порог. */
+function mpRatingDeltaFor(d,mine){
+  const r=d&&d.rating; if(!r) return null;
+  return { delta: mine?r.attDelta:r.defDelta, after: mine?r.attAfter:r.defAfter,
+           rank: mine?r.attRank:r.defRank, calib: mine?r.attCalibrating:r.defCalibrating,
+           counted: !!r.counted, reason: r.reason||"" };
+}
+function mpBattleRatingSub(d,mine){
+  const r=mpRatingDeltaFor(d,mine); if(!r) return "";
+  if(!r.counted) return "";
+  if(!r.delta) return "";
+  return " · рейтинг "+(r.delta>0?"+":"")+r.delta;
+}
+// Почему бой не дал рейтинга — человеческим языком. Молча ноль хуже, чем
+// объяснённый ноль: игрок иначе решит, что система сломана.
+const MP_RATING_REASON_TXT={
+  "потолок пары":"С этим правителем на сегодня уже засчитано четыре боя — рейтинг за следующие не идёт.",
+  "бой без боя":"Города по сути не защищали — за взятие пустых стен рейтинг не начисляется.",
+  "поле не сошлось":"Силы в поле разошлись слишком сильно: настоящего боя между равными не вышло.",
+};
+function mpBattleRatingHtml(d,mine){
+  const r=mpRatingDeltaFor(d,mine); if(!r) return "";
+  if(!r.counted){
+    const txt=MP_RATING_REASON_TXT[r.reason]||"Этот бой в рейтинг не пошёл.";
+    return "<div class='note'>"+escHtml(txt)+"</div>";
+  }
+  const sign=r.delta>0?"+":"";
+  const cls=r.delta>0?"good":r.delta<0?"bad":"";
+  let h="<table class='roll'><tr><td>Рейтинг за бой</td>"+
+        "<td class='"+cls+"'>"+sign+r.delta+"</td></tr>";
+  if(r.after!=null) h+="<tr><td>Стало</td><td>"+r.after+"</td></tr>";
+  if(r.rank && !r.calib) h+="<tr><td>Звание</td><td>"+escHtml(r.rank)+"</td></tr>";
+  h+="</table>";
+  if(r.calib) h+="<div class='note'>Идёт калибровка — звание появится после десятого засчитанного боя.</div>";
+  else if(r.reason==="избиение слабого")
+    h+="<div class='note'>Разбит заведомо слабейший: с зачинщика такого боя снимается 2% его рейтинга.</div>";
+  else if(r.reason==="слабый взял сильного")
+    h+="<div class='note'>Взят город сильнейшего — двойная награда за неравный бой.</div>";
+  return h;
+}
 function mpMailBattleEntry(m){
   const d=m.data, mine=d.role==="attacker";
   const myLoss=mine?d.attLoss:d.defLoss, oppLoss=mine?d.defLoss:d.attLoss;
@@ -17162,7 +17373,8 @@ function mpMailBattleEntry(m){
   // первое, что должно быть видно в строке списка, не разворачивая письмо.
   const ruinedN=(d.demolish && d.demolish.ruined && d.demolish.ruined.length)||0;
   const sub=(ruinedN?(mine?"Разрушено построек: ":"Разрушено наших построек: ")+ruinedN+" · ":"")+
-    "Наши потери: "+RU(lostN(myLoss))+" · потери противника: "+RU(lostN(oppLoss));
+    "Наши потери: "+RU(lostN(myLoss))+" · потери противника: "+RU(lostN(oppLoss))+
+    mpBattleRatingSub(d,mine);
 
   // attRace/defCoords/... — Фаза 29: раньше сервер их не слал вовсе, старые
   // письма (до этого деплоя) их не несут — тогда честно откатываемся на
@@ -17215,6 +17427,8 @@ function mpMailBattleEntry(m){
         if(mine&&won&&lootTxt) detailHtml+="<div class='mail-note'>Захвачено: "+lootTxt+"</div>";
         else if(!mine&&!won&&lootTxt) detailHtml+="<div class='mail-note'>Разграблено: "+lootTxt+"</div>";
         detailHtml+=mpDemolishHtml(d.demolish,mine);
+        // Рейтинг — до хроники боя: он короткий и важный, а хроника длинная.
+        detailHtml+=mpBattleRatingHtml(d,mine);
         detailHtml+=mpBattleLogHtml(d.log,mine);
       } else {
         const hospPart=(label,x)=>x.dead!=null?(" · "+label+": легкораненые "+RU(x.slight||0)+", тяжелораненые "+RU(x.hurt||0)+", убито "+RU(x.dead||0)):"";
@@ -17223,6 +17437,7 @@ function mpMailBattleEntry(m){
         const lootTxt=d.loot&&RES.filter(r=>d.loot[r]).map(r=>resIconSpan(r,RU(d.loot[r]))).join("");
         if(mine&&won&&lootTxt) detailHtml+="<div class='note'>Захвачено: "+lootTxt+"</div>";
         else if(!mine&&!won&&lootTxt) detailHtml+="<div class='note'>Разграблено: "+lootTxt+"</div>";
+        detailHtml+=mpBattleRatingHtml(d,mine);
       }
       return detailHtml;
     }
@@ -17309,6 +17524,7 @@ function mpMailNodeEntry(m){
   const lostN=u=>{ u=u||{}; return TKEYS.reduce((s,t)=>s+[1,2,3,4,5].reduce((s2,i)=>s2+((u[t]&&u[t][i])||0),0),0); };
   const won=(mine&&d.winner==="att")||(!mine&&d.winner==="def");
   const who=d.opponent_nick||"Безымянный лорд";
+  // Рейтинг за бой — и в короткой подписи списка, как у осады.
   const shortTitle = mine
     ? (d.retreated ? "Отступили от точки сбора" : won ? "Точка сбора наша" : "Точку сбора не отбили")
     : (d.retreated ? "Соперник отступил от нашей точки" : won ? "Точку сбора отстояли" : "Точку сбора не удержали");
@@ -17318,7 +17534,8 @@ function mpMailNodeEntry(m){
   const myPower=mine?d.attPower:d.defPower, oppPower=mine?d.defPower:d.attPower;
   const tier=battleOutcomeTier(myStart,myHs.dead||0,myHs.hurt||0,won,myPower,oppPower);
   const title=shortTitle+" — «"+who+"» ("+tier.name+")";
-  const sub="Наши потери (лазарет): "+RU(lostN(myLoss))+" · потери соперника: "+RU(lostN(oppLoss));
+  const sub="Наши потери (лазарет): "+RU(lostN(myLoss))+" · потери соперника: "+RU(lostN(oppLoss))+
+    mpBattleRatingSub(d,mine);
 
   // detailHtml — ленивый геттер (см. подробный заголовок у mpMailBattleEntry
   // выше): аватарки/таблицы/хроника боя не нужны для строки списка, только
@@ -17358,9 +17575,10 @@ function mpMailNodeEntry(m){
             "<table class='mail-stats'><tr><th></th><th>"+selfNick+"</th><th>"+oppNick+"</th></tr>"+
             battleStatsRows(selfBuffs,oppBuffs)+"</table></div>":"")+
           (d.nodeX!=null?"<div class='mail-res-row'>"+mpLocLink(d.nodeX,d.nodeY,(d.res&&MP_NODE_TYPE_NAME[d.res])||"Точка сбора")+"</div>":"")+
+          mpBattleRatingHtml(d,mine)+
           mpBattleLogHtml(d.log,mine);
       } else {
-        detailHtml="<div class='note'>"+sub+"</div>";
+        detailHtml="<div class='note'>"+sub+"</div>"+mpBattleRatingHtml(d,mine);
       }
       return detailHtml;
     }

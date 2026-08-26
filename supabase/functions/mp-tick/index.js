@@ -78,6 +78,17 @@ function handleOptions(req) {
 // applyPower) — все прежние вызовы работают как работали.
 async function savePlayerState(admin, row, state) {
   const extra = (row && row.power != null) ? { power: Math.round(row.power) } : {};
+  // Рейтинговые колонки пишутся тем же обновлением, что и состояние: иначе
+  // между записью state и записью рейтинга открывалось бы своё окно гонки, а
+  // проверка версии по updated_at защищала бы только половину боя.
+  // Флаг — чтобы обычный тик не переписывал их на каждом сохранении.
+  if (row && row.__ratingDirty) {
+    extra.rating = Math.round(row.rating || 0);
+    extra.rating_battles = Math.round(row.rating_battles || 0);
+    extra.rating_peak = Math.round(row.rating_peak || 0);
+    extra.rating_season = row.rating_season || "";
+    if (row.rating_last_at) extra.rating_last_at = row.rating_last_at;
+  }
   const prev = row.updated_at;
   if (!prev) {
     // Строка прочитана без updated_at (старый вызывающий код) — сверять не с
@@ -2218,6 +2229,196 @@ function applyPower(p, row, marchUnits) {
 }
 
 // =============================================================================
+// Боевой рейтинг и звания — Фаза 43.
+// =============================================================================
+// Дословная копия ../_shared/rating.js (тот же принцип самодостаточных копий,
+// что и у всего остального в этом файле). Полное описание правил с доводами —
+// docs/RANKS.md. При правке ЛЮБОГО числа править обе копии и зеркало в
+// index.html.
+const RANK_STEPS = 5;
+const RANKS_UP = [
+  { key: "recruit",  name: "Рекрут",     from: 0,    to: 769 },
+  { key: "guard",    name: "Страж",      from: 770,  to: 1539 },
+  { key: "knight",   name: "Рыцарь",     from: 1540, to: 2309 },
+  { key: "hero",     name: "Герой",      from: 2310, to: 3079 },
+  { key: "legend",   name: "Легенда",    from: 3080, to: 3849 },
+  { key: "overlord", name: "Властелин",  from: 3850, to: 4619 },
+  { key: "deity",    name: "Божество",   from: 4620, to: 5499 },
+  { key: "titan",    name: "Титан",      from: 5500, to: null },
+];
+const RANKS_DOWN = [
+  { key: "dishonoured", name: "Бесчестный",         from: 1,    to: 769 },
+  { key: "branded",     name: "Заклеймённый",       from: 770,  to: 1539 },
+  { key: "oathbreaker", name: "Клятвопреступник",   from: 1540, to: 2309 },
+  { key: "darkadept",   name: "Адепт тьмы",         from: 2310, to: 3079 },
+  { key: "cursed",      name: "Проклятый",          from: 3080, to: 3849 },
+  { key: "destroyer",   name: "Разрушитель",        from: 3850, to: 4619 },
+  { key: "chaoslord",   name: "Властитель Хаоса",   from: 4620, to: 5499 },
+  { key: "worldender",  name: "Уничтожитель миров", from: 5500, to: null },
+];
+const RANK_ROMAN = ["I", "II", "III", "IV", "V"];
+function rankOf(rating) {
+  const r = Math.round(rating || 0), down = r < 0, mag = Math.abs(r);
+  const table = down ? RANKS_DOWN : RANKS_UP;
+  let band = table[0];
+  for (const b of table) { if (mag >= b.from) band = b; }
+  let step = 0, roman = "";
+  if (band.to != null) {
+    const per = (band.to - band.from + 1) / RANK_STEPS;
+    const idx = Math.min(RANK_STEPS - 1, Math.floor((mag - band.from) / per));
+    step = RANK_STEPS - idx;
+    roman = RANK_ROMAN[step - 1];
+  }
+  return { key: band.key, name: band.name, down, step, roman,
+           full: roman ? band.name + " " + roman : band.name };
+}
+function seasonKeyAt(date) {
+  const d = date instanceof Date ? date : new Date(date || Date.now());
+  const m = d.getUTCMonth() + 1, y = d.getUTCFullYear();
+  if (m === 12) return (y + 1) + "-winter";
+  if (m <= 2) return y + "-winter";
+  if (m <= 5) return y + "-spring";
+  if (m <= 8) return y + "-summer";
+  return y + "-autumn";
+}
+const CALIBRATION_BATTLES = 10;
+const NO_FIGHT_K = 0.1, EQUAL_K = 0.5;
+const WIN_EQUAL = 25, WIN_WEAK = 50, LOSS_STRONG = 50;
+const RAID_PENALTY_FRAC = 0.02, RAID_PENALTY_MIN = 25;
+const PAIR_CAP_BATTLES = 4, PAIR_CAP_WINDOW_MS = 60 * 60 * 1000;
+const kRatio = (a, b) => {
+  const x = Math.max(0, a || 0), y = Math.max(0, b || 0), hi = Math.max(x, y);
+  return hi <= 0 ? 0 : Math.min(x, y) / hi;
+};
+function raidPenalty(rating) {
+  const r = Math.round(rating || 0);
+  return r > 0 ? Math.max(RAID_PENALTY_MIN, Math.round(r * RAID_PENALTY_FRAC)) : RAID_PENALTY_MIN;
+}
+function scoreBattle(o) {
+  const kField = kRatio(o.attField, o.defField);
+  const kPower = kRatio(o.attPower, o.defPower);
+  const base = { kField, kPower, k: Math.min(kField, kPower), attDelta: 0, defDelta: 0, counted: false };
+  if ((o.pairBattles || 0) >= PAIR_CAP_BATTLES) return { ...base, reason: "потолок пары" };
+  const attWon = o.winner === "att";
+  if (base.k >= EQUAL_K) {
+    return { ...base, counted: true, reason: "равный бой",
+             attDelta: attWon ? WIN_EQUAL : -WIN_EQUAL,
+             defDelta: attWon ? -WIN_EQUAL : WIN_EQUAL };
+  }
+  // Державы сопоставимы, разошлось только поле — ход в войне равных
+  // (эвакуация или проба малым отрядом), а не избиение. Ноль обоим.
+  if (kPower >= EQUAL_K) return { ...base, reason: "поле не сошлось" };
+  const attIsStrong = (o.attPower || 0) >= (o.defPower || 0);
+  let attDelta = 0, defDelta = 0, reason;
+  if (attWon && attIsStrong) {
+    attDelta = -raidPenalty(o.attRating); reason = "избиение слабого";
+  } else if (attWon && !attIsStrong) {
+    // Смотрим на проигравшего, а не на k_поле вообще: мелкий k_поле бывает и
+    // «защиты не было» (скармливание, гасим), и «пришёл втрое меньшим войском
+    // и всё равно взял» (подвиг, награждаем).
+    if ((o.defField || 0) < (o.attField || 0) * NO_FIGHT_K) return { ...base, reason: "бой без боя" };
+    attDelta = WIN_WEAK; defDelta = -LOSS_STRONG; reason = "слабый взял сильного";
+  } else if (!attWon && attIsStrong) {
+    attDelta = -LOSS_STRONG; defDelta = WIN_WEAK; reason = "сильный не взял слабого";
+  } else {
+    reason = "оборона от слабого";
+  }
+  return { ...base, counted: true, reason, attDelta, defDelta, attIsStrong };
+}
+function applyRatingDelta(rating, battlesPlayed, delta) {
+  let v = Math.round((rating || 0) + delta);
+  if ((battlesPlayed || 0) < CALIBRATION_BATTLES && v < 0) v = 0;
+  return v;
+}
+
+// Начисление рейтинга за один бой правитель против правителя. Зовётся из
+// finalizePvpBattle (осада города) и finalizeNodeBattle (бой за точку сбора) —
+// это единственные два места, где сходятся ДВА ЖИВЫХ ПРАВИТЕЛЯ. Лагеря и
+// крепости варваров рейтинга не дают вовсе: рейтинг об NPC не фармится.
+//
+// Возвращает разбор для письма и для журнала. Сами колонки правит на row'ах —
+// они пишутся тем же saveBothPlayersOrThrow, что и состояние (см. extra в
+// savePlayerState), поэтому отдельного окна гонки тут нет.
+async function computeBattleRating(admin, attRow, defRow, state, nowMs) {
+  const attField = state.attStartPower || 0, defField = state.defStartPower || 0;
+  // Мощь ДЕРЖАВ до боя. Именно до: разорённый защитник после осады выглядел бы
+  // ещё слабее, и кит получал бы скидку за им же учинённый разгром.
+  const attPower = attRow.__powerBefore || 0, defPower = defRow.__powerBefore || 0;
+  // Потолок пары — считаем прямо по журналу, отдельной таблицы не нужно.
+  // Пара НЕУПОРЯДОЧЕННАЯ: поменяться ролями и обнулить счётчик нельзя.
+  const sinceIso = new Date(nowMs - PAIR_CAP_WINDOW_MS).toISOString();
+  const { data: recent, error: recErr } = await admin.from("rating_events")
+    .select("id").eq("counted", true).gte("at", sinceIso)
+    .or(`and(att_id.eq.${attRow.id},def_id.eq.${defRow.id}),and(att_id.eq.${defRow.id},def_id.eq.${attRow.id})`);
+  if (recErr) throw recErr;
+  const r = scoreBattle({
+    attField, defField, attPower, defPower,
+    attRating: attRow.rating || 0, winner: state.winner,
+    pairBattles: (recent || []).length,
+  });
+  const season = seasonKeyAt(new Date(nowMs));
+  const out = {
+    ...r, attField, defField, attPower, defPower, season,
+    attBefore: attRow.rating || 0, defBefore: defRow.rating || 0,
+    pairBattles: (recent || []).length,
+  };
+  if (!r.counted) return out;
+  const touch = (row, delta) => {
+    row.rating = applyRatingDelta(row.rating || 0, row.rating_battles || 0, delta);
+    row.rating_battles = (row.rating_battles || 0) + 1;
+    row.rating_peak = Math.max(row.rating_peak || 0, row.rating);
+    if (!row.rating_season) row.rating_season = season;
+    // Часы затухания сбрасывает ТОЛЬКО равный бой: иначе верхушка раз в две
+    // недели пинала бы новичка и висела бы дальше.
+    if (r.reason === "равный бой") row.rating_last_at = new Date(nowMs).toISOString();
+    row.__ratingDirty = true;
+  };
+  touch(attRow, r.attDelta);
+  touch(defRow, r.defDelta);
+  out.attAfter = attRow.rating; out.defAfter = defRow.rating;
+  out.attRank = rankOf(attRow.rating).full; out.defRank = rankOf(defRow.rating).full;
+  out.attCalibrating = (attRow.rating_battles || 0) < CALIBRATION_BATTLES;
+  out.defCalibrating = (defRow.rating_battles || 0) < CALIBRATION_BATTLES;
+  return out;
+}
+
+// То из разбора, что можно показать игроку. Скрытый коэффициент по мощи держав
+// и сами мощи сюда не попадают — иначе «скрытый» перестал бы им быть, и кит
+// вычислял бы по письму, каким именно маршем пролезть под порог.
+function ratingMailPart(r) {
+  if (!r) return null;
+  return {
+    counted: !!r.counted, reason: r.reason || "",
+    attDelta: Math.round(r.attDelta || 0), defDelta: Math.round(r.defDelta || 0),
+    attAfter: r.attAfter != null ? Math.round(r.attAfter) : null,
+    defAfter: r.defAfter != null ? Math.round(r.defAfter) : null,
+    attRank: r.attRank || null, defRank: r.defRank || null,
+    attCalibrating: !!r.attCalibrating, defCalibrating: !!r.defCalibrating,
+  };
+}
+
+// Журнал. Пишется ПОСЛЕ успешной записи игроков: если та отвалится по
+// конфликту, событие разберётся заново, и строка не должна задвоиться.
+// Пишется и на НЕзасчитанный бой — именно такие и интересны, когда
+// разбираешься, почему кому-то ничего не дали.
+async function logRatingEvent(admin, m, attRow, defRow, state, r, kind) {
+  const { error } = await admin.from("rating_events").insert({
+    world_id: m.world_id, kind, march_id: m.id,
+    att_id: attRow.id, def_id: defRow.id, winner: state.winner,
+    att_nick: attRow.nick || "", def_nick: defRow.nick || "",
+    att_field: Math.round(r.attField), def_field: Math.round(r.defField),
+    att_power: Math.round(r.attPower), def_power: Math.round(r.defPower),
+    k_field: r.kField, k_power: r.kPower, k: r.k,
+    att_before: Math.round(r.attBefore), def_before: Math.round(r.defBefore),
+    att_delta: Math.round(r.attDelta), def_delta: Math.round(r.defDelta),
+    counted: !!r.counted, reason: r.reason || "", season: r.season || "",
+  });
+  // Журнал важен, но ронять из-за него уже проведённый бой нельзя: рейтинг
+  // записан, войска разошлись, откатывать отсюда нечего.
+  if (error) console.error("mp-tick: строка rating_events не записалась —", error.message);
+}
+
+// =============================================================================
 // Прочность построек и снос осадой — Фаза 29.
 // =============================================================================
 // Дословная копия блока "Прочность построек, снос осадой и восстановление" из
@@ -3460,6 +3661,11 @@ async function markRulerFallen(admin, m, attRow, defRow, defP, nowSec) {
 async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, nowSec) {
   // Снимок ДО единого изменения — на случай отката, см. saveBothPlayersOrThrow.
   const attSnapshot = snapshotState(attP);
+  // Мощь держав ДО боя — скрытый коэффициент рейтинга (см. computeBattleRating).
+  // Снимаем здесь, потому что applyPower ниже перезапишет row.power итогом боя,
+  // и разорённый защитник выглядел бы ещё слабее, чем был.
+  attRow.__powerBefore = attRow.power || 0;
+  defRow.__powerBefore = defRow.power || 0;
   defP.troops = unitsSub(defP.troops, state.defLossTotal);
   // Фаза 4, шестой кусочек: лазарет защитника (index.html:4351/4411-4423)
   // — часть потерь не гибнет насмерть. Слегка раненые (12%) немедленно
@@ -3568,10 +3774,16 @@ async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, no
       ruined: (state.demolish.ruined || []).length,
     };
   }
+  // Рейтинг — до записи: колонки уезжают в базу тем же обновлением, что и
+  // состояние (см. extra в savePlayerState), так что проверка версии по
+  // updated_at накрывает бой целиком, а не половину.
+  const rat = await computeBattleRating(admin, attRow, defRow, state, nowSec * 1000);
   await saveBothPlayersOrThrow(admin, attRow, attP, attSnapshot, defRow, defP);
   // Строго ПОСЛЕ успешной записи состояния: если та отвалится по конфликту
-  // (см. savePlayerState), бой пересчитается заново — а запись в летописи и
-  // метка о гибели должны появиться ровно один раз и только по факту.
+  // (см. savePlayerState), бой пересчитается заново — а запись в летописи,
+  // метка о гибели и строка журнала должны появиться ровно один раз и только
+  // по факту.
+  await logRatingEvent(admin, m, attRow, defRow, state, rat, "city");
   if (rulerFell) await markRulerFallen(admin, m, attRow, defRow, defP, nowSec);
 
   const summary = {
@@ -3591,6 +3803,9 @@ async function finalizePvpBattle(admin, m, attRow, defRow, attP, defP, state, no
     retreated: !!state.retreated, // Фаза 21 — честное отступление кнопкой, не обычное поражение (см. mp-recall)
     attRace: attRow.race, defRace: defRow.race,
     attCoords: { x: attRow.x, y: attRow.y }, defCoords: { x: defRow.x, y: defRow.y },
+    // Рейтинг за этот бой — обеим сторонам в их же письмо. k_держава сюда
+    // НЕ кладём: он на то и скрытый (см. docs/RANKS.md).
+    rating: ratingMailPart(rat),
     attGen: state.attHasGen && attP.gen && attP.gen.id != null ? { id: attP.gen.id, lv: attP.gen.lv, tal: attP.gen.tal || {} } : null,
     defGen: (defP.gen && defP.gen.away == null && defP.gen.id != null) ? { id: defP.gen.id, lv: defP.gen.lv, tal: defP.gen.tal || {} } : null,
     attBuffs: battleBuffSnapshotMp(bonuses(attP)), defBuffs: battleBuffSnapshotMp(bonuses(defP, true)),
@@ -4256,6 +4471,8 @@ async function progressOrFinalizeNodeBattle(admin, m, attRow, occRow, attP, occP
 async function finalizeNodeBattle(admin, m, attRow, occRow, occMarch, attP, occP, state, nowSec) {
   // Снимок ДО единого изменения — на случай отката, см. saveBothPlayersOrThrow.
   const attSnapshot = snapshotState(attP);
+  attRow.__powerBefore = attRow.power || 0;
+  occRow.__powerBefore = occRow.power || 0;
   if (!attP.wounded) attP.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
   TKEYS.forEach((t) => { if (!attP.wounded[t]) attP.wounded[t] = {}; });
   if (!occP.wounded) occP.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
@@ -4276,11 +4493,16 @@ async function finalizeNodeBattle(admin, m, attRow, occRow, occMarch, attP, occP
   if (state.attHasGen && unitsTotal(attSurvivors) <= 0 && attP.gen && attP.gen.away === m.id) attP.gen.away = null;
   if (state.defHasGen && unitsTotal(occSurvivors) <= 0 && occP.gen && occP.gen.away === occMarch.id) occP.gen.away = null;
 
+  // Бой за точку сбора — тоже правитель против правителя, и рейтинг за него
+  // идёт по тем же правилам, что и за осаду.
+  const rat = await computeBattleRating(admin, attRow, occRow, state, nowSec * 1000);
   await saveBothPlayersOrThrow(admin, attRow, attP, attSnapshot, occRow, occP);
+  await logRatingEvent(admin, m, attRow, occRow, state, rat, "node");
 
   const summary = {
     winner: state.winner, sent: state.attStartUnits, attLoss: state.attLossTotal, defLoss: state.defLossTotal,
     attHpLeft: state.attHpLeft, defHpLeft: state.defHpLeft,
+    rating: ratingMailPart(rat),
     attDead: attHs.dead, attHurt: attHs.hurt, attSlight: attHs.slight,
     defDead: occHs.dead, defHurt: occHs.hurt, defSlight: occHs.slight,
     // Те же поля, что и в finalizePvpBattle, для battleOutcomeTier на клиенте.
