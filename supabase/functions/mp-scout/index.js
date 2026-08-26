@@ -493,7 +493,13 @@ Deno.serve(async (req) => {
       world_id: world.id, fire_at: new Date((nowSec + travel) * 1000).toISOString(),
       type: "scout_arrive", data: { march_id: march.id },
     });
-    if (evErr) return jsonResponse({ err: evErr.message }, 500);
+    // Лазутчик без события прибытия не дойдёт никогда: тик мира событийный,
+    // обхода просроченных маршей у него нет — марш занимал бы слот отряда
+    // вечно. Убираем вместе с ним (войск у разведки нет, возвращать нечего).
+    if (evErr) {
+      await admin.from("marches").delete().eq("id", march.id);
+      return jsonResponse({ err: evErr.message }, 500);
+    }
 
     return jsonResponse({ ok: true, march_id: march.id, eta: travel });
   } catch (e) {

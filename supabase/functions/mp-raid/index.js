@@ -238,24 +238,29 @@ Deno.serve(async (req) => {
     }).select().single();
     if (mErr) return jsonResponse({ err: mErr.message }, 500);
 
+    // Событие прибытия создаём ДО записи состояния игрока (см. тот же
+    // разбор в mp-attack): тик мира событийный, обхода просроченных маршей
+    // у него нет, и марш без своего события висел бы в пути вечно, держа
+    // войска и слот отряда.
+    const { data: evRow, error: evErr } = await admin.from("events").insert({
+      world_id: world.id, fire_at: new Date((nowSec + travel) * 1000).toISOString(),
+      type: "march_arrive", data: { march_id: marchRow.id },
+    }).select("id").single();
+    if (evErr) {
+      await admin.from("marches").delete().eq("id", marchRow.id);
+      return jsonResponse({ err: evErr.message }, 500);
+    }
+    const rollback = async () => {
+      if (evRow) await admin.from("events").delete().eq("id", evRow.id);
+      await admin.from("marches").delete().eq("id", marchRow.id);
+    };
+
     if (takeGen) attP.gen.away = marchRow.id;
     const saved = await savePlayerState(admin, attRow, attP);
     // См. тот же случай в mp-attack: отряд уже создан, при отказе записи его
     // надо убрать, иначе повтор запроса даст второй такой же поход.
-    if (saved.conflict) {
-      await admin.from("marches").delete().eq("id", marchRow.id);
-      return conflictResponse();
-    }
-    if (saved.error) {
-      await admin.from("marches").delete().eq("id", marchRow.id);
-      return jsonResponse({ err: saved.error.message }, 500);
-    }
-
-    const { error: evErr } = await admin.from("events").insert({
-      world_id: world.id, fire_at: new Date((nowSec + travel) * 1000).toISOString(),
-      type: "march_arrive", data: { march_id: marchRow.id },
-    });
-    if (evErr) return jsonResponse({ err: evErr.message }, 500);
+    if (saved.conflict) { await rollback(); return conflictResponse(); }
+    if (saved.error) { await rollback(); return jsonResponse({ err: saved.error.message }, 500); }
 
     return jsonResponse({ ok: true, march_id: marchRow.id, eta: travel, has_gen: takeGen });
   } catch (e) {

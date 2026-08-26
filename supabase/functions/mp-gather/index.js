@@ -336,6 +336,24 @@ Deno.serve(async (req) => {
       .update({ data: newCellData, updated_at: new Date().toISOString() })
       .eq("world_id", world.id).eq("x", tx).eq("y", ty);
     if (updCell) return jsonResponse({ err: updCell.message }, 500);
+    // Вернуть игроку списанные войска — на случай, если дальше что-то
+    // сорвётся. Порядок здесь выстроен вокруг брони точки (см. разбор выше),
+    // поэтому списание войск идёт ПЕРВЫМ и к моменту создания марша уже
+    // записано: без этого отката сорвавшаяся вставка марша или события
+    // означала бы просто пропавший отряд — ни похода, ни войск. Читаем
+    // строку заново (её мог тронуть тик мира) и пишем поверх свежей.
+    const restoreTroops = async () => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const { data: fresh } = await admin.from("players").select("*").eq("id", attRow.id).maybeSingle();
+        if (!fresh || !fresh.state || !fresh.state.troops) return;
+        const st = fresh.state;
+        TKEYS.forEach((t) => {
+          for (let i = 1; i <= 5; i++) st.troops[t][i] = (st.troops[t][i] || 0) + (sendUnits[t][i] || 0);
+        });
+        const r = await savePlayerState(admin, fresh, st);
+        if (!r.conflict) return;   // записали (или упали по-настоящему) — второй заход только на гонке
+      }
+    };
     // Вернуть точке забронированное — на случай, если дальше что-то сорвётся.
     const unbookCell = async () => {
       const { data: fresh } = await admin.from("map_cells")
@@ -352,7 +370,7 @@ Deno.serve(async (req) => {
       tx, ty, t0: nowSec, t1: nowSec + travel,
       units: sendUnits, data: { res, take, dist, spd, gather_secs: gatherSecs, cell_x: tx, cell_y: ty },
     }).select().single();
-    if (mErr) { await unbookCell(); return jsonResponse({ err: mErr.message }, 500); }
+    if (mErr) { await unbookCell(); await restoreTroops(); return jsonResponse({ err: mErr.message }, 500); }
 
     const { error: evErr } = await admin.from("events").insert({
       world_id: world.id, fire_at: new Date((nowSec + travel) * 1000).toISOString(),
@@ -362,6 +380,7 @@ Deno.serve(async (req) => {
     if (evErr) {
       await admin.from("marches").delete().eq("id", march.id);
       await unbookCell();
+      await restoreTroops();
       return jsonResponse({ err: evErr.message }, 500);
     }
 
