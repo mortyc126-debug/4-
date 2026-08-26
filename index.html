@@ -10356,21 +10356,35 @@ function mpResearchCarouselHtml(){
    не возвращается — груз доехал, и всё. Считает и проводит его сервер
    (supabase/functions/mp-trade), здесь — форма отправки и те же числа для
    предпросмотра.
-   ЗАГОТОВКА ПОД КАЛИБРОВКУ: точные числа автор обещал прислать списком, до
-   тех пор здесь раскладка в духе RoK. Три копии обязаны совпадать — эта,
-   mp-trade и mp-tick; ищите по заголовку «ТОРГОВЛЯ». */
+   Числа Торгового поста — настоящие, из Rise of Kingdoms (автор прислал
+   страницу вики). Ими же выверена таблица стоимости TRADING_TABLE выше:
+   цена, время и мощь совпадают со страницей на всех 25 уровнях.
+   Вторая копия — supabase/functions/mp-trade; в mp-tick таблицы не нужны,
+   он читает уже посчитанную сумму из data.net самого обоза. */
 const TRADE_CAP=[
-  10000, 16000, 25000, 40000, 62000, 95000, 145000, 215000, 320000,
-  470000, 690000, 1000000, 1450000, 2050000, 2900000, 4000000, 5500000,
-  7400000, 9900000, 13000000, 17000000, 22000000, 28000000, 36000000, 45000000,
+  10000, 30000, 60000, 100000, 160000,
+  240000, 320000, 400000, 500000, 600000,
+  800000, 1000000, 1200000, 1400000, 1600000,
+  1800000, 2000000, 2200000, 2400000, 2600000,
+  2800000, 3000000, 3500000, 4000000, 10000000,
 ];
-const TRADE_TAX=[
-  0.25, 0.24, 0.23, 0.22, 0.21, 0.20, 0.19, 0.18, 0.17, 0.16,
-  0.15, 0.14, 0.13, 0.12, 0.115, 0.11, 0.10, 0.095, 0.09, 0.085,
-  0.08, 0.075, 0.07, 0.06, 0.05,
+// Два скачка не опечатка, так и в оригинале: 22->23 налог падает сразу на два
+// пункта (14% -> 12%), а на 25 уровне потолок прыгает с 4 млн до 10 млн.
+// Налог хранится в ЦЕЛЫХ процентах, а не долями, и вычитается тоже целыми:
+// 160000 * (1 - 0.31) в двоичной арифметике даёт 110399.99999999999, и
+// пол-функция срезала бы это до 110399 вместо ровных 110400. С целыми
+// процентами (160000 * 69 / 100) деление точное и обоза не обкрадывает.
+// Наружу (в data обоза, в письмо, в подписи) уходит привычная доля.
+const TRADE_TAX_PCT=[
+  35, 34, 33, 32, 31, 30, 29, 28, 27, 26,
+  25, 24, 23, 22, 21, 20, 19, 18, 17, 16,
+  15, 14, 12, 10, 8,
 ];
 const tradeCap=lv=>lv<=0?0:tblRow(TRADE_CAP,lv);
-const tradeTax=lv=>lv<=0?1:tblRow(TRADE_TAX,lv);
+const tradeTaxPct=lv=>lv<=0?100:tblRow(TRADE_TAX_PCT,lv);
+const tradeTax=lv=>tradeTaxPct(lv)/100;
+// Сколько из n доедет после налога — целочисленно, см. заголовок выше.
+const tradeNet=(n,pct)=>Math.floor((n*(100-pct))/100);
 // Средняя скорость всадников (TROOP_TYPES.cav.speed — одна и та же у всех
 // тиров, поэтому «средняя» и есть она сама), умноженная на три. Расовые
 // поправки на конницу сюда не входят — это купеческий обоз, а не чья-то
@@ -10386,7 +10400,7 @@ function mpMarketLv(st){
 // Цифры Рынка в его карточке + кнопка "Отправить обоз".
 function mpMarketInfoHtml(lv){
   const cap=tradeCap(lv), tax=tradeTax(lv);
-  const nextCap=lv<TRADE_CAP.length?tradeCap(lv+1):null, nextTax=lv<TRADE_TAX.length?tradeTax(lv+1):null;
+  const nextCap=lv<TRADE_CAP.length?tradeCap(lv+1):null, nextTax=lv<TRADE_TAX_PCT.length?tradeTax(lv+1):null;
   let h="<table id='bm-stats'>"+
     "<tr><td>Поднимает обоз</td><td>"+fmt(cap)+(nextCap!=null?" &rarr; "+fmt(nextCap):"")+"</td></tr>"+
     "<tr><td>Налог с провоза</td><td>"+(tax*100).toFixed(1).replace(/\.0$/,"")+"%"+
@@ -10414,9 +10428,9 @@ function mpOpenTradeModal(){
 }
 function mpTradeTotals(){
   const st=mpState.player.state, lv=mpMarketLv(st);
-  const cap=tradeCap(lv), tax=tradeTax(lv);
+  const cap=tradeCap(lv), pct=tradeTaxPct(lv), tax=pct/100;
   let total=0, net=0;
-  RES.forEach(r=>{ const n=mpTradeCtx.res[r]||0; total+=n; net+=Math.floor(n*(1-tax)); });
+  RES.forEach(r=>{ const n=mpTradeCtx.res[r]||0; total+=n; net+=tradeNet(n,pct); });
   return {lv,cap,tax,total,net,over:total>cap};
 }
 function mpTradeSheetHtml(){
