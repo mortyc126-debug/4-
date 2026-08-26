@@ -252,6 +252,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .profile-brank.high,.brank.high{color:var(--gilt-hi)}
 .profile-brank.calib,.brank.calib{color:var(--vellum-faint)}
 .rank-row.shame .rk-nick{color:#c0525b}
+/* Выбор таблицы мира. Девять штук рядом вкладок не помещаются ни на одном
+   телефоне — переносящаяся сетка значков, тот же язык, что у разделов
+   профиля (.psec). */
+.board-pick{display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:6px;margin:8px 0 12px}
+.bpick{display:flex;flex-direction:column;align-items:center;gap:3px;padding:7px 2px;
+  border:1px solid var(--rule-soft);border-radius:8px;background:transparent;
+  color:var(--vellum-faint);font-size:11px;white-space:nowrap}
+.bpick img{width:26px;height:26px;object-fit:contain;opacity:.8}
+.bpick.on{border-color:var(--gilt-dim);background:rgba(194,153,60,.14);color:var(--gilt-hi)}
+.bpick.on img{opacity:1}
 /* Знак звания — временная графика (см. mpRankMarkSrc). Выравнивание по
    середине строки, чтобы стоял вровень с подписью, а не съезжал по базовой
    линии текста. */
@@ -12105,12 +12115,9 @@ function profilePowerFontSize(str){
    в раздел, а не на каждый опрос: это не боевые числа, секунда свежести
    тут ничего не решает, а лишний запрос раз в 5 секунд — решает. */
 let profileScreen=null;                 // null | 'settings' | 'rating' | 'chronicles' | 'battlerank'
-let profileRating=null, profileRatingErr=null, profileRatingAt=0;
-// Фаза 43 — в «Рейтинге» теперь две таблицы: по мощи державы (как было) и по
-// боевому рейтингу. Свой кэш у каждой: у них разный порядок и разный смысл,
-// и переключение вкладки не должно каждый раз ходить в сеть заново.
-let profileRatingTab="power";
-let profileBrank=null, profileBrankErr=null, profileBrankAt=0;
+// Кэш и выбранная таблица живут рядом с самим списком таблиц (см. MP_BOARDS
+// ниже): у каждой свой порядок и свой смысл, и переключение не должно каждый
+// раз ходить в сеть заново.
 let profileChron=null,  profileChronErr=null,  profileChronAt=0;
 const PROFILE_SECTION_TTL=30000;        // мс: повторный вход в раздел за это время не дёргает сервер
 
@@ -12189,38 +12196,83 @@ function mpSeasonTitle(key){
 // состояниям. Индекс players_power_idx (миграция 0008) — ровно под этот
 // порядок. Полсотни строк: рейтинг смотрят, чтобы найти себя и верхушку, а
 // не чтобы листать весь мир.
-async function profileLoadRating(force){
+/* ---- Таблицы мира --------------------------------------------------------
+   Раньше их было две, каждая своим куском кода. Автор попросил ещё пять и
+   оставил остальное на меня — на девяти копипаста стала бы дороже описания,
+   поэтому таблица теперь одна, а различия вынесены в MP_BOARDS: что выбрать,
+   по чему упорядочить, что показать числом и что подписью.
+
+   Читаются прямым запросом: RLS players_select_world и так открывает эти
+   колонки миру, а сортировку и потолок делает база — тянуть на клиент state
+   всех игроков ради сортировки нельзя (там весь город, войска и почта).
+   Колонки заведены миграциями 0008/0009/0011, у каждой свой частичный индекс
+   ровно под этот порядок. */
+const MP_BOARDS=[
+  {id:"power", name:"Мощь", ico:"icon-rating.png",
+   sel:"power,hall:state->b->>hall", by:"power", desc:true,
+   val:r=>fmt(r.power||0), side:r=>"ратуша "+(r.hall||0),
+   empty:"В мире пока некого выстраивать по мощи.",
+   note:"Мощь считает сервер: постройки, войска дома и в походах, исследования, полководец и его снаряжение."},
+  {id:"rank", name:"Звание", ico:"icon-rank.png",
+   sel:"rating,rating_battles", by:"rating", desc:true, minBattles:true,
+   val:r=>String(r.rating||0),
+   side:r=>mpRankMarkHtml(r,18)+escHtml(mpRankOf(r.rating||0).full), sideCls:r=>"brank"+mpBattleRankCls(r),
+   empty:"Звание пока не заработал никто: оно появляется после десяти засчитанных боёв правитель против правителя.",
+   note:"Рейтинг меняют только бои правитель против правителя. Пока идёт калибровка, в таблицу не попадают. Павшие правители выбывают, их рейтинг обнуляется вместе с державой."},
+  {id:"build", name:"Стройка", ico:"icon-build.png",
+   sel:"power_build,hall:state->b->>hall", by:"power_build", desc:true,
+   val:r=>fmt(r.power_build||0), side:r=>"ратуша "+(r.hall||0),
+   empty:"Пока никто ничего не построил.",
+   note:"Только мощь построек — без войск, исследований и полководца. Чистое строительство."},
+  {id:"tech", name:"Наука", ico:"icon-research.png",
+   sel:"power_tech", by:"power_tech", desc:true,
+   val:r=>fmt(r.power_tech||0),
+   empty:"Академии ещё молчат.",
+   note:"Только мощь исследований. Чистая наука, без построек и войск."},
+  {id:"hall", name:"Ратуша", ico:"icon-city.png",
+   sel:"hall_lv", by:"hall_lv", desc:true,
+   val:r=>String(r.hall_lv||0)+" ур.",
+   empty:"Ратуши ещё не строили.",
+   note:"По уровню Ратуши. Она открывает эпохи и потолок всем остальным постройкам, поэтому и стоит отдельной таблицей."},
+  {id:"gathered", name:"Сбор", ico:"icon-march.png",
+   sel:"gathered_total", by:"gathered_total", desc:true,
+   val:r=>fmt(r.gathered_total||0),
+   empty:"На точки сбора ещё никто не ходил.",
+   note:"Сколько ресурсов довезено с точек сбора за всё правление. Считается то, что доехало до склада, а не то, что забронировано на отправке. Награбленное в бою сюда не идёт."},
+  {id:"traded", name:"Торговля", ico:"icon-trade.png",
+   sel:"traded_total", by:"traded_total", desc:true,
+   val:r=>fmt(r.traded_total||0),
+   empty:"Обозы к соседям ещё не ходили.",
+   note:"Сколько довезено обозами другим правителям за всё правление — по довезённому, а не по отправленному: налог Рынка съедает часть груза в дороге."},
+  {id:"camps", name:"Варвары", ico:"icon-siege.png",
+   sel:"camps_taken", by:"camps_taken", desc:true,
+   val:r=>String(r.camps_taken||0),
+   empty:"Лагеря варваров пока стоят нетронутыми.",
+   note:"Сколько лагерей и крепостей варваров взято. Своя таблица для тех, кто воюет не с игроками: рейтинга она не даёт и дать не может."},
+  {id:"age", name:"Правление", ico:"icon-reign.png",
+   sel:"created_at", by:"created_at", desc:false,
+   val:r=>fmtDur(Math.max(0,(Date.now()-new Date(r.created_at).getTime())/1000)),
+   empty:"Мир только что создан.",
+   note:"Кто правит дольше всех без единой гибели. Обнуляется вместе с державой — правитель погиб, отсчёт пошёл заново."},
+  {id:"alliance", name:"Альянс", ico:"icon-alliance.png", stub:true,
+   empty:"", note:"",
+   stubText:"Альянсы ещё строятся: ни союзов, ни их силы в игре пока нет. Здесь появится таблица союзов мира — по общей мощи, по захваченным святыням и по совместным походам."},
+];
+let profileBoard="power";
+const profileBoardData={}, profileBoardErr={}, profileBoardAt={};
+async function profileLoadBoard(id,force){
   if(!mpState.player) return;
-  if(!force && profileRating && Date.now()-profileRatingAt<PROFILE_SECTION_TTL) return;
+  const b=MP_BOARDS.find(x=>x.id===id); if(!b || b.stub) return;
+  if(!force && profileBoardData[id] && Date.now()-(profileBoardAt[id]||0)<PROFILE_SECTION_TTL) return;
   try{
-    const { data, error } = await sb.from("players")
-      .select("id,nick,race,power,hall:state->b->>hall")
-      .eq("world_id", mpState.player.world_id).is("dead_at", null)
-      .order("power", {ascending:false}).limit(50);
+    let q=sb.from("players").select("id,nick,race,"+b.sel)
+      .eq("world_id", mpState.player.world_id).is("dead_at", null);
+    // Пока идёт калибровка, звания нет — и в таблице званий таким не место.
+    if(b.minBattles) q=q.gte("rating_battles", MP_CALIBRATION_BATTLES);
+    const { data, error } = await q.order(b.by,{ascending:!b.desc}).limit(50);
     if(error) throw new Error(error.message);
-    profileRating=data||[]; profileRatingErr=null; profileRatingAt=Date.now();
-  }catch(e){ profileRatingErr=e.message; }
-  refreshProfileIfOpen();
-}
-// Таблица по боевому рейтингу. Читается тем же прямым запросом, что и таблица
-// по мощи: RLS players_select_world и так открывает эти колонки всему миру, а
-// показывать рейтинг всем — прямое решение автора («видно всем»). Индекс
-// players_rating_idx (миграция 0009) — ровно под этот порядок.
-//
-// Игроки на калибровке в таблицу не попадают: звания у них ещё нет, и висеть
-// нулём среди тех, кто его заработал, им незачем.
-async function profileLoadBrank(force){
-  if(!mpState.player) return;
-  if(!force && profileBrank && Date.now()-profileBrankAt<PROFILE_SECTION_TTL) return;
-  try{
-    const { data, error } = await sb.from("players")
-      .select("id,nick,race,rating,rating_battles")
-      .eq("world_id", mpState.player.world_id).is("dead_at", null)
-      .gte("rating_battles", MP_CALIBRATION_BATTLES)
-      .order("rating", {ascending:false}).limit(50);
-    if(error) throw new Error(error.message);
-    profileBrank=data||[]; profileBrankErr=null; profileBrankAt=Date.now();
-  }catch(e){ profileBrankErr=e.message; }
+    profileBoardData[id]=data||[]; profileBoardErr[id]=null; profileBoardAt[id]=Date.now();
+  }catch(e){ profileBoardErr[id]=e.message; }
   refreshProfileIfOpen();
 }
 // Летопись — та самая таблица chronicles (миграция 0007), открытая на чтение
@@ -12242,7 +12294,7 @@ async function profileLoadChronicles(force){
 }
 function profileOpenSection(id){
   profileScreen=id;
-  if(id==="rating"){ if(profileRatingTab==="rank") profileLoadBrank(false); else profileLoadRating(false); }
+  if(id==="rating") profileLoadBoard(profileBoard,false);
   if(id==="chronicles") profileLoadChronicles(false);
   refreshProfileIfOpen();
 }
@@ -12283,82 +12335,40 @@ function profileSettingsHtml(){
   return h;
 }
 function profileRatingHtml(meId){
-  const byRank=profileRatingTab==="rank";
+  const b=MP_BOARDS.find(x=>x.id===profileBoard)||MP_BOARDS[0];
   let h=profileBackHtml("Рейтинг");
-  // Две таблицы одного мира: по размеру державы и по тому, каков ты в бою.
-  // Вкладками, а не двумя разделами меню: сравнивают их обычно подряд.
-  h+="<div id='ac-tabs'>"+
-     "<button class='"+(byRank?"":"on")+"' data-act='ratetab' data-t='power'>По мощи</button>"+
-     "<button class='"+(byRank?"on":"")+"' data-act='ratetab' data-t='rank'>По званию</button>"+
-     "</div>";
-  if(byRank){
-    if(profileBrankErr) return h+"<div class='entry'><div class='note' style='color:#e08'>Не удалось получить таблицу: "+escHtml(profileBrankErr)+"</div></div>";
-    if(!profileBrank) return h+"<div class='entry'><div class='note'>Считаем…</div></div>";
-    if(!profileBrank.length) return h+"<div class='entry'><div class='note'>Звание пока не заработал никто: "+
-      "оно появляется после десяти засчитанных боёв правитель против правителя.</div></div>";
-    const myPlace=profileBrank.findIndex(r=>r.id===meId);
-    h+=rubric("Правители мира", myPlace>=0?"вы "+(myPlace+1)+"-й":"вас нет в первых "+profileBrank.length);
-    h+="<div class='rank-list'>";
-    profileBrank.forEach((r,i)=>{
-      const me=r.id===meId, k=mpRankOf(r.rating||0);
-      h+="<div class='rank-row"+(me?" me":"")+"'>"+
-         "<span class='rk-place"+(i<3?" top":"")+"'>"+(i+1)+"</span>"+
-         "<span class='rk-crest'>"+shieldSvg(r.race,16)+"</span>"+
-         "<span class='rk-nick'>"+escHtml(r.nick||"Безымянный лорд")+"</span>"+
-         "<span class='rk-hall brank"+mpBattleRankCls(r)+"'>"+mpRankMarkHtml(r,18)+escHtml(k.full)+"</span>"+
-         "<b class='rk-pw'>"+(r.rating||0)+"</b></div>";
-    });
-    h+="</div>";
-    h+="<div class='entry'><div class='note'>Рейтинг меняют только бои правитель против правителя. "+
-       "Пока идёт калибровка (первые десять боёв), в таблицу не попадают — звания ещё нет. "+
-       "Павшие правители в таблицу не попадают, а их рейтинг обнуляется вместе с державой.</div></div>";
-    return h;
+  // Таблиц девять — рядом вкладок они бы не поместились ни на одном телефоне.
+  // Переносящаяся сетка значков, тот же язык, что и у разделов профиля.
+  h+="<div class='board-pick'>"+MP_BOARDS.map(x=>
+     "<button class='bpick"+(x.id===b.id?" on":"")+"' data-act='board' data-b='"+x.id+"'>"+
+     "<img src='images/ui/"+x.ico+"' alt=''><span>"+x.name+"</span></button>").join("")+"</div>";
+
+  if(b.stub){
+    return h+"<div class='entry'><div class='line'><div class='fill'>"+
+      "<div class='title'>Пока нечего показывать</div>"+
+      "<div class='note'>"+b.stubText+"</div></div></div></div>";
   }
-  if(profileRatingErr) return h+"<div class='entry'><div class='note' style='color:#e08'>Не удалось получить рейтинг: "+escHtml(profileRatingErr)+"</div></div>";
-  if(!profileRating) return h+"<div class='entry'><div class='note'>Считаем…</div></div>";
-  if(!profileRating.length) return h+"<div class='entry'><div class='note'>В мире пока некого выстраивать по мощи.</div></div>";
-  const myPlace=profileRating.findIndex(r=>r.id===meId);
-  h+=rubric("Правители мира", myPlace>=0?"вы "+(myPlace+1)+"-й":"вас нет в первых "+profileRating.length);
+  const err=profileBoardErr[b.id], rows=profileBoardData[b.id];
+  if(err) return h+"<div class='entry'><div class='note' style='color:#e08'>Не удалось получить таблицу: "+escHtml(err)+"</div></div>";
+  if(!rows) return h+"<div class='entry'><div class='note'>Считаем…</div></div>";
+  if(!rows.length) return h+"<div class='entry'><div class='note'>"+escHtml(b.empty)+"</div></div>";
+
+  const myPlace=rows.findIndex(r=>r.id===meId);
+  h+=rubric("Правители мира", myPlace>=0?"вы "+(myPlace+1)+"-й":"вас нет в первых "+rows.length);
   h+="<div class='rank-list'>";
-  profileRating.forEach((r,i)=>{
+  rows.forEach((r,i)=>{
     const me=r.id===meId;
+    const side=b.side?b.side(r):"";
     h+="<div class='rank-row"+(me?" me":"")+"'>"+
        "<span class='rk-place"+(i<3?" top":"")+"'>"+(i+1)+"</span>"+
        "<span class='rk-crest'>"+shieldSvg(r.race,16)+"</span>"+
        "<span class='rk-nick'>"+escHtml(r.nick||"Безымянный лорд")+"</span>"+
-       "<span class='rk-hall'>ратуша "+(r.hall||0)+"</span>"+
-       "<b class='rk-pw'>"+fmt(r.power||0)+"</b></div>";
+       (side?"<span class='rk-hall "+(b.sideCls?b.sideCls(r):"")+"'>"+side+"</span>":"")+
+       "<b class='rk-pw'>"+b.val(r)+"</b></div>";
   });
   h+="</div>";
-  h+="<div class='entry'><div class='note'>Мощь считает сервер — она складывается из построек, "+
-     "войск (дома и в походах), исследований, полководца и его снаряжения. Павшие правители "+
-     "в рейтинг не попадают.</div></div>";
+  h+="<div class='entry'><div class='note'>"+escHtml(b.note)+" Павшие правители в таблицы не попадают.</div></div>";
   return h;
-}
-/* ---- Остаток потолка пары (Фаза 43) --------------------------------------
-   С одним и тем же соперником засчитывается не больше четырёх боёв в час
-   (см. docs/RANKS.md, «Потолок на пару»). Считаем по СВОИМ письмам о боях, а
-   не запросом на сервер: письма и так приходят опросом, в них есть и соперник,
-   и время, и признак «бой засчитан» (d.rating.counted), а журнал rating_events
-   игроку закрыт нарочно — в нём лежит скрытый коэффициент по мощи держав.
-   Считаются бои в ОБЕ стороны: пара неупорядоченная, поменяться ролями и
-   обнулить счётчик нельзя. */
-const MP_PAIR_CAP_BATTLES=4, MP_PAIR_CAP_WINDOW_MS=60*60*1000;
-function mpPairBattlesLeft(oppId){
-  if(oppId==null) return MP_PAIR_CAP_BATTLES;
-  const since=Date.now()-MP_PAIR_CAP_WINDOW_MS;
-  let n=0;
-  const scan=list=>{
-    (list||[]).forEach(m=>{
-      const d=m.data||{};
-      if(d.opponent_id!==oppId) return;
-      if(!d.rating || !d.rating.counted) return;
-      if(new Date(m.created_at).getTime()<since) return;
-      n++;
-    });
-  };
-  scan(mpState.mail); scan(mpState.nodeBattleMail);
-  return Math.max(0, MP_PAIR_CAP_BATTLES-n);
 }
 /* ---- Знак звания ---------------------------------------------------------
    images/ranks/rank-<ключ>.png. ВРЕМЕННАЯ ГРАФИКА: знаки нарисованы скриптом
@@ -13557,10 +13567,10 @@ function handleAct(e){
   if(locCloseBtn){ mpCloseLocate(); return; }
   const profSecBtn=e.target.closest("[data-act='profsec']");
   if(profSecBtn){ profileOpenSection(profSecBtn.dataset.s); return; }
-  const rateTabBtn=e.target.closest("[data-act='ratetab']");
-  if(rateTabBtn){
-    profileRatingTab=rateTabBtn.dataset.t;
-    if(profileRatingTab==="rank") profileLoadBrank(false); else profileLoadRating(false);
+  const boardBtn=e.target.closest("[data-act='board']");
+  if(boardBtn){
+    profileBoard=boardBtn.dataset.b;
+    profileLoadBoard(profileBoard,false);
     refreshProfileIfOpen();
     return;
   }

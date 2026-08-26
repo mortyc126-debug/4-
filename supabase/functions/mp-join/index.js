@@ -74,6 +74,14 @@ async function savePlayerState(admin, row, state, power) {
   // Смена сезона и затухание правят рейтинговые колонки (см.
   // applyRatingUpkeep) — уезжают тем же обновлением, что и состояние, чтобы
   // проверка версии по updated_at накрывала их тоже.
+  if (row && row.__boardsDirty) {
+    extra.power_build = Math.round(row.power_build || 0);
+    extra.power_tech = Math.round(row.power_tech || 0);
+    extra.hall_lv = Math.round(row.hall_lv || 0);
+    extra.gathered_total = Math.round(row.gathered_total || 0);
+    extra.traded_total = Math.round(row.traded_total || 0);
+    extra.camps_taken = Math.round(row.camps_taken || 0);
+  }
   if (row && row.__ratingDirty) {
     extra.rating = Math.round(row.rating || 0);
     extra.rating_peak = Math.round(row.rating_peak || 0);
@@ -878,6 +886,32 @@ function powerOf(p, marchUnits) {
 // (высшая мощь за всё правление, для итога на экране гибели: текущая на
 // момент смерти всегда занижена, у павшего к тому времени нет ни войск, ни
 // половины города).
+// Фаза 44 — числа для таблиц мира. Мгновенные считаются здесь же, из того же
+// состояния, что уже прочитано ради мощи; накопительные лежат в state.stats
+// (их ведёт mp-tick там, где событие происходит) и отсюда только зеркалятся в
+// колонки, по которым идёт сортировка.
+function applyBoardStats(p, row) {
+  if (!row) return;
+  let build = 0;
+  for (const bk of Object.keys(POWER_BUILD)) {
+    const lv = p.b && p.b[bk];
+    if (Array.isArray(lv)) lv.forEach((l) => { build += buildingPowerOf(bk, l || 0); });
+    else build += buildingPowerOf(bk, lv || 0);
+  }
+  let tech = 0;
+  const t = p.tech || {};
+  for (const id of Object.keys(t)) { const lv = t[id] || 0; if (lv) tech += researchPowerOf(id, lv); }
+  const rawHall = p.b && p.b.hall;
+  const hall = Array.isArray(rawHall) ? Math.max(0, ...rawHall.map((v) => v || 0)) : (rawHall || 0);
+  const st = p.stats || {};
+  row.power_build = Math.round(build);
+  row.power_tech = Math.round(tech);
+  row.hall_lv = Math.round(hall);
+  row.gathered_total = Math.round(st.gathered || 0);
+  row.traded_total = Math.round(st.traded || 0);
+  row.camps_taken = Math.round(st.camps || 0);
+  row.__boardsDirty = true;
+}
 function applyPower(p, row, marchUnits) {
   const v = powerOf(p, marchUnits);
   p.peakPower = Math.max(p.peakPower || 0, v);
@@ -1413,6 +1447,8 @@ Deno.serve(async (req) => {
       // Работа «по календарю»: сменился сезон — мягкий пересчёт и печать,
       // молчит выше Властелина — затухание. См. applyRatingUpkeep.
       applyRatingUpkeep(existing.data, st, Date.now());
+      // Числа для таблиц мира — здесь же, по уже прочитанному состоянию.
+      applyBoardStats(st, existing.data);
       // Эта запись — самая частая в игре: клиент дёргает mp-join на КАЖДОМ
       // пятисекундном опросе. Именно она чаще всего и затирала чужие правки
       // (см. подробности у savePlayerState выше): пока mp-join считал
