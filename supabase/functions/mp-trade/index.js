@@ -579,6 +579,13 @@ const MARCH_SPEED_SCALE = 32;
 // mp-recall/mp-redirect/mp-tick: только чтобы t1 > t0 и событие прибытия не
 // оказалось в прошлом на соседней клетке.
 const MIN_TRAVEL = 3;
+// index.html:4332 marchSlots — сколько отрядов держится в поле разом.
+// Обоз занимает такой же слот, как войско: так в оригинале («the trader
+// occupies a troop dispatch queue» на странице Trading Post, которую автор
+// прислал как образец), и так уже считает mp-move — он не исключает mode
+// 'trade' из busy. Без этой проверки вышло бы однобоко: ушедший обоз
+// запрещал бы поход, а поход обозу — нет.
+const marchSlots = (hall) => (hall >= 22 ? 5 : hall >= 17 ? 4 : hall >= 11 ? 3 : hall >= 5 ? 2 : 1);
 const emptyUnits = () => ({ inf: {}, arc: {}, cav: {}, sie: {} });
 // marchBonus — МНОЖИТЕЛЬ (bonuses().march возвращает 1 при отсутствии
 // исследований, а не 0), поэтому умножаем на него, а не на 1+него: та же
@@ -642,6 +649,17 @@ Deno.serve(async (req) => {
     // бы отправить то, что у него по факту уже накопилось.
     const nowSec = Date.now() / 1000;
     syncRes(fromP, nowSec);
+
+    // Слот отряда — общий пул со штурмом, рейдом и сбором; разведка считается
+    // отдельно (то же правило и та же выборка, что в mp-move). Занят он до
+    // возвращения обоза домой, а не до вручения груза (см. applyTradeArrive
+    // в mp-tick: обоз разворачивается и идёт назад).
+    const hallLv = Array.isArray(fromP.b.hall) ? Math.max(0, ...fromP.b.hall) : fromP.b.hall;
+    const { data: outMarches, error: omErr } = await admin
+      .from("marches").select("id,mode").eq("world_id", world.id).eq("player_id", fromRow.id);
+    if (omErr) return jsonResponse({ err: omErr.message }, 500);
+    const busy = (outMarches || []).filter((m) => m.mode !== "scout" && m.mode !== "scoutmarch").length;
+    if (busy >= marchSlots(hallLv)) return jsonResponse({ err: "Все отряды заняты — обоз некому вести" }, 400);
 
     const cap = tradeCap(marketLv), taxPct = tradeTaxPct(marketLv), tax = taxPct / 100;
     const send = {}; let total = 0;
