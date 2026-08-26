@@ -587,16 +587,17 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    иконку, обёртка-плашка не нужна (пользователь явно попросил убрать фон,
    оставить только иконку). z-index:4 — тот же, что у .plate (см. коммент
    там), иначе просто не будет видно/некликабельно поверх iframe (z-index:3).
-   top:190px — ниже и плашки ресурсов родителя, и плавающей coordBar
-   ДВИЖКА (та сама рассчитана на top:100px + своя высота, обе панели в
-   одной системе координат — #chart, где и коордBar через iframe:inset:0,
-   и это меню начинаются от истинного верха экрана, см. #top:position:fixed).
-   Раньше стояла заметно выше и заходила на coordBar (репорт пользователя:
-   "опусти её, она заходит за другую часть интерфейса"). Высота — по
-   содержимому (без bottom), max-height + скролл только на случай марш-
-   слотов больше, чем разумно влезает (marchSlots до 5). */
-#fieldarmy-world{position:absolute;z-index:4;right:14px;top:190px;max-height:40vh;
-  display:flex;flex-direction:column;gap:10px;overflow-y:auto;scrollbar-width:none;
+   top:108px и gap:8px — РОВНО те же, что у городских #brigades/#fieldarmy
+   (см. их правило ниже). Раньше тут стояло 190px: панель опускали, чтобы
+   она не заходила на плавающую координатную строку САМОГО ДВИЖКА
+   (#coordBar). Строку убрали вместе с переносом перехода по координатам в
+   игру (Фаза 38), и разница осталась висеть — при переключении Город/Мир
+   слоты заметно прыгали. Автор: "перемести их туда, где они располагаются
+   в городе... чтобы были иконки идентичны по расположению с Городом в
+   Мире". Высота — по содержимому (без bottom), max-height + скролл только
+   на случай марш-слотов больше, чем разумно влезает (marchSlots до 5). */
+#fieldarmy-world{position:absolute;z-index:4;right:14px;top:108px;max-height:40vh;
+  display:flex;flex-direction:column;gap:8px;overflow-y:auto;scrollbar-width:none;
   align-items:center}
 #fieldarmy-world::-webkit-scrollbar{display:none}
 /* Автор: «странно будет, что в городе они есть, а на мире их нет» — те же
@@ -605,8 +606,8 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    выше — z-index/top/скролл общие резоны). В одиночке своей "мировой"
    панели у бригад раньше не было вовсе (там #fieldarmy-world добавляли
    отдельным запросом только под марши) — теперь есть в обоих режимах. */
-#brigades-world{position:absolute;z-index:4;left:14px;top:190px;max-height:40vh;
-  display:flex;flex-direction:column;gap:10px;overflow-y:auto;scrollbar-width:none;
+#brigades-world{position:absolute;z-index:4;left:14px;top:108px;max-height:40vh;
+  display:flex;flex-direction:column;gap:8px;overflow-y:auto;scrollbar-width:none;
   align-items:center}
 #brigades-world::-webkit-scrollbar{display:none}
 
@@ -716,16 +717,19 @@ body.mp-placing #place-toolbar{display:flex}
 #side-menu.open{display:flex}
 /* Видимое расстояние между иконками — это gap (выше) ПЛЮС вертикальный
    padding каждой кнопки сверху и снизу (кнопки прозрачные, своей рамки не
-   видно, так что глаз читает именно суммарный зазор). Раньше уменьшали
-   только gap (14px->4px) и не учли, что padding:6px даёт ещё +12px —
-   реальное сокращение получалось ~38%, а не запрошенные 70%. Целевой
-   зазор: (14+6+6)*0.3 ≈ 8px = 4px сверху + 4px снизу при gap:0 (выше). */
-#side-menu button{position:relative;display:flex;align-items:center;gap:14px;padding:4px 6px;background:transparent;
+   видно, так что глаз читает именно суммарный зазор).
+   Фаза 40 — разделов стало шесть (добавились Альянс и Магазин), и столбец
+   в 66px с отступами перестал помещаться на телефоне. Автор: "сделай
+   иконки в два раза меньше и зазоры в них меньше, чтобы они все
+   поместились компактно". Иконка 66 -> 33, отступ 4 -> 2: столбец из шести
+   теперь занимает 6*(33+4)=222px против прежних 6*(66+8)=444px у четырёх
+   с лишним. */
+#side-menu button{position:relative;display:flex;align-items:center;gap:14px;padding:2px 4px;background:transparent;
   border:none;color:var(--vellum);font-size:33px;font-variant:small-caps;letter-spacing:.06em;
   text-align:left;text-shadow:0 2px 6px rgba(0,0,0,.9),0 0 10px rgba(0,0,0,.85);border-radius:6px}
 #side-menu button:hover{background:rgba(0,0,0,.35);color:var(--gilt-hi)}
-#side-menu button img{width:66px;height:66px;object-fit:contain;flex:0 0 auto;
-  filter:drop-shadow(0 3px 8px rgba(0,0,0,.9))}
+#side-menu button img{width:33px;height:33px;object-fit:contain;flex:0 0 auto;
+  filter:drop-shadow(0 2px 5px rgba(0,0,0,.9))}
 /* Только иконки, без подписи (пользователь явно попросил) — текст
    остаётся в разметке как aria-label на самой кнопке, а не потерян для
    скринридеров, просто визуально скрыт. */
@@ -1666,6 +1670,21 @@ body.mp-placing #place-toolbar{display:flex}
   font-size:8.5px;color:var(--gilt-hi);text-shadow:0 1px 3px rgba(0,0,0,1),0 0 4px rgba(0,0,0,1)}
 .slotcell .progress{position:absolute;left:8%;right:8%;bottom:0;margin:0;height:3px;
   background:rgba(0,0,0,.5);border:none;border-radius:2px}
+/* Входящий чужой марш в столбце отрядов (Фаза 40). Враждебный обведён
+   гранатовым и слегка пульсирует — автор: "для обороняющегося обвести его
+   в красный или подсветку красную сделать, как при обычных атаках, так и
+   при осадах". Дружеский (чужой обоз с товаром к нам) — спокойная медная
+   зелень, без пульсации: это не угроза, а просто "к вам едут". */
+.slotcell.foe::before,.slotcell.friend::before{content:"";position:absolute;inset:-3px;
+  border-radius:50%;pointer-events:none}
+.slotcell.foe::before{border:2px solid var(--garnet);
+  box-shadow:0 0 10px rgba(150,50,59,.75),inset 0 0 8px rgba(150,50,59,.35);
+  animation:foePulse 1.6s ease-in-out infinite}
+.slotcell.friend::before{border:2px solid var(--verdigris);
+  box-shadow:0 0 8px rgba(77,129,104,.6)}
+.slotcell.foe .timer{color:#e2909a}
+@keyframes foePulse{0%,100%{opacity:1}50%{opacity:.5}}
+@media (prefers-reduced-motion:reduce){ .slotcell.foe::before{animation:none} }
 /* Общий .progress i целится в высокую (22px) полоску (top/bottom:2px внутрь
    рамки) — в этой 3px-плашке от такого отступа заливка схлопывалась в
    нулевую/отрицательную высоту и не была видна вовсе, сколько ни ставь
@@ -3805,6 +3824,10 @@ const COUNTER_UP = 1.5, COUNTER_DOWN = 0.7;
 /* ---- Ресурсы ---- */
 const RES = ["food","wood","stone","gold"];
 const RES_NAME = {food:"Еда",wood:"Дерево",stone:"Камень",gold:"Золото"};
+// Родительный падеж — для фраз вида "за единицу еды дают 0,75 камня".
+// Именительного RES_NAME для связного текста не хватает, а склонять на лету
+// незачем: ресурсов всего четыре. Зеркало RES_RU в mp-barter/index.js.
+const RES_GEN = {food:"еды",wood:"дерева",stone:"камня",gold:"золота"};
 // Янтарь намеренно НЕ в RES_NAME/RES: он не участвует ни в ценах построек,
 // ни в складе, ни в разграблении — только своя жила на карте и счётчик в
 // шапке. Отдельное имя нужно панелям, которые подписывают точку на карте.
@@ -9301,33 +9324,53 @@ function mpMarchIcon(m){
   if(m.state==="go"&&m.mode==="gather") return "images/ui/icon-gather.png";
   return "images/ui/icon-march.png";
 }
-function mpFieldArmyCellHtml(m,nowSec,act){
+// incoming — марш ЧУЖОЙ и идёт к нам. Обоз с товаром (mode:"trade") —
+// дружеский, всё остальное враждебное: автор просил "для обороняющегося
+// обвести его в красный", и одинаково при обычных атаках и при осадах.
+function mpFieldArmyCellHtml(m,nowSec,act,incoming){
   const sieging=m.state==="siege";
   const ico=mpMarchIcon(m);
   const st=MARCH_STATE_RU[m.state]||m.state;
   const hint=act==="followmarch"?" — нажмите, чтобы проследить камерой":"";
-  const title=RU(countUnits(m.units))+" воинов · "+st+" · цель "+m.tx+"·"+m.ty
+  const foe=!!incoming && m.mode!=="trade";
+  const who=incoming ? ((mpState.neighbors.find(n=>n.id===m.player_id)||{}).nick||"Неизвестный") : null;
+  // Обоз воинов не везёт (units у него пустые) — писать "0 воинов" было бы
+  // враньём. Вместо счёта войска — груз: сколько чего в телеге. На обратной
+  // дороге (state:"back", груз вручён — см. applyTradeArrive в mp-tick)
+  // телега пуста, так и пишем.
+  const cargo=(m.data&&(m.mode==="trade"?(incoming?m.data.net:m.data.sent):null))||null;
+  const cargoTxt=m.mode!=="trade" ? null
+    : (m.state==="back" ? "порожняком"
+      : (RES.filter(r=>cargo&&cargo[r]).map(r=>RES_NAME[r]+" "+fmt(cargo[r])).join(", ")||"пусто"));
+  const title=(incoming
+      ? (foe?"Чужое войско: ":"Обоз от ")+who+" · "
+      : "")
+    +(cargoTxt!=null?cargoTxt:RU(countUnits(m.units))+" воинов")+" · "+st+" · цель "+m.tx+"·"+m.ty
     +((sieging||m.state==="hold")?"":" · осталось "+fmtDur(Math.max(0,m.t1-nowSec)))+hint;
+  const cls=" "+(foe?"foe":incoming?"friend":"");
   const attrs=act==="followmarch" ? "data-act='followmarch' data-m='"+m.id+"'" : "data-mpmarch='"+m.id+"'";
   if(sieging){
-    return "<div class='slotcell' "+attrs+" title='"+title+"'>"+
+    return "<div class='slotcell"+cls+"' "+attrs+" title='"+escHtml(title)+"'>"+
        "<img src='"+ico+"'><span class='timer'>Бой</span></div>";
   }
   // Отряд, вставший в пустоши, никуда не идёт — таймера и полоски у него
   // нет вовсе, вместо них подпись "стоит": прежний обратный отсчёт до m.t1
   // у него давно истёк и показывал бы вечный ноль.
   if(m.state==="hold"){
-    return "<div class='slotcell' "+attrs+" title='"+title+"'>"+
+    return "<div class='slotcell"+cls+"' "+attrs+" title='"+escHtml(title)+"'>"+
        "<img src='"+ico+"'><span class='timer'>стоит</span></div>";
   }
   const f=Math.max(0,Math.min(1,(nowSec-m.t0)/Math.max(1,m.t1-m.t0)));
-  return "<div class='slotcell' "+attrs+" title='"+title+"'>"+
+  return "<div class='slotcell"+cls+"' "+attrs+" title='"+escHtml(title)+"'>"+
      "<img src='"+ico+"'><span class='timer'>"+fmtDur(Math.max(0,m.t1-nowSec))+"</span>"+
      "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div></div>";
 }
 function mpRenderFieldArmy(){
   const nowSec=Date.now()/1000;
-  return "<div id='fieldarmy'>"+mpState.marches.map(m=>mpFieldArmyCellHtml(m,nowSec,"mpmarchinfo")).join("")+"</div>";
+  return "<div id='fieldarmy'>"+
+    mpState.marches.map(m=>mpFieldArmyCellHtml(m,nowSec,"mpmarchinfo")).join("")+
+    mpState.incoming.map(m=>mpFieldArmyCellHtml(m,nowSec,"mpmarchinfo",true)).join("")+
+    "</div>";
 }
 // Зеркало одиночного renderFieldArmyWorld() (см. её заголовок) — та же
 // панель, тот же DOM-узел #fieldarmy-world (уже слушает handleAct, см.
@@ -9340,7 +9383,8 @@ function mpRenderFieldArmyWorld(){
   if(!inWorldView()) return;
   const el=$("#fieldarmy-world"); if(!el) return;
   const nowSec=Date.now()/1000;
-  const h=mpState.marches.map(m=>mpFieldArmyCellHtml(m,nowSec,"followmarch")).join("");
+  const h=mpState.marches.map(m=>mpFieldArmyCellHtml(m,nowSec,"followmarch")).join("")+
+          mpState.incoming.map(m=>mpFieldArmyCellHtml(m,nowSec,"followmarch",true)).join("");
   if(h!==lastMpFieldArmyWorld){ lastMpFieldArmyWorld=h; setHtml(el,h); }
 }
 // Та же ветвящаяся логика (участок ещё не открыт / в очереди / макс.
@@ -10712,7 +10756,10 @@ async function mpDoBarter(){
   mpState.loading=true; mpTradeCtx.err=null; mpTradeRepaint();
   try{
     const r=await mpCall("mp-barter",{from:mpTradeCtx.bFrom,to:mpTradeCtx.bTo,amount});
-    await mpRefreshPlayer();
+    // Квитанцию тянем сразу, не дожидаясь медленной полосы опроса (она ходит
+    // раз в минуту): игрок обменял ресурсы и вполне может тут же открыть
+    // почту сверить курс — письмо должно там уже лежать.
+    await Promise.all([mpRefreshPlayer(), mpRefreshBarterMail()]);
     mpTradeCtx.bAmount=0;
     herald("Обменяно: "+fmt(r&&r.got||0)+" "+RES_NAME[mpTradeCtx.bTo].toLowerCase()+".");
   }catch(e){ mpTradeCtx.err=e.message; }
@@ -14719,8 +14766,15 @@ function mpBuildWorldSnapshot(){
   }
   const marches=[];
   const seenIds=new Set();
-  mpState.marches.forEach(m=>{ seenIds.add(m.id); marches.push(withPath(Object.assign({pid:me.id},m), me)); });
+  // Обозы (mode:"trade") в 3D не выводим — автор прямо разрешил: "Пусть его
+  // на карте и не видно, но иконка должна быть у двоих". Модели телеги в
+  // движке нет, а рисовать его общей моделью похода — врать: на карте
+  // появилось бы войско, которого нет (units у обоза пустые), и соседи
+  // приняли бы мирную телегу за подходящую армию. В панелях отрядов он при
+  // этом виден у обеих сторон — там иконка честная, своя.
+  mpState.marches.forEach(m=>{ if(m.mode==="trade") return; seenIds.add(m.id); marches.push(withPath(Object.assign({pid:me.id},m), me)); });
   mpState.incoming.forEach(m=>{
+    if(m.mode==="trade") return;                 // см. выше — обоз на карте не рисуем
     const att=byId[m.player_id]; if(!att) return; // соседа уже нет в mpState.neighbors — не рисуем повисший маркер
     seenIds.add(m.id);
     marches.push(withPath(Object.assign({pid:m.player_id},m), att));
@@ -15253,7 +15307,7 @@ async function claimChronicle(){
    восполняются со временem — серверное производство ещё не перенесено,
    стартовых 100000 хватает на несколько заказов набора для проверки.
    ========================================================================= */
-let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[], siegeMail:[], nodeBattleMail:[], worldBattles:[], gatherMail:[], tradeMail:[], scoutedMail:[], noteMail:[], pmMail:[] };
+let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[], siegeMail:[], nodeBattleMail:[], worldBattles:[], gatherMail:[], tradeMail:[], barterMail:[], scoutedMail:[], noteMail:[], pmMail:[] };
 let mpPollTimer = null;
 // Идёт ли прямо сейчас вход/авто-резюме в общий мир (см. mpOpen) — защита
 // от повторного запуска при быстрых переключениях вкладок меню.
@@ -15285,7 +15339,8 @@ function mpSaveCache(){
       camps:mpState.camps, marches:mpState.marches, incoming:mpState.incoming,
       mail:mpState.mail, scoutMail:mpState.scoutMail, raidMail:mpState.raidMail, siegeMail:mpState.siegeMail,
       nodeBattleMail:mpState.nodeBattleMail, gatherMail:mpState.gatherMail,
-      tradeMail:mpState.tradeMail, scoutedMail:mpState.scoutedMail, noteMail:mpState.noteMail,
+      tradeMail:mpState.tradeMail, barterMail:mpState.barterMail,
+      scoutedMail:mpState.scoutedMail, noteMail:mpState.noteMail,
       pmMail:mpState.pmMail,
     }));
   }catch(e){ /* приватный режим/переполнение — кэш не обязателен, молча живём без него */ }
@@ -15301,7 +15356,8 @@ function mpLoadCache(){
     mpState.marches=c.marches||[]; mpState.incoming=c.incoming||[];
     mpState.mail=c.mail||[]; mpState.scoutMail=c.scoutMail||[]; mpState.raidMail=c.raidMail||[]; mpState.siegeMail=c.siegeMail||[];
     mpState.nodeBattleMail=c.nodeBattleMail||[]; mpState.gatherMail=c.gatherMail||[];
-    mpState.tradeMail=c.tradeMail||[]; mpState.scoutedMail=c.scoutedMail||[]; mpState.noteMail=c.noteMail||[];
+    mpState.tradeMail=c.tradeMail||[]; mpState.barterMail=c.barterMail||[];
+    mpState.scoutedMail=c.scoutedMail||[]; mpState.noteMail=c.noteMail||[];
     mpState.pmMail=c.pmMail||[];
     return true;
   }catch(e){ return false }
@@ -15683,7 +15739,8 @@ function mpTickSlots(){
   }
   const fc=$("#fieldarmy");
   if(fc){
-    const h=mpState.marches.map(m=>mpFieldArmyCellHtml(m,nowSec,"mpmarchinfo")).join("");
+    const h=mpState.marches.map(m=>mpFieldArmyCellHtml(m,nowSec,"mpmarchinfo")).join("")+
+            mpState.incoming.map(m=>mpFieldArmyCellHtml(m,nowSec,"mpmarchinfo",true)).join("");
     if(h!==lastMpFieldArmyCity){ lastMpFieldArmyCity=h; setHtml(fc,h); }
   }
   mpRenderBrigadesWorld();   // обе сами проверяют, что мы в объёмной карте
@@ -15761,7 +15818,7 @@ async function mpRefreshAll(includeSlowLane){
     if(includeSlowLane) jobs.push(
       mpRefreshMail(), mpRefreshScoutMail(), mpRefreshRaidMail(), mpRefreshSiegeMail(),
       mpRefreshNodeBattleMail(), mpRefreshGatherMail(), mpRefreshTradeMail(),
-      mpRefreshScoutedMail(),
+      mpRefreshBarterMail(), mpRefreshScoutedMail(),
       mpRefreshNoteMail(), mpRefreshPmMail()
     );
     // allSettled, не all: одна упавшая выборка (сеть моргнула на одной из
@@ -15877,6 +15934,14 @@ async function mpRefreshTradeMail(){
   const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
     .eq("kind","trade").order("created_at",{ascending:false}).limit(10);
   if(!error && data){ mpState.tradeMail=data; mpRerenderData(); }
+}
+// Квитанции размена (mail, kind:"barter", см. mp-barter) — та же схема
+// выборки, что у остальных рубрик.
+async function mpRefreshBarterMail(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
+    .eq("kind","barter").order("created_at",{ascending:false}).limit(10);
+  if(!error && data){ mpState.barterMail=data; mpRerenderData(); }
 }
 async function mpRefreshNoteMail(){
   if(!mpState.player) return;
@@ -16011,7 +16076,7 @@ async function mpDoRestart(){
   mpState.joined=false; mpState.player=null; mpState.race=null; mpState.err=null;
   mpState.neighbors=[]; mpState.nodes=[]; mpState.camps=[]; mpState.marches=[]; mpState.incoming=[];
   mpState.mail=[]; mpState.scoutMail=[]; mpState.raidMail=[]; mpState.siegeMail=[];
-  mpState.nodeBattleMail=[]; mpState.gatherMail=[]; mpState.tradeMail=[];
+  mpState.nodeBattleMail=[]; mpState.gatherMail=[]; mpState.tradeMail=[]; mpState.barterMail=[];
   mpState.scoutedMail=[]; mpState.noteMail=[]; mpState.pmMail=[];
   mpHideDeath();
   await mpOpen();
@@ -16461,7 +16526,11 @@ async function mpRefreshMarches(){
     // он в этой панели всегда был (renderFieldArmyWorld фильтрует только по
     // владельцу), да и модель разведчика в 3D показывать не над чем, пока
     // его марш сюда не попадает.
-    .eq("player_id",mpState.player.id).in("mode",["attack","gather","raid","move","scout"]).order("t1");
+    // "trade" — свой обоз. Без него отправитель не видел собственную телегу
+    // вовсе (автор: "Иконки обоза нет, при отправке ресурсов... иконка должна
+    // быть у двоих"): марш в базе был, слот отряда занимал, а в панели его не
+    // существовало. Получателю тот же обоз приходит через mpRefreshIncoming.
+    .eq("player_id",mpState.player.id).in("mode",["attack","gather","raid","move","scout","trade"]).order("t1");
   if(!error && data){ mpState.marches=data; mpMaybeToggleBattleFastPoll(); mpRerenderData(); }
 }
 // Фаза 8, кусочек 1 — точки сбора рядом (map_cells, t:"node"). RLS
@@ -16553,8 +16622,15 @@ async function mpRefreshIncoming(){
   // разведку, показывается занят слот марша на 0 сек и не уходит".
   // Разведка — не атака, и теперь у неё есть свой честный способ сообщить
   // цели о себе: письмо kind:"scouted" (см. applyScoutArrive в mp-tick).
-  const { data, error } = await sb.from("marches").select("id,player_id,t0,t1,tx,ty,units,state,data")
-    .eq("data->>defender_id", String(mpState.player.id)).neq("mode","scout")
+  // Фаза 40 — сюда же попадают ЧУЖИЕ ОБОЗЫ, идущие к нам (data.to_id, см.
+  // mp-trade). Автор: "иконка должна быть у двоих пользователей — у того,
+  // кто отправил, и того, к кому он идёт". У отправителя обоз и так свой
+  // (mpState.marches), получателю его взять было неоткуда.
+  // mode берём тоже: по нему список ниже отличает дружеский обоз от
+  // враждебного марша (см. mpFieldArmyCellHtml/.foe).
+  const meId=String(mpState.player.id);
+  const { data, error } = await sb.from("marches").select("id,player_id,mode,t0,t1,tx,ty,units,state,data")
+    .or("data->>defender_id.eq."+meId+",data->>to_id.eq."+meId).neq("mode","scout")
     .in("state",["go","siege"]).order("t1");
   if(!error && data){ mpState.incoming=data; mpMaybeToggleBattleFastPoll(); mpRerenderData(); }
 }
@@ -16788,7 +16864,8 @@ function mpUnreadByCat(){
   const n=a=>a.filter(unread).length;
   return {
     report: n(mpState.mail)+n(mpState.scoutMail)+n(mpState.raidMail)+
-            n(mpState.nodeBattleMail)+n(mpState.gatherMail)+n(mpState.tradeMail),
+            n(mpState.nodeBattleMail)+n(mpState.gatherMail)+n(mpState.tradeMail)+
+            n(mpState.barterMail),
     personal: n(mpState.noteMail)+
             mpState.pmMail.filter(m=>m.data&&m.data.role==="recipient"&&unread(m)).length,
     system: n(mpState.siegeMail)+n(mpState.scoutedMail),
@@ -17202,6 +17279,42 @@ function mpMailTradeEntry(m){
     sub: RES.filter(r=>goods[r]).map(r=>RES_NAME[r]+" "+fmt(goods[r])).join(" · ")||"пусто",
     detailHtml: rows+taxLine};
 }
+// Квитанция размена (mail, kind:"barter", см. mp-barter) — автор: «при
+// обмене письмо от системы должно приходить, что и сколько поменял, какова
+// была ставка и налог». Живёт в "Отчётах", рядом с обозом, а не в "Системе":
+// "Система" по уговору — вести о ЧУЖИХ действиях против нас (подход войск,
+// наведённая разведка), а размен — наше собственное действие, и отчитывается
+// оно так же, как обоз, сбор и бой. Оба письма Рынка оказываются в одной
+// ленте, что и правильно: это одна ведомость.
+//
+// Иконка — icon-shop (меняла в городе), а не icon-trade (обоз в дороге):
+// разные механики, и в списке они не должны сливаться.
+//
+// Ставку показываем как "1 : 0,75" (за одну отданную единицу — столько
+// полученных), а не голым числом 0.75: так читается направление обмена, и
+// именно в таком виде автор её и назвал.
+function mpMailBarterEntry(m){
+  const d=m.data||{};
+  const gave=d.gave||0, got=d.got||0;
+  const fromN=RES_NAME[d.from]||d.from||"?", toN=RES_NAME[d.to]||d.to||"?";
+  const rate=(typeof d.rate==="number"?d.rate:0);
+  // toFixed(2) без хвостовых нулей: 1 остаётся "1", 0.75 — "0,75",
+  // 0.6666… — "0,67". Запятая, а не точка — как в остальном тексте игры.
+  const rateTxt=rate.toFixed(2).replace(/0+$/,"").replace(/\.$/,"").replace(".",",");
+  const taxTxt=((d.tax||0)*100).toFixed(1).replace(/\.0$/,"");
+  return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-shop.png", cls:"", tone:"gold",
+    title:"Размен на Рынке",
+    sub:fromN+" "+fmt(gave)+" → "+toN+" "+fmt(got),
+    detailHtml:
+      "<div class='mail-res-row'>"+
+        resIconSpan(d.from,"−"+fmt(gave))+resIconSpan(d.to,"+"+fmt(got))+
+      "</div>"+
+      "<div class='note'>Ставка 1 : "+rateTxt+" — за 100 "+
+        (RES_GEN[d.from]||fromN)+" дают "+fmt(Math.round(rate*100))+" "+(RES_GEN[d.to]||toN)+
+        " (до налога).</div>"+
+      "<div class='note'>Налог Рынка"+(d.market_lv?" "+d.market_lv+" ур.":"")+" — "+taxTxt+"%"+
+        (d.lost?" (удержано "+fmt(d.lost)+" "+(RES_GEN[d.to]||toN)+")":"")+".</div>"};
+}
 // "На вас была разведка" (mail, kind:"scouted", см. applyScoutArrive в
 // mp-tick) — обратная сторона донесения: цель узнаёт, что её осматривали,
 // кто и откуда. Координаты кликабельные (mpLocLink), как и просил автор.
@@ -17268,7 +17381,8 @@ function mpMailReportEntries(){
     mpState.raidMail.map(m=>mpMailCached(m,mpMailRaidEntry)),
     mpState.nodeBattleMail.map(m=>mpMailCached(m,mpMailNodeEntry)),
     mpState.gatherMail.map(m=>mpMailCached(m,mpMailGatherEntry)),
-    mpState.tradeMail.map(m=>mpMailCached(m,mpMailTradeEntry))
+    mpState.tradeMail.map(m=>mpMailCached(m,mpMailTradeEntry)),
+    mpState.barterMail.map(m=>mpMailCached(m,mpMailBarterEntry))
   ).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
 }
 // "Личное" — повышения генерала + входящие письма от игроков.

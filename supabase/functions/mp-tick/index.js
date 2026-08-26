@@ -4015,7 +4015,38 @@ async function applyTradeArrive(admin, m) {
     const { error: mailErr } = await admin.from("mail").insert(mailRows);
     if (mailErr) throw mailErr;
   }
-  await admin.from("marches").delete().eq("id", m.id);
+  // Обратная дорога — прямое указание автора («Обратная дорога конечно тоже
+  // нужна») и то же, что в оригинале: возчик отвязывает телегу и едет домой,
+  // а слот отряда (см. проверку busy в mp-trade) держится занятым до его
+  // возвращения, а не освобождается в момент вручения груза. Иначе Рынок был
+  // бы вдвое быстрее любого похода при той же цене слота.
+  //
+  // Обоз пустой — units:{} и никакого carry, — так что общий applyMarchHome
+  // обрабатывает его прибытие ровно как любой другой возврат: воинов
+  // прибавит ноль, добычи нет, генерала нет, строку марша удалит. Отдельная
+  // ветка ему не нужна.
+  //
+  // Дорожные dist/spd лежат в data с отправки — назад той же дорогой и с той
+  // же скоростью, что и туда (тот же расчёт, что у sendSurvivorsHome). from —
+  // ГОРОД ПОЛУЧАТЕЛЯ: линия возврата ведётся клиентом именно по этому полю,
+  // без него обоз зримо прыгнул бы домой и уже оттуда пошёл обратно.
+  const dist = d.dist || 0, spd = d.spd || 1;
+  const travelBack = Math.max(MIN_TRAVEL, (dist / spd) * 60);
+  const home = d.from || {};
+  const { error: backErr } = await admin.from("marches").update({
+    state: "back", t0: nowSec, t1: nowSec + travelBack,
+    tx: home.x != null ? home.x : m.tx, ty: home.y != null ? home.y : m.ty,
+    // Груз с обоза снимаем: он вручён (или пропал вместе с получателем).
+    // Оставить sent/net в data значило бы показывать в подсказке к иконке
+    // товар, которого в телеге уже нет.
+    data: { ...d, sent: {}, net: {}, delivered: true, from: { x: m.tx, y: m.ty } },
+  }).eq("id", m.id);
+  if (backErr) throw backErr;
+  const { error: homeEvErr } = await admin.from("events").insert({
+    world_id: m.world_id, fire_at: new Date((nowSec + travelBack) * 1000).toISOString(),
+    type: "march_home", data: { march_id: m.id },
+  });
+  if (homeEvErr) throw homeEvErr;
 }
 async function applyGathered(admin, ev) {
   const marchId = ev.data && ev.data.march_id;

@@ -97,6 +97,19 @@ const r = await page.evaluate(async ()=>{
       tax:0.31,x:130,y:-50}),
     mk(62,'trade',{role:'sender',lost:true,to_nick:'Бедолага',sent:{food:5000},net:{food:3450}}),
   ];
+  // Квитанции размена — все четыре ресурса в обе стороны, чтобы поймать и
+  // ставку 1 (еда->дерево), и 0,75, и 0,5, и «некрасивую» 0,67 (камень->золото).
+  mpState.barterMail=[
+    mk(63,'barter',{from:'food',to:'wood', gave:1000,got:690, rate:1,   tax:0.31,lost:310,market_lv:5}),
+    mk(64,'barter',{from:'food',to:'stone',gave:1000,got:517, rate:0.75,tax:0.31,lost:233,market_lv:5}),
+    mk(65,'barter',{from:'wood',to:'gold', gave:1000,got:345, rate:0.5, tax:0.31,lost:155,market_lv:5}),
+    mk(66,'barter',{from:'stone',to:'gold',gave:1000,got:460, rate:2/3, tax:0.31,lost:207,market_lv:5}),
+    mk(67,'barter',{from:'gold',to:'food', gave:1000,got:1380,rate:2,   tax:0.31,lost:620,market_lv:25}),
+  ];
+  mpState.scoutedMail=[
+    mk(68,'scouted',{by_nick:'Сосед',se:3,x:130,y:-50}),
+    mk(69,'scouted',{by_nick:'Тихоня',se:0}),
+  ];
   mpState.noteMail=[ mk(70,'note',{title:'Весть',body:'Простой текст'}) ];
   mpState.pmMail=[ mk(80,'pm',{role:'recipient',from_nick:'Сосед',subject:'Тема',body:'Здравствуй'}) ];
 
