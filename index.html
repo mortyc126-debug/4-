@@ -243,6 +243,31 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    длине результата, а не только сокращаем разряды. */
 .profile-power-chip{position:absolute;top:37%;left:50%;transform:translate(-50%,-50%);
   font-family:var(--data);color:var(--gilt-hi);font-weight:bold;white-space:nowrap}
+/* Выбор ресурса в обмене на Рынке (mpBarterBodyHtml) — четыре плитки в ряд.
+   Пергаментная гамма, как у остальной карточки здания. */
+.bt-pick{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:4px}
+.bt-res{display:flex;flex-direction:column;align-items:center;gap:3px;padding:7px 2px;
+  border:1px solid rgba(90,69,48,.3);border-radius:8px;background:transparent;
+  color:#5a4530;font-size:11.5px}
+.bt-res img{width:30px;height:30px;object-fit:contain}
+.bt-res.on{border-color:#8a6d2c;background:rgba(138,109,44,.16);color:#3a2c1c}
+.bt-res.off{opacity:.35}
+.bt-res.off:hover{opacity:.5}
+
+/* Строка выбора войск в окнах отправки (mpTroopRowHtml): подпись сверху,
+   под ней ползунок, число и "Всё" одной строкой. Тёмная гамма — эти окна
+   рисуются в #building-modal, но своим фоном, не на пергаменте карточки
+   здания. */
+.mp-troop{margin:9px 0;padding-bottom:8px;border-bottom:1px solid var(--rule-soft)}
+.mp-troop:last-of-type{border-bottom:none}
+.mt-hd{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:5px}
+.mt-nm{font-size:13px;color:var(--vellum)}
+.mt-have{font-size:11.5px;color:var(--vellum-faint);font-family:var(--data);white-space:nowrap}
+.mt-row{display:flex;align-items:center;gap:9px}
+.mt-range{flex:1 1 auto;min-width:0}
+.mt-num{flex:0 0 74px;width:74px;text-align:right}
+.mt-all{flex:0 0 auto;padding:4px 10px;font-size:12px}
+
 /* Фаза 34 — форма торгового обоза (mpTradeSheetHtml). Живёт в
    #building-modal, то есть на светлом пергаменте карточки здания, — поэтому
    свои чернила, как у .bm-hp рядом, а не тёмная гамма остальных экранов. */
@@ -1508,6 +1533,14 @@ body.mp-placing #place-toolbar{display:flex}
   background:var(--verdigris);transition:width .4s ease,background .4s ease}
 .cbuild .bhp.warn i{background:var(--gilt)}
 .cbuild .bhp.crit i{background:var(--garnet);animation:bhpPulse 1.4s ease-in-out infinite}
+/* Таймер занятости здания (набор/лечение/ковка/исследование) — маленькая
+   плашка у ВЕРХНЕГО края плитки, чтобы не спорить со значком уровня и
+   полоской прочности внизу. Автор просил "не сильно большие, чтобы
+   помещались": моноширинный 9px, тёмная подложка, по центру. */
+.cbuild .bbusy{position:absolute;top:2px;left:50%;transform:translateX(-50%);
+  font-family:var(--data);font-size:9px;line-height:1.5;white-space:nowrap;
+  color:var(--gilt-hi);background:rgba(0,0,0,.66);border-radius:3px;padding:0 4px;
+  z-index:3;pointer-events:none;box-shadow:0 0 0 1px rgba(0,0,0,.5)}
 /* Значок уровня стоит там же, у нижнего края, и на узкой плитке налезал на
    полоску. Полоска теперь есть у всех построенных зданий, поэтому и подъём
    значка общий — но правило оставлено на :has(), чтобы пустой участок
@@ -4170,6 +4203,28 @@ function buildHpShown(st,bk,plot,nowSec){
   const dt=Math.max(0,(nowSec||Date.now()/1000)-from);
   return Math.max(0,Math.min(max, cur + max*BUILD_REGEN_PER_HOUR*(dt/3600)));
 }
+// Что здание сейчас делает и сколько ему осталось — маленькой плашкой прямо
+// на плитке. Автор: "добавь таймеры над казармами, сколько занимает
+// тренировка по времени, а то так неудобно постоянно заглядывать и смотреть.
+// Но не сильно большие, чтобы помещались".
+// Источник — то же состояние, что читают карточки зданий: набор войск по
+// роду (st.train[t] у казарм/стрельбища/конюшни/осадной), лечение
+// (st.heal у лазарета), ковка (st.craft у горна), исследование (st.rsch у
+// академии). Стройка сюда НЕ входит: у неё свои слоты бригад слева, и
+// дублировать её на плитке незачем.
+const BLD_BUSY_FIELD={ barracks:["train","inf"], range:["train","arc"],
+                       stable:["train","cav"], siege:["train","sie"],
+                       hospital:["heal"], forge:["craft"], academy:["rsch"] };
+function buildBusyUntil(st,bk){
+  const f=BLD_BUSY_FIELD[bk]; if(!f||!st) return 0;
+  const box=f[1]!=null ? (st[f[0]]&&st[f[0]][f[1]]) : st[f[0]];
+  return (box&&box.t1)||0;
+}
+function buildBusyBadgeHtml(st,bk,nowSec){
+  const t1=buildBusyUntil(st,bk);
+  if(!t1||t1<=nowSec) return "";
+  return "<span class='bbusy'>"+fmtDur(t1-nowSec)+"</span>";
+}
 // Полоска под зданием на карте города — у КАЖДОГО построенного здания.
 // Раньше она появлялась только у повреждённого (чтобы мирный город не был
 // утыкан одинаковыми зелёными чертами), но автор попросил обратное прямо:
@@ -5296,6 +5351,13 @@ function bonuses(p, defending){
   Object.keys(multAcc2).forEach(f=>b[f]*=(1+multAcc2[f]));
   return b;
 }
+// Вес ресурса: во сколько раз его добывают медленнее еды. 0.75 у камня и
+// 0.5 у золота — не оценка, а точное отношение по всей табличке PROD_TABLE
+// (см. комментарий в production ниже). Одна таблица на весь файл: те же
+// числа нужны ёмкости участков (plotFillCap), карточкам зданий и обмену
+// ресурсов на Рынке (barterRate) — четыре одинаковых литерала по месту
+// разъехались бы при первой же правке баланса.
+const PROD_MULT={food:1,wood:1,stone:0.75,gold:0.5};
 function production(p){ // единиц в час
   const B=bonuses(p), out={};
   const map={food:"farm",wood:"lumber",stone:"quarry",gold:"mine"};
@@ -5306,7 +5368,7 @@ function production(p){ // единиц в час
   // нужна отдельная кривая — та же PROD_TABLE с фиксированным множителем.
   for(const r of RES){
     let base=0; p.b[map[r]].forEach(lv=>{ if(lv>0) base+=prodRate(lv); });
-    let v=base * ({food:1,wood:1,stone:0.75,gold:0.5}[r]) * handicap;
+    let v=base * PROD_MULT[r] * handicap;
     v*=1+B.prodAll;
     v*=1+(r==="food"?B.prodFood:r==="wood"?B.prodWood:r==="stone"?B.prodStone:B.prodGold);
     v*=1+((r==="food"||r==="wood")?B.prodFW:B.prodSG);
@@ -5321,9 +5383,8 @@ function production(p){ // единиц в час
 // Здесь она используется для обоих механик — см. capacity()/syncRes() ниже.
 function plotFillCap(p){
   const map={food:"farm",wood:"lumber",stone:"quarry",gold:"mine"};
-  const mult={food:1,wood:1,stone:0.75,gold:0.5};   // тот же множитель ресурса, что и в production()
   const out={};
-  RES.forEach(r=>{ let extra=0; p.b[map[r]].forEach(lv=>extra+=plotCap(lv)*mult[r]); out[r]=Math.round(extra); });
+  RES.forEach(r=>{ let extra=0; p.b[map[r]].forEach(lv=>extra+=plotCap(lv)*PROD_MULT[r]); out[r]=Math.round(extra); });
   return out;
 }
 function capacity(p){    // своя вместимость на каждый ресурс — склад + защита самих участков (при набеге)
@@ -8532,7 +8593,7 @@ let tab="city", tempo=1, lastReal=Date.now(), lastFolio="", lastMenuBody="", aca
 // звали centerOn(x,y), так и зовут, изменилась только реализация.
 function centerOn(x,y){
   const w=world3dWin();
-  if(w){ w.cam.tx=x; w.cam.tz=y; w.cam.ty=w.H(x,y)+15; }
+  if(w) w.goToWorldPos(x,y);
 }
 
 /* =========================================================================
@@ -9089,6 +9150,7 @@ function mpRenderFreeformCity(){
        "style='left:"+r.left+"%;top:"+r.top+"%;width:"+r.w+"%;height:"+r.h+"%'>"+
        "<div class='shape'></div>"+
        (lv>0?(bk!=="wall"?"<img class='bimg' src='"+cityCellImg({bk,pl:null})+"'>":"")+"<span class='lvl'>"+lv+"</span>"+
+             buildBusyBadgeHtml(st,bk,nowSecCity)+
              buildHpBarHtml(st,bk,null,nowSecCity):"")+
        "</div>";
   });
@@ -9108,6 +9170,7 @@ function mpRenderFreeformCity(){
        "style='left:"+r.left+"%;top:"+r.top+"%;width:"+r.w+"%;height:"+r.h+"%'>"+
        "<div class='shape'></div>"+
        "<img class='bimg' src='"+cityCellImg({bk:e.b,pl:e.plot})+"'><span class='lvl'>"+lv+"</span>"+
+       buildBusyBadgeHtml(st,e.b,nowSecCity)+
        buildHpBarHtml(st,e.b,e.plot,nowSecCity)+
        "</div>";
   });
@@ -9841,7 +9904,7 @@ function mpInvHtml(pShim,st){
 function mpBuildingStatDeltaHtml(bk,lv,nx,hallLv){
   const B=BUILDINGS[bk];
   if(B.prod){
-    const mult={food:1,wood:1,stone:0.75,gold:0.5}[B.prod];
+    const mult=PROD_MULT[B.prod];
     const cur=Math.round(prodRate(lv)*mult), next=Math.round(prodRate(nx)*mult);
     return "<table id='bm-stats'><tr><td>Добыча "+RES_NAME[B.prod].toLowerCase()+"/ч</td><td>"+fmt(cur)+" &rarr; "+fmt(next)+"</td></tr></table>";
   }
@@ -10461,6 +10524,24 @@ const TRADE_SPEED_MULT=3;
 function tradeSpeed(p){
   return TROOP_TYPES.cav.speed*TRADE_SPEED_MULT*MARCH_SPEED_SCALE*bonuses(p).march;
 }
+/* ---- Обмен ресурсов (бартер) — Фаза 39 -----------------------------------
+   Автор: «менять ресурсы внутри города, так же со ставкой налога и... с
+   балансом, не 1:1: дерево и еду можно менять 1:1, еда/дерево на камень
+   1:0,75, еда/дерево на золото 1:0,5, а камень на золото — тут уже твоя
+   математика от тех значений что есть».
+   Названные числа — это в точности PROD_MULT, множители добычи, уже
+   существующие в игре. Смысл прямой: золота добывается вдвое меньше, чем
+   еды, значит единица золота вдвое дороже. Отсюда одна формула на все пары —
+   ставка(из A в B) = вес(B)/вес(A), — и она сама доводит те пары, которые
+   автор оставил на меня: камень->золото 0.667, золото->камень 1.5,
+   золото->еда 2. Система обратима: без налога круг "еда -> камень -> еда"
+   возвращает ровно исходное, выигрыша из воздуха нет, платится только налог.
+   Считает и проводит обмен сервер (supabase/functions/mp-barter) — здесь те
+   же числа для предпросмотра. */
+const barterRate=(from,to)=>PROD_MULT[to]/PROD_MULT[from];
+function barterGet(amount,from,to,pct){
+  return Math.floor((amount*barterRate(from,to)*(100-pct))/100);
+}
 function mpMarketLv(st){
   const raw=st&&st.b&&st.b.market;
   return Array.isArray(raw)?Math.max(0,...raw.map(v=>v||0)):(raw||0);
@@ -10491,7 +10572,8 @@ function mpOpenTradeModal(){
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpForgeTab=null; mpForgeRarity=null;
   mpCitySel=-1; mpLayoutSel=-1; mpFixedSel=null; mpPickerOpen=false;
-  mpTradeCtx={ to:null, res:{food:0,wood:0,stone:0,gold:0}, err:null, q:"" };
+  mpTradeCtx={ tab:"send", to:null, res:{food:0,wood:0,stone:0,gold:0}, err:null, q:"",
+               bFrom:"food", bTo:"stone", bAmount:0 };
   lastTradeSheet=mpTradeSheetHtml();
   setHtml($("#bm-body"), lastTradeSheet);
   $("#building-modal").classList.add("open");
@@ -10508,10 +10590,16 @@ function mpTradeSheetHtml(){
   const p=mpState.player, st=p.state;
   const {lv,cap,tax,total,net,over}=mpTradeTotals();
   const to=mpState.neighbors.find(n=>n.id===mpTradeCtx.to);
-  let h="<div id='bm-title'>Торговый обоз</div>"+
-        "<div id='bm-sub'>Рынок "+lv+" ур. · поднимает "+fmt(cap)+" · налог "+
+  const barter=mpTradeCtx.tab==="barter";
+  let h="<div id='bm-title'>"+(barter?"Меняльная лавка":"Торговый обоз")+"</div>"+
+        "<div id='bm-sub'>Рынок "+lv+" ур. · "+(barter?"меняет за раз ":"поднимает ")+fmt(cap)+" · налог "+
         (tax*100).toFixed(1).replace(/\.0$/,"")+"%</div>";
+  h+="<div id='ac-tabs'>"+
+     "<button class='"+(barter?"":"on")+"' data-mp='tradetab' data-t='send'>Обоз</button>"+
+     "<button class='"+(barter?"on":"")+"' data-mp='tradetab' data-t='barter'>Обмен</button>"+
+     "</div>";
   if(mpTradeCtx.err) h+="<div class='note' style='color:#e08'>"+escHtml(mpTradeCtx.err)+"</div>";
+  if(barter) return h+mpBarterBodyHtml(st,lv,cap,tax);
 
   // ---- получатель ----
   h+="<div class='trade-hd'>Кому</div>";
@@ -10570,6 +10658,65 @@ function mpTradeSheetHtml(){
      "<img src='images/ui/icon-trade.png' alt=''>Отправить</button>"+
      "<button class='seal' data-act='closebuilding'>Отмена</button></div>";
   return h;
+}
+// Тело вкладки "Обмен". Две строки выбора ресурса (что отдаём / что берём),
+// количество ползунком и живой расчёт: ставка, налог, сколько выйдет.
+function mpBarterBodyHtml(st,lv,cap,tax){
+  const from=mpTradeCtx.bFrom, to=mpTradeCtx.bTo;
+  const have=Math.floor((st.res&&st.res[from])||0);
+  const maxGive=Math.min(have,cap);
+  const amount=Math.max(0,Math.min(maxGive,Math.floor(mpTradeCtx.bAmount||0)));
+  const pct=tradeTaxPct(lv);
+  const got=barterGet(amount,from,to,pct);
+  const rate=barterRate(from,to);
+
+  const picker=(sel,which)=>"<div class='bt-pick'>"+RES.map(r=>
+      "<button class='bt-res"+(r===sel?" on":"")+(which==='to'&&r===from?" off":"")+
+      (which==='from'&&r===to?" off":"")+"' data-mp='btpick' data-w='"+which+"' data-r='"+r+"'>"+
+      "<img src='images/ui/res-"+r+".png' alt=''><span>"+RES_NAME[r]+"</span></button>").join("")+"</div>";
+
+  let h="<div class='trade-hd'>Отдаём</div>"+picker(from,"from")+
+        "<div class='note'>На складе "+fmt(have)+" · за раз Рынок меняет не больше "+fmt(cap)+"</div>";
+  h+="<div class='trade-hd'>Получаем</div>"+picker(to,"to");
+  h+="<div class='mp-troop' style='margin-top:12px'>"+
+     "<div class='mt-hd'><span class='mt-nm'>Сколько меняем</span>"+
+     "<span class='mt-have'>до "+fmt(maxGive)+"</span></div>"+
+     "<div class='mt-row'>"+
+       "<input class='mt-range' type='range' min='0' max='"+maxGive+"' value='"+amount+"' data-btqty='1'>"+
+       "<input id='bt-amount' class='mt-num' type='number' min='0' max='"+maxGive+"' value='"+amount+"' "+
+         "data-btqty-num='1' inputmode='numeric'>"+
+       "<button class='seal mt-all' data-mp='btall' data-max='"+maxGive+"'>Всё</button>"+
+     "</div></div>";
+  h+="<table class='roll'>"+
+     "<tr><td>Ставка</td><td>1 "+RES_NAME[from].toLowerCase()+" &rarr; "+
+       (rate>=1?rate.toFixed(rate%1?3:0):rate.toFixed(3)).replace(/\.?0+$/,"")+" "+RES_NAME[to].toLowerCase()+"</td></tr>"+
+     "<tr><td>Отдаём</td><td>"+fmt(amount)+"</td></tr>"+
+     "<tr><td>Налог</td><td class='bad'>&minus;"+fmt(Math.floor(amount*rate)-got)+"</td></tr>"+
+     "<tr><td>Получим</td><td class='good'>"+fmt(got)+"</td></tr></table>";
+  h+="<div class='chips' style='margin-top:12px'>"+
+     "<button class='seal ico' data-mp='btgo'"+((amount>0&&got>0&&!mpState.loading)?"":" disabled")+">"+
+     "<img src='images/ui/icon-trade.png' alt=''>Обменять</button>"+
+     "<button class='seal' data-act='closebuilding'>Закрыть</button></div>";
+  h+="<div class='note'>Ставка идёт от того, насколько быстро ресурс добывается: "+
+     "золота копится вдвое медленнее еды — значит и стоит оно вдвое дороже. "+
+     "Обмен обратим: без налога круг «еда — камень — еда» возвращает ровно исходное.</div>";
+  return h;
+}
+async function mpDoBarter(){
+  if(!mpTradeCtx || mpState.loading) return;
+  const {lv,cap}=mpTradeTotals();
+  const st=mpState.player.state;
+  const have=Math.floor((st.res&&st.res[mpTradeCtx.bFrom])||0);
+  const amount=Math.max(0,Math.min(Math.min(have,cap),Math.floor(mpTradeCtx.bAmount||0)));
+  if(amount<=0){ mpTradeCtx.err="Укажите, сколько меняем."; mpTradeRepaint(); return; }
+  mpState.loading=true; mpTradeCtx.err=null; mpTradeRepaint();
+  try{
+    const r=await mpCall("mp-barter",{from:mpTradeCtx.bFrom,to:mpTradeCtx.bTo,amount});
+    await mpRefreshPlayer();
+    mpTradeCtx.bAmount=0;
+    herald("Обменяно: "+fmt(r&&r.got||0)+" "+RES_NAME[mpTradeCtx.bTo].toLowerCase()+".");
+  }catch(e){ mpTradeCtx.err=e.message; }
+  finally{ mpState.loading=false; if(mpTradeCtx) mpTradeRepaint(); else mpRerender(); }
 }
 function mpTradeRepaint(){
   if(!mpTradeCtx) return;
@@ -11150,6 +11297,28 @@ function mpGenTakeCheckboxHtml(st,id){
     " onchange='setGenTakeDefault(this.checked)'>"+
     " Взять полководца (боевые бонусы, риск попасть под удар в этом бою)</label></div>";
 }
+// Одна строка выбора войск для всех окон отправки (штурм/сбор/пустошь/
+// лагерь). Раньше в каждом из четырёх мест стоял голый <input type=number>
+// со значением "0", и автор попросил три вещи сразу: ползунок, чтобы
+// набирать число пальцем, исчезающий ноль ("чтобы при нажатии на ячейку с
+// вводом войск 0 пропадал и не нужно было вводить поверх нуля или стирать
+// его вручную") и кнопку "всё" — она напрашивается рядом с ползунком.
+// id полей остались прежние (mp-atk-<t> и т.п.): их читают mpDoAttack и
+// соседи по фиксированным именам, менять их незачем.
+// data-mpqty связывает ползунок с числом в обе стороны (см. слушатель
+// input у #building-modal).
+function mpTroopRowHtml(idPrefix,t,name,have){
+  const id=idPrefix+t;
+  return "<div class='mp-troop'>"+
+    "<div class='mt-hd'><span class='mt-nm'>"+name+"</span>"+
+    "<span class='mt-have'>есть "+RU(have)+"</span></div>"+
+    "<div class='mt-row'>"+
+      "<input class='mt-range' type='range' min='0' max='"+have+"' value='0' data-mpqty='"+id+"'>"+
+      "<input id='"+id+"' class='mt-num' type='number' min='0' max='"+have+"' value='0' "+
+        "data-mpqty-num='"+id+"' inputmode='numeric'>"+
+      "<button class='seal mt-all' data-mp='qtyall' data-id='"+id+"' data-max='"+have+"'>Всё</button>"+
+    "</div></div>";
+}
 let mpMarchCtx=null, lastMarchSheet="";
 function mpOpenMarchModal(mode,target){
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
@@ -11179,8 +11348,7 @@ function mpMarchSheetHtml(){
       "пути тоже настоящие — чем медленнее войска, тем дольше идти). См. supabase/README.md.</div>"+errHtml;
     TKEYS.forEach(t=>{
       const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
-      h+="<div class='note'>"+unitName(t,1,p.race)+" (T1, есть "+RU(have)+"): "+
-         "<input id='mp-atk-"+t+"' type='number' min='0' max='"+have+"' value='0'></div>";
+      h+=mpTroopRowHtml("mp-atk-",t,unitName(t,1,p.race)+" (T1)",have);
     });
     h+=mpGenTakeCheckboxHtml(st,"mp-atk-gen");
     h+="<div class='chips' style='margin-top:9px'>"+
@@ -11198,9 +11366,12 @@ function mpMarchSheetHtml(){
       "<div class='note'>"+n.x+", "+n.y+" · "+dist+" клет. · осталось "+fmt(amount)+"</div>"+errHtml;
     TKEYS.forEach(t=>{
       const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
-      h+="<div class='note'>"+unitName(t,1,p.race)+" (T1, есть "+RU(have)+"): "+
-         "<input id='mp-gth-"+t+"' type='number' min='0' max='"+have+"' value='0'></div>";
+      h+=mpTroopRowHtml("mp-gth-",t,unitName(t,1,p.race)+" (T1)",have);
     });
+    // Галочка генерала была во всех окнах отправки, кроме сбора — автор:
+    // "при открывании менюшки на сбор, к примеру, всё ещё нет галочки взять
+    // генерала". Сервер (mp-gather) её принимает так же, как остальные.
+    h+=mpGenTakeCheckboxHtml(st,"mp-gth-gen");
     h+="<div class='chips' style='margin-top:9px'>"+
        "<button class='seal ico' data-mp='gather' data-x='"+n.x+"' data-y='"+n.y+"'"+(mpState.loading?" disabled":"")+"><img src='images/ui/icon-gather.png' alt=''>Собрать</button> "+
        "<button class='seal' data-act='closebuilding'>Отмена</button></div>";
@@ -11217,8 +11388,7 @@ function mpMarchSheetHtml(){
       "Дальше его можно перетащить пальцем на любую цель или отозвать.</div>"+errHtml;
     TKEYS.forEach(t=>{
       const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
-      h+="<div class='note'>"+unitName(t,1,p.race)+" (T1, есть "+RU(have)+"): "+
-         "<input id='mp-mv-"+t+"' type='number' min='0' max='"+have+"' value='0'></div>";
+      h+=mpTroopRowHtml("mp-mv-",t,unitName(t,1,p.race)+" (T1)",have);
     });
     h+=mpGenTakeCheckboxHtml(st,"mp-mv-gen");
     h+="<div class='chips' style='margin-top:9px'>"+
@@ -11235,8 +11405,7 @@ function mpMarchSheetHtml(){
     "часть погибнет насовсем — как при штурме города, но без разграбления вашего дома.</div>"+errHtml;
   TKEYS.forEach(t=>{
     const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
-    h+="<div class='note'>"+unitName(t,1,p.race)+" (T1, есть "+RU(have)+"): "+
-       "<input id='mp-rd-"+t+"' type='number' min='0' max='"+have+"' value='0'></div>";
+      h+=mpTroopRowHtml("mp-rd-",t,unitName(t,1,p.race)+" (T1)",have);
   });
   h+=mpGenTakeCheckboxHtml(st,"mp-rd-gen");
   h+="<div class='chips' style='margin-top:9px'>"+
@@ -11635,7 +11804,7 @@ function hospitalInfoHtml(p){
 function buildingStatDeltaHtml(bk,lv,nx){
   const B=BUILDINGS[bk];
   if(B.prod){
-    const mult={food:1,wood:1,stone:0.75,gold:0.5}[B.prod];   // см. те же числа в production()
+    const mult=PROD_MULT[B.prod];
     const cur=Math.round(prodRate(lv)*mult), next=Math.round(prodRate(nx)*mult);
     return "<table id='bm-stats'><tr><td>Добыча "+RES_NAME[B.prod].toLowerCase()+"/ч</td><td>"+fmt(cur)+" &rarr; "+fmt(next)+"</td></tr></table>";
   }
@@ -13481,6 +13650,31 @@ $("#building-modal").addEventListener("input",e=>{
   // Фаза 34 — поля торгового обоза. Числа правим БЕЗ пересборки экрана:
   // перерисовка на каждый набранный символ уводила бы фокус из поля, в
   // которое игрок печатает. Пересчитываем только итоговую табличку.
+  // Ползунок и число в окнах отправки — две стороны одного значения.
+  // Пишем НАПРЯМУЮ в соседа, не пересобирая экран: иначе поле теряло бы
+  // фокус на каждом движении пальца.
+  } else if(e.target.dataset && (e.target.dataset.btqty||e.target.dataset.btqtyNum) && mpTradeCtx){
+    // Обмен: ползунок и число — две стороны одного значения. Пишем в
+    // контекст и в соседний узел напрямую, без пересборки: иначе поле
+    // теряло бы фокус на каждом движении пальца (та же причина, что у
+    // строк выбора войск ниже).
+    const v=Math.max(0,Math.round(+e.target.value||0));
+    mpTradeCtx.bAmount=v;
+    const other=e.target.dataset.btqty
+      ? $("#bt-amount")
+      : $("#bm-body").querySelector("[data-btqty]");
+    if(other) other.value=v;
+    mpUpdateBarterTotals();
+  } else if(e.target.dataset && e.target.dataset.mpqty){
+    const num=$("#"+e.target.dataset.mpqty);
+    if(num) num.value=e.target.value;
+  } else if(e.target.dataset && e.target.dataset.mpqtyNum){
+    const box=$("#bm-body").querySelector("[data-mpqty='"+e.target.dataset.mpqtyNum+"']");
+    if(box){
+      const max=+box.max||0;
+      const v=Math.max(0,Math.min(max,Math.round(+e.target.value||0)));
+      box.value=v;
+    }
   } else if(e.target.dataset && e.target.dataset.trade && mpTradeCtx){
     const r=e.target.dataset.trade;
     const st=mpState.player.state;
@@ -13500,6 +13694,26 @@ $("#building-modal").addEventListener("input",e=>{
 });
 // Пересчёт только итоговых строк обоза (в обозе / налог / доедет) и
 // доступности кнопки — без пересборки всей формы, см. выше.
+// Пересчёт только итоговых строк обмена — без пересборки вкладки, см. выше.
+function mpUpdateBarterTotals(){
+  if(!mpTradeCtx) return;
+  const body=$("#bm-body"); if(!body) return;
+  const {lv,cap}=mpTradeTotals();
+  const st=mpState.player.state;
+  const have=Math.floor((st.res&&st.res[mpTradeCtx.bFrom])||0);
+  const amount=Math.max(0,Math.min(Math.min(have,cap),Math.floor(mpTradeCtx.bAmount||0)));
+  const pct=tradeTaxPct(lv);
+  const got=barterGet(amount,mpTradeCtx.bFrom,mpTradeCtx.bTo,pct);
+  const rate=barterRate(mpTradeCtx.bFrom,mpTradeCtx.bTo);
+  const cells=body.querySelectorAll(".roll td:last-child");
+  if(cells.length>=4){
+    cells[1].textContent=fmt(amount);
+    cells[2].textContent="−"+fmt(Math.floor(amount*rate)-got);
+    cells[3].textContent=fmt(got);
+  }
+  const go=body.querySelector("[data-mp='btgo']");
+  if(go) go.disabled=!(amount>0&&got>0&&!mpState.loading);
+}
 function mpUpdateTradeTotals(){
   if(!mpTradeCtx) return;
   const body=$("#bm-body"); if(!body) return;
@@ -14157,8 +14371,37 @@ function handleMpAct(e){
   const moveBtn=e.target.closest("[data-mp='move']");
   if(moveBtn){ mpDoMove(+moveBtn.dataset.x, +moveBtn.dataset.y); return; }
   // ---- торговля (Фаза 34) --------------------------------------------
+  const qtyAllBtn=e.target.closest("[data-mp='qtyall']");
+  if(qtyAllBtn){
+    const id=qtyAllBtn.dataset.id, max=+qtyAllBtn.dataset.max||0;
+    const num=$("#"+id);
+    const box=$("#bm-body").querySelector("[data-mpqty='"+id+"']");
+    if(num) num.value=max;
+    if(box) box.value=max;
+    return;
+  }
   const tradeOpenBtn=e.target.closest("[data-mp='tradeopen']");
   if(tradeOpenBtn){ mpOpenTradeModal(); return; }
+  const tradeTabBtn=e.target.closest("[data-mp='tradetab']");
+  if(tradeTabBtn && mpTradeCtx){ mpTradeCtx.tab=tradeTabBtn.dataset.t; mpTradeCtx.err=null; mpTradeRepaint(); return; }
+  const btPickBtn=e.target.closest("[data-mp='btpick']");
+  if(btPickBtn && mpTradeCtx){
+    const r=btPickBtn.dataset.r;
+    if(btPickBtn.dataset.w==="from"){
+      if(r===mpTradeCtx.bTo) mpTradeCtx.bTo=mpTradeCtx.bFrom;   // выбрали то же, что справа — меняем их местами
+      mpTradeCtx.bFrom=r;
+    } else {
+      if(r===mpTradeCtx.bFrom) mpTradeCtx.bFrom=mpTradeCtx.bTo;
+      mpTradeCtx.bTo=r;
+    }
+    mpTradeCtx.bAmount=0; mpTradeCtx.err=null;
+    mpTradeRepaint();
+    return;
+  }
+  const btAllBtn=e.target.closest("[data-mp='btall']");
+  if(btAllBtn && mpTradeCtx){ mpTradeCtx.bAmount=+btAllBtn.dataset.max||0; mpTradeRepaint(); return; }
+  const btGoBtn=e.target.closest("[data-mp='btgo']");
+  if(btGoBtn){ mpDoBarter(); return; }
   const tradePickBtn=e.target.closest("[data-mp='tradepick']");
   if(tradePickBtn && mpTradeCtx){
     const id=tradePickBtn.dataset.id;
@@ -14254,6 +14497,19 @@ $("#menu-modal-body").addEventListener("click",e=>{
 // рисует те же data-mp-кнопки в #bm-body, но ЖИЛО без единого слушателя
 // для них — только handleAct(), который data-mp не знает).
 $("#building-modal").addEventListener("click",handleMpAct);
+// Ноль в поле ввода войск исчезает, как только в него ткнули: автор просил
+// не заставлять "вводить поверх нуля или стирать его вручную". Ушли из
+// пустого поля — возвращаем ноль, чтобы дальше по коду не читался NaN.
+// focusin/focusout, а не focus/blur: эти два не всплывают, а слушатель тут
+// один на всю модалку.
+$("#building-modal").addEventListener("focusin",e=>{
+  const el=e.target;
+  if(el && el.dataset && el.dataset.mpqtyNum && el.value==="0"){ el.value=""; el.select&&el.select(); }
+});
+$("#building-modal").addEventListener("focusout",e=>{
+  const el=e.target;
+  if(el && el.dataset && el.dataset.mpqtyNum && el.value===""){ el.value="0"; }
+});
 
 // Двойной тап по чужой клетке в 3D сразу открывал лист похода (openLevy) —
 // удобный ярлык поверх обычного тапа+кнопки в cartouche, но не необходимый:
@@ -14266,7 +14522,7 @@ $("#building-modal").addEventListener("click",handleMpAct);
 // "клеток на пиксель" у 2D.
 function zoomAt(f){
   const w=world3dWin();
-  if(w) w.cam.dist=Math.max(9,Math.min(240,w.cam.dist/f));
+  if(w) w.zoomWorldBy(f);   // пределы держит сам движок (MIN_DIST/MAX_DIST)
 }
 // Когда открыта вкладка "Мир", те же три кнопки должны крутить 3D-камеру, а
 // не невидимую 2D-канву позади неё. iframe#world3d — тот же origin, поэтому
@@ -14275,9 +14531,17 @@ function zoomAt(f){
 // cam, а не просто наличие iframe: до первого openView("world") src ещё
 // пустой, а сразу после назначения src скрипт внутри мог не успеть создать
 // cam.
+// Признак готовности движка — наличие goToWorldPos, а не cam.
+// Раньше проверялось contentWindow.cam: так звался объект камеры в СТАРОМ
+// прототипе (obyom-3d-infinite.html). Нынешний движок его наружу не
+// выставляет вовсе, поэтому эта функция ВСЕГДА возвращала null, а вместе с
+// ней тихо не работало всё, что двигает камеру: переход по координатам,
+// "к своему замку", кнопки зума. Со стороны это выглядело как "камера
+// осталась где была" — движок и так стартует на своём городе, так что
+// подмену никто не замечал (см. goToWorldPos в engine/src/main.ts).
 function world3dWin(){
   const f=$("#world3d");
-  try{ return (f && f.contentWindow && f.contentWindow.cam) ? f.contentWindow : null; }
+  try{ return (f && f.contentWindow && typeof f.contentWindow.goToWorldPos==="function") ? f.contentWindow : null; }
   catch(_){ return null; }
 }
 // Фаза 12, кусочек 2 — мост к объёмной карте (engine/src/realData.ts +
@@ -14481,9 +14745,9 @@ function mpBuildWorldSnapshot(){
 // ОДИНОЧНОЙ партии — от столицы общего мира она может быть сколь угодно
 // далеко. Без явного перевода камеры игрок увидел бы пустую карту: все
 // сущности общего мира просто не попали бы в радиус выборки вокруг
-// устаревшего центра. window.cam.tx/tz — тот же готовый мост "к своему
-// городу", что уже использует клавиша "H" (goHome() ниже), просто
-// нацеленный на настоящую столицу общего мира, а не на me() из одиночки.
+// устаревшего центра. goToWorldPos — тот же мост "к своему городу", что
+// уже использует клавиша "H" (goHome() ниже), просто нацеленный на
+// настоящую столицу общего мира, а не на me() из одиночки.
 // Если "Мир" ещё не открывали вовсе (iframe без src, world3dWin()===null)
 // — трогать нечего, самый первый рендер и так возьмёт верную точку через
 // getOwnCityPos()→mpWorldSnapshot() (см. её же комментарий).
@@ -14616,9 +14880,7 @@ function mpFocusWorld3D(){
   mpWorld3DFocused=true;
   const apply=(w)=>{
     const p=mpState.player; if(!p) return false;
-    w.cam.tx=p.x; w.cam.tz=p.y;
-    if(typeof w.H==="function") w.cam.ty=w.H(p.x,p.y)+2;
-    w.cam.dist=40; w.cam.pitch=0.5;
+    if(!w.goToWorldPos(p.x,p.y,{dist:40,pitch:0.5})) return false;
     mpHideLoading();
     return true;
   };
@@ -14645,7 +14907,7 @@ function goHome(){
   const p=me();
   centerOn(p.x,p.y);
   const w=world3dWin();
-  if(w){ w.cam.dist=40; w.cam.pitch=0.5; }   // облёт пошире, не тот же, что у обычного тапа
+  if(w) w.goToWorldPos(p.x,p.y,{dist:40,pitch:0.5});   // облёт пошире, не тот же, что у обычного тапа
   renderCartoucheFor(p.x,p.y);
 }
 $("#tempo").onchange=e=>{ tempo=+e.target.value };
@@ -14991,7 +15253,7 @@ async function claimChronicle(){
    восполняются со временem — серверное производство ещё не перенесено,
    стартовых 100000 хватает на несколько заказов набора для проверки.
    ========================================================================= */
-let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[], siegeMail:[], nodeBattleMail:[], worldBattles:[], gatherMail:[], tradeMail:[], noteMail:[], pmMail:[] };
+let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[], siegeMail:[], nodeBattleMail:[], worldBattles:[], gatherMail:[], tradeMail:[], scoutedMail:[], noteMail:[], pmMail:[] };
 let mpPollTimer = null;
 // Идёт ли прямо сейчас вход/авто-резюме в общий мир (см. mpOpen) — защита
 // от повторного запуска при быстрых переключениях вкладок меню.
@@ -15023,7 +15285,7 @@ function mpSaveCache(){
       camps:mpState.camps, marches:mpState.marches, incoming:mpState.incoming,
       mail:mpState.mail, scoutMail:mpState.scoutMail, raidMail:mpState.raidMail, siegeMail:mpState.siegeMail,
       nodeBattleMail:mpState.nodeBattleMail, gatherMail:mpState.gatherMail,
-      tradeMail:mpState.tradeMail, noteMail:mpState.noteMail,
+      tradeMail:mpState.tradeMail, scoutedMail:mpState.scoutedMail, noteMail:mpState.noteMail,
       pmMail:mpState.pmMail,
     }));
   }catch(e){ /* приватный режим/переполнение — кэш не обязателен, молча живём без него */ }
@@ -15039,7 +15301,7 @@ function mpLoadCache(){
     mpState.marches=c.marches||[]; mpState.incoming=c.incoming||[];
     mpState.mail=c.mail||[]; mpState.scoutMail=c.scoutMail||[]; mpState.raidMail=c.raidMail||[]; mpState.siegeMail=c.siegeMail||[];
     mpState.nodeBattleMail=c.nodeBattleMail||[]; mpState.gatherMail=c.gatherMail||[];
-    mpState.tradeMail=c.tradeMail||[]; mpState.noteMail=c.noteMail||[];
+    mpState.tradeMail=c.tradeMail||[]; mpState.scoutedMail=c.scoutedMail||[]; mpState.noteMail=c.noteMail||[];
     mpState.pmMail=c.pmMail||[];
     return true;
   }catch(e){ return false }
@@ -15426,6 +15688,11 @@ function mpTickSlots(){
   }
   mpRenderBrigadesWorld();   // обе сами проверяют, что мы в объёмной карте
   mpRenderFieldArmyWorld();
+  // Карта города — ради таймеров занятости прямо на плитках зданий
+  // (buildBusyBadgeHtml). Собрать её HTML стоит 0.09 мс, а setHtml внутри
+  // mpRenderFolio ещё и диффит: секунду это не нагружает ничем, зато
+  // "осталось 4 мин 56 с" тикает как часы, а не прыгает через пять секунд.
+  if($("#app").classList.contains("view-city")) mpRenderFolio();
   // Что-то ТОЛЬКО ЧТО кончилось — просим свежее состояние сразу, не дожидаясь
   // очередного опроса: иначе новый уровень здания или готовое исследование
   // появятся в карточках на несколько секунд позже, чем слот освободился.
@@ -15494,6 +15761,7 @@ async function mpRefreshAll(includeSlowLane){
     if(includeSlowLane) jobs.push(
       mpRefreshMail(), mpRefreshScoutMail(), mpRefreshRaidMail(), mpRefreshSiegeMail(),
       mpRefreshNodeBattleMail(), mpRefreshGatherMail(), mpRefreshTradeMail(),
+      mpRefreshScoutedMail(),
       mpRefreshNoteMail(), mpRefreshPmMail()
     );
     // allSettled, не all: одна упавшая выборка (сеть моргнула на одной из
@@ -15596,6 +15864,14 @@ async function mpRefreshGatherMail(){
 // никогда не узнавал, в отличие от одиночки. Своя рубрика, та же схема
 // выборки, что и у остальной почты.
 // Письма об обозах (mail, kind:"trade") — та же схема, что у gather/scout.
+// Письма "на вас была разведка" (mail, kind:"scouted") — та же схема, что у
+// остальных рубрик.
+async function mpRefreshScoutedMail(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
+    .eq("kind","scouted").order("created_at",{ascending:false}).limit(10);
+  if(!error && data){ mpState.scoutedMail=data; mpRerenderData(); }
+}
 async function mpRefreshTradeMail(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
@@ -15735,7 +16011,8 @@ async function mpDoRestart(){
   mpState.joined=false; mpState.player=null; mpState.race=null; mpState.err=null;
   mpState.neighbors=[]; mpState.nodes=[]; mpState.camps=[]; mpState.marches=[]; mpState.incoming=[];
   mpState.mail=[]; mpState.scoutMail=[]; mpState.raidMail=[]; mpState.siegeMail=[];
-  mpState.nodeBattleMail=[]; mpState.gatherMail=[]; mpState.tradeMail=[]; mpState.noteMail=[]; mpState.pmMail=[];
+  mpState.nodeBattleMail=[]; mpState.gatherMail=[]; mpState.tradeMail=[];
+  mpState.scoutedMail=[]; mpState.noteMail=[]; mpState.pmMail=[];
   mpHideDeath();
   await mpOpen();
   mpRenderFolio(); mpRenderTop();
@@ -15973,7 +16250,8 @@ async function mpDoGather(x,y){
   TKEYS.forEach(t=>{ const inp=$("#mp-gth-"+t); units[t]={1:Math.max(0,Math.round(+((inp&&inp.value)||0)))}; });
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
-    await mpCall("mp-gather",{x,y,units});
+    const genInp=$("#mp-gth-gen"), withGen=!!(genInp&&genInp.checked);
+    await mpCall("mp-gather",{x,y,units,with_gen:withGen});
     mpState.gatherTarget=null; if(mpMarchCtx){ mpMarchCtx=null; $("#building-modal").classList.remove("open"); }
     await mpRefreshPlayer(); await mpRefreshMarches(); await mpRefreshNodes();
   }catch(e){ mpState.err=e.message; }
@@ -16268,8 +16546,16 @@ async function mpRefreshIncoming(){
   // защитник должен видеть его ровно так же, как и на подходе, поэтому
   // фильтр по state расширен, а data (там лежит data.battle — живые HP,
   // см. mpBattleBarsHtml) теперь тоже читается.
+  // mode НЕ "scout": лазутчик тоже несёт data.defender_id (см. mp-scout), и
+  // без этого условия цель видела его в списке ВХОДЯЩИХ АТАК — пустым
+  // отрядом, маркером на карте и занятым слотом, который после прибытия
+  // застревал на нуле. Автор: "у правителя, на которого я отправил
+  // разведку, показывается занят слот марша на 0 сек и не уходит".
+  // Разведка — не атака, и теперь у неё есть свой честный способ сообщить
+  // цели о себе: письмо kind:"scouted" (см. applyScoutArrive в mp-tick).
   const { data, error } = await sb.from("marches").select("id,player_id,t0,t1,tx,ty,units,state,data")
-    .eq("data->>defender_id", String(mpState.player.id)).in("state",["go","siege"]).order("t1");
+    .eq("data->>defender_id", String(mpState.player.id)).neq("mode","scout")
+    .in("state",["go","siege"]).order("t1");
   if(!error && data){ mpState.incoming=data; mpMaybeToggleBattleFastPoll(); mpRerenderData(); }
 }
 // Превью добычи/час для панели — Фаза 6: теперь зовёт НАСТОЯЩИЙ клиентский
@@ -16418,10 +16704,10 @@ function mpGoToLoc(x,y){
   const apply=()=>{
     const w=world3dWin();
     if(!w) return false;
-    w.cam.tx=x; w.cam.tz=y;
-    if(typeof w.H==="function") w.cam.ty=w.H(x,y)+15;
-    w.cam.dist=40;
-    return true;
+    // Цель встаёт РОВНО в центр кадра: высоту точки взгляда подбирает сам
+    // движок (см. FOCUS_LIFT там же). Прежний код поднимал её на 15 единиц
+    // над землёй — камера смотрела в небо, а объект уезжал вниз экрана.
+    return w.goToWorldPos(x,y,{dist:40});
   };
   closeMenuModal();
   whenWorld3DReady(apply);      // общая очередь ожидания, см. её заголовок
@@ -16505,7 +16791,7 @@ function mpUnreadByCat(){
             n(mpState.nodeBattleMail)+n(mpState.gatherMail)+n(mpState.tradeMail),
     personal: n(mpState.noteMail)+
             mpState.pmMail.filter(m=>m.data&&m.data.role==="recipient"&&unread(m)).length,
-    system: n(mpState.siegeMail),
+    system: n(mpState.siegeMail)+n(mpState.scoutedMail),
   };
 }
 // Общее число для значка на гамбургере — СУММА тех же рубрик, а не
@@ -16916,6 +17202,28 @@ function mpMailTradeEntry(m){
     sub: RES.filter(r=>goods[r]).map(r=>RES_NAME[r]+" "+fmt(goods[r])).join(" · ")||"пусто",
     detailHtml: rows+taxLine};
 }
+// "На вас была разведка" (mail, kind:"scouted", см. applyScoutArrive в
+// mp-tick) — обратная сторона донесения: цель узнаёт, что её осматривали,
+// кто и откуда. Координаты кликабельные (mpLocLink), как и просил автор.
+function mpMailScoutedEntry(m){
+  const d=m.data;
+  const who=escHtml(d.by_nick||"Безымянный лорд");
+  const se=d.se||0;
+  // Предостережение по делу, а не пугалка: чем глубже разведка соперника,
+  // тем больше он о нас узнал — и тем вероятнее, что за ней придёт войско.
+  const warn = se>=3
+    ? "Он видел состав нашего войска и запасы. Такой осмотр обычно делают перед походом — уводите добычу и поднимайте стену."
+    : se>=1
+    ? "Он пересчитал наше войско на глаз и заглянул в амбары. Стоит подумать о стене и гарнизоне."
+    : "Разглядел немногое — ратушу да знамя. Но раз смотрел, значит, приглядывается.";
+  return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-scout.png", cls:"lose", tone:"red",
+    title:"На нас навели лазутчика",
+    sub:who+(d.x!=null?" · X:"+d.x+" Y:"+d.y:""),
+    detailHtml:
+      (d.x!=null?"<div class='mail-res-row'>"+mpLocLink(d.x,d.y,d.by_nick||"Соглядатай")+"</div>":"")+
+      "<div class='note'>Лазутчик правителя <b>"+who+"</b> осмотрел наш город.</div>"+
+      "<div class='note'>"+warn+"</div>"};
+}
 function mpMailNoteEntry(m){
   const d=m.data;
   return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-gen.png", cls:"", tone:"gold",
@@ -16973,8 +17281,14 @@ function mpMailPersonalEntries(){
 // "Система" — извещения о движении войск, вынесенные из "Отчёты" (автор:
 // "во вкладку систему перенеси системные уведомления... там многое ты
 // напихал в отчёты").
+// "Система" — вести о чужих действиях против нас: гонцы о подходе войск и
+// предупреждения о наведённой на нас разведке. Не наши отчёты (те в
+// "Отчётах") и не переписка.
 function mpMailSystemEntries(){
-  return mpState.siegeMail.map(m=>mpMailCached(m,mpMailSiegeEntry)).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+  return [].concat(
+    mpState.siegeMail.map(m=>mpMailCached(m,mpMailSiegeEntry)),
+    mpState.scoutedMail.map(m=>mpMailCached(m,mpMailScoutedEntry))
+  ).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
 }
 // "Отправленные" — свои же письма, копия role:"sender" у mp-sendmail.
 function mpMailSentEntries(){

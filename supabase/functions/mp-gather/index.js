@@ -365,7 +365,39 @@ Deno.serve(async (req) => {
       return jsonResponse({ err: evErr.message }, 500);
     }
 
-    return jsonResponse({ ok: true, march_id: march.id, eta: travel + gatherSecs });
+    // ---- полководец в обозе (Фаза 39) --------------------------------------
+    // Автор: "при открывании менюшки на сбор, к примеру, всё ещё нет галочки
+    // взять генерала". Галочка была во всех окнах отправки, кроме сбора, и не
+    // просто так: сервер сбора про полководца не знал вовсе.
+    //
+    // Записываем ВТОРЫМ шагом, а не вместе с войсками. gen.away должен
+    // указывать на id марша, а марш к моменту первого savePlayerState ещё не
+    // создан (порядок тут выстроен вокруг брони точки: сначала списать войска
+    // и сохранить, потом бронировать добычу, потом марш — см. комментарий
+    // выше). Отдельный маленький апдейт дешевле, чем перекладывать всю эту
+    // последовательность.
+    //
+    // Если не вышло (кто-то параллельно тронул строку игрока, полководец уже
+    // уехал с другим походом) — обоз всё равно ушёл, просто без него, и ответ
+    // честно говорит has_gen:false. Врать в другую сторону нельзя: марш с
+    // has_gen:true, но без gen.away, дал бы полководцу быть в двух местах.
+    let takeGen = !!body.with_gen;
+    if (takeGen) {
+      const { data: fresh } = await admin.from("players").select("*").eq("id", attRow.id).maybeSingle();
+      const g = fresh && fresh.state && fresh.state.gen;
+      if (g && g.id != null && g.away == null) {
+        g.away = march.id;
+        const savedGen = await savePlayerState(admin, fresh, fresh.state);
+        if (savedGen.conflict || savedGen.error) takeGen = false;
+      } else takeGen = false;
+      if (takeGen) {
+        const { error: mgErr } = await admin.from("marches")
+          .update({ data: { ...march.data, has_gen: true } }).eq("id", march.id);
+        if (mgErr) takeGen = false;   // в марше отметки нет — считаем, что не взяли
+      }
+    }
+
+    return jsonResponse({ ok: true, march_id: march.id, eta: travel + gatherSecs, has_gen: takeGen });
   } catch (e) {
     return jsonResponse({ err: String(e && e.message || e) }, 500);
   }

@@ -88,6 +88,29 @@ const SCENARIOS = {
       return { tables: { worlds:[world], players:[mkPlayer(st), mkOther()], marches:[], map_cells:[], mail:[], events:[] },
                body: { to: 7, res: { food: 1000 } } }; },
   },
+  "mp-barter": {
+    // Рынок 5 ур.: налог 31%. 1000 еды -> камень по 0.75 = 750, минус
+    // налог -> 517.
+    ok: () => { const st = baseState(); st.b.market = 5; st.resAt = Date.now()/1000;
+      return { tables: { worlds:[world], players:[mkPlayer(st)], marches:[], map_cells:[], mail:[], events:[] },
+               body: { from: "food", to: "stone", amount: 1000 } }; },
+    // Золото дороже всех: 100 золота -> 200 еды до налога.
+    gold: () => { const st = baseState(); st.b.market = 25; st.resAt = Date.now()/1000;
+      return { tables: { worlds:[world], players:[mkPlayer(st)], marches:[], map_cells:[], mail:[], events:[] },
+               body: { from: "gold", to: "food", amount: 100 } }; },
+    // Сам на себя.
+    same: () => { const st = baseState(); st.b.market = 5;
+      return { tables: { worlds:[world], players:[mkPlayer(st)], marches:[], map_cells:[], mail:[], events:[] },
+               body: { from: "food", to: "food", amount: 100 } }; },
+    // Больше, чем есть на складе.
+    poor: () => { const st = baseState(); st.b.market = 25; st.resAt = Date.now()/1000;
+      return { tables: { worlds:[world], players:[mkPlayer(st)], marches:[], map_cells:[], mail:[], events:[] },
+               body: { from: "gold", to: "food", amount: 99999999 } }; },
+    // Рынка нет.
+    nomarket: () => { const st = baseState(); st.b.market = 0;
+      return { tables: { worlds:[world], players:[mkPlayer(st)], marches:[], map_cells:[], mail:[], events:[] },
+               body: { from: "food", to: "wood", amount: 100 } }; },
+  },
   "mp-recall": {
     // Отряд стоит на янтарной жиле и накопал ровно половину. Отзыв должен
     // отдать ему половину, а вторую вернуть жиле — иначе она уходит в ноль
