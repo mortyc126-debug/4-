@@ -255,6 +255,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 /* Выбор таблицы мира. Девять штук рядом вкладок не помещаются ни на одном
    телефоне — переносящаяся сетка значков, тот же язык, что у разделов
    профиля (.psec). */
+/* Переключатель из нескольких значений (настройки графики). Узкий по
+   умолчанию — стоит справа от названия строки; .wide растягивается на всю
+   ширину под набор качества. */
+.seg{display:inline-flex;flex:0 0 auto;border:1px solid var(--rule-soft);border-radius:8px;overflow:hidden}
+.seg.wide{display:flex;width:100%}
+.seg button{flex:1 1 auto;padding:6px 10px;background:transparent;border:none;
+  border-right:1px solid var(--rule-soft);color:var(--vellum-faint);font-size:12px;white-space:nowrap}
+.seg button:last-child{border-right:none}
+.seg button.on{background:rgba(194,153,60,.18);color:var(--gilt-hi)}
+.seg button:disabled{opacity:.7}
 .board-pick{display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:6px;margin:8px 0 12px}
 .bpick{display:flex;flex-direction:column;align-items:center;gap:3px;padding:7px 2px;
   border:1px solid var(--rule-soft);border-radius:8px;background:transparent;
@@ -12123,6 +12133,7 @@ const PROFILE_SECTION_TTL=30000;        // мс: повторный вход в 
 
 const PROFILE_SECTIONS=[
   {id:"settings",  ico:"icon-settings.png", name:"Настройки", note:"Как игра себя ведёт"},
+  {id:"graphics",  ico:"icon-world.png",    name:"Графика",   note:"Картинка и производительность"},
   {id:"rating",    ico:"icon-rating.png",   name:"Рейтинг",   note:"Правители мира по мощи"},
   {id:"chronicles",ico:"icon-reign.png",    name:"Хроники",   note:"Летопись мира"},
   // Фаза 43 — звание. Прежняя лестница по мощи державы (Безземельный →
@@ -12295,6 +12306,106 @@ function profileBackHtml(title){
   return "<div class='entry'><div class='line'>"+
     "<button class='seal' data-act='profback'>&larr; Профиль</button>"+
     "<div class='fill'><div class='title'>"+title+"</div></div></div></div>";
+}
+/* ---- Настройки графики (Фаза 45) -----------------------------------------
+   Живут на устройстве (localStorage), а не на сервере: это свойство ЖЕЛЕЗА,
+   а не правителя — с телефона и с настольного одного и того же игрока они
+   должны быть разными.
+
+   Движок читает их из window.__gfx раз в кадр и применяет, когда сдвинулась
+   версия (см. applyGfx в engine/src/main.ts). Объект кладётся в window ещё до
+   того, как загрузится iframe, поэтому стартовые настройки применяются первым
+   же кадром, без гонки «кто кого дождётся». */
+const GFX_KEY="fourbanners:gfx1";
+const GFX_DEFAULT={res:1, shadows:true, decor:1, far:2, fps:0, labels:true};
+let gfxState=Object.assign({},GFX_DEFAULT);
+(function gfxLoad(){
+  try{ const raw=localStorage.getItem(GFX_KEY); if(raw) Object.assign(gfxState,JSON.parse(raw)||{}); }
+  catch(e){ /* приватный режим — живём на значениях по умолчанию */ }
+})();
+let gfxVer=0;
+function gfxPush(){
+  gfxVer++;
+  window.__gfx=Object.assign({v:gfxVer},gfxState);
+}
+gfxPush();   // до загрузки iframe — см. заголовок выше
+function gfxSet(key,val){
+  gfxState[key]=val;
+  try{ localStorage.setItem(GFX_KEY,JSON.stringify(gfxState)); }catch(e){}
+  gfxPush();
+  refreshProfileIfOpen();
+}
+// Готовые наборы. «Своё» не выбирается кнопкой — оно показывается само, когда
+// набор не совпал ни с одним готовым.
+const GFX_PRESETS=[
+  {id:"low",  name:"Низкое",  cfg:{res:0.5,  shadows:false, decor:0,   far:1, fps:30, labels:true}},
+  {id:"mid",  name:"Среднее", cfg:{res:0.75, shadows:false, decor:0.5, far:2, fps:60, labels:true}},
+  // «Высокое» — это в точности то, как движок вёл себя до появления настроек:
+  // свежий игрок видит именно его, и ни у кого ничего не меняется, пока он сам
+  // не тронет переключатели. Дальность «Дальше» (far:3) сверх этого — уже
+  // «Своё», и это честно: она за пределами того, на что балансировался мир.
+  {id:"high", name:"Высокое", cfg:{res:1,    shadows:true,  decor:1,   far:2, fps:0,  labels:true}},
+];
+function gfxPresetId(){
+  const p=GFX_PRESETS.find(p=>Object.keys(p.cfg).every(k=>gfxState[k]===p.cfg[k]));
+  return p?p.id:"custom";
+}
+function gfxApplyPreset(id){
+  const p=GFX_PRESETS.find(p=>p.id===id); if(!p) return;
+  Object.assign(gfxState,p.cfg);
+  try{ localStorage.setItem(GFX_KEY,JSON.stringify(gfxState)); }catch(e){}
+  gfxPush();
+  refreshProfileIfOpen();
+}
+// Строка настройки: слева название и пояснение, справа переключатель.
+function setRowHtml(title,note,control){
+  return "<div class='entry'><div class='line'><div class='fill'>"+
+    "<div class='title'>"+title+"</div>"+
+    (note?"<div class='note'>"+note+"</div>":"")+
+    "</div>"+control+"</div></div>";
+}
+// Переключатель из нескольких значений. data-g — какой ключ правим,
+// data-v — значение; числа и «да/нет» кодируются строкой и разбираются в
+// обработчике, чтобы не заводить два разных data-атрибута.
+function segHtml(key,opts){
+  return "<div class='seg'>"+opts.map(o=>
+    "<button class='"+(String(gfxState[key])===String(o.v)?"on":"")+"' "+
+    "data-act='gfxset' data-g='"+key+"' data-v='"+o.v+"'>"+o.t+"</button>").join("")+"</div>";
+}
+function profileGraphicsHtml(){
+  const preset=gfxPresetId();
+  let h=profileBackHtml("Графика");
+  h+=rubric("Качество", preset==="custom"?"своё":"");
+  h+="<div class='entry'><div class='seg wide'>"+GFX_PRESETS.map(p=>
+     "<button class='"+(preset===p.id?"on":"")+"' data-act='gfxpreset' data-p='"+p.id+"'>"+p.name+"</button>").join("")+
+     (preset==="custom"?"<button class='on' disabled>Своё</button>":"")+
+     "</div></div>";
+
+  h+=rubric("Картинка");
+  h+=setRowHtml("Разрешение",
+    "Во сколько пикселей рисуется мир. Кадр стоит ровно столько, сколько в нём пикселей, — это самый весомый рычаг из всех.",
+    segHtml("res",[{v:0.5,t:"50%"},{v:0.75,t:"75%"},{v:1,t:"100%"}]));
+  h+=setRowHtml("Тени",
+    "Тени от рельефа и деревьев. Второй по весу рычаг: выключенные не рисуются вовсе.",
+    segHtml("shadows",[{v:false,t:"Выкл"},{v:true,t:"Вкл"}]));
+  h+=setRowHtml("Растительность",
+    "«Деревья» — только деревья и камни, без травы и кустов: их подсетка вчетверо гуще, и считаются они дольше всего остального декора вместе взятого.",
+    segHtml("decor",[{v:0,t:"Нет"},{v:0.5,t:"Деревья"},{v:1,t:"Всё"}]));
+  h+=setRowHtml("Прорисовка",
+    "Как далеко тянется рельеф за горизонт. Замки, лагеря и точки сбора видны на полную дальность всегда — их единицы, и появляться из воздуха им нельзя.",
+    segHtml("far",[{v:1,t:"Ближе"},{v:2,t:"Обычно"},{v:3,t:"Дальше"}]));
+
+  h+=rubric("Производительность");
+  h+=setRowHtml("Предел кадров",
+    "На слабом устройстве ровные 30 приятнее рваных 45: при пределе каждому кадру достаётся вдвое больше времени. Заодно бережёт батарею.",
+    segHtml("fps",[{v:30,t:"30"},{v:60,t:"60"},{v:0,t:"Без предела"}]));
+  h+=setRowHtml("Подписи над объектами",
+    "Ники над замками, названия точек и полосы боя. Это разметка поверх картинки, и на телефоне она стоит заметно.",
+    segHtml("labels",[{v:false,t:"Выкл"},{v:true,t:"Вкл"}]));
+
+  h+="<div class='entry'><div class='note'>Настройки хранятся на этом устройстве и применяются сразу, "+
+     "перезагружать страницу не нужно. На телефоне и на настольном они свои.</div></div>";
+  return h;
 }
 function profileSettingsHtml(){
   let h=profileBackHtml("Настройки");
@@ -12547,6 +12658,7 @@ function foProfile(pIn){
     if(profileScreen==="settings")   return profileSettingsHtml();
     if(profileScreen==="rating")     return profileRatingHtml(mpState.player.id);
     if(profileScreen==="chronicles") return profileChroniclesHtml();
+    if(profileScreen==="graphics")   return profileGraphicsHtml();
     if(profileScreen==="battlerank") return profileBattleRankHtml();
   }
   const avSrc=playerAvatarSrc(p);
@@ -13557,6 +13669,17 @@ function handleAct(e){
   if(locCloseBtn){ mpCloseLocate(); return; }
   const profSecBtn=e.target.closest("[data-act='profsec']");
   if(profSecBtn){ profileOpenSection(profSecBtn.dataset.s); return; }
+  const gfxBtn=e.target.closest("[data-act='gfxset']");
+  if(gfxBtn){
+    const k=gfxBtn.dataset.g, raw=gfxBtn.dataset.v;
+    // Значения приходят строкой (data-атрибут иначе не умеет) — разбираем
+    // обратно в тот же тип, в каком они лежат в наборе: движок сверяет их
+    // строгим сравнением.
+    gfxSet(k, raw==="true" ? true : raw==="false" ? false : Number(raw));
+    return;
+  }
+  const gfxPresetBtn=e.target.closest("[data-act='gfxpreset']");
+  if(gfxPresetBtn){ gfxApplyPreset(gfxPresetBtn.dataset.p); return; }
   const boardBtn=e.target.closest("[data-act='board']");
   if(boardBtn){
     profileBoard=boardBtn.dataset.b;

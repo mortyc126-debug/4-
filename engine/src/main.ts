@@ -398,10 +398,51 @@ async function main() {
   // подряд — и драйвер уходит в долгую переупаковку памяти, особенно на
   // телефоне. Игнорируя нулевой размер, мы просто НИЧЕГО не пересоздаём:
   // канва остаётся ровно той, какой была, и возврат во вкладку бесплатен.
+  /* ---- Настройки графики -------------------------------------------------
+     Родитель (index.html, экран «Настройки») держит их в window.__gfx и
+     поднимает __gfx.v на каждое изменение. Движок читает объект раз в кадр —
+     это чтение поля у обычного объекта, стоит нисколько — и применяет
+     изменения только когда версия сдвинулась.
+     Почему так, а не postMessage: движок и так читает window.parent напрямую
+     (мир, пауза, обратные вызовы — см. по всему файлу), заводить ради шести
+     чисел вторую, асинхронную дорогу с очередью сообщений незачем; к тому же
+     объект уже лежит в родителе к моменту загрузки iframe, и стартовые
+     настройки применяются первым же кадром, без гонки «кто кого дождётся».
+     Значения по умолчанию — ровно то, как движок вёл себя до настроек. */
+  type GfxCfg = {
+    v: number;
+    res: number;        // масштаб разрешения: 0.5 | 0.75 | 1
+    shadows: boolean;
+    decor: number;      // 0 — голая земля, 0.5 — только деревья, 1 — всё
+    far: number;        // дальность дальнего кольца: 1 | 2 | 3 (чанков по 64)
+    fps: number;        // предел кадров: 30 | 60 | 0 (без предела)
+    labels: boolean;    // подписи над замками и точками
+  };
+  const GFX_DEFAULT: GfxCfg = { v: 0, res: 1, shadows: true, decor: 1, far: 2, fps: 0, labels: true };
+  let gfx: GfxCfg = { ...GFX_DEFAULT };
+  function readGfx(): GfxCfg {
+    try {
+      const g = (window.parent as any)?.__gfx;
+      if (!g || typeof g !== "object") return GFX_DEFAULT;
+      return {
+        v: +g.v || 0,
+        res: [0.5, 0.75, 1].includes(+g.res) ? +g.res : 1,
+        shadows: g.shadows !== false,
+        decor: [0, 0.5, 1].includes(+g.decor) ? +g.decor : 1,
+        far: [1, 2, 3].includes(+g.far) ? +g.far : 2,
+        fps: [30, 60, 0].includes(+g.fps) ? +g.fps : 0,
+        labels: g.labels !== false,
+      };
+    } catch { return GFX_DEFAULT; }
+  }
   function resize() {
     const cw = canvas.clientWidth, ch = canvas.clientHeight;
     if (cw <= 0 || ch <= 0) return;
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    // Масштаб разрешения — самый весомый рычаг производительности из всех:
+    // кадр стоит ровно столько, сколько в нём пикселей. 0.75 отдаёт почти
+    // половину нагрузки и почти не виден на телефоне, 0.5 спасает совсем
+    // слабые устройства.
+    const dpr = Math.min(2, window.devicePixelRatio || 1) * gfx.res;
     const w = Math.max(1, Math.floor(cw * dpr));
     const h = Math.max(1, Math.floor(ch * dpr));
     if (canvas.width !== w) canvas.width = w;
@@ -590,6 +631,10 @@ async function main() {
   }
   function genDecorForChunk(cx: number, cz: number): DecorEntity[] {
     const out: DecorEntity[] = [];
+    // Растительность выключена целиком — голая земля. Самый дешёвый режим:
+    // не только не рисуем, но и не считаем (каждый чанк это сотни hash2 и
+    // heightAt плюс проверки воды и построек).
+    if (gfx.decor <= 0) return out;
     const cellsPerSide = CHUNK_SIZE / DECOR_CELL;
     for (let j = 0; j < cellsPerSide; j++) {
       for (let i = 0; i < cellsPerSide; i++) {
@@ -683,6 +728,11 @@ async function main() {
         }
       }
     }
+    // Средний режим — только деревья и камни, без травы и кустов. Считать
+    // тут есть что: у травы подсетка вчетверо гуще деревьев (GRASS_CELL=2
+    // против DECOR_CELL=4, то есть 64 клетки на чанк против 16), и вместе с
+    // кустами она и даёт основную часть и счёта, и инстансов в кадре.
+    if (gfx.decor < 1) return out;
     const grassCellsPerSide = CHUNK_SIZE / GRASS_CELL;
     for (let j = 0; j < grassCellsPerSide; j++) {
       for (let i = 0; i < grassCellsPerSide; i++) {
@@ -729,6 +779,19 @@ async function main() {
       }
     }
     return out;
+  }
+  // Пересобрать декор всех загруженных чанков — на смену настройки
+  // растительности. Рельеф при этом не трогаем вовсе: он от настройки не
+  // зависит, а его пересборка стоила бы полсотни чанков геометрии на ровном
+  // месте.
+  function rebuildAllDecor() {
+    for (const key of loadedChunks) {
+      const parts = key.split(",");
+      const cx = Number(parts[0]), cz = Number(parts[1]);
+      if (!Number.isFinite(cx) || !Number.isFinite(cz)) continue;
+      decorByChunk.set(key, genDecorForChunk(cx, cz));
+    }
+    refreshDecor();
   }
   function refreshDecor() {
     const merged: DecorEntity[] = [];
@@ -893,7 +956,13 @@ async function main() {
   // FAR_CHUNK_SIZE и FAR_UNLOAD_RADIUS объявлены раньше, у CHUNK_SIZE/
   // UNLOAD_RADIUS — их же значение нужно ENTITY_RADIUS ещё до этого блока.
   const FAR_STEP = 4;
-  const FAR_LOAD_RADIUS = 2; // 2×64=128 клеток от камеры (было 3×64=192 — см. FAR_UNLOAD_RADIUS выше). Запас между load/unload сузился до 1 клетки (64 мировых юнита) — но это всё ещё больше абсолютного зазора у ближнего слоя (LOAD_RADIUS/UNLOAD_RADIUS выше, 2 клетки по 16 = 32 юнита), так что дребезг на границе не должен участиться
+  // Настройка «Прорисовка» правит ТОЛЬКО дальнее кольцо рельефа. Радиус
+  // сущностей (ENTITY_RADIUS выше) намеренно оставлен на максимуме и от
+  // настройки не зависит: замки и лагеря — это единицы объектов, они ничего
+  // не стоят, а вот появляться из воздуха у игрока перед носом им нельзя.
+  // Убавляем ровно то, что и правда дорого, — грубую сетку рельефа.
+  const farLoadRadius = () => gfx.far;
+  const farUnloadRadius = () => gfx.far + 1;
   // Грубая сетка и детальные ближние чанки читают ОДНУ И ТУ ЖЕ heightAt(x,y),
   // но в разных точках: между её редкими узлами грубая сетка линейно
   // интерполирует высоту, а не следует истинному рельефу, как частая сетка
@@ -948,8 +1017,9 @@ async function main() {
     lastFarChunkX = ccx;
     lastFarChunkZ = ccz;
     let queueChanged = false;
-    for (let dz = -FAR_LOAD_RADIUS; dz <= FAR_LOAD_RADIUS; dz++) {
-      for (let dx = -FAR_LOAD_RADIUS; dx <= FAR_LOAD_RADIUS; dx++) {
+    const fLoad = farLoadRadius();
+    for (let dz = -fLoad; dz <= fLoad; dz++) {
+      for (let dx = -fLoad; dx <= fLoad; dx++) {
         const cx = ccx + dx, cz = ccz + dz;
         const rkey = "far:" + cx + "," + cz;
         if (loadedFarChunks.has(rkey) || queuedFarKeys.has(rkey)) continue;
@@ -961,7 +1031,7 @@ async function main() {
     }
     for (const rkey of Array.from(loadedFarChunks)) {
       const [kx, kz] = rkey.slice(4).split(",").map(Number);
-      const tooFar = Math.max(Math.abs(kx - ccx), Math.abs(kz - ccz)) > FAR_UNLOAD_RADIUS;
+      const tooFar = Math.max(Math.abs(kx - ccx), Math.abs(kz - ccz)) > farUnloadRadius();
       const tooClose = farChunkFullyNear(kx, kz, centerX, centerZ);
       if (tooFar || tooClose) {
         renderer.removeTerrainChunk(rkey);
@@ -970,7 +1040,7 @@ async function main() {
     }
     for (const rkey of Array.from(queuedFarKeys)) {
       const [kx, kz] = rkey.slice(4).split(",").map(Number);
-      if (Math.max(Math.abs(kx - ccx), Math.abs(kz - ccz)) > FAR_UNLOAD_RADIUS) {
+      if (Math.max(Math.abs(kx - ccx), Math.abs(kz - ccz)) > farUnloadRadius()) {
         queuedFarKeys.delete(rkey);
         queueChanged = true;
       }
@@ -2229,8 +2299,42 @@ async function main() {
     }
     (window as any).__perf = perf;
   }
+  // Применение настроек. Зовётся раз в кадр, но работает только когда версия
+  // в родителе сдвинулась.
+  let gfxVersion = -1;
+  function applyGfx() {
+    const next = readGfx();
+    if (next.v === gfxVersion) return;
+    const prev = gfx;
+    gfx = next;
+    gfxVersion = next.v;
+    // Отладочный слепок: по нему видно, что именно движок СЕЙЧАС считает
+    // настройками, — те же грабли, что и у __decorCount/__terrainChunkCount.
+    (window as any).__gfxNow = gfx;
+    if (next.res !== prev.res) resize();
+    renderer.setShadowsEnabled(next.shadows);
+    if (next.decor !== prev.decor) rebuildAllDecor();
+    // Дальнее кольцо: force=true, иначе пересчёт ждал бы, пока камера
+    // перейдёт в соседний чанк, и убавленная дальность не показалась бы.
+    if (next.far !== prev.far) updateFarTerrain(cam.target[0], cam.target[2], true);
+    if (next.labels !== prev.labels) {
+      labelsRoot.style.display = next.labels ? "" : "none";
+      if (!next.labels) labelsRoot.replaceChildren();
+    }
+  }
   let drawErrorReported = false;
+  let lastFrameMs = 0;
   function draw(tMs: number) {
+    applyGfx();
+    // Предел кадров. Не только про батарею: на слабом устройстве полтора
+    // десятка лишних кадров в секунду отнимают тот же бюджет, что и
+    // отрисовка, — при 30 к/с каждому кадру достаётся вдвое больше времени,
+    // и мир идёт ровнее, чем при рваных 45.
+    if (gfx.fps > 0) {
+      const minGap = 1000 / gfx.fps - 1;   // минус миллисекунда: иначе на 60 Гц ровно каждый второй кадр пропускался бы
+      if (tMs - lastFrameMs < minGap) { requestAnimationFrame(draw); return; }
+    }
+    lastFrameMs = tMs;
     const t0 = DEBUG_STATUS ? performance.now() : 0;
     try {
       drawFrame(tMs);
@@ -2380,8 +2484,9 @@ async function main() {
     (window as any).__modelDrawCount = modelDrawCount;
     if (DEBUG_STATUS) perf.render = performance.now() - renderStart;
     const labelStart = DEBUG_STATUS ? performance.now() : 0;
-    updateAmbientLabels();
-    updateBattleLabels();
+    // Подписи — это DOM поверх канвы, и на телефоне они стоят заметно (свой
+    // замер в отладке их и отделяет). Выключены — не считаем вовсе.
+    if (gfx.labels) { updateAmbientLabels(); updateBattleLabels(); }
     if (DEBUG_STATUS) perf.labels = performance.now() - labelStart;
   }
   requestAnimationFrame(draw);
