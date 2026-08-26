@@ -44,8 +44,16 @@ create table if not exists rating_events (
   at         timestamptz not null default now(),
   kind       text not null,                    -- 'city' (осада) | 'node' (бой за точку)
   march_id   bigint,
-  att_id     bigint not null references players(id) on delete cascade,
-  def_id     bigint not null references players(id) on delete cascade,
+  -- on delete set null, а НЕ cascade: mp-restart стирает строку павшего
+  -- правителя целиком, и при cascade вместе с ним исчезал бы весь его след в
+  -- журнале — то есть достаточно было бы «умереть», чтобы стереть улики.
+  -- Ссылка обнуляется, строка остаётся.
+  att_id     bigint references players(id) on delete set null,
+  def_id     bigint references players(id) on delete set null,
+  -- Ники на момент боя: после обнуления ссылок только по ним и будет видно,
+  -- кто с кем воевал.
+  att_nick   text not null default '',
+  def_nick   text not null default '',
   winner     text not null,                    -- 'att' | 'def'
   -- Мощь ВЫШЕДШИХ В ПОЛЕ войск (видимый коэффициент) и мощь ДЕРЖАВ до боя
   -- (скрытый). Оба — чтобы потом было видно, кто чем «подкручивал».
