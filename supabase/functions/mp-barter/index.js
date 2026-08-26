@@ -678,23 +678,36 @@ Deno.serve(async (req) => {
     // Письмо пишется ПОСЛЕ savePlayerState и его ошибка обмен не отменяет:
     // ресурсы уже перемещены, откатить их мы отсюда всё равно не можем, а
     // ронять ответ 500 на успешном обмене — худшее из двух зол (игрок решит,
-    // что обмен не прошёл, и повторит). Поэтому ошибку письма проглатываем
-    // молча, ровно как несущественную.
-    await admin.from("mail").insert({
-      world_id: world.id, player_id: row.id, kind: "barter",
-      data: {
-        from, to, gave: want, got,
-        rate: barterRate(from, to),
-        tax: taxPct / 100,
-        lost: Math.floor(gross) - got,
-        market_lv: marketLv,
-      },
-    });
+    // что обмен не прошёл, и повторит).
+    //
+    // Но раньше эта ошибка ГЛОТАЛАСЬ молча — ни в логах, ни в ответе от неё
+    // не оставалось следа, и «письма не приходят» было не отличить от «этой
+    // механики нет». Теперь ошибка попадает и в лог функции, и в ответ
+    // (mail_err) — клиент показывает её игроку отдельной строкой, а обмен
+    // при этом остаётся успешным, как и раньше.
+    let mailErrMsg = null;
+    try {
+      const { error: mailErr } = await admin.from("mail").insert({
+        world_id: world.id, player_id: row.id, kind: "barter",
+        data: {
+          from, to, gave: want, got,
+          rate: barterRate(from, to),
+          tax: taxPct / 100,
+          lost: Math.floor(gross) - got,
+          market_lv: marketLv,
+        },
+      });
+      if (mailErr) mailErrMsg = mailErr.message;
+    } catch (e) {
+      mailErrMsg = String(e && e.message || e);
+    }
+    if (mailErrMsg) console.error("mp-barter: квитанция размена не записалась —", mailErrMsg);
 
     return jsonResponse({
       ok: true, from, to, gave: want, got,
       rate: barterRate(from, to), tax: taxPct / 100,
       lost: Math.floor(gross) - got,
+      mail_err: mailErrMsg || undefined,
     });
   } catch (e) {
     return jsonResponse({ err: String(e && e.message || e) }, 500);
