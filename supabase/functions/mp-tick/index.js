@@ -418,8 +418,24 @@ async function applyScoutArrive(admin, ev) {
     data.wounded = wounded;
   }
 
+  // Цель тоже должна узнать, что её осматривали. Автор: "второму — что на
+  // него была совершена разведка таким-то правителем, с такими-то
+  // координатами (кликабельными) и предосторожность".
+  // Письмо уходит ИМЕННО СЕЙЧАС, а не вместе с донесением разведчика: с
+  // точки зрения цели событие произошло в момент, когда лазутчик подошёл к
+  // городу, а не когда он добрался обратно (это может быть сильно позже).
+  // Координаты — разведчика, чтобы цель понимала, откуда пришли и кому
+  // отвечать. kind:"scouted" — свой вид письма, не "scout": у них разный
+  // состав и разные читатели.
+  const { error: warnErr } = await admin.from("mail").insert({
+    world_id: m.world_id, player_id: defRow.id, kind: "scouted",
+    data: { by_id: attRow.id, by_nick: attRow.nick || "", by_race: attRow.race || "",
+            x: attRow.x, y: attRow.y, se },
+  });
+  if (warnErr) throw warnErr;
+
   // Сведения сняты (это и есть момент, когда лазутчик смотрит на город) —
-  // но письмо отдаст applyScoutHome, когда он дойдёт обратно.
+  // но донесение РАЗВЕДЧИКУ отдаст applyScoutHome, когда он дойдёт обратно.
   await turnScoutHome(admin, m, attRow, data);
 }
 
@@ -459,7 +475,18 @@ async function applyScoutHome(admin, ev) {
   const { data: m, error: mErr } = await admin.from("marches").select("*").eq("id", marchId).maybeSingle();
   if (mErr) throw mErr;
   if (!m || m.state !== "back") return; // уже разобрано/отозвано
-  await admin.from("marches").delete().eq("id", m.id);
+  // Удаление марша — ЗАМОК на выдачу донесения, а не просто уборка.
+  // Автор: "баг в разведке, два отчёта пришло, хотя посылал один раз".
+  // Раньше строка сносилась без проверки результата, и письмо писалось
+  // следом безусловно: любой повторный заход в эту функцию по тому же
+  // маршу (протухшая аренда события после сбоя где-то дальше, два события
+  // scout_home на один марш) выдавал ВТОРОЕ донесение. Теперь письмо
+  // пишет только тот заход, который реально забрал строку: у второго
+  // delete вернёт пусто, и он тихо выйдет.
+  const { data: gone, error: delErr } = await admin
+    .from("marches").delete().eq("id", m.id).select("id");
+  if (delErr) throw delErr;
+  if (!gone || !gone.length) return;   // строку уже забрал кто-то другой — донесение он и выдал
   const report = m.data && m.data.scout_report;
   if (!report) return;
   const { error: mailErr } = await admin.from("mail").insert({

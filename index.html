@@ -8532,7 +8532,7 @@ let tab="city", tempo=1, lastReal=Date.now(), lastFolio="", lastMenuBody="", aca
 // звали centerOn(x,y), так и зовут, изменилась только реализация.
 function centerOn(x,y){
   const w=world3dWin();
-  if(w){ w.cam.tx=x; w.cam.tz=y; w.cam.ty=w.H(x,y)+15; }
+  if(w) w.goToWorldPos(x,y);
 }
 
 /* =========================================================================
@@ -14266,7 +14266,7 @@ $("#building-modal").addEventListener("click",handleMpAct);
 // "клеток на пиксель" у 2D.
 function zoomAt(f){
   const w=world3dWin();
-  if(w) w.cam.dist=Math.max(9,Math.min(240,w.cam.dist/f));
+  if(w) w.zoomWorldBy(f);   // пределы держит сам движок (MIN_DIST/MAX_DIST)
 }
 // Когда открыта вкладка "Мир", те же три кнопки должны крутить 3D-камеру, а
 // не невидимую 2D-канву позади неё. iframe#world3d — тот же origin, поэтому
@@ -14275,9 +14275,17 @@ function zoomAt(f){
 // cam, а не просто наличие iframe: до первого openView("world") src ещё
 // пустой, а сразу после назначения src скрипт внутри мог не успеть создать
 // cam.
+// Признак готовности движка — наличие goToWorldPos, а не cam.
+// Раньше проверялось contentWindow.cam: так звался объект камеры в СТАРОМ
+// прототипе (obyom-3d-infinite.html). Нынешний движок его наружу не
+// выставляет вовсе, поэтому эта функция ВСЕГДА возвращала null, а вместе с
+// ней тихо не работало всё, что двигает камеру: переход по координатам,
+// "к своему замку", кнопки зума. Со стороны это выглядело как "камера
+// осталась где была" — движок и так стартует на своём городе, так что
+// подмену никто не замечал (см. goToWorldPos в engine/src/main.ts).
 function world3dWin(){
   const f=$("#world3d");
-  try{ return (f && f.contentWindow && f.contentWindow.cam) ? f.contentWindow : null; }
+  try{ return (f && f.contentWindow && typeof f.contentWindow.goToWorldPos==="function") ? f.contentWindow : null; }
   catch(_){ return null; }
 }
 // Фаза 12, кусочек 2 — мост к объёмной карте (engine/src/realData.ts +
@@ -14481,9 +14489,9 @@ function mpBuildWorldSnapshot(){
 // ОДИНОЧНОЙ партии — от столицы общего мира она может быть сколь угодно
 // далеко. Без явного перевода камеры игрок увидел бы пустую карту: все
 // сущности общего мира просто не попали бы в радиус выборки вокруг
-// устаревшего центра. window.cam.tx/tz — тот же готовый мост "к своему
-// городу", что уже использует клавиша "H" (goHome() ниже), просто
-// нацеленный на настоящую столицу общего мира, а не на me() из одиночки.
+// устаревшего центра. goToWorldPos — тот же мост "к своему городу", что
+// уже использует клавиша "H" (goHome() ниже), просто нацеленный на
+// настоящую столицу общего мира, а не на me() из одиночки.
 // Если "Мир" ещё не открывали вовсе (iframe без src, world3dWin()===null)
 // — трогать нечего, самый первый рендер и так возьмёт верную точку через
 // getOwnCityPos()→mpWorldSnapshot() (см. её же комментарий).
@@ -14616,9 +14624,7 @@ function mpFocusWorld3D(){
   mpWorld3DFocused=true;
   const apply=(w)=>{
     const p=mpState.player; if(!p) return false;
-    w.cam.tx=p.x; w.cam.tz=p.y;
-    if(typeof w.H==="function") w.cam.ty=w.H(p.x,p.y)+2;
-    w.cam.dist=40; w.cam.pitch=0.5;
+    if(!w.goToWorldPos(p.x,p.y,{dist:40,pitch:0.5})) return false;
     mpHideLoading();
     return true;
   };
@@ -14645,7 +14651,7 @@ function goHome(){
   const p=me();
   centerOn(p.x,p.y);
   const w=world3dWin();
-  if(w){ w.cam.dist=40; w.cam.pitch=0.5; }   // облёт пошире, не тот же, что у обычного тапа
+  if(w) w.goToWorldPos(p.x,p.y,{dist:40,pitch:0.5});   // облёт пошире, не тот же, что у обычного тапа
   renderCartoucheFor(p.x,p.y);
 }
 $("#tempo").onchange=e=>{ tempo=+e.target.value };
@@ -14991,7 +14997,7 @@ async function claimChronicle(){
    восполняются со временem — серверное производство ещё не перенесено,
    стартовых 100000 хватает на несколько заказов набора для проверки.
    ========================================================================= */
-let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[], siegeMail:[], nodeBattleMail:[], worldBattles:[], gatherMail:[], tradeMail:[], noteMail:[], pmMail:[] };
+let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[], siegeMail:[], nodeBattleMail:[], worldBattles:[], gatherMail:[], tradeMail:[], scoutedMail:[], noteMail:[], pmMail:[] };
 let mpPollTimer = null;
 // Идёт ли прямо сейчас вход/авто-резюме в общий мир (см. mpOpen) — защита
 // от повторного запуска при быстрых переключениях вкладок меню.
@@ -15023,7 +15029,7 @@ function mpSaveCache(){
       camps:mpState.camps, marches:mpState.marches, incoming:mpState.incoming,
       mail:mpState.mail, scoutMail:mpState.scoutMail, raidMail:mpState.raidMail, siegeMail:mpState.siegeMail,
       nodeBattleMail:mpState.nodeBattleMail, gatherMail:mpState.gatherMail,
-      tradeMail:mpState.tradeMail, noteMail:mpState.noteMail,
+      tradeMail:mpState.tradeMail, scoutedMail:mpState.scoutedMail, noteMail:mpState.noteMail,
       pmMail:mpState.pmMail,
     }));
   }catch(e){ /* приватный режим/переполнение — кэш не обязателен, молча живём без него */ }
@@ -15039,7 +15045,7 @@ function mpLoadCache(){
     mpState.marches=c.marches||[]; mpState.incoming=c.incoming||[];
     mpState.mail=c.mail||[]; mpState.scoutMail=c.scoutMail||[]; mpState.raidMail=c.raidMail||[]; mpState.siegeMail=c.siegeMail||[];
     mpState.nodeBattleMail=c.nodeBattleMail||[]; mpState.gatherMail=c.gatherMail||[];
-    mpState.tradeMail=c.tradeMail||[]; mpState.noteMail=c.noteMail||[];
+    mpState.tradeMail=c.tradeMail||[]; mpState.scoutedMail=c.scoutedMail||[]; mpState.noteMail=c.noteMail||[];
     mpState.pmMail=c.pmMail||[];
     return true;
   }catch(e){ return false }
@@ -15494,6 +15500,7 @@ async function mpRefreshAll(includeSlowLane){
     if(includeSlowLane) jobs.push(
       mpRefreshMail(), mpRefreshScoutMail(), mpRefreshRaidMail(), mpRefreshSiegeMail(),
       mpRefreshNodeBattleMail(), mpRefreshGatherMail(), mpRefreshTradeMail(),
+      mpRefreshScoutedMail(),
       mpRefreshNoteMail(), mpRefreshPmMail()
     );
     // allSettled, не all: одна упавшая выборка (сеть моргнула на одной из
@@ -15596,6 +15603,14 @@ async function mpRefreshGatherMail(){
 // никогда не узнавал, в отличие от одиночки. Своя рубрика, та же схема
 // выборки, что и у остальной почты.
 // Письма об обозах (mail, kind:"trade") — та же схема, что у gather/scout.
+// Письма "на вас была разведка" (mail, kind:"scouted") — та же схема, что у
+// остальных рубрик.
+async function mpRefreshScoutedMail(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
+    .eq("kind","scouted").order("created_at",{ascending:false}).limit(10);
+  if(!error && data){ mpState.scoutedMail=data; mpRerenderData(); }
+}
 async function mpRefreshTradeMail(){
   if(!mpState.player) return;
   const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
@@ -15735,7 +15750,8 @@ async function mpDoRestart(){
   mpState.joined=false; mpState.player=null; mpState.race=null; mpState.err=null;
   mpState.neighbors=[]; mpState.nodes=[]; mpState.camps=[]; mpState.marches=[]; mpState.incoming=[];
   mpState.mail=[]; mpState.scoutMail=[]; mpState.raidMail=[]; mpState.siegeMail=[];
-  mpState.nodeBattleMail=[]; mpState.gatherMail=[]; mpState.tradeMail=[]; mpState.noteMail=[]; mpState.pmMail=[];
+  mpState.nodeBattleMail=[]; mpState.gatherMail=[]; mpState.tradeMail=[];
+  mpState.scoutedMail=[]; mpState.noteMail=[]; mpState.pmMail=[];
   mpHideDeath();
   await mpOpen();
   mpRenderFolio(); mpRenderTop();
@@ -16268,8 +16284,16 @@ async function mpRefreshIncoming(){
   // защитник должен видеть его ровно так же, как и на подходе, поэтому
   // фильтр по state расширен, а data (там лежит data.battle — живые HP,
   // см. mpBattleBarsHtml) теперь тоже читается.
+  // mode НЕ "scout": лазутчик тоже несёт data.defender_id (см. mp-scout), и
+  // без этого условия цель видела его в списке ВХОДЯЩИХ АТАК — пустым
+  // отрядом, маркером на карте и занятым слотом, который после прибытия
+  // застревал на нуле. Автор: "у правителя, на которого я отправил
+  // разведку, показывается занят слот марша на 0 сек и не уходит".
+  // Разведка — не атака, и теперь у неё есть свой честный способ сообщить
+  // цели о себе: письмо kind:"scouted" (см. applyScoutArrive в mp-tick).
   const { data, error } = await sb.from("marches").select("id,player_id,t0,t1,tx,ty,units,state,data")
-    .eq("data->>defender_id", String(mpState.player.id)).in("state",["go","siege"]).order("t1");
+    .eq("data->>defender_id", String(mpState.player.id)).neq("mode","scout")
+    .in("state",["go","siege"]).order("t1");
   if(!error && data){ mpState.incoming=data; mpMaybeToggleBattleFastPoll(); mpRerenderData(); }
 }
 // Превью добычи/час для панели — Фаза 6: теперь зовёт НАСТОЯЩИЙ клиентский
@@ -16418,10 +16442,10 @@ function mpGoToLoc(x,y){
   const apply=()=>{
     const w=world3dWin();
     if(!w) return false;
-    w.cam.tx=x; w.cam.tz=y;
-    if(typeof w.H==="function") w.cam.ty=w.H(x,y)+15;
-    w.cam.dist=40;
-    return true;
+    // Цель встаёт РОВНО в центр кадра: высоту точки взгляда подбирает сам
+    // движок (см. FOCUS_LIFT там же). Прежний код поднимал её на 15 единиц
+    // над землёй — камера смотрела в небо, а объект уезжал вниз экрана.
+    return w.goToWorldPos(x,y,{dist:40});
   };
   closeMenuModal();
   whenWorld3DReady(apply);      // общая очередь ожидания, см. её заголовок
@@ -16505,7 +16529,7 @@ function mpUnreadByCat(){
             n(mpState.nodeBattleMail)+n(mpState.gatherMail)+n(mpState.tradeMail),
     personal: n(mpState.noteMail)+
             mpState.pmMail.filter(m=>m.data&&m.data.role==="recipient"&&unread(m)).length,
-    system: n(mpState.siegeMail),
+    system: n(mpState.siegeMail)+n(mpState.scoutedMail),
   };
 }
 // Общее число для значка на гамбургере — СУММА тех же рубрик, а не
@@ -16916,6 +16940,28 @@ function mpMailTradeEntry(m){
     sub: RES.filter(r=>goods[r]).map(r=>RES_NAME[r]+" "+fmt(goods[r])).join(" · ")||"пусто",
     detailHtml: rows+taxLine};
 }
+// "На вас была разведка" (mail, kind:"scouted", см. applyScoutArrive в
+// mp-tick) — обратная сторона донесения: цель узнаёт, что её осматривали,
+// кто и откуда. Координаты кликабельные (mpLocLink), как и просил автор.
+function mpMailScoutedEntry(m){
+  const d=m.data;
+  const who=escHtml(d.by_nick||"Безымянный лорд");
+  const se=d.se||0;
+  // Предостережение по делу, а не пугалка: чем глубже разведка соперника,
+  // тем больше он о нас узнал — и тем вероятнее, что за ней придёт войско.
+  const warn = se>=3
+    ? "Он видел состав нашего войска и запасы. Такой осмотр обычно делают перед походом — уводите добычу и поднимайте стену."
+    : se>=1
+    ? "Он пересчитал наше войско на глаз и заглянул в амбары. Стоит подумать о стене и гарнизоне."
+    : "Разглядел немногое — ратушу да знамя. Но раз смотрел, значит, приглядывается.";
+  return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-scout.png", cls:"lose", tone:"red",
+    title:"На нас навели лазутчика",
+    sub:who+(d.x!=null?" · X:"+d.x+" Y:"+d.y:""),
+    detailHtml:
+      (d.x!=null?"<div class='mail-res-row'>"+mpLocLink(d.x,d.y,d.by_nick||"Соглядатай")+"</div>":"")+
+      "<div class='note'>Лазутчик правителя <b>"+who+"</b> осмотрел наш город.</div>"+
+      "<div class='note'>"+warn+"</div>"};
+}
 function mpMailNoteEntry(m){
   const d=m.data;
   return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-gen.png", cls:"", tone:"gold",
@@ -16973,8 +17019,14 @@ function mpMailPersonalEntries(){
 // "Система" — извещения о движении войск, вынесенные из "Отчёты" (автор:
 // "во вкладку систему перенеси системные уведомления... там многое ты
 // напихал в отчёты").
+// "Система" — вести о чужих действиях против нас: гонцы о подходе войск и
+// предупреждения о наведённой на нас разведке. Не наши отчёты (те в
+// "Отчётах") и не переписка.
 function mpMailSystemEntries(){
-  return mpState.siegeMail.map(m=>mpMailCached(m,mpMailSiegeEntry)).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+  return [].concat(
+    mpState.siegeMail.map(m=>mpMailCached(m,mpMailSiegeEntry)),
+    mpState.scoutedMail.map(m=>mpMailCached(m,mpMailScoutedEntry))
+  ).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
 }
 // "Отправленные" — свои же письма, копия role:"sender" у mp-sendmail.
 function mpMailSentEntries(){

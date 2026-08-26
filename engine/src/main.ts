@@ -13,7 +13,7 @@ import { buildTerrainPatch } from "./terrainMesh";
 import { heightAt, HMAX, hash2, noise, isWater, SEED, registerFlattenSite, WORLD_HALF_X, WORLD_HALF_Z, forestMaskAt, loadHeightmapData, HEIGHTMAP_VERSION } from "./terrain";
 import { PINE, LEAF, GRASS_TONES, BUSH_TONES, ROCK_TONES } from "./decorMesh";
 import { mul, persp, look, modelMatrix, transformPoint, transformPointInto, makeClipPoint, sub, cross, norm, type Vec3, type Mat4 } from "./mat4";
-import { attachOrbitControls, type OrbitCamera, MAX_DIST } from "./camera";
+import { attachOrbitControls, type OrbitCamera, MAX_DIST, MIN_DIST } from "./camera";
 import { loadGLB } from "./glb";
 import { uploadGLB, createModelPipeline, type GpuModel, type ModelInstance, type Tint } from "./modelRenderer";
 import { loadRealEntities, getOwnCityPos, type RealEntity } from "./realData";
@@ -130,9 +130,11 @@ async function main() {
   // пересобирается при каждом шаге камеры (см. renderer.ts mergedTiers —
   // это и есть источник автора: "подгружает много чанков, а размывает
   // меньше" — этому дальнему кольцу приходилось пересобирать себя целиком
-  // на каждое смещение, а задник — никогда). MAX_DIST в camera.ts (140)
-  // по-прежнему меньше нового кольца (192, запас ×1.37) — предельный зум
-  // всё ещё покрыт детальным дальним слоем, а не только грубым задником.
+  // на каждое смещение, а задник — никогда). MAX_DIST в camera.ts (Фаза 39 —
+  // снова 100, автор: "убери сильное отдаление... при сильном отдалении
+  // начинаются лаги") по-прежнему меньше кольца (192, запас теперь почти
+  // двукратный вместо прежних ×1.37) — предельный зум заведомо покрыт
+  // детальным дальним слоем, а не только грубым задником.
   const FAR_CHUNK_SIZE = 64;
   const FAR_UNLOAD_RADIUS = 3;
   // Раньше ENTITY_RADIUS считался от УЖЕ УСТАРЕВШЕГО ориентира — радиуса
@@ -1191,6 +1193,47 @@ async function main() {
   });
   (window as any).H = (x: number, y: number) => heightAt(x, y) * HMAX;
   (window as any).__camState = () => ({ yaw: cam.yaw, pitch: cam.pitch, dist: cam.dist, target: [...cam.target] });
+  // ---- перевод камеры к точке мира — ЕДИНСТВЕННЫЙ внешний способ её
+  // подвинуть (Фаза 39).
+  //
+  // Игра (index.html) до сих пор двигала камеру, присваивая полям
+  // w.cam.tx/ty/tz — это интерфейс СТАРОГО прототипа
+  // (obyom-3d-infinite.html). Здешний cam наружу не выставлен вовсе, так
+  // что все такие присваивания молча падали в никуда: и переход по
+  // координатам, и "к своему замку", и кнопки зума. Выглядело это не как
+  // ошибка, а как "камера просто осталась где была" — движок и так
+  // стартует на своём городе (см. getOwnCityPos), поэтому подмены никто не
+  // замечал, пока автор не попробовал перейти по чужим координатам.
+  //
+  // FOCUS_LIFT — почему не ноль и почему маленький. Камера смотрит ровно в
+  // cam.target, значит эта точка и оказывается в центре экрана. Прежний код
+  // ставил её на 15 единиц ВЫШЕ земли — камера глядела в пустое небо над
+  // объектом, а сам объект уезжал вниз кадра. Автор: "камера располагает
+  // объект где-то внизу... внимание игрока располагается в центре, поэтому
+  // и объект должен располагаться в центре". Четыре единицы — примерно
+  // половина высоты рядового строения: постройка оказывается по центру
+  // целиком, а не одним основанием.
+  const FOCUS_LIFT = 4;
+  (window as any).goToWorldPos = (x: number, z: number, opts?: { dist?: number; pitch?: number }) => {
+    const nx = Number(x), nz = Number(z);
+    if (!isFinite(nx) || !isFinite(nz)) return false;
+    const o = opts || {};
+    cam.target[0] = Math.max(-WORLD_HALF_X, Math.min(WORLD_HALF_X, nx));
+    cam.target[2] = Math.max(-WORLD_HALF_Z, Math.min(WORLD_HALF_Z, nz));
+    cam.target[1] = heightAt(cam.target[0], cam.target[2]) * HMAX + FOCUS_LIFT;
+    if (isFinite(Number(o.dist))) cam.dist = Math.max(MIN_DIST, Math.min(MAX_DIST, Number(o.dist)));
+    if (isFinite(Number(o.pitch))) cam.pitch = Number(o.pitch);
+    controls.stopAuto();   // иначе автооблёт тут же увёл бы камеру обратно
+    return true;
+  };
+  // Зум снаружи (кнопки игры) — тем же способом, без доступа к самому cam.
+  (window as any).zoomWorldBy = (f: number) => {
+    const nf = Number(f);
+    if (!isFinite(nf) || nf <= 0) return false;
+    cam.dist = Math.max(MIN_DIST, Math.min(MAX_DIST, cam.dist / nf));
+    controls.stopAuto();
+    return true;
+  };
   (window as any).__isAutoOrbiting = () => controls.isAutoOrbiting();
 
   // ---- координатной строки здесь БОЛЬШЕ НЕТ (Фаза 38).
