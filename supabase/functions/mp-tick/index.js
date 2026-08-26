@@ -4182,12 +4182,51 @@ async function applyMarchHome(admin, ev) {
 // зависит от бонусов игрока на тот момент, тот же принцип "снимок при
 // отправке", что и у dist/spd для дороги). Зеркало перехода
 // m.state="gather" в arriveMarch (index.html:5030-5031).
+// Списать с точки выкопанное. amount — сколько отряд забирает; на точке могло
+// остаться меньше (её копали другие, пока этот шёл), поэтому берём минимум и
+// возвращаем фактическое. Вызывается из трёх мест, и все три — момент, когда
+// добыча реально переходит к отряду: конец сбора (applyGathered) и досрочный
+// уход со сбора (mp-redirect/mp-recall делают это у себя тем же способом).
+async function takeFromNode(admin, m, amount) {
+  const want = Math.max(0, Math.floor(amount || 0));
+  const cellX = m.data && m.data.cell_x, cellY = m.data && m.data.cell_y;
+  if (!(want > 0) || cellX == null || cellY == null) return 0;
+  const { data: cell } = await admin.from("map_cells")
+    .select("data").eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY).maybeSingle();
+  if (!cell) return 0;                       // точку успели снести — брать неоткуда
+  const left = Math.max(0, (cell.data && cell.data.amount) || 0);
+  const got = Math.min(want, left);
+  if (got <= 0) return 0;
+  await admin.from("map_cells")
+    .update({ data: { ...(cell.data || {}), amount: left - got } })
+    .eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY);
+  return got;
+}
+
 async function applyGatherStart(admin, m) {
   const nowSec = Date.now() / 1000;
-  const gatherSecs = Math.max(0, (m.data && m.data.gather_secs) || 0);
+  const d = m.data || {};
+  let take = Math.max(0, d.take || 0);
+  let gatherSecs = Math.max(0, d.gather_secs || 0);
+  // Резерва точки нет (см. разбор в mp-gather): пока отряд шёл, её могли
+  // выкопать другие. Подрезаем задачу под то, что на точке ЕСТЬ на самом деле,
+  // — и время копать вместе с объёмом, пропорционально. Иначе отряд честно
+  // отстоял бы полный срок ради того, чего там уже нет.
+  const cellX = d.cell_x, cellY = d.cell_y;
+  if (take > 0 && cellX != null && cellY != null) {
+    const { data: cell } = await admin.from("map_cells")
+      .select("data").eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY).maybeSingle();
+    const left = Math.max(0, (cell && cell.data && cell.data.amount) || 0);
+    if (left < take) {
+      gatherSecs = take > 0 ? gatherSecs * (left / take) : 0;
+      take = left;
+    }
+  }
   const { error: updM } = await admin.from("marches")
-    .update({ state: "gather", t0: nowSec, t1: nowSec + gatherSecs }).eq("id", m.id);
+    .update({ state: "gather", t0: nowSec, t1: nowSec + gatherSecs,
+              data: { ...d, take, gather_secs: gatherSecs } }).eq("id", m.id);
   if (updM) throw updM;
+  m.data = { ...d, take, gather_secs: gatherSecs };
   const { error: evErr } = await admin.from("events").insert({
     world_id: m.world_id, fire_at: new Date((nowSec + gatherSecs) * 1000).toISOString(),
     type: "gathered", data: { march_id: m.id },
@@ -4343,6 +4382,12 @@ async function applyGathered(admin, ev) {
     reports.push({ res: m.data.res, amount: m.data.take, x: m.tx, y: m.ty });
   }
   const gatherReport = reports.length ? reports : null;
+  // Вот здесь и списывается ресурс с точки — в момент, когда отряд ДОКОПАЛ, и
+  // ровно столько, сколько к этой секунде на точке осталось. Резерва на
+  // отправке больше нет (см. разбор в mp-gather), поэтому цифра на карте
+  // всегда настоящая, а спор за точку решают ноги и войско, а не очередь
+  // нажатий.
+  await takeFromNode(admin, m, (m.data && m.data.take) || 0);
   const { error: updM } = await admin.from("marches")
     // from — точка, с которой обоз уходит домой. Обязательно ПЕРЕЗАПИСАТЬ:
     // на сбор отряд мог попасть перетаскиванием (mp-redirect ставит там
@@ -4370,8 +4415,8 @@ async function applyGathered(admin, ev) {
   });
   if (evErr) throw evErr;
 
-  // Фаза 8, кусочек 3 — точка истощена (amount уже списан до нуля в
-  // mp-gather на отправке) — сносим клетку и заводим respawn, зеркало
+  // Фаза 8, кусочек 3 — точка истощена (amount доведён до нуля списанием
+  // выше, takeFromNode) — сносим клетку и заводим respawn, зеркало
   // mapDelete+schedule(CFG.NODE_RESPAWN,"nodeback",...) из index.html
   // (EV.gathered, index.html:4993-4997). Раньше (кусочек 1) пустая точка
   // просто оставалась на карте навсегда — честный пробел, закрытый здесь.

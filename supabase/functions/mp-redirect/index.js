@@ -31,8 +31,8 @@
 //   ЦЕЛИ напрямую, без интерполяции по t0/t1 — здесь то же самое (t0/t1 в
 //   этом состоянии означают длительность СБОРА, не дорогу, интерполировать
 //   по ним позицию было бы неверно).
-// - Честная ДОБАВКА к экономике: mp-gather резервирует ресурс узла
-//   (data.take) уже на отправке (Фаза 8, кусочек 1), а не при завершении
+// - Резерва узла больше нет (см. разбор в mp-gather): точка всегда показывает
+//   настоящую цифру, а ресурс списывается в момент, когда его выкопали
 //   сбора — значит, отозванный НА ПОДХОДЕ (state:"go") марш должен вернуть
 //   резерв узлу (иначе ресурс пропадает в никуда — ни игроку, ни узлу).
 //   Отозванный УЖЕ НА ТОЧКЕ (state:"gather") — наоборот, признаём сбор
@@ -564,49 +564,53 @@ Deno.serve(async (req) => {
       cur = { x: started.x + (to.x - started.x) * f, y: started.y + (to.y - started.y) * f };
     }
 
-    // ---- снять со сбора, вернув точке недокопанный остаток -------------------
-    // При отправке на точку за отрядом резервируется ВЕСЬ объём (mp-gather
-    // списывает amount сразу), поэтому при досрочном уходе он забирает только
-    // фактически накопанную долю — иначе перетаскивание было бы способом
-    // получить полную добычу мгновенно.
+    // ---- снять со сбора: списать точке ровно выкопанное ---------------------
+    // Резерва на отправке нет (полный разбор — в mp-gather), поэтому уходить
+    // «с возвратом остатка» больше неоткуда: точка всё это время показывала
+    // настоящую цифру. Списываем ровно ту долю, которую отряд успел выкопать,
+    // и её же он и увозит — на карте и в обозе одно и то же число.
     const newData = { ...(m.data || {}) };
     if (m.state === "gather") {
       const f = Math.max(0, Math.min(1, (nowSec - m.t0) / Math.max(1, m.t1 - m.t0)));
       const take = (m.data && m.data.take) || 0;
-      const kept = Math.floor(take * f);
-      const back = take - kept;
+      const want = Math.floor(take * f);
+      const cx = m.data && m.data.cell_x, cy = m.data && m.data.cell_y;
+      let kept = 0;
+      if (want > 0 && cx != null && cy != null) {
+        const { data: cell } = await admin.from("map_cells")
+          .select("data").eq("world_id", world.id).eq("x", cx).eq("y", cy).maybeSingle();
+        // Точки могло уже не быть, или её докопали другие — берём сколько
+        // есть. Отряд увозит ровно столько, сколько с точки и убыло.
+        if (cell) {
+          const left = Math.max(0, (cell.data && cell.data.amount) || 0);
+          kept = Math.min(want, left);
+          if (kept > 0) {
+            await admin.from("map_cells")
+              .update({ data: { ...(cell.data || {}), amount: left - kept } })
+              .eq("world_id", world.id).eq("x", cx).eq("y", cy);
+          }
+        }
+      }
+      newData.take = 0;
       // Накопанное кладём в carry — это то, что отряд физически увозит.
-      // Раньше carry трогался ТОЛЬКО если уже существовал, а появляется он
-      // лишь в applyGathered (по завершении сбора) — значит у отряда, снятого
-      // с НЕЗАКОНЧЕННОГО сбора, добыча не попадала никуда: донесение о ней
-      // уходило, applyMarchHome зачислять было нечего.
       // Складываем, а не заменяем: отряд мог уже везти добычу с прошлой точки.
-      newData.take = 0;                       // резерв точки за нами больше не числится
       const carried = { ...(newData.carry || {}) };
       if (kept > 0 && newData.res) {
         const key = newData.res === "amber" ? "amber" : newData.res;
         carried[key] = (carried[key] || 0) + kept;
       }
       newData.carry = carried;
-      const cx = m.data && m.data.cell_x, cy = m.data && m.data.cell_y;
-      if (back > 0 && cx != null && cy != null) {
-        const { data: cell } = await admin.from("map_cells")
-          .select("data").eq("world_id", world.id).eq("x", cx).eq("y", cy).maybeSingle();
-        if (cell) {
-          const d2 = { ...(cell.data || {}) };
-          d2.amount = ((d2.amount || 0) + back);
-          await admin.from("map_cells").update({ data: d2 })
-            .eq("world_id", world.id).eq("x", cx).eq("y", cy);
-        }
-      }
       // Донесение о сборе поедет вместе с отрядом только если он что-то унёс.
       // Списком, а не одиночным объектом: отряд может копать на нескольких
-      // точках подряд, и письмо должно прийти на каждую (см. applyGathered/
-      // applyMarchHome в mp-tick — они читают тот же список).
+      // точках подряд, и письмо должно прийти на каждую.
       const reports = Array.isArray(newData.gather_report) ? newData.gather_report.slice()
         : (newData.gather_report ? [newData.gather_report] : []);
       if (kept > 0 && newData.res) reports.push({ res: newData.res, amount: kept, x: m.tx, y: m.ty });
       newData.gather_report = reports.length ? reports : null;
+    } else if (m.mode === "gather") {
+      // Шёл к точке, но так и не начал копать — забирать и возвращать нечего,
+      // просто снимаем задачу.
+      newData.take = 0;
     }
 
     // ---- что под новой целью → какой это режим ------------------------------
@@ -645,9 +649,10 @@ Deno.serve(async (req) => {
       // Готовим сбор ровно так же, как mp-gather при обычной отправке: сколько
       // отряд увезёт (грузоподъёмность по составу и расе + B.load), сколько на
       // точке осталось, и сколько секунд копать при нынешней скорости добычи.
-      // Объём резервируется за отрядом сразу (amount уменьшается) — тот же
-      // порядок, что и при отправке, иначе на одну точку можно было бы
-      // перетащить два отряда и оба «увезли бы всё».
+      // Ничего не резервируем: точка показывает настоящую цифру, а спор за
+      // неё решает бой (applyNodeContestArrive в mp-tick), а не очередь
+      // нажатий. take — это «сколько отряд СОБИРАЕТСЯ увезти», и на прибытии
+      // он ещё раз подрежется под то, что на точке к тому времени осталось.
       const attP = attRow.state || {};
       const cellData = (cell && cell.data) || {};
       const cellAmount = Math.max(0, Number(cellData.amount) || 0);
@@ -669,8 +674,6 @@ Deno.serve(async (req) => {
         rate *= isAmber ? (1 + (B.gatherAmber || 0))
           : (res === "food" || res === "wood") ? (1 + (B.gatherFW || 0)) : (1 + (B.gatherSG || 0));
         const gatherSecs = rate > 0 ? (take / rate) * 3600 : 0;
-        await admin.from("map_cells").update({ data: { ...cellData, amount: Math.max(0, cellAmount - take) } })
-          .eq("world_id", world.id).eq("x", nx).eq("y", ny);
         newData.res = res; newData.take = take; newData.gather_secs = gatherSecs;
         newData.cell_x = nx; newData.cell_y = ny;
         // carry ЗДЕСЬ не трогаем: он копит уже увезённое (см. снятие со сбора

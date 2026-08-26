@@ -302,46 +302,38 @@ Deno.serve(async (req) => {
     const spd = marchSpeed(sendUnits, attP.race, B.march);
     const travel = Math.max(20, (dist / spd) * 60);
 
-    // НАЙДЕН реальный баг (автор: «попытался собрать янтарь, но мне резко игра
-    // обнулила янтарную жилу и не позволила это сделать»).
+    // Резерва точки НЕТ и не будет. Раньше объём списывался с точки прямо
+    // здесь, на отправке, — «чтобы второй отряд не рассчитывал на занятые
+    // ресурсы». Автор это отменил: «так не должно быть, а как же битвы за
+    // ресурсные точки — они должны показываться по факту сколько там
+    // ресурсов, без резервирования».
     //
-    // Бронь добычи (списание cell.amount) стояла ПЕРВОЙ, а сохранение игрока
-    // — после неё, и при проигранной гонке за строку игрока функция отвечала
-    // 409. Клиент на 409 молча повторяет запрос (см. mpCall в index.html), но
-    // amount к этому моменту УЖЕ СПИСАН и никем не возвращён: повтор видит
-    // точку беднее, списывает ещё раз, и так до нуля — после чего проверка
-    // «Точка истощена» выше отвергает запрос совсем. Отряд не ушёл, а жила
-    // пуста. У янтарных жил запасы малы, поэтому там это срабатывало с
-    // первого же раза; у больших точек баг тот же, просто съедал долю.
+    // И он прав не только про честность цифры. Резерв решал ту же задачу, что
+    // и бой за точку (applyNodeContestArrive в mp-tick), только хуже: бой
+    // отдаёт точку сильнейшему, а резерв отдавал её тому, кто первым нажал
+    // кнопку, и делал спорную точку невидимой для остальных — то есть отменял
+    // сам смысл спора. Теперь amount на карте всегда настоящий, а сколько
+    // достанется — решают ноги и войско.
     //
-    // Порядок исправлен: сначала списываем ВОЙСКА (это и есть место, где
-    // случается конфликт версий — при нём точка остаётся нетронутой), и
-    // только потом бронируем добычу. Всё, что может сорваться после брони,
-    // её возвращает: mp-attack/mp-raid ровно так же откатывают уже созданный
-    // марш, здесь этого не было — единственная функция, которая правит
-    // общий ресурс карты, и единственная без компенсации.
+    // Что списывает ресурс теперь: applyGathered в mp-tick, в момент, когда
+    // отряд ДОКОПАЛ, и ровно столько, сколько на точке к тому времени
+    // осталось. Уход со сбора досрочно (mp-redirect/mp-recall) списывает
+    // выкопанную долю там же, где её начисляет отряду.
+    //
+    // Войска списываем до создания марша, как и раньше: это и есть место, где
+    // случается конфликт версий, и при нём точка остаётся нетронутой — теперь
+    // уже просто потому, что мы её и не трогаем.
     TKEYS.forEach((t) => {
       for (let i = 1; i <= 5; i++) attP.troops[t][i] = Math.max(0, (attP.troops[t][i] || 0) - sendUnits[t][i]);
     });
     const saved = await savePlayerState(admin, attRow, attP);
-    if (saved.conflict) return conflictResponse();          // точка ещё не тронута — повтор безопасен
+    if (saved.conflict) return conflictResponse();
     if (saved.error) return jsonResponse({ err: saved.error.message }, 500);
 
-    // Бронируем добычу за этим отрядом (та же логика, что и в index.html
-    // arriveMarch — cell.amount уменьшается по факту отправки, не по факту
-    // прибытия), чтобы второй отряд на ту же точку не мог рассчитывать на уже
-    // занятые ресурсы.
-    const newCellData = { ...(cell.data || {}), amount: Math.max(0, cellAmount - take) };
-    const { error: updCell } = await admin.from("map_cells")
-      .update({ data: newCellData, updated_at: new Date().toISOString() })
-      .eq("world_id", world.id).eq("x", tx).eq("y", ty);
-    if (updCell) return jsonResponse({ err: updCell.message }, 500);
     // Вернуть игроку списанные войска — на случай, если дальше что-то
-    // сорвётся. Порядок здесь выстроен вокруг брони точки (см. разбор выше),
-    // поэтому списание войск идёт ПЕРВЫМ и к моменту создания марша уже
-    // записано: без этого отката сорвавшаяся вставка марша или события
-    // означала бы просто пропавший отряд — ни похода, ни войск. Читаем
-    // строку заново (её мог тронуть тик мира) и пишем поверх свежей.
+    // сорвётся: без этого сорвавшаяся вставка марша или события означала бы
+    // просто пропавший отряд. Читаем строку заново (её мог тронуть тик мира)
+    // и пишем поверх свежей.
     const restoreTroops = async () => {
       for (let attempt = 0; attempt < 2; attempt++) {
         const { data: fresh } = await admin.from("players").select("*").eq("id", attRow.id).maybeSingle();
@@ -351,17 +343,8 @@ Deno.serve(async (req) => {
           for (let i = 1; i <= 5; i++) st.troops[t][i] = (st.troops[t][i] || 0) + (sendUnits[t][i] || 0);
         });
         const r = await savePlayerState(admin, fresh, st);
-        if (!r.conflict) return;   // записали (или упали по-настоящему) — второй заход только на гонке
+        if (!r.conflict) return;
       }
-    };
-    // Вернуть точке забронированное — на случай, если дальше что-то сорвётся.
-    const unbookCell = async () => {
-      const { data: fresh } = await admin.from("map_cells")
-        .select("data").eq("world_id", world.id).eq("x", tx).eq("y", ty).maybeSingle();
-      if (!fresh) return;   // точку успели снести — возвращать некуда
-      await admin.from("map_cells")
-        .update({ data: { ...(fresh.data || {}), amount: ((fresh.data && fresh.data.amount) || 0) + take } })
-        .eq("world_id", world.id).eq("x", tx).eq("y", ty);
     };
 
     const nowSec = Date.now() / 1000;
@@ -370,7 +353,7 @@ Deno.serve(async (req) => {
       tx, ty, t0: nowSec, t1: nowSec + travel,
       units: sendUnits, data: { res, take, dist, spd, gather_secs: gatherSecs, cell_x: tx, cell_y: ty },
     }).select().single();
-    if (mErr) { await unbookCell(); await restoreTroops(); return jsonResponse({ err: mErr.message }, 500); }
+    if (mErr) { await restoreTroops(); return jsonResponse({ err: mErr.message }, 500); }
 
     const { error: evErr } = await admin.from("events").insert({
       world_id: world.id, fire_at: new Date((nowSec + travel) * 1000).toISOString(),
@@ -379,7 +362,6 @@ Deno.serve(async (req) => {
     // Марш без события прибытия — вечно идущий отряд; убираем и его, и бронь.
     if (evErr) {
       await admin.from("marches").delete().eq("id", march.id);
-      await unbookCell();
       await restoreTroops();
       return jsonResponse({ err: evErr.message }, 500);
     }

@@ -692,6 +692,41 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 /* ─────────────── Переключение Город/Мир ─────────────── */
 #app.view-city #chart{display:none}
 #app.view-city #ledger{width:100%;flex:1;border-left:none;box-shadow:none}
+/* ---- Плавность интерфейса ------------------------------------------------
+   Автор: «сделай более плавные переходы, чтобы игра смотрелась цельной».
+   Всё на CSS-АНИМАЦИЯХ, а не на переходах свойства display: анимация
+   проигрывается сама в момент появления элемента, и городить отложенное
+   снятие класса (а с ним и окно, когда модалка уже закрыта для игрока, но
+   ещё «open» для кода) не приходится.
+     • ui-veil — затемнение под модалкой;
+     • ui-rise — само содержимое приподнимается на пару пикселей;
+     • ui-swap — короткое проявление при СМЕНЕ содержимого (вкладка, раздел),
+       навешивается из JS через uiSwap().
+   prefers-reduced-motion уважаем целиком: у кого системная настройка просит
+   покоя, анимаций нет вовсе. */
+@keyframes ui-veil{from{opacity:0}to{opacity:1}}
+@keyframes ui-rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes ui-swap{from{opacity:.35}to{opacity:1}}
+.ui-swap{animation:ui-swap .18s ease-out}
+/* Полоски-заглушки на время ожидания ответа (см. skeletonRowsHtml): держат
+   разметку на месте, чтобы экран не схлопывался в одну строчку и обратно. */
+@keyframes ui-pulse{0%,100%{opacity:.30}50%{opacity:.55}}
+.rank-row.skel{grid-template-columns:1fr auto;pointer-events:none}
+.sk{display:block;height:11px;border-radius:5px;background:var(--rule-soft);animation:ui-pulse 1.4s ease-in-out infinite}
+.sk-a{width:58%}
+.sk-b{width:54px}
+#menu-modal.open #menu-modal-body{animation:ui-rise .2s ease-out}
+#building-modal.open #bm-sheet{animation:ui-rise .2s ease-out}
+/* Переключение Город <-> Мир: то, что становится видимым, проявляется, а не
+   возникает рывком. Это самый заметный переход в игре — им пользуются чаще
+   любого другого. */
+#app.view-world #chart{animation:ui-swap .22s ease-out}
+#app.view-city #ledger{animation:ui-swap .22s ease-out}
+@media (prefers-reduced-motion:reduce){
+  #menu-modal.open,#building-modal.open,#menu-modal.open #menu-modal-body,
+  #building-modal.open #bm-sheet,.ui-swap,
+  #app.view-world #chart,#app.view-city #ledger{animation:none!important}
+}
 /* Снова скрыты — дублировали гамбургер-меню (пользователь явно попросил
    убрать именно эту панель целиком, не подписи внутри неё). Единственный
    путь, который раньше уводил tab с "city" без клика по самим ribbons
@@ -811,7 +846,7 @@ body.mp-placing #place-toolbar{display:flex}
 
 #menu-modal{position:fixed;inset:0;z-index:25;display:none;background:rgba(8,5,2,.72);
   overflow-y:auto}
-#menu-modal.open{display:block}
+#menu-modal.open{display:block;animation:ui-veil .16s ease-out}
 /* Золотые уголки поверх тёмной подложки #menu-modal — тот же ассет, что и
    в почте (.mail-corner), не нужно менять тёмную цветовую схему Войска/
    Генерала/Инвентаря/Профиля целиком ради декора: золото на тёмном фоне
@@ -883,7 +918,7 @@ body.mp-placing #place-toolbar{display:flex}
 /* ─────────────── Модалка здания (пергамент) ─────────────── */
 #building-modal{position:fixed;inset:0;z-index:27;display:none;background:rgba(8,5,2,.78);
   align-items:stretch;justify-content:center;padding:0}
-#building-modal.open{display:flex}
+#building-modal.open{display:flex;animation:ui-veil .16s ease-out}
 /* Раньше фон #bm-sheet тянулся ОДНОЙ картинкой parchment.jpg с двумя
    РАЗНЫМИ процентами по осям (139.13% ширина / 107.84% высота) — грубый
    ручной подбор, чтобы декор (уголки, круглая печать), запечённый ПРЯМО В
@@ -8582,6 +8617,77 @@ function setHtml(el,html){
   tpl.innerHTML=html;
   morphChildren(el,tpl.content);
 }
+/* Заглушка на время ожидания ответа сервера. Раньше на её месте стояла строка
+   «Считаем…» — экран схлопывался в одну строчку и через долю секунды
+   разворачивался обратно, и это читалось как «вкладка догружается». Полоски
+   той же высоты, что и настоящие строки, держат разметку на месте: меняется
+   только содержимое, а не размер экрана. */
+function skeletonRowsHtml(n){
+  let h="<div class='rank-list'>";
+  for(let i=0;i<n;i++) h+="<div class='rank-row skel'><span class='sk sk-a'></span><span class='sk sk-b'></span></div>";
+  return h+"</div>";
+}
+/* Короткое проявление при СМЕНЕ содержимого — вкладка меню, раздел профиля,
+   таблица мира. Класс снимается по окончании анимации, иначе следующая смена
+   не проиграла бы её заново (браузер не перезапускает уже идущую анимацию у
+   того же элемента с тем же классом).
+   Именно перезапуск и есть вся хитрость: reflow между снятием и постановкой
+   класса обязателен, без него браузер склеит две правки в одну и анимации не
+   будет вовсе. offsetWidth — самый дешёвый способ его вызвать. */
+function uiSwap(el){
+  if(!el) return;
+  el.classList.remove("ui-swap");
+  void el.offsetWidth;
+  el.classList.add("ui-swap");
+  // Снимаем по окончании — чтобы класс не оставался висеть на узле навсегда.
+  // На повтор это не влияет (перезапуск и так вынужден reflow'ом выше), просто
+  // не держим лишнего в разметке. once — слушатель снимается сам.
+  el.addEventListener("animationend",()=>el.classList.remove("ui-swap"),{once:true});
+}
+/* ---- Предзагрузка значков ------------------------------------------------
+   Автор: «загружать вкладки полностью, а не подгружать их по мере
+   необходимости». Причина была не в разметке, а в весе: значки интерфейса
+   лежали PNG-32 по 135 КБ штука при показе в 20-66 пикселей, и на телефоне
+   вкладка успевала открыться раньше, чем приходили её картинки, — сначала
+   текст, потом значки один за другим. Сами файлы пережаты (см.
+   tools/optimize_art.py, впятеро), а здесь второй половина решения: то, что
+   встречается на каждом экране, скачивается ОДИН РАЗ заранее, в простое, и
+   дальше берётся из кэша браузера мгновенно.
+
+   Именно в простое (requestIdleCallback), а не при загрузке страницы: на
+   критическом пути стоит вход в мир, и полтора мегабайта украшений там ни к
+   чему. По шесть за раз — столько браузер и так держит соединений к домену,
+   больше просто выстроится в очередь и задержит то, что игроку нужнее.
+
+   Список — то, что видно постоянно: значки действий, ресурсы, гербы, знаки
+   званий, рамки герба и почты. Полный набор (аватары, снаряжение, юниты,
+   постройки) сюда НЕ входит: он и показывается редко, и весит вчетверо
+   больше, чем всё остальное вместе. */
+const UI_PRELOAD_ICONS=["army","alliance","build","build-fab","camp","city","durability","gather",
+  "gen","help","inv","locate","mail","march","rank","rating","recall","reign","research","ruin",
+  "scout","settings","shop","siege","trade","world"];
+const UI_PRELOAD_OTHER=["mail-seal.png","mail-corner.png","profile-ring.png",
+  "profile-wreath.png","profile-shield-frame.png","icon-siege.png"];
+function preloadUiArt(){
+  const list=[];
+  UI_PRELOAD_ICONS.forEach(n=>list.push("images/ui/icon-"+n+".png"));
+  RES.concat(["amber"]).forEach(r=>list.push("images/ui/res-"+r+".png"));
+  Object.keys(RACE_CREST||{}).forEach(k=>list.push("images/ui/"+RACE_CREST[k]+"-badge.png"));
+  MP_RANKS_UP.concat(MP_RANKS_DOWN).forEach(r=>list.push("images/ranks/rank-"+r.key+".png"));
+  list.push("images/ranks/rank-none.png");
+  UI_PRELOAD_OTHER.forEach(n=>list.push("images/ui/"+n));
+  let i=0, inflight=0;
+  const pump=()=>{
+    while(inflight<6 && i<list.length){
+      const src=list[i++]; inflight++;
+      const im=new Image();
+      const done=()=>{ inflight--; pump(); };
+      im.onload=done; im.onerror=done;   // нет файла — не беда, это украшение
+      im.src=src;
+    }
+  };
+  pump();
+}
 // Тот же довод, что у isHidden() в engine/src/main.ts (см. её комментарий):
 // пока открыта вкладка "Город", панели поверх 3D-мира (#brigades-world/
 // #fieldarmy-world) просто не видны (#app.view-city #chart{display:none}),
@@ -10916,6 +11022,7 @@ function mpTradeRepaint(){
   // фокуса и набранного в поле числа.
   lastTradeSheet=mpTradeSheetHtml();
   setHtml($("#bm-body"), lastTradeSheet);
+  uiSwap($("#bm-body"));
 }
 async function mpDoTrade(){
   if(!mpTradeCtx || mpState.loading) return;
@@ -12133,7 +12240,6 @@ const PROFILE_SECTION_TTL=30000;        // мс: повторный вход в 
 
 const PROFILE_SECTIONS=[
   {id:"settings",  ico:"icon-settings.png", name:"Настройки", note:"Как игра себя ведёт"},
-  {id:"graphics",  ico:"icon-world.png",    name:"Графика",   note:"Картинка и производительность"},
   {id:"rating",    ico:"icon-rating.png",   name:"Рейтинг",   note:"Правители мира по мощи"},
   {id:"chronicles",ico:"icon-reign.png",    name:"Хроники",   note:"Летопись мира"},
   // Фаза 43 — звание. Прежняя лестница по мощи державы (Безземельный →
@@ -12296,6 +12402,7 @@ async function profileLoadChronicles(force){
 }
 function profileOpenSection(id){
   profileScreen=id;
+  uiSwap($("#menu-modal-body"));
   if(id==="rating") profileLoadBoard(profileBoard,false);
   if(id==="chronicles") profileLoadChronicles(false);
   refreshProfileIfOpen();
@@ -12329,11 +12436,26 @@ function gfxPush(){
   window.__gfx=Object.assign({v:gfxVer},gfxState);
 }
 gfxPush();   // до загрузки iframe — см. заголовок выше
+// Настройки применяются перезагрузкой страницы. Движок умеет принимать их и
+// на лету (см. applyGfx в engine/src/main.ts, и этот путь остаётся рабочим —
+// стартовые настройки применяются именно им), но часть изменений на живой
+// сцене не видна: уже построенные чанки рельефа не перестраиваются под новую
+// дальность, а свежий размер канвы становится заметен только после того, как
+// сцена перерисуется целиком. Автор: «при изменении любого переключателя
+// страница обновляется, а то я не вижу изменений». Перезагрузка гарантирует,
+// что видно ровно то, что выбрано, и стоит она секунду.
+//
+// localStorage.setItem синхронный, так что перезагружать можно сразу же:
+// значение уже на диске.
+function gfxReload(){
+  try{ sessionStorage.setItem(FS_WANT_KEY, fsActive()?"1":"0"); }catch(e){}
+  location.reload();
+}
 function gfxSet(key,val){
   gfxState[key]=val;
   try{ localStorage.setItem(GFX_KEY,JSON.stringify(gfxState)); }catch(e){}
   gfxPush();
-  refreshProfileIfOpen();
+  gfxReload();
 }
 // Готовые наборы. «Своё» не выбирается кнопкой — оно показывается само, когда
 // набор не совпал ни с одним готовым.
@@ -12355,8 +12477,53 @@ function gfxApplyPreset(id){
   Object.assign(gfxState,p.cfg);
   try{ localStorage.setItem(GFX_KEY,JSON.stringify(gfxState)); }catch(e){}
   gfxPush();
+  gfxReload();
+}
+
+/* ---- Полноэкранный режим -------------------------------------------------
+   Отдельно от настроек графики и БЕЗ перезагрузки, и вот почему: войти в
+   полный экран браузер разрешает только в ответ на действие пользователя, а
+   перезагрузка из него выкидывает. То есть «поставил галочку — перезагрузились
+   — и снова не полный экран» было бы единственным возможным исходом.
+
+   Состояние не запоминаем, а СПРАШИВАЕМ у браузера (document.fullscreenElement):
+   выйти можно и мимо галочки — клавишей Esc, свайпом, кнопкой системы, — и
+   галочка обязана это показывать, а не врать.
+
+   FS_WANT_KEY переживает только перезагрузку по смене настроек графики (см.
+   gfxReload): если игрок был в полном экране, после перезагрузки мы вернём
+   его туда на первом же касании — своего жеста для этого не нужно, годится
+   любое. sessionStorage, а не localStorage: это про текущую сессию вкладки,
+   а не про устройство навсегда. */
+const FS_WANT_KEY="fourbanners:fswant";
+const fsSupported=()=>!!(document.documentElement.requestFullscreen||document.documentElement.webkitRequestFullscreen);
+const fsActive=()=>!!(document.fullscreenElement||document.webkitFullscreenElement);
+async function fsSet(on){
+  const el=document.documentElement;
+  try{
+    if(on){ await (el.requestFullscreen ? el.requestFullscreen() : el.webkitRequestFullscreen()); }
+    else { await (document.exitFullscreen ? document.exitFullscreen() : document.webkitExitFullscreen()); }
+  }catch(e){
+    // Чаще всего это iPhone: Safari на нём полноэкранного режима для страницы
+    // не даёт вовсе. Молчать нельзя — галочка иначе просто «не работает».
+    herald("Браузер не дал переключить полноэкранный режим.");
+  }
   refreshProfileIfOpen();
 }
+// Выход мимо галочки (Esc, системная кнопка) — обновляем экран настроек, если
+// он открыт, чтобы галочка не осталась стоять.
+document.addEventListener("fullscreenchange",()=>refreshProfileIfOpen());
+document.addEventListener("webkitfullscreenchange",()=>refreshProfileIfOpen());
+// Возврат в полный экран после перезагрузки по смене настроек — на первом же
+// касании. Слушатель одноразовый и снимается сам.
+(function fsRestore(){
+  let want=false;
+  try{ want=sessionStorage.getItem(FS_WANT_KEY)==="1"; }catch(e){}
+  if(!want||!fsSupported()) return;
+  try{ sessionStorage.removeItem(FS_WANT_KEY); }catch(e){}
+  const once=()=>{ document.removeEventListener("pointerdown",once); if(!fsActive()) fsSet(true); };
+  document.addEventListener("pointerdown",once);
+})();
 // Строка настройки: слева название и пояснение, справа переключатель.
 function setRowHtml(title,note,control){
   return "<div class='entry'><div class='line'><div class='fill'>"+
@@ -12372,10 +12539,12 @@ function segHtml(key,opts){
     "<button class='"+(String(gfxState[key])===String(o.v)?"on":"")+"' "+
     "data-act='gfxset' data-g='"+key+"' data-v='"+o.v+"'>"+o.t+"</button>").join("")+"</div>";
 }
-function profileGraphicsHtml(){
+// Блок графики — ЧАСТЬ экрана настроек, а не свой раздел меню: автор
+// попросил «не заводить отдельную вкладку, она должна быть внутри настроек».
+// Своей шапки (profileBackHtml) поэтому не рисует — она уже есть у настроек.
+function gfxBlockHtml(){
   const preset=gfxPresetId();
-  let h=profileBackHtml("Графика");
-  h+=rubric("Качество", preset==="custom"?"своё":"");
+  let h=rubric("Качество картинки", preset==="custom"?"своё":"");
   h+="<div class='entry'><div class='seg wide'>"+GFX_PRESETS.map(p=>
      "<button class='"+(preset===p.id?"on":"")+"' data-act='gfxpreset' data-p='"+p.id+"'>"+p.name+"</button>").join("")+
      (preset==="custom"?"<button class='on' disabled>Своё</button>":"")+
@@ -12403,12 +12572,23 @@ function profileGraphicsHtml(){
     "Ники над замками, названия точек и полосы боя. Это разметка поверх картинки, и на телефоне она стоит заметно.",
     segHtml("labels",[{v:false,t:"Выкл"},{v:true,t:"Вкл"}]));
 
-  h+="<div class='entry'><div class='note'>Настройки хранятся на этом устройстве и применяются сразу, "+
-     "перезагружать страницу не нужно. На телефоне и на настольном они свои.</div></div>";
+  h+=rubric("Экран");
+  h+=setRowHtml("Полноэкранный режим",
+    fsSupported()
+      ? "Прячет адресную строку и панели браузера — мир занимает весь экран. Выйти можно и отсюда, и клавишей Esc."
+      : "Этот браузер полноэкранного режима для страницы не даёт (так ведёт себя Safari на iPhone).",
+    "<label class='gen-take"+(fsSupported()?"":" disabled")+"'>"+
+    "<input type='checkbox' data-act='fullscreen'"+(fsActive()?" checked":"")+
+    (fsSupported()?"":" disabled")+"><span></span></label>");
+
+  h+="<div class='entry'><div class='note'>Настройки картинки хранятся на этом устройстве — на телефоне "+
+     "и на настольном они свои. При смене любой из них страница перезагрузится, чтобы мир перестроился "+
+     "целиком и было видно ровно то, что выбрано. Полноэкранный режим перезагрузки не требует.</div></div>";
   return h;
 }
 function profileSettingsHtml(){
   let h=profileBackHtml("Настройки");
+  h+=gfxBlockHtml();
   h+=rubric("Походы");
   h+="<div class='entry'><div class='line'><div class='fill'>"+
      "<div class='title'>Брать полководца по умолчанию</div>"+
@@ -12452,7 +12632,7 @@ function profileRatingHtml(meId){
   }
   const err=profileBoardErr[b.id], rows=profileBoardData[b.id];
   if(err) return h+"<div class='entry'><div class='note' style='color:#e08'>Не удалось получить таблицу: "+escHtml(err)+"</div></div>";
-  if(!rows) return h+"<div class='entry'><div class='note'>Считаем…</div></div>";
+  if(!rows) return h+skeletonRowsHtml(6);
   if(!rows.length) return h+"<div class='entry'><div class='note'>"+escHtml(b.empty)+"</div></div>";
 
   const myPlace=rows.findIndex(r=>r.id===meId);
@@ -12638,7 +12818,7 @@ function chronicleLineHtml(c){
 function profileChroniclesHtml(){
   let h=profileBackHtml("Хроники");
   if(profileChronErr) return h+"<div class='entry'><div class='note' style='color:#e08'>Не удалось открыть летопись: "+escHtml(profileChronErr)+"</div></div>";
-  if(!profileChron) return h+"<div class='entry'><div class='note'>Листаем…</div></div>";
+  if(!profileChron) return h+skeletonRowsHtml(5);
   if(!profileChron.length){
     return h+"<div class='entry'><div class='note'>Летопись пуста — в этом мире ещё ни одно правление "+
       "не оборвалось. Записи появляются сами, когда чья-то ратуша падёт.</div></div>";
@@ -12658,7 +12838,6 @@ function foProfile(pIn){
     if(profileScreen==="settings")   return profileSettingsHtml();
     if(profileScreen==="rating")     return profileRatingHtml(mpState.player.id);
     if(profileScreen==="chronicles") return profileChroniclesHtml();
-    if(profileScreen==="graphics")   return profileGraphicsHtml();
     if(profileScreen==="battlerank") return profileBattleRankHtml();
   }
   const avSrc=playerAvatarSrc(p);
@@ -13678,17 +13857,20 @@ function handleAct(e){
     gfxSet(k, raw==="true" ? true : raw==="false" ? false : Number(raw));
     return;
   }
+  const fsBox=e.target.closest("[data-act='fullscreen']");
+  if(fsBox){ fsSet(fsBox.checked); return; }
   const gfxPresetBtn=e.target.closest("[data-act='gfxpreset']");
   if(gfxPresetBtn){ gfxApplyPreset(gfxPresetBtn.dataset.p); return; }
   const boardBtn=e.target.closest("[data-act='board']");
   if(boardBtn){
     profileBoard=boardBtn.dataset.b;
     profileLoadBoard(profileBoard,false);
+    uiSwap($("#menu-modal-body"));
     refreshProfileIfOpen();
     return;
   }
   const profBackBtn=e.target.closest("[data-act='profback']");
-  if(profBackBtn){ profileScreen=null; refreshProfileIfOpen(); return; }
+  if(profBackBtn){ profileScreen=null; uiSwap($("#menu-modal-body")); refreshProfileIfOpen(); return; }
   const genTakeBox=e.target.closest("[data-act='setgentake']");
   if(genTakeBox){ setGenTakeDefault(genTakeBox.checked); return; }
   const clearCacheBtn=e.target.closest("[data-act='clearcache']");
@@ -14556,6 +14738,9 @@ function openMenuModal(t){
   }
   lastMenuBody = html;
   setHtml($("#menu-modal-body"), html);
+  // Проявление на СМЕНУ вкладки, а не на каждый тик: сюда приходят только по
+  // нажатию значка меню, а живое обновление идёт своим путём (mpRerenderData).
+  uiSwap($("#menu-modal-body"));
   // setHtml (в отличие от прежнего innerHTML) не пересоздаёт контейнер, а
   // значит и не обнуляет его прокрутку сам — при СМЕНЕ вкладки её нужно
   // сбросить явно, иначе новая вкладка открывалась бы прокрученной на
@@ -18754,6 +18939,13 @@ function foMultiplayer(embedded, only){
     const w3d=$("#world3d");
     if(w3d && !w3d.src) w3d.src="engine/dist/index.html";
   }
+  // Значки интерфейса — в простое, последним делом (см. preloadUiArt): к
+  // моменту, когда игрок откроет первую вкладку, они уже в кэше, и вкладка
+  // показывается целиком, а не дорисовывается по одной картинке.
+  // requestIdleCallback есть не везде (Safari до 16-й) — тогда просто с
+  // задержкой, лишь бы не в критическом пути входа.
+  if(window.requestIdleCallback) requestIdleCallback(preloadUiArt,{timeout:4000});
+  else setTimeout(preloadUiArt,2500);
 })();
 </script>
 </body>
