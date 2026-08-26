@@ -9109,8 +9109,23 @@ function renderCartoucheMp(){
     // войска — только через настоящую разведку, не бесплатной строкой тут);
     // shield_until — голый scalar, не вскрывает состав (см. mpRefreshNeighbors).
     const shielded=(q.shieldUntil||0)>Date.now()/1000;
+    const qCalib=(q.ratingBattles||0)<MP_CALIBRATION_BATTLES;
+    const qRank=qCalib?null:mpRankOf(q.rating||0);
+    const left=mpPairBattlesLeft(q.id);
     put("<div class='hd'>"+shieldSvg(q.race,14)+q.nick+" "+coord+"</div>"+
       "<div class='co'><span>Ратуша</span><b>"+q.b.hall+"</b></div>"+
+      // Звание соперника — то, ради чего его вообще видно всем: по нему
+      // решают, свой ли это бой. Число рейтинга тут не нужно, оно есть в
+      // мировой таблице.
+      (qRank?"<div class='co'><span>Звание</span><b class='brank"+(qRank.down?" shame":"")+"'>"+escHtml(qRank.full)+"</b></div>"
+            :"<div class='co'><span>Звание</span><b style='color:var(--vellum-faint)'>нет</b></div>")+
+      // Остаток потолка пары. Считается по СВОИМ же письмам о боях — сервер
+      // за этим ходить незачем, а журнал rating_events игроку закрыт нарочно
+      // (в нём скрытый коэффициент по мощи держав).
+      (left<MP_PAIR_CAP_BATTLES
+        ? "<div class='co'><span>Рейтинг за бой</span><b"+(left<=0?" style='color:#c0525b'":"")+">"+
+          (left>0?"осталось "+left:"исчерпан на час")+"</b></div>"
+        : "")+
       (shielded?"<div class='co'><span>Статус</span><b style='color:#7ab2e0'>Под щитом мира</b></div>":"")+
       "<div class='chips' style='margin-top:9px'>"+
         (hasScout?"<button class='seal ico' data-mp='cartscout' data-id='"+q.id+"'><img src='images/ui/icon-scout.png' alt=''>Разведать</button>":"")+
@@ -12343,6 +12358,31 @@ function profileRatingHtml(meId){
      "в рейтинг не попадают.</div></div>";
   return h;
 }
+/* ---- Остаток потолка пары (Фаза 43) --------------------------------------
+   С одним и тем же соперником засчитывается не больше четырёх боёв в час
+   (см. docs/RANKS.md, «Потолок на пару»). Считаем по СВОИМ письмам о боях, а
+   не запросом на сервер: письма и так приходят опросом, в них есть и соперник,
+   и время, и признак «бой засчитан» (d.rating.counted), а журнал rating_events
+   игроку закрыт нарочно — в нём лежит скрытый коэффициент по мощи держав.
+   Считаются бои в ОБЕ стороны: пара неупорядоченная, поменяться ролями и
+   обнулить счётчик нельзя. */
+const MP_PAIR_CAP_BATTLES=4, MP_PAIR_CAP_WINDOW_MS=60*60*1000;
+function mpPairBattlesLeft(oppId){
+  if(oppId==null) return MP_PAIR_CAP_BATTLES;
+  const since=Date.now()-MP_PAIR_CAP_WINDOW_MS;
+  let n=0;
+  const scan=list=>{
+    (list||[]).forEach(m=>{
+      const d=m.data||{};
+      if(d.opponent_id!==oppId) return;
+      if(!d.rating || !d.rating.counted) return;
+      if(new Date(m.created_at).getTime()<since) return;
+      n++;
+    });
+  };
+  scan(mpState.mail); scan(mpState.nodeBattleMail);
+  return Math.max(0, MP_PAIR_CAP_BATTLES-n);
+}
 // Класс окраски боевого звания: позорные — гранатом, обычные — как есть,
 // три высших — золотом. Отдельная функция, потому что зовётся и с карточки
 // профиля, и с экрана звания.
@@ -15023,7 +15063,8 @@ function mpBuildWorldSnapshot(){
   const byId={}; byId[me.id]=players[0];
   mpState.neighbors.forEach(n=>{
     const p={id:n.id, race:n.race, nick:n.nick, x:n.x, y:n.y, b:{hall:Number(n.hall)||1},
-             gen:{id:(n.gen==null||n.gen==="")?null:Number(n.gen)}, shieldUntil:Number(n.shield_until)||0};
+             gen:{id:(n.gen==null||n.gen==="")?null:Number(n.gen)}, shieldUntil:Number(n.shield_until)||0,
+             rating:Number(n.rating)||0, ratingBattles:Number(n.rating_battles)||0};
     players.push(p); byId[n.id]=p;
   });
   const map={};
@@ -16263,7 +16304,11 @@ async function mpRefreshNeighbors(){
   // города больше нет, атаковать/разведывать их нельзя (mp-attack/mp-scout
   // отвечают отказом), и висеть замком в 3D им незачем. Своя же строка сюда
   // не попадает вовсе (neq по id) — экран гибели берёт её из mpState.player.
-  const { data, error } = await sb.from("players").select("id,nick,race,x,y,is_bot,hall:state->b->>hall,gen:state->gen->>id,shield_until")
+  // rating/rating_battles — Фаза 43: звание соперника видно всем (прямое
+  // решение автора), и смотрят на него ровно там, где решают, нападать ли, —
+  // в картуше по тапу по чужому городу. Это два числа, не состав войск: тот
+  // по-прежнему только через настоящую разведку.
+  const { data, error } = await sb.from("players").select("id,nick,race,x,y,is_bot,hall:state->b->>hall,gen:state->gen->>id,shield_until,rating,rating_battles")
     .eq("world_id", mpState.player.world_id).neq("id", mpState.player.id).is("dead_at", null).order("id");
   if(!error && data){ mpState.neighbors=data; mpRerenderData(); }
 }
