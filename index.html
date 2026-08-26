@@ -243,6 +243,20 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    длине результата, а не только сокращаем разряды. */
 .profile-power-chip{position:absolute;top:37%;left:50%;transform:translate(-50%,-50%);
   font-family:var(--data);color:var(--gilt-hi);font-weight:bold;white-space:nowrap}
+/* Строка выбора войск в окнах отправки (mpTroopRowHtml): подпись сверху,
+   под ней ползунок, число и "Всё" одной строкой. Тёмная гамма — эти окна
+   рисуются в #building-modal, но своим фоном, не на пергаменте карточки
+   здания. */
+.mp-troop{margin:9px 0;padding-bottom:8px;border-bottom:1px solid var(--rule-soft)}
+.mp-troop:last-of-type{border-bottom:none}
+.mt-hd{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:5px}
+.mt-nm{font-size:13px;color:var(--vellum)}
+.mt-have{font-size:11.5px;color:var(--vellum-faint);font-family:var(--data);white-space:nowrap}
+.mt-row{display:flex;align-items:center;gap:9px}
+.mt-range{flex:1 1 auto;min-width:0}
+.mt-num{flex:0 0 74px;width:74px;text-align:right}
+.mt-all{flex:0 0 auto;padding:4px 10px;font-size:12px}
+
 /* Фаза 34 — форма торгового обоза (mpTradeSheetHtml). Живёт в
    #building-modal, то есть на светлом пергаменте карточки здания, — поэтому
    свои чернила, как у .bm-hp рядом, а не тёмная гамма остальных экранов. */
@@ -1508,6 +1522,14 @@ body.mp-placing #place-toolbar{display:flex}
   background:var(--verdigris);transition:width .4s ease,background .4s ease}
 .cbuild .bhp.warn i{background:var(--gilt)}
 .cbuild .bhp.crit i{background:var(--garnet);animation:bhpPulse 1.4s ease-in-out infinite}
+/* Таймер занятости здания (набор/лечение/ковка/исследование) — маленькая
+   плашка у ВЕРХНЕГО края плитки, чтобы не спорить со значком уровня и
+   полоской прочности внизу. Автор просил "не сильно большие, чтобы
+   помещались": моноширинный 9px, тёмная подложка, по центру. */
+.cbuild .bbusy{position:absolute;top:2px;left:50%;transform:translateX(-50%);
+  font-family:var(--data);font-size:9px;line-height:1.5;white-space:nowrap;
+  color:var(--gilt-hi);background:rgba(0,0,0,.66);border-radius:3px;padding:0 4px;
+  z-index:3;pointer-events:none;box-shadow:0 0 0 1px rgba(0,0,0,.5)}
 /* Значок уровня стоит там же, у нижнего края, и на узкой плитке налезал на
    полоску. Полоска теперь есть у всех построенных зданий, поэтому и подъём
    значка общий — но правило оставлено на :has(), чтобы пустой участок
@@ -4169,6 +4191,28 @@ function buildHpShown(st,bk,plot,nowSec){
   const from=Math.max(st.bhpAt||0,(st.lastHitAt||0)+BUILD_REGEN_CALM_SEC);
   const dt=Math.max(0,(nowSec||Date.now()/1000)-from);
   return Math.max(0,Math.min(max, cur + max*BUILD_REGEN_PER_HOUR*(dt/3600)));
+}
+// Что здание сейчас делает и сколько ему осталось — маленькой плашкой прямо
+// на плитке. Автор: "добавь таймеры над казармами, сколько занимает
+// тренировка по времени, а то так неудобно постоянно заглядывать и смотреть.
+// Но не сильно большие, чтобы помещались".
+// Источник — то же состояние, что читают карточки зданий: набор войск по
+// роду (st.train[t] у казарм/стрельбища/конюшни/осадной), лечение
+// (st.heal у лазарета), ковка (st.craft у горна), исследование (st.rsch у
+// академии). Стройка сюда НЕ входит: у неё свои слоты бригад слева, и
+// дублировать её на плитке незачем.
+const BLD_BUSY_FIELD={ barracks:["train","inf"], range:["train","arc"],
+                       stable:["train","cav"], siege:["train","sie"],
+                       hospital:["heal"], forge:["craft"], academy:["rsch"] };
+function buildBusyUntil(st,bk){
+  const f=BLD_BUSY_FIELD[bk]; if(!f||!st) return 0;
+  const box=f[1]!=null ? (st[f[0]]&&st[f[0]][f[1]]) : st[f[0]];
+  return (box&&box.t1)||0;
+}
+function buildBusyBadgeHtml(st,bk,nowSec){
+  const t1=buildBusyUntil(st,bk);
+  if(!t1||t1<=nowSec) return "";
+  return "<span class='bbusy'>"+fmtDur(t1-nowSec)+"</span>";
 }
 // Полоска под зданием на карте города — у КАЖДОГО построенного здания.
 // Раньше она появлялась только у повреждённого (чтобы мирный город не был
@@ -9089,6 +9133,7 @@ function mpRenderFreeformCity(){
        "style='left:"+r.left+"%;top:"+r.top+"%;width:"+r.w+"%;height:"+r.h+"%'>"+
        "<div class='shape'></div>"+
        (lv>0?(bk!=="wall"?"<img class='bimg' src='"+cityCellImg({bk,pl:null})+"'>":"")+"<span class='lvl'>"+lv+"</span>"+
+             buildBusyBadgeHtml(st,bk,nowSecCity)+
              buildHpBarHtml(st,bk,null,nowSecCity):"")+
        "</div>";
   });
@@ -9108,6 +9153,7 @@ function mpRenderFreeformCity(){
        "style='left:"+r.left+"%;top:"+r.top+"%;width:"+r.w+"%;height:"+r.h+"%'>"+
        "<div class='shape'></div>"+
        "<img class='bimg' src='"+cityCellImg({bk:e.b,pl:e.plot})+"'><span class='lvl'>"+lv+"</span>"+
+       buildBusyBadgeHtml(st,e.b,nowSecCity)+
        buildHpBarHtml(st,e.b,e.plot,nowSecCity)+
        "</div>";
   });
@@ -11150,6 +11196,28 @@ function mpGenTakeCheckboxHtml(st,id){
     " onchange='setGenTakeDefault(this.checked)'>"+
     " Взять полководца (боевые бонусы, риск попасть под удар в этом бою)</label></div>";
 }
+// Одна строка выбора войск для всех окон отправки (штурм/сбор/пустошь/
+// лагерь). Раньше в каждом из четырёх мест стоял голый <input type=number>
+// со значением "0", и автор попросил три вещи сразу: ползунок, чтобы
+// набирать число пальцем, исчезающий ноль ("чтобы при нажатии на ячейку с
+// вводом войск 0 пропадал и не нужно было вводить поверх нуля или стирать
+// его вручную") и кнопку "всё" — она напрашивается рядом с ползунком.
+// id полей остались прежние (mp-atk-<t> и т.п.): их читают mpDoAttack и
+// соседи по фиксированным именам, менять их незачем.
+// data-mpqty связывает ползунок с числом в обе стороны (см. слушатель
+// input у #building-modal).
+function mpTroopRowHtml(idPrefix,t,name,have){
+  const id=idPrefix+t;
+  return "<div class='mp-troop'>"+
+    "<div class='mt-hd'><span class='mt-nm'>"+name+"</span>"+
+    "<span class='mt-have'>есть "+RU(have)+"</span></div>"+
+    "<div class='mt-row'>"+
+      "<input class='mt-range' type='range' min='0' max='"+have+"' value='0' data-mpqty='"+id+"'>"+
+      "<input id='"+id+"' class='mt-num' type='number' min='0' max='"+have+"' value='0' "+
+        "data-mpqty-num='"+id+"' inputmode='numeric'>"+
+      "<button class='seal mt-all' data-mp='qtyall' data-id='"+id+"' data-max='"+have+"'>Всё</button>"+
+    "</div></div>";
+}
 let mpMarchCtx=null, lastMarchSheet="";
 function mpOpenMarchModal(mode,target){
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
@@ -11179,8 +11247,7 @@ function mpMarchSheetHtml(){
       "пути тоже настоящие — чем медленнее войска, тем дольше идти). См. supabase/README.md.</div>"+errHtml;
     TKEYS.forEach(t=>{
       const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
-      h+="<div class='note'>"+unitName(t,1,p.race)+" (T1, есть "+RU(have)+"): "+
-         "<input id='mp-atk-"+t+"' type='number' min='0' max='"+have+"' value='0'></div>";
+      h+=mpTroopRowHtml("mp-atk-",t,unitName(t,1,p.race)+" (T1)",have);
     });
     h+=mpGenTakeCheckboxHtml(st,"mp-atk-gen");
     h+="<div class='chips' style='margin-top:9px'>"+
@@ -11198,9 +11265,12 @@ function mpMarchSheetHtml(){
       "<div class='note'>"+n.x+", "+n.y+" · "+dist+" клет. · осталось "+fmt(amount)+"</div>"+errHtml;
     TKEYS.forEach(t=>{
       const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
-      h+="<div class='note'>"+unitName(t,1,p.race)+" (T1, есть "+RU(have)+"): "+
-         "<input id='mp-gth-"+t+"' type='number' min='0' max='"+have+"' value='0'></div>";
+      h+=mpTroopRowHtml("mp-gth-",t,unitName(t,1,p.race)+" (T1)",have);
     });
+    // Галочка генерала была во всех окнах отправки, кроме сбора — автор:
+    // "при открывании менюшки на сбор, к примеру, всё ещё нет галочки взять
+    // генерала". Сервер (mp-gather) её принимает так же, как остальные.
+    h+=mpGenTakeCheckboxHtml(st,"mp-gth-gen");
     h+="<div class='chips' style='margin-top:9px'>"+
        "<button class='seal ico' data-mp='gather' data-x='"+n.x+"' data-y='"+n.y+"'"+(mpState.loading?" disabled":"")+"><img src='images/ui/icon-gather.png' alt=''>Собрать</button> "+
        "<button class='seal' data-act='closebuilding'>Отмена</button></div>";
@@ -11217,8 +11287,7 @@ function mpMarchSheetHtml(){
       "Дальше его можно перетащить пальцем на любую цель или отозвать.</div>"+errHtml;
     TKEYS.forEach(t=>{
       const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
-      h+="<div class='note'>"+unitName(t,1,p.race)+" (T1, есть "+RU(have)+"): "+
-         "<input id='mp-mv-"+t+"' type='number' min='0' max='"+have+"' value='0'></div>";
+      h+=mpTroopRowHtml("mp-mv-",t,unitName(t,1,p.race)+" (T1)",have);
     });
     h+=mpGenTakeCheckboxHtml(st,"mp-mv-gen");
     h+="<div class='chips' style='margin-top:9px'>"+
@@ -11235,8 +11304,7 @@ function mpMarchSheetHtml(){
     "часть погибнет насовсем — как при штурме города, но без разграбления вашего дома.</div>"+errHtml;
   TKEYS.forEach(t=>{
     const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
-    h+="<div class='note'>"+unitName(t,1,p.race)+" (T1, есть "+RU(have)+"): "+
-       "<input id='mp-rd-"+t+"' type='number' min='0' max='"+have+"' value='0'></div>";
+      h+=mpTroopRowHtml("mp-rd-",t,unitName(t,1,p.race)+" (T1)",have);
   });
   h+=mpGenTakeCheckboxHtml(st,"mp-rd-gen");
   h+="<div class='chips' style='margin-top:9px'>"+
@@ -13481,6 +13549,19 @@ $("#building-modal").addEventListener("input",e=>{
   // Фаза 34 — поля торгового обоза. Числа правим БЕЗ пересборки экрана:
   // перерисовка на каждый набранный символ уводила бы фокус из поля, в
   // которое игрок печатает. Пересчитываем только итоговую табличку.
+  // Ползунок и число в окнах отправки — две стороны одного значения.
+  // Пишем НАПРЯМУЮ в соседа, не пересобирая экран: иначе поле теряло бы
+  // фокус на каждом движении пальца.
+  } else if(e.target.dataset && e.target.dataset.mpqty){
+    const num=$("#"+e.target.dataset.mpqty);
+    if(num) num.value=e.target.value;
+  } else if(e.target.dataset && e.target.dataset.mpqtyNum){
+    const box=$("#bm-body").querySelector("[data-mpqty='"+e.target.dataset.mpqtyNum+"']");
+    if(box){
+      const max=+box.max||0;
+      const v=Math.max(0,Math.min(max,Math.round(+e.target.value||0)));
+      box.value=v;
+    }
   } else if(e.target.dataset && e.target.dataset.trade && mpTradeCtx){
     const r=e.target.dataset.trade;
     const st=mpState.player.state;
@@ -14157,6 +14238,15 @@ function handleMpAct(e){
   const moveBtn=e.target.closest("[data-mp='move']");
   if(moveBtn){ mpDoMove(+moveBtn.dataset.x, +moveBtn.dataset.y); return; }
   // ---- торговля (Фаза 34) --------------------------------------------
+  const qtyAllBtn=e.target.closest("[data-mp='qtyall']");
+  if(qtyAllBtn){
+    const id=qtyAllBtn.dataset.id, max=+qtyAllBtn.dataset.max||0;
+    const num=$("#"+id);
+    const box=$("#bm-body").querySelector("[data-mpqty='"+id+"']");
+    if(num) num.value=max;
+    if(box) box.value=max;
+    return;
+  }
   const tradeOpenBtn=e.target.closest("[data-mp='tradeopen']");
   if(tradeOpenBtn){ mpOpenTradeModal(); return; }
   const tradePickBtn=e.target.closest("[data-mp='tradepick']");
@@ -14254,6 +14344,19 @@ $("#menu-modal-body").addEventListener("click",e=>{
 // рисует те же data-mp-кнопки в #bm-body, но ЖИЛО без единого слушателя
 // для них — только handleAct(), который data-mp не знает).
 $("#building-modal").addEventListener("click",handleMpAct);
+// Ноль в поле ввода войск исчезает, как только в него ткнули: автор просил
+// не заставлять "вводить поверх нуля или стирать его вручную". Ушли из
+// пустого поля — возвращаем ноль, чтобы дальше по коду не читался NaN.
+// focusin/focusout, а не focus/blur: эти два не всплывают, а слушатель тут
+// один на всю модалку.
+$("#building-modal").addEventListener("focusin",e=>{
+  const el=e.target;
+  if(el && el.dataset && el.dataset.mpqtyNum && el.value==="0"){ el.value=""; el.select&&el.select(); }
+});
+$("#building-modal").addEventListener("focusout",e=>{
+  const el=e.target;
+  if(el && el.dataset && el.dataset.mpqtyNum && el.value===""){ el.value="0"; }
+});
 
 // Двойной тап по чужой клетке в 3D сразу открывал лист похода (openLevy) —
 // удобный ярлык поверх обычного тапа+кнопки в cartouche, но не необходимый:
@@ -15432,6 +15535,11 @@ function mpTickSlots(){
   }
   mpRenderBrigadesWorld();   // обе сами проверяют, что мы в объёмной карте
   mpRenderFieldArmyWorld();
+  // Карта города — ради таймеров занятости прямо на плитках зданий
+  // (buildBusyBadgeHtml). Собрать её HTML стоит 0.09 мс, а setHtml внутри
+  // mpRenderFolio ещё и диффит: секунду это не нагружает ничем, зато
+  // "осталось 4 мин 56 с" тикает как часы, а не прыгает через пять секунд.
+  if($("#app").classList.contains("view-city")) mpRenderFolio();
   // Что-то ТОЛЬКО ЧТО кончилось — просим свежее состояние сразу, не дожидаясь
   // очередного опроса: иначе новый уровень здания или готовое исследование
   // появятся в карточках на несколько секунд позже, чем слот освободился.
@@ -15989,7 +16097,8 @@ async function mpDoGather(x,y){
   TKEYS.forEach(t=>{ const inp=$("#mp-gth-"+t); units[t]={1:Math.max(0,Math.round(+((inp&&inp.value)||0)))}; });
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
-    await mpCall("mp-gather",{x,y,units});
+    const genInp=$("#mp-gth-gen"), withGen=!!(genInp&&genInp.checked);
+    await mpCall("mp-gather",{x,y,units,with_gen:withGen});
     mpState.gatherTarget=null; if(mpMarchCtx){ mpMarchCtx=null; $("#building-modal").classList.remove("open"); }
     await mpRefreshPlayer(); await mpRefreshMarches(); await mpRefreshNodes();
   }catch(e){ mpState.err=e.message; }
