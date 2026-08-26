@@ -10638,8 +10638,6 @@ function mpMarketInfoHtml(lv){
   // Рынка обмен не был показан вовсе. Своя кнопка сюда же, рядом.
   h+="<button class='seal wide ico' data-mp='tradeopen' data-t='barter'>"+
      "<img src='images/ui/icon-trade.png' alt=''>Обменять ресурсы</button>";
-  h+="<div class='note'>Обмен идёт на месте, без обоза: еду и дерево меняют один к одному, "+
-     "на камень 1:0,75, на золото 1:0,5. С обмена берётся тот же налог.</div>";
   return h;
 }
 /* ---- Форма отправки обоза ------------------------------------------------
@@ -10784,9 +10782,6 @@ function mpBarterBodyHtml(st,lv,cap,tax){
      "<button class='seal ico' data-mp='btgo'"+((amount>0&&got>0&&!mpState.loading)?"":" disabled")+">"+
      "<img src='images/ui/icon-trade.png' alt=''>Обменять</button>"+
      "<button class='seal' data-act='closebuilding'>Закрыть</button></div>";
-  h+="<div class='note'>Ставка идёт от того, насколько быстро ресурс добывается: "+
-     "золота копится вдвое медленнее еды — значит и стоит оно вдвое дороже. "+
-     "Обмен обратим: без налога круг «еда — камень — еда» возвращает ровно исходное.</div>";
   return h;
 }
 // Живое значение <input> морфер не трогает НАРОЧНО (см. morphNode: там
@@ -17380,9 +17375,7 @@ function mpMailBarterEntry(m){
       "<div class='mail-res-row'>"+
         resIconSpan(d.from,"−"+fmt(gave))+resIconSpan(d.to,"+"+fmt(got))+
       "</div>"+
-      "<div class='note'>Ставка 1 : "+rateTxt+" — за 100 "+
-        (RES_GEN[d.from]||fromN)+" дают "+fmt(Math.round(rate*100))+" "+(RES_GEN[d.to]||toN)+
-        " (до налога).</div>"+
+      "<div class='note'>Ставка 1 : "+rateTxt+"</div>"+
       "<div class='note'>Налог Рынка"+(d.market_lv?" "+d.market_lv+" ур.":"")+" — "+taxTxt+"%"+
         (d.lost?" (удержано "+fmt(d.lost)+" "+(RES_GEN[d.to]||toN)+")":"")+".</div>"};
 }
