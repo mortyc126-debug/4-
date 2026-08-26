@@ -19,19 +19,10 @@
 //   ЦЕЛИ напрямую, без интерполяции по t0/t1 — здесь то же самое (t0/t1 в
 //   этом состоянии означают длительность СБОРА, не дорогу, интерполировать
 //   по ним позицию было бы неверно).
-// - Честная ДОБАВКА к экономике: mp-gather резервирует ресурс узла
-//   (data.take) уже на отправке (Фаза 8, кусочек 1), а не при завершении
-//   сбора — значит, отозванный НА ПОДХОДЕ (state:"go") марш должен вернуть
-//   резерв узлу (иначе ресурс пропадает в никуда — ни игроку, ни узлу).
-//   Отозванный УЖЕ НА ТОЧКЕ (state:"gather") забирает ТУ ДОЛЮ, что успела
-//   набежать, а остаток возвращает точке — дословно как mp-redirect при
-//   перетаскивании с недокопанной жилы. Раньше здесь засчитывался весь
-//   резерв целиком, и это ломало точку: резерв списан при отправке, назад
-//   не возвращался, у точки оставался ноль, а как только марш переставал
-//   быть сборщиком, sweepEmptyNodes сносил её насовсем (репорт автора:
-//   "отвожу войска с жилы — жила обнуляется и повторно направить туда
-//   войска не получается"). Заодно это была дыра: отозвался через секунду —
-//   унёс всё, что резервировал на час.
+// - Резерва узла нет (полный разбор — в mp-gather): точка всегда показывает
+//   настоящую цифру, а ресурс списывается в момент, когда его выкопали.
+//   Отозванный С ТОЧКИ забирает выкопанную долю (и ровно она с точки и
+//   убывает); отозванный с дороги не забирает ничего — копать он не начинал.
 //
 // Честное упрощение, продолжающее то же, что и в mp-attack: путь по прямой
 // (Math.hypot), не waterPath() — клетки местности (map_cells) в общем
@@ -450,19 +441,6 @@ async function triggerTick(SUPABASE_URL) {
   } catch (_) { /* тикер недоступен/завис/упал — не блокируем сам отзыв, см. заголовок выше */ }
 }
 
-// Числится ли за отрядом НЕВЫБРАННЫЙ резерв точки. Дословная копия
-// gatherBooked из mp-redirect (тот же принцип самодостаточных копий, что и у
-// остального в этой папке) — там же полный разбор, зачем нужен отдельный флаг
-// вместо «take > 0»: take переживает сбор, и у отряда, уже уходящего домой с
-// добычей, он тот же самый.
-function gatherBooked(m) {
-  const d = m && m.data;
-  if (!d || !(d.take > 0) || d.cell_x == null || d.cell_y == null) return false;
-  if (d.booked === true) return true;
-  if (d.booked === false) return false;
-  return m.state === "go" || m.state === "gather";
-}
-
 Deno.serve(async (req) => {
   const pre = handleOptions(req);
   if (pre) return pre;
@@ -586,11 +564,29 @@ Deno.serve(async (req) => {
       curX = m.tx; curY = m.ty;
       const f = clamp((nowSec - m.t0) / Math.max(1, m.t1 - m.t0), 0, 1);
       const take = (m.data && m.data.take) || 0;
-      const kept = Math.floor(take * f);
-      const back = take - kept;
+      const want = Math.floor(take * f);
       newData = { ...(m.data || {}) };
-      newData.take = 0;                       // резерв точки за нами больше не числится
-      newData.booked = false;                 // см. gatherBooked
+      newData.take = 0;
+      // Резерва на отправке нет (полный разбор — в mp-gather): точка всё это
+      // время показывала настоящую цифру. Списываем ровно ту долю, которую
+      // отряд успел выкопать, и её же он и увозит.
+      let kept = 0;
+      {
+        const cx = m.data && m.data.cell_x, cy = m.data && m.data.cell_y;
+        if (want > 0 && cx != null && cy != null) {
+          const { data: cell } = await admin.from("map_cells")
+            .select("data").eq("world_id", world.id).eq("x", cx).eq("y", cy).maybeSingle();
+          if (cell) {
+            const left = Math.max(0, (cell.data && cell.data.amount) || 0);
+            kept = Math.min(want, left);
+            if (kept > 0) {
+              await admin.from("map_cells")
+                .update({ data: { ...(cell.data || {}), amount: left - kept } })
+                .eq("world_id", world.id).eq("x", cx).eq("y", cy);
+            }
+          }
+        }
+      }
       // Складываем, а не заменяем: отряд мог уже везти добычу с прошлой точки
       // (его могли перетащить сюда с другой жилы, см. mp-redirect).
       const carried = { ...(newData.carry || {}) };
@@ -599,19 +595,6 @@ Deno.serve(async (req) => {
         carried[key] = (carried[key] || 0) + kept;
       }
       newData.carry = carried;
-      const cx = m.data && m.data.cell_x, cy = m.data && m.data.cell_y;
-      if (back > 0 && cx != null && cy != null) {
-        const { data: cell } = await admin.from("map_cells")
-          .select("data").eq("world_id", world.id).eq("x", cx).eq("y", cy).maybeSingle();
-        // Точки может уже не быть (истощил кто-то другой, уборщик снёс) —
-        // тогда возвращать некуда, тот же честный исход, что и у ветки
-        // отзыва с дороги ниже.
-        if (cell) {
-          await admin.from("map_cells")
-            .update({ data: { ...(cell.data || {}), amount: ((cell.data && cell.data.amount) || 0) + back } })
-            .eq("world_id", world.id).eq("x", cx).eq("y", cy);
-        }
-      }
     } else {
       // Дословно marchPos(m)/recallMarch(m) из index.html:4770-4784, по
       // прямой вместо настоящего path[] (см. заголовок файла).
@@ -628,27 +611,9 @@ Deno.serve(async (req) => {
       const to = m.state === "back" ? { x: attRow.x, y: attRow.y } : { x: m.tx, y: m.ty };
       curX = started.x + (to.x - started.x) * f;
       curY = started.y + (to.y - started.y) * f;
-      // Отозван ещё на подходе — если это gather-марш, резерв узла
-      // (data.take) возвращаем узлу: доехать он так и не успел, добывать
-      // нечего, но ресурс уже списан на отправке (Фаза 8, кусочек 1) — без
-      // возврата он бы пропал в никуда, ни игроку, ни узлу.
-      // gatherBooked, а не «take > 0»: take переживает сбор, и у отряда, уже
-      // уходящего домой с добычей, он тот же самый — возврат «остатка» тут
-      // выдумал бы точке ресурсы из воздуха.
-      if (m.mode === "gather" && gatherBooked(m)) {
-        const { data: cell } = await admin.from("map_cells")
-          .select("data").eq("world_id", world.id).eq("x", m.data.cell_x).eq("y", m.data.cell_y).maybeSingle();
-        // Точка могла успеть исчезнуть (истощилась начисто кем-то другим,
-        // respawn ещё не подоспел) — тогда возвращать резерв некуда, честно
-        // теряется, тот же исход, что и опоздавший на пустую точку игрок.
-        if (cell) {
-          await admin.from("map_cells")
-            .update({ data: { ...(cell.data || {}), amount: ((cell.data && cell.data.amount) || 0) + m.data.take } })
-            .eq("world_id", world.id).eq("x", m.data.cell_x).eq("y", m.data.cell_y);
-        }
-        newData.take = 0;
-        newData.booked = false;
-      }
+      // Отозван ещё на подходе — забирать и возвращать нечего: резерва точки
+      // нет (см. разбор в mp-gather), копать он не начинал.
+      if (m.mode === "gather" && m.data && m.data.take) { newData = { ...(m.data || {}) }; newData.take = 0; }
     }
     const dist = Math.hypot(attRow.x - curX, attRow.y - curY);
     const attP = attRow.state;

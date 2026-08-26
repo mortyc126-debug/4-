@@ -12328,11 +12328,26 @@ function gfxPush(){
   window.__gfx=Object.assign({v:gfxVer},gfxState);
 }
 gfxPush();   // до загрузки iframe — см. заголовок выше
+// Настройки применяются перезагрузкой страницы. Движок умеет принимать их и
+// на лету (см. applyGfx в engine/src/main.ts, и этот путь остаётся рабочим —
+// стартовые настройки применяются именно им), но часть изменений на живой
+// сцене не видна: уже построенные чанки рельефа не перестраиваются под новую
+// дальность, а свежий размер канвы становится заметен только после того, как
+// сцена перерисуется целиком. Автор: «при изменении любого переключателя
+// страница обновляется, а то я не вижу изменений». Перезагрузка гарантирует,
+// что видно ровно то, что выбрано, и стоит она секунду.
+//
+// localStorage.setItem синхронный, так что перезагружать можно сразу же:
+// значение уже на диске.
+function gfxReload(){
+  try{ sessionStorage.setItem(FS_WANT_KEY, fsActive()?"1":"0"); }catch(e){}
+  location.reload();
+}
 function gfxSet(key,val){
   gfxState[key]=val;
   try{ localStorage.setItem(GFX_KEY,JSON.stringify(gfxState)); }catch(e){}
   gfxPush();
-  refreshProfileIfOpen();
+  gfxReload();
 }
 // Готовые наборы. «Своё» не выбирается кнопкой — оно показывается само, когда
 // набор не совпал ни с одним готовым.
@@ -12354,8 +12369,53 @@ function gfxApplyPreset(id){
   Object.assign(gfxState,p.cfg);
   try{ localStorage.setItem(GFX_KEY,JSON.stringify(gfxState)); }catch(e){}
   gfxPush();
+  gfxReload();
+}
+
+/* ---- Полноэкранный режим -------------------------------------------------
+   Отдельно от настроек графики и БЕЗ перезагрузки, и вот почему: войти в
+   полный экран браузер разрешает только в ответ на действие пользователя, а
+   перезагрузка из него выкидывает. То есть «поставил галочку — перезагрузились
+   — и снова не полный экран» было бы единственным возможным исходом.
+
+   Состояние не запоминаем, а СПРАШИВАЕМ у браузера (document.fullscreenElement):
+   выйти можно и мимо галочки — клавишей Esc, свайпом, кнопкой системы, — и
+   галочка обязана это показывать, а не врать.
+
+   FS_WANT_KEY переживает только перезагрузку по смене настроек графики (см.
+   gfxReload): если игрок был в полном экране, после перезагрузки мы вернём
+   его туда на первом же касании — своего жеста для этого не нужно, годится
+   любое. sessionStorage, а не localStorage: это про текущую сессию вкладки,
+   а не про устройство навсегда. */
+const FS_WANT_KEY="fourbanners:fswant";
+const fsSupported=()=>!!(document.documentElement.requestFullscreen||document.documentElement.webkitRequestFullscreen);
+const fsActive=()=>!!(document.fullscreenElement||document.webkitFullscreenElement);
+async function fsSet(on){
+  const el=document.documentElement;
+  try{
+    if(on){ await (el.requestFullscreen ? el.requestFullscreen() : el.webkitRequestFullscreen()); }
+    else { await (document.exitFullscreen ? document.exitFullscreen() : document.webkitExitFullscreen()); }
+  }catch(e){
+    // Чаще всего это iPhone: Safari на нём полноэкранного режима для страницы
+    // не даёт вовсе. Молчать нельзя — галочка иначе просто «не работает».
+    herald("Браузер не дал переключить полноэкранный режим.");
+  }
   refreshProfileIfOpen();
 }
+// Выход мимо галочки (Esc, системная кнопка) — обновляем экран настроек, если
+// он открыт, чтобы галочка не осталась стоять.
+document.addEventListener("fullscreenchange",()=>refreshProfileIfOpen());
+document.addEventListener("webkitfullscreenchange",()=>refreshProfileIfOpen());
+// Возврат в полный экран после перезагрузки по смене настроек — на первом же
+// касании. Слушатель одноразовый и снимается сам.
+(function fsRestore(){
+  let want=false;
+  try{ want=sessionStorage.getItem(FS_WANT_KEY)==="1"; }catch(e){}
+  if(!want||!fsSupported()) return;
+  try{ sessionStorage.removeItem(FS_WANT_KEY); }catch(e){}
+  const once=()=>{ document.removeEventListener("pointerdown",once); if(!fsActive()) fsSet(true); };
+  document.addEventListener("pointerdown",once);
+})();
 // Строка настройки: слева название и пояснение, справа переключатель.
 function setRowHtml(title,note,control){
   return "<div class='entry'><div class='line'><div class='fill'>"+
@@ -12404,8 +12464,18 @@ function gfxBlockHtml(){
     "Ники над замками, названия точек и полосы боя. Это разметка поверх картинки, и на телефоне она стоит заметно.",
     segHtml("labels",[{v:false,t:"Выкл"},{v:true,t:"Вкл"}]));
 
-  h+="<div class='entry'><div class='note'>Настройки картинки хранятся на этом устройстве и "+
-     "применяются сразу, перезагружать страницу не нужно. На телефоне и на настольном они свои.</div></div>";
+  h+=rubric("Экран");
+  h+=setRowHtml("Полноэкранный режим",
+    fsSupported()
+      ? "Прячет адресную строку и панели браузера — мир занимает весь экран. Выйти можно и отсюда, и клавишей Esc."
+      : "Этот браузер полноэкранного режима для страницы не даёт (так ведёт себя Safari на iPhone).",
+    "<label class='gen-take"+(fsSupported()?"":" disabled")+"'>"+
+    "<input type='checkbox' data-act='fullscreen'"+(fsActive()?" checked":"")+
+    (fsSupported()?"":" disabled")+"><span></span></label>");
+
+  h+="<div class='entry'><div class='note'>Настройки картинки хранятся на этом устройстве — на телефоне "+
+     "и на настольном они свои. При смене любой из них страница перезагрузится, чтобы мир перестроился "+
+     "целиком и было видно ровно то, что выбрано. Полноэкранный режим перезагрузки не требует.</div></div>";
   return h;
 }
 function profileSettingsHtml(){
@@ -13679,6 +13749,8 @@ function handleAct(e){
     gfxSet(k, raw==="true" ? true : raw==="false" ? false : Number(raw));
     return;
   }
+  const fsBox=e.target.closest("[data-act='fullscreen']");
+  if(fsBox){ fsSet(fsBox.checked); return; }
   const gfxPresetBtn=e.target.closest("[data-act='gfxpreset']");
   if(gfxPresetBtn){ gfxApplyPreset(gfxPresetBtn.dataset.p); return; }
   const boardBtn=e.target.closest("[data-act='board']");
