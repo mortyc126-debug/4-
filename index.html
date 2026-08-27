@@ -1181,6 +1181,15 @@ body.mp-placing #place-toolbar{display:flex}
 .mail-back{display:flex;align-items:center;gap:6px;color:#5a4530;font-size:12.5px;
   font-variant:small-caps;letter-spacing:.08em;margin-bottom:12px}
 .mail-note{font-size:13.5px;line-height:1.6;color:#2c2114;padding:6px 2px}
+/* Тот же вид «шага назад», что и в почте, но внутри карточки здания
+   (#bm-body): карусели и форма рынка открываются поверх карточки, и без
+   этой строки выйти из них можно было только крестиком. width:max-content —
+   в отличие от почты (там .mail-back один на всю ширину списка) карточка
+   здания идёт сразу под ним заголовком, и полоса во всю ширину ловила бы
+   промахи по заголовку. */
+.bm-back{cursor:pointer;width:max-content;max-width:100%;padding:2px 10px 4px 0;margin:-4px 0 10px;
+  transition:color .16s ease,transform .16s ease}
+.bm-back:hover{color:#2c2114;transform:translateX(-2px)}
 /* Иконка ресурса вместо голого текста в добыче/грабеже/отчётах о сборе —
    см. заголовок resIconSpan(). Раньше 16px картинка висела отдельным
    мелким пятном перед текстом с заметным зазором (vertical-align:-3px без
@@ -1482,6 +1491,7 @@ body.mp-placing #place-toolbar{display:flex}
 .chron-row.good{border-left-color:#4a7c3f;background:rgba(74,124,63,.10)}
 .chron-row.bad{border-left-color:#a33c2c;background:rgba(163,60,44,.09)}
 .chron-ico{flex:0 0 auto;font-style:normal;font-size:12px;line-height:1.5;color:#8a6d2c;width:14px;text-align:center}
+.chron-ico img{width:14px;height:14px;object-fit:contain;vertical-align:-2px}
 .chron-tx{font-size:12px;line-height:1.5;color:#3a2c1c}
 /* Итог и бегство — крупнее и заметнее: это финал рассказа, а не рядовой шаг. */
 .chron-row.end{margin-top:6px;padding:6px 8px}
@@ -2871,7 +2881,14 @@ const CFG = {
                             // 0.8 — вы примерно на равных, 0.6 — заметно легче.
   MAX_LEVEL: 25,             // настоящий потолок RoK — 5 эпох (1-6/7-12/13-18/19-24/25,
                               // последняя — один только венчающий уровень, см. EPOCH_HALL_MIN)
-  BATTLE_PACE: 0.45,       // ниже — бои дольше и нагляднее
+  // Темп общей схватки: ниже — бои дольше и нагляднее. Был 0.45, пока
+  // половину урона в схватке давала магическая атака (она почти не
+  // смягчалась — магическая защита у всех была втрое ниже обычной). С её
+  // уходом тот же бой растянулся бы примерно вдвое, поэтому темп поднят
+  // ровно на измеренную долю (см. tools/test_battle.mjs): 0.45 * 1.51.
+  // Множитель ОДИН на всю боёвку — залп лучников, башня гарнизона и
+  // полководец считаются от него же, так что их доля в бою не сдвинулась.
+  BATTLE_PACE: 0.68,
   RESPAWN_CAMP: 45*60,      // респаун лагеря разбойников
   NODE_RESPAWN: 60*60,
   // Раньше опустевшая жила пропадала с карты В ТОТ ЖЕ МИГ, как последний
@@ -3250,47 +3267,47 @@ const ACADEMY_TREE = {
   ],
   mil: [
     {id:"mil_atk_inf1",name:"Пехота, атака I",   max:5, wave:1,branch:"mil",
-      effects:[{field:"atkInf",total:0.10},{field:"matkInf",total:0.05}]},
+      field:"atkInf",total:0.10},
     {id:"mil_atk_inf2",name:"Пехота, атака II",  max:10,wave:2,branch:"mil",requires:["mil_atk_inf1"],
-      effects:[{field:"atkInf",total:0.20},{field:"matkInf",total:0.10}]},
+      field:"atkInf",total:0.20},
     {id:"mil_atk_arc1",name:"Лучники, атака I",  max:5, wave:1,branch:"mil",
-      effects:[{field:"atkArc",total:0.10},{field:"matkArc",total:0.05}]},
+      field:"atkArc",total:0.10},
     {id:"mil_atk_arc2",name:"Лучники, атака II", max:10,wave:2,branch:"mil",requires:["mil_atk_arc1"],
-      effects:[{field:"atkArc",total:0.20},{field:"matkArc",total:0.10}]},
+      field:"atkArc",total:0.20},
     {id:"mil_atk_cav1",name:"Кавалерия, атака I",max:5, wave:1,branch:"mil",
-      effects:[{field:"atkCav",total:0.10},{field:"matkCav",total:0.05}]},
+      field:"atkCav",total:0.10},
     {id:"mil_atk_cav2",name:"Кавалерия, атака II",max:10,wave:2,branch:"mil",requires:["mil_atk_cav1"],
-      effects:[{field:"atkCav",total:0.20},{field:"matkCav",total:0.10}]},
+      field:"atkCav",total:0.20},
     {id:"mil_atk_sie1",name:"Осада, атака I",    max:5, wave:1,branch:"mil",
-      effects:[{field:"atkSie",total:0.10},{field:"matkSie",total:0.05}]},
+      field:"atkSie",total:0.10},
     {id:"mil_atk_sie2",name:"Осада, атака II",   max:10,wave:2,branch:"mil",requires:["mil_atk_sie1"],
-      effects:[{field:"atkSie",total:0.20},{field:"matkSie",total:0.10}]},
+      field:"atkSie",total:0.20},
     {id:"mil_def_inf1",name:"Пехота, защита I",   max:5, wave:1,branch:"mil",
-      effects:[{field:"defInf",total:0.10},{field:"mdefInf",total:0.05}]},
+      field:"defInf",total:0.10},
     {id:"mil_def_inf2",name:"Пехота, защита II",  max:10,wave:2,branch:"mil",requires:["mil_def_inf1"],
-      effects:[{field:"defInf",total:0.20},{field:"mdefInf",total:0.10}]},
+      field:"defInf",total:0.20},
     {id:"mil_def_arc1",name:"Лучники, защита I",  max:5, wave:1,branch:"mil",
-      effects:[{field:"defArc",total:0.10},{field:"mdefArc",total:0.05}]},
+      field:"defArc",total:0.10},
     {id:"mil_def_arc2",name:"Лучники, защита II", max:10,wave:2,branch:"mil",requires:["mil_def_arc1"],
-      effects:[{field:"defArc",total:0.20},{field:"mdefArc",total:0.10}]},
+      field:"defArc",total:0.20},
     {id:"mil_def_cav1",name:"Кавалерия, защита I",max:5, wave:1,branch:"mil",
-      effects:[{field:"defCav",total:0.10},{field:"mdefCav",total:0.05}]},
+      field:"defCav",total:0.10},
     {id:"mil_def_cav2",name:"Кавалерия, защита II",max:10,wave:2,branch:"mil",requires:["mil_def_cav1"],
-      effects:[{field:"defCav",total:0.20},{field:"mdefCav",total:0.10}]},
+      field:"defCav",total:0.20},
     {id:"mil_def_sie1",name:"Осада, защита I",    max:5, wave:1,branch:"mil",
-      effects:[{field:"defSie",total:0.10},{field:"mdefSie",total:0.05}]},
+      field:"defSie",total:0.10},
     {id:"mil_def_sie2",name:"Осада, защита II",   max:10,wave:2,branch:"mil",requires:["mil_def_sie1"],
-      effects:[{field:"defSie",total:0.20},{field:"mdefSie",total:0.10}]},
+      field:"defSie",total:0.20},
     {id:"mil_atk_all1",name:"Атака войск I",  max:10,wave:2,branch:"mil",
       requires:["mil_atk_inf1","mil_atk_arc1","mil_atk_cav1","mil_atk_sie1"],
-      effects:[{field:"atk",total:0.15},{field:"matk",total:0.075}]},
+      field:"atk",total:0.15},
     {id:"mil_atk_all2",name:"Атака войск II", max:10,wave:3,branch:"mil",requires:["mil_atk_all1"],
-      effects:[{field:"atk",total:0.25},{field:"matk",total:0.125}]},
+      field:"atk",total:0.25},
     {id:"mil_def_all1",name:"Защита войск I", max:10,wave:2,branch:"mil",
       requires:["mil_def_inf1","mil_def_arc1","mil_def_cav1","mil_def_sie1"],
-      effects:[{field:"def",total:0.15},{field:"mdef",total:0.075}]},
+      field:"def",total:0.15},
     {id:"mil_def_all2",name:"Защита войск II",max:10,wave:3,branch:"mil",requires:["mil_def_all1"],
-      effects:[{field:"def",total:0.25},{field:"mdef",total:0.125}]},
+      field:"def",total:0.25},
     {id:"mil_hp_all1", name:"Здоровье войск I", max:10,wave:2,branch:"mil",field:"hp",total:0.15,
       requires:["mil_atk_all1","mil_def_all1"]},
     {id:"mil_hp_all2", name:"Здоровье войск II",max:10,wave:3,branch:"mil",field:"hp",total:0.25,requires:["mil_hp_all1"]},
@@ -3865,11 +3882,22 @@ const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];     // T1..T5
 // последнем тире прыжок больше, как и почти везде на границе тиров/уровней).
 const UNIT_POWER=[1,2,3,4,10];
 const unitPower = tier => UNIT_POWER[tier-1];
+/* Магической атаки и защиты у войск больше нет — ни одного поля, ни одного
+   множителя, ни в бою, ни в мощи. Автор: «я подумал, что она пока лишняя и я
+   заведу отдельный класс юнитов под неё, призываемых из портала». То есть
+   магия вернётся, но своим родом войск, а не второй парой характеристик у
+   каждого обычного солдата. Всё, что от неё зависело, пересчитано так, будто
+   её никогда не было: см. CFG.BATTLE_PACE (общая схватка) и делитель
+   armyPower() ниже.
+   Осадные: атака 12, а была 24 — «если они участвуют в бой, то их урон
+   армиям в два раза ниже». Их настоящее дело — снос построек, он считается
+   отдельным статом (SIEGE_BDMG_BASE, см. блок прочности построек) и в
+   полевом бою не участвует вовсе. */
 const TROOP_TYPES = {
-  inf: {name:"Пехота",  atk:34, def:46, hp:44, load:6,  speed:1.00, magicAtk:8,  magicDef:18, beats:"arc", losesTo:"cav"},
-  arc: {name:"Лучники", atk:50, def:30, hp:36, load:8,  speed:1.10, magicAtk:20, magicDef:8,  beats:"cav", losesTo:"inf"},
-  cav: {name:"Конница", atk:46, def:34, hp:40, load:5,  speed:1.70, magicAtk:12, magicDef:12, beats:"inf", losesTo:"arc"},
-  sie: {name:"Осадные", atk:24, def:20, hp:60, load:30, speed:0.60, magicAtk:26, magicDef:6,  beats:null,  losesTo:null},
+  inf: {name:"Пехота",  atk:34, def:46, hp:44, load:6,  speed:1.00, beats:"arc", losesTo:"cav"},
+  arc: {name:"Лучники", atk:50, def:30, hp:36, load:8,  speed:1.10, beats:"cav", losesTo:"inf"},
+  cav: {name:"Конница", atk:46, def:34, hp:40, load:5,  speed:1.70, beats:"inf", losesTo:"arc"},
+  sie: {name:"Осадные", atk:12, def:20, hp:60, load:30, speed:0.60, beats:null,  losesTo:null},
 };
 const TKEYS = ["inf","arc","cav","sie"];
 /* ---- Расовые правки отдельных типов войск (не задевают базовые числа других рас) ----
@@ -4310,6 +4338,17 @@ const buildCost = (bk,lv,p) => {
    восстанавливается, не дожидаясь ответа.
    Осада тут ничего не считает — весь урон только на сервере (mp-tick). */
 const BUILD_HP_BASE=250, BUILD_HP_POW=1.2;
+/* Урон осадных по постройкам — ОТДЕЛЬНЫЙ от их атаки стат: в полевом бою эта
+   величина не участвует вовсе, а атака (12) не участвует в сносе. Зеркало
+   SIEGE_BDMG_BASE/DEMOLISH_ROUNDS из _shared/rules.js, нужное клиенту только
+   чтобы ПОКАЗАТЬ число — считает снос по-прежнему один сервер.
+   siegeBreachPerSiege — сколько прочности снимает ОДНО орудие за всю осаду
+   (все DEMOLISH_ROUNDS раундов), без бонусов Академии: ровно то число, которое
+   честно поставить в карточку юнита рядом с атакой и защитой. */
+const SIEGE_BDMG_BASE=0.75, DEMOLISH_ROUNDS=8;
+function siegeBreachPerSiege(race,tier){
+  return Math.round(SIEGE_BDMG_BASE*TIER_MULT[tier-1]*troopMod(race,"sie","atk")*DEMOLISH_ROUNDS);
+}
 const BUILD_HP_MULT={hall:3,wall:2.5,garrison:2,scout:0.8,farm:0.6,lumber:0.6,quarry:0.6,mine:0.6};
 const BUILD_HP_FLAT={forge:3000};
 const BUILD_REGEN_CALM_SEC=1800, BUILD_REGEN_PER_HOUR=0.20;
@@ -5440,8 +5479,6 @@ function bonuses(p, defending){
     trainSpeed:0, buildCostCut:0, wallBonus:0, counter:0, firstStrike:0,
     researchSpeed:0, scoutBonus:0,
     atkInf:0, atkArc:0, atkCav:0, atkSie:0, defInf:0, defArc:0, defCav:0, defSie:0,
-    matkInf:0, matkArc:0, matkCav:0, matkSie:0, mdefInf:0, mdefArc:0, mdefCav:0, mdefSie:0,
-    matk:0, mdef:0,
     genAtkMod:0, genDefMod:0, genHpMod:0};
   const race=RACES[p.race], mn=race.minus;
   if(mn.kind==="mult") b[mn.field]*=mn.value; else b[mn.field]=(b[mn.field]||0)+mn.value;
@@ -5620,19 +5657,19 @@ function genPowerOf(p){ return 2000+Math.pow(p.gen.lv,1.5)*318.5 + genTalentSpen
 function armyPower(units,B,race){
   const TYPE_ATK={inf:"atkInf",arc:"atkArc",cav:"atkCav",sie:"atkSie"};
   const TYPE_DEF={inf:"defInf",arc:"defArc",cav:"defCav",sie:"defSie"};
-  const TYPE_MATK={inf:"matkInf",arc:"matkArc",cav:"matkCav",sie:"matkSie"};
-  const TYPE_MDEF={inf:"mdefInf",arc:"mdefArc",cav:"mdefCav",sie:"mdefSie"};
   let v=0; TKEYS.forEach(t=>{for(let i=1;i<=5;i++){
     const n=units[t]&&units[t][i]||0; if(!n)continue;
     let a=troopStat(t,i,"atk")*troopMod(race,t,"atk")*(1+(B&&B[TYPE_ATK[t]]||0));
     if(t==="arc") a*=1+(B&&B.archer||0);
     const d=troopStat(t,i,"def")*troopMod(race,t,"def")*(1+(B&&B[TYPE_DEF[t]]||0));
-    const ma=troopStat(t,i,"magicAtk")*troopMod(race,t,"magicAtk")*(1+(B&&B[TYPE_MATK[t]]||0));
-    const md=troopStat(t,i,"magicDef")*troopMod(race,t,"magicDef")*(1+(B&&B[TYPE_MDEF[t]]||0));
     const hp=troopStat(t,i,"hp")*troopMod(race,t,"hp");
-    v+=n*(a*(1+(B?B.atk:0))+d*(1+(B?B.def:0))+ma*(1+(B?B.matk:0))+md*(1+(B?B.mdef:0))+hp*(1+(B?B.hp:0)));
+    v+=n*(a*(1+(B?B.atk:0))+d*(1+(B?B.def:0))+hp*(1+(B?B.hp:0)));
   }});
-  return Math.round(v/150);   // T1 пехота без бонусов = 150 суммарных статов -> ~1 сила за юнита T1
+  // Делитель — сумма характеристик T1 пехоты без бонусов, чтобы один такой
+  // солдат по-прежнему стоил ~1 силы. Был 150 (34+46+44 плюс магия 8+18),
+  // без магии осталось ровно 124 — то же правило, пересчитанное по новым
+  // характеристикам, а не подпорка под старое число.
+  return Math.round(v/124);
 }
 function countUnits(u){let n=0;TKEYS.forEach(t=>{for(let i=1;i<=5;i++)n+=(u[t]&&u[t][i])||0});return n}
 function emptyUnits(){const u={};TKEYS.forEach(t=>{u[t]={};for(let i=1;i<=5;i++)u[t][i]=0});return u}
@@ -5669,7 +5706,7 @@ function marchCapacity(p){
 function atkName(p){ return p.isBot ? p.name : "Ваши войска"; }
 function makeForce(units,p,opts){
   const defending=!!(opts&&opts.defending);
-  const B=p?bonuses(p,defending):{atk:0,def:0,hp:0,matk:0,mdef:0,archer:0,raise:0,bandit:0,mercy:0,counter:0,firstStrike:0};
+  const B=p?bonuses(p,defending):{atk:0,def:0,hp:0,archer:0,raise:0,bandit:0,mercy:0,counter:0,firstStrike:0};
   // withGen — сторона решает САМА, была ли эта конкретная сила с генералом
   // (см. вызовы makeForce): поход — если игрок явно взял его в этот поход
   // (m.hasGen), город — если генерал сейчас дома, а не уехал с другим
@@ -5694,12 +5731,9 @@ function sideStats(f){
   const race=f.p&&f.p.race, B=f.B;
   const TYPE_ATK={inf:"atkInf",arc:"atkArc",cav:"atkCav",sie:"atkSie"};
   const TYPE_DEF={inf:"defInf",arc:"defArc",cav:"defCav",sie:"defSie"};
-  const TYPE_MATK={inf:"matkInf",arc:"matkArc",cav:"matkCav",sie:"matkSie"};
-  const TYPE_MDEF={inf:"mdefInf",arc:"mdefArc",cav:"mdefCav",sie:"mdefSie"};
   TKEYS.forEach(t=>{
-    let atk=0,def=0,matk=0,mdef=0,hp=0,n=0;
+    let atk=0,def=0,hp=0,n=0;
     const atkMod=1+(B[TYPE_ATK[t]]||0), defMod=1+(B[TYPE_DEF[t]]||0);
-    const matkMod=1+(B[TYPE_MATK[t]]||0), mdefMod=1+(B[TYPE_MDEF[t]]||0);
     for(let i=1;i<=5;i++){
       const c=f.units[t][i]||0;
       const brk=f.broken&&f.broken[t][i]?0.70:1;
@@ -5707,10 +5741,7 @@ function sideStats(f){
         let a=troopStat(t,i,"atk")*troopMod(race,t,"atk")*atkMod;
         if(t==="arc") a*=1+(f.B.archer||0);
         let d=troopStat(t,i,"def")*troopMod(race,t,"def")*defMod;
-        let ma=troopStat(t,i,"magicAtk")*troopMod(race,t,"magicAtk")*matkMod;
-        let md=troopStat(t,i,"magicDef")*troopMod(race,t,"magicDef")*mdefMod;
         atk+=c*a*brk*(1+f.B.atk); def+=c*d*brk*(1+f.B.def);
-        matk+=c*ma*brk*(1+f.B.matk); mdef+=c*md*brk*(1+f.B.mdef);
         hp +=c*troopStat(t,i,"hp")*troopMod(race,t,"hp")*(1+f.B.hp); n+=c;
       }
       // мертвецы нежити: половина характеристик того тира и рода войск, что погиб
@@ -5719,12 +5750,10 @@ function sideStats(f){
         let ra=troopStat(t,i,"atk")*troopMod(race,t,"atk")*atkMod*0.5;
         if(t==="arc") ra*=1+(f.B.archer||0);
         atk+=rc*ra*(1+f.B.atk); def+=rc*troopStat(t,i,"def")*troopMod(race,t,"def")*defMod*0.5*(1+f.B.def);
-        matk+=rc*troopStat(t,i,"magicAtk")*troopMod(race,t,"magicAtk")*matkMod*0.5*(1+f.B.matk);
-        mdef+=rc*troopStat(t,i,"magicDef")*troopMod(race,t,"magicDef")*mdefMod*0.5*(1+f.B.mdef);
         hp +=rc*troopStat(t,i,"hp")*troopMod(race,t,"hp")*0.5*(1+f.B.hp); n+=rc;
       }
     }
-    s[t]={atk,def,matk,mdef,hp,n};
+    s[t]={atk,def,hp,n};
   });
   s.totalHp=TKEYS.reduce((a,t)=>a+s[t].hp,0);
   s.totalN =TKEYS.reduce((a,t)=>a+s[t].n,0);
@@ -5913,7 +5942,7 @@ function resolveBattle(A,D,ctx){
       const out={inf:0,arc:0,cav:0,sie:0};
       TKEYS.forEach(dt=>{
         if(defS[dt].n<=0) return;
-        let d=0,dm=0;
+        let d=0;
         TKEYS.forEach(at=>{ if(attS[at].n<=0)return;
           const share=defS[dt].hp/Math.max(1,defS.totalHp);
           // wMod(at) — погода бьёт по роду войск БЬЮЩЕГО (мокрая тетива у
@@ -5921,11 +5950,9 @@ function resolveBattle(A,D,ctx){
           // по at, а не по dt, и одинаково применяется к обеим сторонам.
           const w=wMod(at);
           d += attS[at].atk * counterMult(at,dt) * share * w;
-          dm += attS[at].matk * counterMult(at,dt) * share * w;
         });
         const mitig = 1 + (defS[dt].def/Math.max(1,defS[dt].n))/70 * defWall;
-        const mitigM = 1 + (defS[dt].mdef/Math.max(1,defS[dt].n))/70 * defWall;
-        out[dt]=(d/mitig+dm/mitigM)*CFG.BATTLE_PACE*shake;
+        out[dt]=d/mitig*CFG.BATTLE_PACE*shake;
       });
       return out;
     };
@@ -7272,7 +7299,7 @@ function arriveMarch(m){
     const A=makeForce(m.units,p,{name:atkName(p),withGen:!!m.hasGen});
     const bandUnits=banditArmy(cell.lv);
     const D=makeForce(bandUnits,null,{bandit:true,name:"Разбойники ур. "+cell.lv});
-    D.B={atk:0,def:0,hp:0,matk:0,mdef:0,archer:0,raise:0};
+    D.B={atk:0,def:0,hp:0,archer:0,raise:0};
     A.B.atk += B.bandit;
     const r=resolveBattle(A,D,{startA:countUnits(m.units)});
     // Рейд на разбойников — PvE, A.deathFrac не задан (0 по умолчанию, см.
@@ -10335,6 +10362,54 @@ function mpHospitalHtml(pShim,st){
 // troopCost/retrainCost/tierUnlockedFor/unitName/TROOP_TYPES) переиспользуются
 // НАПРЯМУЮ — принимают p обычным параметром, ничего не читают из me()/W. =====
 let mpTrainCtx=null, mpCarouselCtx=null;
+/* ---- «Назад» в подэкранах карточки здания ---------------------------------
+   Карусели (обучение/лазарет/исследования) и форма рынка живут в ТОМ ЖЕ
+   #bm-body, что и карточка здания, из которой в них вошли, и раньше выйти
+   из них можно было только крестиком — а потом заново искать здание на
+   карте города. Автор: «можно в некоторых вкладках, где это требуется,
+   добавить кнопку "назад" как в почте, чтобы не закрывать и не открывать по
+   несколько раз».
+   bmBack помнит ровно одну карточку — ту, что была под подэкраном. Стек не
+   нужен: глубже одного уровня подэкраны не вкладываются (каждый mpOpen* на
+   входе гасит чужие контексты карусели), а «назад из назад» — это уже
+   крестик. Одна переменная на оба режима: #bm-body тоже один на оба, а
+   какой из них сейчас — видно по SP_UNLOCKED. */
+let bmBack=null;   // {k:'sp'|'city'|'layout'|'fixed', v} | null
+function bmSnap(){
+  if(SP_UNLOCKED) return buildingModalSel>=0 ? {k:"sp", v:buildingModalSel} : null;
+  if(mpCitySel>=0) return {k:"city", v:mpCitySel};
+  if(mpLayoutSel>=0) return {k:"layout", v:mpLayoutSel};
+  if(mpFixedSel) return {k:"fixed", v:mpFixedSel};
+  return null;
+}
+// data-act (не data-mp) — тот же довод, что и у 'ucnav' ниже: ветка чисто
+// DOM'ная, ни разу не читает me()/W, обработчик один на оба режима.
+function bmBackHtml(){
+  return bmBack ? "<div class='mail-back bm-back' data-act='bmback'>&#8592; Назад</div>" : "";
+}
+/* Все три выбора карточки (mpCitySel/mpLayoutSel/mpFixedSel) плюс пикер,
+   свиток похода и форма рынка живут в ОДНОМ #bm-body, а mpRerender()
+   разбирает их строго по порядку (city → layout → fixed → picker → march →
+   trade). Открытие одного из них раньше НЕ гасило остальные: тап по Ратуше
+   после тапа по зданию из раскладки показывал карточку ратуши ровно до
+   ближайшего опроса, а потом mpRerender() возвращал поверх неё старую
+   карточку — mpLayoutSel так и остался выставленным. Гасим всё на входе в
+   любой из этих экранов. */
+function mpBmResetSel(){
+  mpCitySel=-1; mpLayoutSel=-1; mpFixedSel=null; mpPickerOpen=false;
+  if(mpTradeCtx){ mpTradeCtx=null; lastTradeSheet=""; }
+  if(mpMarchCtx){ mpMarchCtx=null; lastMarchSheet=""; }
+}
+function bmGoBack(){
+  const b=bmBack; bmBack=null;
+  // Некуда возвращаться (подэкран открыли не из карточки) — честно закрываем,
+  // а не оставляем игрока в тупике с мёртвой кнопкой.
+  if(!b){ closeBuildingModal(); return; }
+  if(b.k==="sp") openBuildingModal(b.v);
+  else if(b.k==="city") mpOpenBuildingModal(b.v);
+  else if(b.k==="layout") mpOpenLayoutModal(b.v);
+  else mpOpenFixedModal(b.v);
+}
 // Собирает p-совместимый объект из mpState.player (race — из колонки
 // players.race) + state (b/gen/tech/res/troops/wounded/train/heal) —
 // этого достаточно для ВСЕХ чистых функций одиночки, которые тут
@@ -10391,6 +10466,7 @@ function mpTrainInfoHtml(bld,pShim,st){
   return "<div id='bm-tree'><button class='rnode-go' data-mp='browsetrain' data-t='"+type+"'>Тренировать</button></div>";
 }
 function mpOpenUnitCarousel(type){
+  bmBack=bmSnap();   // запоминаем карточку, из которой вошли (см. bmBackHtml)
   const st=mpState.player.state, pShim=mpFullShim(mpState.player,st);
   const maxT=tierUnlockedFor(pShim,type);
   // Та же чистка чужих контекстов карусели, что и у одиночного
@@ -10435,7 +10511,7 @@ function mpTrainInlineHtml(){
 function mpUnitCarouselHtml(){
   const st=mpState.player.state, pShim=mpFullShim(mpState.player,st);
   const type=mpCarouselCtx.type, maxT=tierUnlockedFor(pShim,type);
-  let h="<div id='bm-title'>"+TROOP_TYPES[type].name+"</div>";
+  let h=bmBackHtml()+"<div id='bm-title'>"+TROOP_TYPES[type].name+"</div>";
   h+="<div id='uc-track'>";
   for(let tier=1; tier<=5; tier++){
     const locked=tier>maxT, have=(st.troops[type]&&st.troops[type][tier])||0;
@@ -10524,6 +10600,7 @@ async function mpDoTrainGo(){
 // шлёт настоящий mpHealCtx.tier — честная починка, не новый функционал. =====
 let mpHealCtx=null, mpHealCarouselOpen=false;
 function mpOpenHealCarousel(){
+  bmBack=bmSnap();   // запоминаем карточку, из которой вошли (см. bmBackHtml)
   mpCarouselCtx=null; mpTrainCtx=null; mpResearchCtx=null; mpForgeTab=null; mpForgeRarity=null; // та же чистка контекста, что и у одиночного openHealCarousel()
   mpHealCarouselOpen=true; mpHealCtx=null;
   setHtml($("#bm-body"), mpHealCarouselHtml());
@@ -10554,7 +10631,7 @@ function mpHealInlineHtml(){
 }
 function mpHealCarouselHtml(){
   const st=mpState.player.state, pShim=mpFullShim(mpState.player,st), list=woundedList(pShim);
-  let h="<div id='bm-title'>Лазарет</div>";
+  let h=bmBackHtml()+"<div id='bm-title'>Лазарет</div>";
   if(!list.length){
     mpHealCtx=null;
     h+="<div id='bm-tree'><div class='rgroup'>Раненых нет</div></div>";
@@ -10655,6 +10732,7 @@ function mpHospitalInfoHtml(pShim,st){
 // оформление карточки вокруг него).
 let mpResearchCtx=null;
 function mpOpenResearchCarousel(branch,startId){
+  bmBack=bmSnap();   // запоминаем карточку, из которой вошли (см. bmBackHtml)
   const st=mpState.player.state, pShim=mpFullShim(mpState.player,st);
   // Та же чистка чужих контекстов карусели, что и у остальных mpOpen*Carousel().
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false;
@@ -10676,7 +10754,7 @@ function mpOpenResearchCarousel(branch,startId){
 function mpResearchCarouselHtml(){
   const st=mpState.player.state, pShim=mpFullShim(mpState.player,st), B=bonuses(pShim);
   const list=researchNodeList(mpResearchCtx.branch,pShim);
-  let h="<div id='bm-title'>"+(mpResearchCtx.branch==="mil"?"Военные исследования":"Экономические исследования")+"</div>";
+  let h=bmBackHtml()+"<div id='bm-title'>"+(mpResearchCtx.branch==="mil"?"Военные исследования":"Экономические исследования")+"</div>";
   h+="<div id='uc-track'>";
   list.forEach(n=>{
     const lv=pShim.tech[n.id]||0, maxed=lv>=n.max, nx=lv+1, gated=pShim.b.academy<=0;
@@ -10839,13 +10917,13 @@ function mpOpenTradeModal(tab){
   const st=mpState.player&&mpState.player.state; if(!st) return;
   const lv=mpMarketLv(st);
   if(lv<=0){ herald("Нужен Рынок."); return; }
+  bmBack=bmSnap();   // запоминаем карточку, из которой вошли (см. bmBackHtml)
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpForgeTab=null; mpForgeRarity=null;
-  mpCitySel=-1; mpLayoutSel=-1; mpFixedSel=null; mpPickerOpen=false;
   // Свиток похода гасим тоже: в разборе рендера по опросу его ветка стоит
   // ВЫШЕ ветки этой формы, и забытый непустым mpMarchCtx через секунду
   // затирал бы уже открытый обмен свитком похода.
-  mpMarchCtx=null; lastMarchSheet="";
+  mpBmResetSel();
   mpTradeCtx={ tab:(tab==="barter"?"barter":"send"), to:null, res:{food:0,wood:0,stone:0,gold:0}, err:null, q:"",
                bFrom:"food", bTo:"stone", bAmount:0 };
   lastTradeSheet=mpTradeSheetHtml();
@@ -10865,7 +10943,7 @@ function mpTradeSheetHtml(){
   const {lv,cap,tax,total,net,over}=mpTradeTotals();
   const to=mpState.neighbors.find(n=>n.id===mpTradeCtx.to);
   const barter=mpTradeCtx.tab==="barter";
-  let h="<div id='bm-title'>"+(barter?"Меняльная лавка":"Торговый обоз")+"</div>"+
+  let h=bmBackHtml()+"<div id='bm-title'>"+(barter?"Меняльная лавка":"Торговый обоз")+"</div>"+
         "<div id='bm-sub'>Рынок "+lv+" ур. · "+(barter?"меняет за раз ":"поднимает ")+fmt(cap)+" · налог "+
         (tax*100).toFixed(1).replace(/\.0$/,"")+"%</div>";
   h+="<div id='ac-tabs'>"+
@@ -11183,6 +11261,7 @@ function mpBuildingModalHtml(idx){
 // сама была расширена (см. её же комментарий) под mpCitySel — эта пара
 // нужна только для открытия/переключения выбранной ячейки на карте.
 function mpOpenBuildingModal(idx){
+  bmBack=null; mpBmResetSel();
   // Фаза 19, кусочек 1 — сброс карусели при открытии ЛЮБОЙ ячейки (тот же
   // приём, что и у одиночного openBuildingModal() ниже по файлу, который
   // сбрасывает trainCtx/carouselCtx/researchCtx/healCtx на входе) — иначе
@@ -11204,6 +11283,7 @@ function mpOpenBuildingModal(idx){
   mpRenderFolio();
 }
 function mpCloseBuildingModal(){
+  bmBack=null;
   $("#building-modal").classList.remove("open");
   mpCitySel=-1;
   // Фаза 19, кусочки 1-2 — сбрасывает и карусели обучения/лазарета, если
@@ -11240,6 +11320,7 @@ function mpOpenAcademyFromFab(){
 let mpLayoutSel=-1;
 function mpOpenLayoutModal(li){
   const entry=(mpState.player.state.layout||[])[li]; if(!entry) return;
+  bmBack=null; mpBmResetSel();
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpForgeTab=null; mpForgeRarity=null;
   mpLayoutSel=li;
@@ -11248,6 +11329,7 @@ function mpOpenLayoutModal(li){
   mpRenderFolio();
 }
 function mpCloseLayoutModal(){
+  bmBack=null;
   $("#building-modal").classList.remove("open");
   mpLayoutSel=-1;
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
@@ -11259,6 +11341,7 @@ function mpCloseLayoutModal(){
 // же просто ключ здания.
 let mpFixedSel=null;
 function mpOpenFixedModal(bk){
+  bmBack=null; mpBmResetSel();
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpForgeTab=null; mpForgeRarity=null;
   mpFixedSel=bk;
@@ -11267,6 +11350,7 @@ function mpOpenFixedModal(bk){
   mpRenderFolio();
 }
 function mpCloseFixedModal(){
+  bmBack=null;
   $("#building-modal").classList.remove("open");
   mpFixedSel=null;
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
@@ -11419,9 +11503,10 @@ let mpPickerOpen=false;
 // возвращаем прокрутку на прежнее место, когда всё-таки перерисовали.
 let lastBuildPickerHtml="";
 function mpOpenBuildPicker(){
+  bmBack=null;
   if(!mpState.player) return;
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
-  mpForgeTab=null; mpForgeRarity=null; mpCitySel=-1; mpLayoutSel=-1; mpFixedSel=null;
+  mpForgeTab=null; mpForgeRarity=null; mpBmResetSel();
   mpPickerOpen=true;
   const html=mpBuildPickerHtml();
   lastBuildPickerHtml=html;
@@ -11431,6 +11516,7 @@ function mpOpenBuildPicker(){
   mpRenderFolio();
 }
 function mpCloseBuildPicker(){
+  bmBack=null;
   $("#building-modal").classList.remove("open");
   mpPickerOpen=false;
   lastBuildPickerHtml="";
@@ -11623,9 +11709,10 @@ function mpTroopRowHtml(idPrefix,t,name,have){
 }
 let mpMarchCtx=null, lastMarchSheet="";
 function mpOpenMarchModal(mode,target){
+  bmBack=null;
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
-  mpForgeTab=null; mpForgeRarity=null; mpCitySel=-1;
-  mpTradeCtx=null; lastTradeSheet="";     // и наоборот — см. mpOpenTradeModal
+  mpForgeTab=null; mpForgeRarity=null;
+  mpBmResetSel();                          // и наоборот — см. mpOpenTradeModal
   mpMarchCtx={mode};
   if(mode==="attack") mpState.attackTarget=target;
   else if(mode==="gather") mpState.gatherTarget=target;
@@ -11653,6 +11740,14 @@ function mpMarchSheetHtml(){
       const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
       h+=mpTroopRowHtml("mp-atk-",t,unitName(t,1,p.race)+" (T1)",have);
     });
+    // Осадные — единственный род войск, чья польза начинается ПОСЛЕ победы,
+    // и по одним боевым цифрам этого не видно (атака 12, худшая в игре).
+    // Штурм чужого города — ровно то место, где это решение принимается,
+    // поэтому число сноса стоит здесь, а не только в карточке юнита.
+    if((st.troops.sie&&st.troops.sie[1])||0)
+      h+="<div class='note'>Осадные в поле бьются слабо — их дело начинается после победы: "+
+         "каждое орудие снимает "+RU(siegeBreachPerSiege(p.race,1))+" прочности с построек, "+
+         "первыми под таран идут стена и гарнизон.</div>";
     h+=mpGenTakeCheckboxHtml(st,"mp-atk-gen");
     h+="<div class='chips' style='margin-top:9px'>"+
        "<button class='seal blood ico' data-mp='attack' data-id='"+n.id+"'"+(mpState.loading?" disabled":"")+"><img src='images/ui/icon-siege.png' alt=''>В поход</button> "+
@@ -11925,11 +12020,6 @@ const RESEARCH_FIELD_NAME = {
   atkArc:"атака лучников", defArc:"защита лучников",
   atkCav:"атака конницы", defCav:"защита конницы",
   atkSie:"атака осады", defSie:"защита осады",
-  matkInf:"маг. атака пехоты", mdefInf:"маг. защита пехоты",
-  matkArc:"маг. атака лучников", mdefArc:"маг. защита лучников",
-  matkCav:"маг. атака конницы", mdefCav:"маг. защита конницы",
-  matkSie:"маг. атака осады", mdefSie:"маг. защита осады",
-  matk:"маг. атака войск", mdef:"маг. защита войск",
   atk:"атака войск", def:"защита войск", hp:"здоровье войск",
   trainSpeed:"скорость обучения", march:"скорость марша", scoutBonus:"точность разведки",
 };
@@ -11938,11 +12028,11 @@ const RESEARCH_FIELD_ICON = {
   build:"icon-build", march:"icon-march", trainSpeed:"icon-army",
   gatherFW:"res-food", gatherSG:"res-stone", gather:"stat-load", load:"stat-load",
   gatherAmber:"res-amber",
-  atkInf:"class-inf", defInf:"class-inf", matkInf:"class-inf", mdefInf:"class-inf",
-  atkArc:"class-arc", defArc:"class-arc", matkArc:"class-arc", mdefArc:"class-arc",
-  atkCav:"class-cav", defCav:"class-cav", matkCav:"class-cav", mdefCav:"class-cav",
-  atkSie:"class-sie", defSie:"class-sie", matkSie:"class-sie", mdefSie:"class-sie",
-  atk:"stat-atk", def:"stat-def", hp:"stat-hp", matk:"stat-matk", mdef:"stat-mdef",
+  atkInf:"class-inf", defInf:"class-inf",
+  atkArc:"class-arc", defArc:"class-arc",
+  atkCav:"class-cav", defCav:"class-cav",
+  atkSie:"class-sie", defSie:"class-sie",
+  atk:"stat-atk", def:"stat-def", hp:"stat-hp",
 };
 function renderTreeMap(arr,p){
   const rows=computeRows(arr,p);
@@ -12342,10 +12432,6 @@ const MP_BOARDS=[
    sel:"power_tech", by:"power_tech", desc:true,
    val:r=>fmt(r.power_tech||0),
    empty:"Академии ещё молчат."},
-  {id:"hall", name:"Ратуша", ico:"icon-city.png",
-   sel:"hall_lv", by:"hall_lv", desc:true,
-   val:r=>String(r.hall_lv||0)+" ур.",
-   empty:"Ратуши ещё не строили."},
   {id:"gathered", name:"Сбор", ico:"icon-march.png",
    sel:"gathered_total", by:"gathered_total", desc:true,
    val:r=>fmt(r.gathered_total||0),
@@ -12358,10 +12444,6 @@ const MP_BOARDS=[
    sel:"camps_taken", by:"camps_taken", desc:true,
    val:r=>String(r.camps_taken||0),
    empty:"Лагеря варваров пока стоят нетронутыми."},
-  {id:"age", name:"Правление", ico:"icon-reign.png",
-   sel:"created_at", by:"created_at", desc:false,
-   val:r=>fmtDur(Math.max(0,(Date.now()-new Date(r.created_at).getTime())/1000)),
-   empty:"Мир только что создан."},
   {id:"alliance", name:"Альянс", ico:"icon-alliance.png", stub:true,
    empty:"",
    stubText:"Альянсы ещё строятся: ни союзов, ни их силы в игре пока нет. Здесь появится таблица союзов мира — по общей мощи, по захваченным святыням и по совместным походам."},
@@ -12828,6 +12910,11 @@ function profileChroniclesHtml(){
   return h;
 }
 
+// Мощь для карточки профиля. В общем мире — та же, что в шапке и на сервере
+// (mpPower считает и войска в походах); в одиночке — обычная power().
+function profilePowerOf(p){
+  return (!SP_UNLOCKED && mpState.player) ? mpPower(p) : power(p);
+}
 function foProfile(pIn){
   const p=pIn||me();
   // Разделы профиля (Фаза 34) — только в общем мире: рейтинг и летопись
@@ -12873,8 +12960,17 @@ function foProfile(pIn){
          "<button class='seal' data-act='savenick'>Сохранить</button></div>"
        : "<div class='profile-name-row'><div class='title'>"+(p.nick||"Безымянный лорд")+"</div></div>")+
      "<div class='note'>"+RACES[p.race].name+"</div>"+
+     // НАЙДЕН реальный баг (автор: «в профиле чуть слетело отображение мощи, на
+     // вкладке города рядом с аватаркой 11к, в профиль захожу — там 9к»).
+     // В шапке мощь считает mpPower (см. её), в профиле стоял одиночный
+     // power() — а он отличается ровно одним: НЕ прибавляет войска, которые
+     // сейчас в походах. Одиночный так и должен себя вести (у него свои
+     // W.marches, и для шима общего мира они пусты), но для общего мира это
+     // неверно: сервер (powerOf в mp-join) войска в поле считает, и по его
+     // числу идут все таблицы мира. Правильное значение — mpPower, оно с
+     // сервером и сходится.
      "<div class='profile-power-wrap'><img class='wreath' src='images/ui/profile-wreath.png' alt=''>"+
-     "<span class='profile-power-chip' style='font-size:"+profilePowerFontSize(fmt(power(p)))+"px'>"+fmt(power(p))+"</span></div>"+
+     "<span class='profile-power-chip' style='font-size:"+profilePowerFontSize(fmt(profilePowerOf(p)))+"px'>"+fmt(profilePowerOf(p))+"</span></div>"+
      // Звание — прямо под мощью, со своим знаком. Прежняя лестница титулов по
      // мощи отсюда убрана: автор решил, что это одно и то же слово про разные
      // вещи, и оставил боевое.
@@ -13011,7 +13107,20 @@ const BATTLE_LOG_ICON={weather:"&#9730;",volley:"&#10148;",tower:"&#9819;",panic
   // рухнула (ruin). Оба приходят от mp-tick стороной "att" — у защитника
   // они покрасятся как плохие новости сами, тем же правилом, что и всё
   // остальное в хронике (см. mpBattleLogHtml).
-  breach:"&#9874;",ruin:"&#10007;"};
+  // Единственные две строки хроники со своей картинкой вместо знака: снос —
+  // не рядовой шаг схватки, а то, ради чего осадные вообще приходят под
+  // стены, и значок развалин у них тот же, что в отчёте о разрушенном
+  // (см. .ruin-row/.note.ruin-live). Значение с ".png" рисуется картинкой —
+  // разбор в battleLogIcoHtml() ниже.
+  breach:"icon-siege.png",ruin:"icon-ruin.png"};
+// Значок строки хроники: обычный текстовый знак или картинка, если в
+// BATTLE_LOG_ICON лежит имя файла.
+function battleLogIcoHtml(kind){
+  const v=BATTLE_LOG_ICON[kind]||"&#8226;";
+  return /\.png$/.test(v)
+    ? "<img src='images/ui/"+v+"' alt='' onerror=\"this.remove()\">"
+    : v;
+}
 // Проценты бонуса — со знаком (+12.3% / −4.0%), тем же округлением, что и
 // остальные проценты в игре (одна десятая, как у snap talents/statTxt).
 function pctTxt(v){ return (v>=0?"+":"")+(v*100).toFixed(1)+"%"; }
@@ -13055,7 +13164,7 @@ function battleLogHtml(m){
   log.forEach(e=>{
     const tone = !e.side ? "" : (e.side===mine ? " good" : " bad");
     h+="<div class='chron-row "+e.kind+tone+"'>"+
-       "<i class='chron-ico'>"+(BATTLE_LOG_ICON[e.kind]||"&#8226;")+"</i>"+
+       "<i class='chron-ico'>"+battleLogIcoHtml(e.kind)+"</i>"+
        "<span class='chron-tx'>"+e.text+"</span></div>";
   });
   return h+"</div>";
@@ -13984,6 +14093,9 @@ function handleAct(e){
     openUnitCarousel(b.dataset.t);
     return;
   }
+  // «Назад» из подэкрана карточки здания (карусели/рынок) — data-act, а не
+  // data-mp: ветка чисто DOM'ная, одна на оба режима, см. bmGoBack().
+  else if(a==="bmback"){ bmGoBack(); return; }
   else if(a==="ucnav"){
     const track=$("#uc-track"), card=track&&track.querySelector(".uc-card");
     if(track&&card) track.scrollLeft += card.getBoundingClientRect().width*(+b.dataset.dir);
@@ -14309,6 +14421,7 @@ function toggleMenu(){
 }
 let buildingModalSel=-1;
 function openBuildingModal(ci){
+  bmBack=null;
   trainCtx=null; carouselCtx=null; forgeTab=null; forgeRarity=null; researchCtx=null; healCarouselOpen=false; healCtx=null;
   buildingModalSel=ci;
   setHtml($("#bm-body"), buildingModalHtml(ci));
@@ -14321,6 +14434,7 @@ function openBuildingModal(ci){
 // (см. mpCloseBuildingModal() выше) — SP_UNLOCKED делает вторую ветку
 // no-op в одиночке (mpCitySel там всегда -1, условие не пройдёт).
 function closeBuildingModal(){
+  bmBack=null;
   $("#building-modal").classList.remove("open"); buildingModalSel=-1; trainCtx=null; carouselCtx=null; researchCtx=null; healCarouselOpen=false; healCtx=null;
   // Фаза 19, кусочек 1 — mpCarouselCtx/mpTrainCtx тоже сбрасываются здесь
   // (см. тот же довод в mpCloseBuildingModal() выше) — крестик/подложка
@@ -14447,6 +14561,7 @@ function mpUpdateTradeTotals(){
 let carouselCtx=null, trainCtx=null;
 let healCtx=null, healCarouselOpen=false, lastHealFingerprint="";
 function openUnitCarousel(type){
+  bmBack=bmSnap();   // запоминаем карточку, из которой вошли (см. bmBackHtml)
   const p=me(), maxT=tierUnlockedFor(p,type);
   carouselCtx={type}; researchCtx=null; healCarouselOpen=false; healCtx=null;
   buildingModalSel=-1;
@@ -14465,8 +14580,8 @@ function unitCardStatsHtml(p,type,tier){
     "<tr><td>"+statIcon("atk")+"Атака</td><td>"+Math.round(troopStat(type,tier,"atk")*troopMod(p.race,type,"atk"))+"</td></tr>"+
     "<tr><td>"+statIcon("def")+"Защита</td><td>"+troopStat(type,tier,"def")+"</td></tr>"+
     "<tr><td>"+statIcon("hp")+"Здоровье</td><td>"+troopStat(type,tier,"hp")+"</td></tr>"+
-    "<tr><td>"+statIcon("matk")+"Магическая атака</td><td>"+troopStat(type,tier,"magicAtk")+"</td></tr>"+
-    "<tr><td>"+statIcon("mdef")+"Магическая защита</td><td>"+troopStat(type,tier,"magicDef")+"</td></tr>"+
+    (type==="sie" ? "<tr><td><img class='stat-ico' src='images/ui/icon-ruin.png' alt='' onerror=\"this.remove()\">"+
+      "Урон по постройкам</td><td>"+RU(siegeBreachPerSiege(p.race,tier))+"</td></tr>" : "")+
     "<tr><td>"+statIcon("speed")+"Скорость</td><td>"+Math.round(TROOP_TYPES[type].speed*troopMod(p.race,type,"speed")*MARCH_SPEED_SCALE)+" кл/мин</td></tr>"+
     "<tr><td>"+statIcon("load")+"Грузоподъёмность</td><td>"+TROOP_TYPES[type].load+"</td></tr>"+
     "<tr><td><img class='stat-ico' src='images/ui/icon-power.png' alt=''>Мощь</td><td>"+unitPower(tier)+"</td></tr>"+
@@ -14496,7 +14611,7 @@ function trainInlineHtml(){
 }
 function unitCarouselHtml(){
   const p=me(), type=carouselCtx.type, maxT=tierUnlockedFor(p,type);
-  let h="<div id='bm-title'>"+TROOP_TYPES[type].name+"</div>";
+  let h=bmBackHtml()+"<div id='bm-title'>"+TROOP_TYPES[type].name+"</div>";
   h+="<div id='uc-track'>";
   for(let tier=1; tier<=5; tier++){
     const locked=tier>maxT, have=p.troops[type][tier]||0;
@@ -14550,7 +14665,7 @@ function healInlineHtml(){
 }
 function healCarouselHtml(){
   const p=me(), list=woundedList(p);
-  let h="<div id='bm-title'>Лазарет</div>";
+  let h=bmBackHtml()+"<div id='bm-title'>Лазарет</div>";
   if(!list.length){
     healCtx=null;
     h+="<div id='bm-tree'><div class='rgroup'>Раненых нет</div></div>";
@@ -14594,6 +14709,7 @@ function updateHealSheet(){
   $("#bm-btn").disabled = !!p.heal || max<1 || n<=0;
 }
 function openHealCarousel(){
+  bmBack=bmSnap();   // запоминаем карточку, из которой вошли (см. bmBackHtml)
   trainCtx=null; carouselCtx=null; researchCtx=null; forgeTab=null; forgeRarity=null;
   buildingModalSel=-1; healCarouselOpen=true; healCtx=null;
   setHtml($("#bm-body"), healCarouselHtml());
@@ -14606,6 +14722,7 @@ function researchNodeList(branch,p){
   return ACADEMY_TREE[branch].filter(n=>nodeVisibleFor(n,p));
 }
 function openResearchCarousel(branch,startId){
+  bmBack=bmSnap();   // запоминаем карточку, из которой вошли (см. bmBackHtml)
   const p=me();
   trainCtx=null; carouselCtx=null; forgeTab=null; forgeRarity=null; healCarouselOpen=false; healCtx=null;
   buildingModalSel=-1;
@@ -14622,7 +14739,7 @@ function openResearchCarousel(branch,startId){
 function researchCarouselHtml(){
   const p=me(), B=bonuses(p);
   const list=researchNodeList(researchCtx.branch,p);
-  let h="<div id='bm-title'>"+(researchCtx.branch==="mil"?"Военные исследования":"Экономические исследования")+"</div>";
+  let h=bmBackHtml()+"<div id='bm-title'>"+(researchCtx.branch==="mil"?"Военные исследования":"Экономические исследования")+"</div>";
   h+="<div id='uc-track'>";
   list.forEach(n=>{
     const lv=p.tech[n.id]||0, maxed=lv>=n.max, nx=lv+1, gated=p.b.academy<=0;
@@ -17648,7 +17765,7 @@ function mpBattleLogHtml(log, mineIsAtt){
   log.forEach(e=>{
     const tone = !e.side ? "" : (e.side===mine ? " good" : " bad");
     h+="<div class='chron-row "+e.kind+tone+"'>"+
-       "<i class='chron-ico'>"+(BATTLE_LOG_ICON[e.kind]||"&#8226;")+"</i>"+
+       "<i class='chron-ico'>"+battleLogIcoHtml(e.kind)+"</i>"+
        "<span class='chron-tx'>"+e.text+"</span></div>";
   });
   return h+"</div>";

@@ -563,7 +563,7 @@ export const SIEGE_BDMG_BASE = 0.75;
 // 15-секундные тики, что и у самого боя (см. BATTLE_TICK_SECONDS в mp-tick) —
 // осада не разрешается мгновенно, её видно в живую.
 export const DEMOLISH_ROUNDS = 8;
-// atkSie/matkSie — те самые Баллистика/Машиностроение/Инженерия из Академии
+// atkSie — те самые Баллистика/Машиностроение/Инженерия из Академии
 // (см. ACADEMY_TREE): вложился в осадную ветку — ломаешь стены быстрее. Своей
 // отдельной ветки исследований под снос не заводим.
 export function siegeBreachPerRound(units, race, B) {
@@ -572,7 +572,7 @@ export function siegeBreachPerRound(units, race, B) {
     const n = (units.sie && units.sie[i]) || 0;
     if (n > 0) dmg += n * SIEGE_BDMG_BASE * TIER_MULT[i - 1];
   }
-  const bonus = 1 + ((B && B.atkSie) || 0) + ((B && B.matkSie) || 0);
+  const bonus = 1 + ((B && B.atkSie) || 0);
   return dmg * bonus * troopMod(race, "sie", "atk");
 }
 
@@ -678,7 +678,7 @@ export function syncRes(p, nowSec) {
 // COUNTER_UP/COUNTER_DOWN — буквальная копия из index.html:2578-2651, те же
 // числа), без раундов/погоды/дисциплины/полководцев/подъёма нежити/
 // гарнизонного контрудара/первого залпа. Стена (уровень + расовый/
-// эпохальный wallBonus) и остальные боевые бонусы (atk/def/matk/mdef/hp по
+// эпохальный wallBonus) и остальные боевые бонусы (atk/def/hp по
 // каждому роду войск, archer, дефолтный генерал, дерево исследований) — уже
 // подключены (Фаза 6, sideStats/dmgTo/resolvePvp ниже принимают bonuses(p)).
 // Урон по типу защитника считается той же формулой "доля-по-HP + контр-
@@ -693,10 +693,18 @@ export const TIER_MULT = [1, 1.62, 2.55, 4.05, 6.20];
 // расходился с игрой, и обе живые копии (mp-gather/mp-tick) дописывали её
 // каждая по-своему. Приведено к эталону.
 export const TROOP_TYPES = {
-  inf: { atk: 34, def: 46, hp: 44, load: 6, speed: 1.00, magicAtk: 8, magicDef: 18, beats: "arc", losesTo: "cav" },
-  arc: { atk: 50, def: 30, hp: 36, load: 8, speed: 1.10, magicAtk: 20, magicDef: 8, beats: "cav", losesTo: "inf" },
-  cav: { atk: 46, def: 34, hp: 40, load: 5, speed: 1.70, magicAtk: 12, magicDef: 12, beats: "inf", losesTo: "arc" },
-  sie: { atk: 24, def: 20, hp: 60, load: 30, speed: 0.60, magicAtk: 26, magicDef: 6, beats: null, losesTo: null },
+  // Магической атаки и защиты у войск больше нет — ни поля, ни множителя, ни
+  // в бою, ни в мощи (автор заводит под магию отдельный род войск, призываемый
+  // из портала, а не вторую пару характеристик у каждого солдата). Всё, что от
+  // неё зависело, пересчитано так, будто её не было: см. BATTLE_PACE и делитель
+  // armyPower в mp-tick.
+  // Осадные: атака 12 вместо 24 — их урон по армиям намеренно вдвое ниже, их
+  // дело — снос построек отдельным статом (SIEGE_BDMG_BASE выше), который в
+  // полевом бою не участвует вовсе.
+  inf: { atk: 34, def: 46, hp: 44, load: 6, speed: 1.00, beats: "arc", losesTo: "cav" },
+  arc: { atk: 50, def: 30, hp: 36, load: 8, speed: 1.10, beats: "cav", losesTo: "inf" },
+  cav: { atk: 46, def: 34, hp: 40, load: 5, speed: 1.70, beats: "inf", losesTo: "arc" },
+  sie: { atk: 12, def: 20, hp: 60, load: 30, speed: 0.60, beats: null, losesTo: null },
 };
 export const RACE_TROOP_MOD = {
   dwarf: { inf: { atk: 1.05, def: 1.05, hp: 1.05 } },
@@ -736,21 +744,18 @@ export function counterMult(from, to) {
 // войск (сумма по тирам). Фаза 6, продолжение: раньше бонусы p.gen/tal/
 // tech/race-пассивки были не перенесены — теперь принимает готовый B
 // (bonuses(p) или bonuses(p,true) для защитника) и применяет ровно те же
-// множители, что и index.html:3974-4014 (per-type atkX/defX/matkX/mdefX +
-// общие atk/def/matk/mdef/hp + archer для лучников). НЕ переносит f.broken
+// множители, что и index.html:3974-4014 (per-type atkX/defX +
+// общие atk/def/hp + archer для лучников). НЕ переносит f.broken
 // (слом дисциплины) и f.risen (поднятые скелеты) — оба существуют только
 // внутри раундового resolveBattle(), здесь один обмен без раундов.
 const SIDE_TYPE_ATK = { inf: "atkInf", arc: "atkArc", cav: "atkCav", sie: "atkSie" };
 const SIDE_TYPE_DEF = { inf: "defInf", arc: "defArc", cav: "defCav", sie: "defSie" };
-const SIDE_TYPE_MATK = { inf: "matkInf", arc: "matkArc", cav: "matkCav", sie: "matkSie" };
-const SIDE_TYPE_MDEF = { inf: "mdefInf", arc: "mdefArc", cav: "mdefCav", sie: "mdefSie" };
 export function sideStats(units, race, B) {
   const TKEYS = ["inf", "arc", "cav", "sie"];
   const s = {};
   TKEYS.forEach((t) => {
-    let atk = 0, def = 0, matk = 0, mdef = 0, hp = 0, n = 0;
+    let atk = 0, def = 0, hp = 0, n = 0;
     const atkMod = 1 + (B[SIDE_TYPE_ATK[t]] || 0), defMod = 1 + (B[SIDE_TYPE_DEF[t]] || 0);
-    const matkMod = 1 + (B[SIDE_TYPE_MATK[t]] || 0), mdefMod = 1 + (B[SIDE_TYPE_MDEF[t]] || 0);
     for (let i = 1; i <= 5; i++) {
       const c = (units[t] && units[t][i]) || 0;
       if (!c) continue;
@@ -758,14 +763,11 @@ export function sideStats(units, race, B) {
       let a = TROOP_TYPES[t].atk * w * troopMod(race, t, "atk") * atkMod;
       if (t === "arc") a *= 1 + (B.archer || 0);
       const d = TROOP_TYPES[t].def * w * troopMod(race, t, "def") * defMod;
-      const ma = TROOP_TYPES[t].magicAtk * w * troopMod(race, t, "atk") * matkMod;
-      const md = TROOP_TYPES[t].magicDef * w * troopMod(race, t, "def") * mdefMod;
       atk += c * a * (1 + B.atk); def += c * d * (1 + B.def);
-      matk += c * ma * (1 + B.matk); mdef += c * md * (1 + B.mdef);
       hp += c * TROOP_TYPES[t].hp * w * troopMod(race, t, "hp") * (1 + B.hp);
       n += c;
     }
-    s[t] = { atk, def, matk, mdef, hp, n };
+    s[t] = { atk, def, hp, n };
   });
   s.totalHp = TKEYS.reduce((a, t) => a + s[t].hp, 0);
   s.totalN = TKEYS.reduce((a, t) => a + s[t].n, 0);
@@ -789,16 +791,14 @@ export function dmgTo(attS, defS, defWallLv = 0, wallBonus = 0) {
   const out = {};
   TKEYS.forEach((dt) => {
     if (defS[dt].n <= 0) { out[dt] = 0; return; }
-    let d = 0, dm = 0;
+    let d = 0;
     TKEYS.forEach((at) => {
       if (attS[at].n <= 0) return;
       const share = defS[dt].hp / Math.max(1, defS.totalHp);
       d += attS[at].atk * counterMult(at, dt) * share;
-      dm += attS[at].matk * counterMult(at, dt) * share;
     });
     const mitig = 1 + (defS[dt].def / Math.max(1, defS[dt].n)) / 70 * defWall;
-    const mitigM = 1 + (defS[dt].mdef / Math.max(1, defS[dt].n)) / 70 * defWall;
-    out[dt] = d / mitig + dm / mitigM;
+    out[dt] = d / mitig;
   });
   return out;
 }
@@ -1286,47 +1286,47 @@ export const ACADEMY_TREE = {
   ],
   mil: [
     {id:"mil_atk_inf1",name:"Пехота, атака I",   max:5, wave:1,branch:"mil",
-      effects:[{field:"atkInf",total:0.10},{field:"matkInf",total:0.05}]},
+      field:"atkInf",total:0.10},
     {id:"mil_atk_inf2",name:"Пехота, атака II",  max:10,wave:2,branch:"mil",requires:["mil_atk_inf1"],
-      effects:[{field:"atkInf",total:0.20},{field:"matkInf",total:0.10}]},
+      field:"atkInf",total:0.20},
     {id:"mil_atk_arc1",name:"Лучники, атака I",  max:5, wave:1,branch:"mil",
-      effects:[{field:"atkArc",total:0.10},{field:"matkArc",total:0.05}]},
+      field:"atkArc",total:0.10},
     {id:"mil_atk_arc2",name:"Лучники, атака II", max:10,wave:2,branch:"mil",requires:["mil_atk_arc1"],
-      effects:[{field:"atkArc",total:0.20},{field:"matkArc",total:0.10}]},
+      field:"atkArc",total:0.20},
     {id:"mil_atk_cav1",name:"Кавалерия, атака I",max:5, wave:1,branch:"mil",
-      effects:[{field:"atkCav",total:0.10},{field:"matkCav",total:0.05}]},
+      field:"atkCav",total:0.10},
     {id:"mil_atk_cav2",name:"Кавалерия, атака II",max:10,wave:2,branch:"mil",requires:["mil_atk_cav1"],
-      effects:[{field:"atkCav",total:0.20},{field:"matkCav",total:0.10}]},
+      field:"atkCav",total:0.20},
     {id:"mil_atk_sie1",name:"Осада, атака I",    max:5, wave:1,branch:"mil",
-      effects:[{field:"atkSie",total:0.10},{field:"matkSie",total:0.05}]},
+      field:"atkSie",total:0.10},
     {id:"mil_atk_sie2",name:"Осада, атака II",   max:10,wave:2,branch:"mil",requires:["mil_atk_sie1"],
-      effects:[{field:"atkSie",total:0.20},{field:"matkSie",total:0.10}]},
+      field:"atkSie",total:0.20},
     {id:"mil_def_inf1",name:"Пехота, защита I",   max:5, wave:1,branch:"mil",
-      effects:[{field:"defInf",total:0.10},{field:"mdefInf",total:0.05}]},
+      field:"defInf",total:0.10},
     {id:"mil_def_inf2",name:"Пехота, защита II",  max:10,wave:2,branch:"mil",requires:["mil_def_inf1"],
-      effects:[{field:"defInf",total:0.20},{field:"mdefInf",total:0.10}]},
+      field:"defInf",total:0.20},
     {id:"mil_def_arc1",name:"Лучники, защита I",  max:5, wave:1,branch:"mil",
-      effects:[{field:"defArc",total:0.10},{field:"mdefArc",total:0.05}]},
+      field:"defArc",total:0.10},
     {id:"mil_def_arc2",name:"Лучники, защита II", max:10,wave:2,branch:"mil",requires:["mil_def_arc1"],
-      effects:[{field:"defArc",total:0.20},{field:"mdefArc",total:0.10}]},
+      field:"defArc",total:0.20},
     {id:"mil_def_cav1",name:"Кавалерия, защита I",max:5, wave:1,branch:"mil",
-      effects:[{field:"defCav",total:0.10},{field:"mdefCav",total:0.05}]},
+      field:"defCav",total:0.10},
     {id:"mil_def_cav2",name:"Кавалерия, защита II",max:10,wave:2,branch:"mil",requires:["mil_def_cav1"],
-      effects:[{field:"defCav",total:0.20},{field:"mdefCav",total:0.10}]},
+      field:"defCav",total:0.20},
     {id:"mil_def_sie1",name:"Осада, защита I",    max:5, wave:1,branch:"mil",
-      effects:[{field:"defSie",total:0.10},{field:"mdefSie",total:0.05}]},
+      field:"defSie",total:0.10},
     {id:"mil_def_sie2",name:"Осада, защита II",   max:10,wave:2,branch:"mil",requires:["mil_def_sie1"],
-      effects:[{field:"defSie",total:0.20},{field:"mdefSie",total:0.10}]},
+      field:"defSie",total:0.20},
     {id:"mil_atk_all1",name:"Атака войск I",  max:10,wave:2,branch:"mil",
       requires:["mil_atk_inf1","mil_atk_arc1","mil_atk_cav1","mil_atk_sie1"],
-      effects:[{field:"atk",total:0.15},{field:"matk",total:0.075}]},
+      field:"atk",total:0.15},
     {id:"mil_atk_all2",name:"Атака войск II", max:10,wave:3,branch:"mil",requires:["mil_atk_all1"],
-      effects:[{field:"atk",total:0.25},{field:"matk",total:0.125}]},
+      field:"atk",total:0.25},
     {id:"mil_def_all1",name:"Защита войск I", max:10,wave:2,branch:"mil",
       requires:["mil_def_inf1","mil_def_arc1","mil_def_cav1","mil_def_sie1"],
-      effects:[{field:"def",total:0.15},{field:"mdef",total:0.075}]},
+      field:"def",total:0.15},
     {id:"mil_def_all2",name:"Защита войск II",max:10,wave:3,branch:"mil",requires:["mil_def_all1"],
-      effects:[{field:"def",total:0.25},{field:"mdef",total:0.125}]},
+      field:"def",total:0.25},
     {id:"mil_hp_all1", name:"Здоровье войск I", max:10,wave:2,branch:"mil",field:"hp",total:0.15,
       requires:["mil_atk_all1","mil_def_all1"]},
     {id:"mil_hp_all2", name:"Здоровье войск II",max:10,wave:3,branch:"mil",field:"hp",total:0.25,requires:["mil_hp_all1"]},
@@ -1521,8 +1521,6 @@ export function bonuses(p, defending = false) {
     trainSpeed: 0, buildCostCut: 0, wallBonus: 0, counter: 0, firstStrike: 0,
     researchSpeed: 0, scoutBonus: 0,
     atkInf: 0, atkArc: 0, atkCav: 0, atkSie: 0, defInf: 0, defArc: 0, defCav: 0, defSie: 0,
-    matkInf: 0, matkArc: 0, matkCav: 0, matkSie: 0, mdefInf: 0, mdefArc: 0, mdefCav: 0, mdefSie: 0,
-    matk: 0, mdef: 0,
     genAtkMod: 0, genDefMod: 0, genHpMod: 0,
   };
   const mn = RACES_MINUS[p.race];
