@@ -11695,17 +11695,97 @@ function mpGenTakeCheckboxHtml(st,id){
 // соседи по фиксированным именам, менять их незачем.
 // data-mpqty связывает ползунок с числом в обе стороны (см. слушатель
 // input у #building-modal).
-function mpTroopRowHtml(idPrefix,t,name,have){
-  const id=idPrefix+t;
+/* Раньше свиток похода показывал ТОЛЬКО первый тир: и разметка, и
+   mpDoAttack/mpDoGather/mpDoMove/mpDoRaid были написаны под один-единственный
+   ряд на род войск (`units[t]={1:...}`). Ветеранов Т2-Т5 нельзя было
+   отправить НИКУДА — ни в бой, ни на точку сбора, ни на соседнюю клетку: их
+   в списке просто не существовало. Автор: «в мой поход на ресурсную точку не
+   вмещается войска, мне как бы говорят, чтобы я взял меньше». Так и было —
+   у армии в 11 600 душ свиток предлагал 500, остальные четыре пятых были
+   невидимы. Сервер (mp-attack/mp-gather/mp-move/mp-raid) все пять тиров
+   принимал и списывал ВСЕГДА — ограничение целиком жило в разметке.
+   Никакого потолка на численность похода нет и не заводится: сколько войск
+   есть, столько и можно взять.
+   Набранное держится в mpMarchCtx.units, а не только в DOM: свиток
+   пересобирается на каждом опросе (см. mpRerender), и без этого любая
+   перерисовка стирала бы уже набранные числа — с двадцатью рядами это
+   заметно куда сильнее, чем с четырьмя. */
+function mpMarchUnits(){
+  if(!mpMarchCtx) return emptyUnits();
+  if(!mpMarchCtx.units) mpMarchCtx.units=emptyUnits();
+  return mpMarchCtx.units;
+}
+// Сколько воинов этого тира дома. Клампим по нему и при вводе, и при отправке:
+// пока свиток открыт, набор мог закончиться или отряд уйти другим походом.
+function mpTroopsHave(t,i){
+  const st=mpState.player&&mpState.player.state;
+  return (st&&st.troops&&st.troops[t]&&st.troops[t][i])||0;
+}
+function mpTroopRowHtml(idPrefix,t,tier,name,have,val){
+  const id=idPrefix+t+tier, k=t+tier;
   return "<div class='mp-troop'>"+
     "<div class='mt-hd'><span class='mt-nm'>"+name+"</span>"+
     "<span class='mt-have'>есть "+RU(have)+"</span></div>"+
     "<div class='mt-row'>"+
-      "<input class='mt-range' type='range' min='0' max='"+have+"' value='0' data-mpqty='"+id+"'>"+
-      "<input id='"+id+"' class='mt-num' type='number' min='0' max='"+have+"' value='0' "+
-        "data-mpqty-num='"+id+"' inputmode='numeric'>"+
-      "<button class='seal mt-all' data-mp='qtyall' data-id='"+id+"' data-max='"+have+"'>Всё</button>"+
+      "<input class='mt-range' type='range' min='0' max='"+have+"' value='"+val+"' data-mpqty='"+id+"' data-mpu='"+k+"'>"+
+      "<input id='"+id+"' class='mt-num' type='number' min='0' max='"+have+"' value='"+val+"' "+
+        "data-mpqty-num='"+id+"' data-mpu='"+k+"' inputmode='numeric'>"+
+      "<button class='seal mt-all' data-mp='qtyall' data-id='"+id+"' data-max='"+have+"' data-mpu='"+k+"'>Всё</button>"+
     "</div></div>";
+}
+/* Все ряды одним куском — вместо четырёх почти одинаковых циклов в свитках
+   штурма/сбора/пустоши/лагеря. Плюс две кнопки на всё войско сразу: с
+   двадцатью рядами дёргать «Всё» в каждом было бы издевательством. */
+function mpTroopPickerHtml(idPrefix,p){
+  const u=mpMarchUnits();
+  let rows="", any=false;
+  TKEYS.forEach(t=>{
+    for(let i=1;i<=5;i++){
+      const have=mpTroopsHave(t,i); if(!have) continue;
+      any=true;
+      rows+=mpTroopRowHtml(idPrefix,t,i,unitName(t,i,p.race)+" (T"+i+")",have,Math.min(u[t][i]||0,have));
+    }
+  });
+  if(!any) return "<div class='note'>Войск дома нет.</div>";
+  return "<div class='chips' style='margin-top:9px'>"+
+      "<button class='seal' data-mp='marchall'>Всё войско</button> "+
+      "<button class='seal' data-mp='marchnone'>Сбросить</button></div>"+
+    rows+"<div id='mp-march-sum' class='note'>"+mpMarchSumText()+"</div>";
+}
+// Сводка под рядами: сколько выступает, чего они стоят в бою и сколько
+// поднимут груза. Обновляется на месте (mpUpdateMarchSum), без пересборки
+// свитка — иначе ввод сбивался бы на каждую набранную цифру.
+function mpMarchSumText(){
+  const p=mpState.player, st=p&&p.state; if(!st) return "";
+  const u=mpMarchUnits();
+  let n=0, load=0;
+  TKEYS.forEach(t=>{for(let i=1;i<=5;i++){
+    const c=Math.min(u[t][i]||0, mpTroopsHave(t,i)); if(!c) continue;
+    n+=c; load+=c*TROOP_TYPES[t].load*TIER_MULT[i-1]*troopMod(p.race,t,"load");
+  }});
+  if(n<=0) return "Ни одного воина не выбрано.";
+  const shim=mpFullShim(p,st);
+  const pow=armyPower(u,bonuses(shim),p.race);
+  return "Выступает "+RU(n)+" · сила "+fmt(pow)+" · поднимут груза "+fmt(Math.round(load*(1+bonuses(shim).load)));
+}
+function mpUpdateMarchSum(){
+  const el=$("#mp-march-sum"); if(el) el.textContent=mpMarchSumText();
+}
+// Запись одного ряда в набор. key — "inf3" и т.п. (data-mpu на обоих полях
+// ряда и на кнопке «Всё»); чужие поля (обмен, барт) сюда не приходят —
+// у них своего data-mpu нет.
+function mpMarchQtySet(key,v){
+  if(!key||!mpMarchCtx) return;
+  const t=key.slice(0,3), i=+key.slice(3);
+  if(!TKEYS.includes(t)||!(i>=1&&i<=5)) return;
+  mpMarchUnits()[t][i]=Math.max(0,Math.min(mpTroopsHave(t,i),Math.round(+v||0)));
+  mpUpdateMarchSum();
+}
+// Набранное к отправке, ужатое по тому, что реально есть дома.
+function mpMarchUnitsOut(){
+  const u=mpMarchUnits(), out=emptyUnits();
+  TKEYS.forEach(t=>{for(let i=1;i<=5;i++) out[t][i]=Math.min(u[t][i]||0, mpTroopsHave(t,i))});
+  return out;
 }
 let mpMarchCtx=null, lastMarchSheet="";
 function mpOpenMarchModal(mode,target){
@@ -11713,7 +11793,7 @@ function mpOpenMarchModal(mode,target){
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpForgeTab=null; mpForgeRarity=null;
   mpBmResetSel();                          // и наоборот — см. mpOpenTradeModal
-  mpMarchCtx={mode};
+  mpMarchCtx={mode, units:emptyUnits()};
   if(mode==="attack") mpState.attackTarget=target;
   else if(mode==="gather") mpState.gatherTarget=target;
   else if(mode==="move") mpState.moveTarget=target;
@@ -11736,10 +11816,7 @@ function mpMarchSheetHtml(){
       "<div class='note'>"+n.x+", "+n.y+" · "+dist+" клет.</div>"+
       "<div class='note'>Бой честный (стена защитника, погода и полководец — настоящие; марш и время в "+
       "пути тоже настоящие — чем медленнее войска, тем дольше идти). См. supabase/README.md.</div>"+errHtml;
-    TKEYS.forEach(t=>{
-      const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
-      h+=mpTroopRowHtml("mp-atk-",t,unitName(t,1,p.race)+" (T1)",have);
-    });
+    h+=mpTroopPickerHtml("mp-atk-",p);
     // Осадные — единственный род войск, чья польза начинается ПОСЛЕ победы,
     // и по одним боевым цифрам этого не видно (атака 12, худшая в игре).
     // Штурм чужого города — ровно то место, где это решение принимается,
@@ -11762,10 +11839,7 @@ function mpMarchSheetHtml(){
     if(amount<=0) return gone(resName(res)+", жила "+lv+" ур. — истощена");
     let h="<div class='title'>"+resName(res)+", жила "+lv+" ур.</div>"+
       "<div class='note'>"+n.x+", "+n.y+" · "+dist+" клет. · осталось "+fmt(amount)+"</div>"+errHtml;
-    TKEYS.forEach(t=>{
-      const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
-      h+=mpTroopRowHtml("mp-gth-",t,unitName(t,1,p.race)+" (T1)",have);
-    });
+    h+=mpTroopPickerHtml("mp-gth-",p);
     // Галочка генерала была во всех окнах отправки, кроме сбора — автор:
     // "при открывании менюшки на сбор, к примеру, всё ещё нет галочки взять
     // генерала". Сервер (mp-gather) её принимает так же, как остальные.
@@ -11784,10 +11858,7 @@ function mpMarchSheetHtml(){
       (regionNameAt(mx,my)?" · "+regionNameAt(mx,my):"")+"</div>"+
       "<div class='note'>Отряд дойдёт и встанет там до нового приказа — сам домой не вернётся. "+
       "Дальше его можно перетащить пальцем на любую цель или отозвать.</div>"+errHtml;
-    TKEYS.forEach(t=>{
-      const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
-      h+=mpTroopRowHtml("mp-mv-",t,unitName(t,1,p.race)+" (T1)",have);
-    });
+    h+=mpTroopPickerHtml("mp-mv-",p);
     h+=mpGenTakeCheckboxHtml(st,"mp-mv-gen");
     h+="<div class='chips' style='margin-top:9px'>"+
        "<button class='seal ico' data-mp='move' data-x='"+mx+"' data-y='"+my+"'"+(mpState.loading?" disabled":"")+"><img src='images/ui/icon-camp.png' alt=''>Выступить</button> "+
@@ -11801,10 +11872,7 @@ function mpMarchSheetHtml(){
     "<div class='note'>"+c.x+", "+c.y+" · "+dist+" клет.</div>"+
     "<div class='note'>Бой честный (погода и полководец — настоящие). Часть потерь отправится в лазарет, "+
     "часть погибнет насовсем — как при штурме города, но без разграбления вашего дома.</div>"+errHtml;
-  TKEYS.forEach(t=>{
-    const have=(st.troops[t]&&st.troops[t][1])||0; if(!have) return;
-      h+=mpTroopRowHtml("mp-rd-",t,unitName(t,1,p.race)+" (T1)",have);
-  });
+  h+=mpTroopPickerHtml("mp-rd-",p);
   h+=mpGenTakeCheckboxHtml(st,"mp-rd-gen");
   h+="<div class='chips' style='margin-top:9px'>"+
      "<button class='seal blood ico' data-mp='raid' data-x='"+c.x+"' data-y='"+c.y+"'"+(mpState.loading?" disabled":"")+"><img src='images/ui/icon-siege.png' alt=''>В поход</button> "+
@@ -14496,13 +14564,16 @@ $("#building-modal").addEventListener("input",e=>{
   } else if(e.target.dataset && e.target.dataset.mpqty){
     const num=$("#"+e.target.dataset.mpqty);
     if(num) num.value=e.target.value;
+    mpMarchQtySet(e.target.dataset.mpu, e.target.value);
   } else if(e.target.dataset && e.target.dataset.mpqtyNum){
     const box=$("#bm-body").querySelector("[data-mpqty='"+e.target.dataset.mpqtyNum+"']");
+    let v=Math.max(0,Math.round(+e.target.value||0));
     if(box){
       const max=+box.max||0;
-      const v=Math.max(0,Math.min(max,Math.round(+e.target.value||0)));
+      v=Math.min(max,v);
       box.value=v;
     }
+    mpMarchQtySet(e.target.dataset.mpu, v);
   } else if(e.target.dataset && e.target.dataset.trade && mpTradeCtx){
     const r=e.target.dataset.trade;
     const st=mpState.player.state;
@@ -15219,6 +15290,23 @@ function handleMpAct(e){
     const box=$("#bm-body").querySelector("[data-mpqty='"+id+"']");
     if(num) num.value=max;
     if(box) box.value=max;
+    mpMarchQtySet(qtyAllBtn.dataset.mpu, max);
+    return;
+  }
+  // Всё войско / сбросить — с двадцатью рядами дёргать «Всё» в каждом
+  // невозможно. Правим и набор, и уже нарисованные поля: пересобирать свиток
+  // целиком незачем, а ввод в чужом ряду при пересборке сбился бы.
+  const marchAllBtn=e.target.closest("[data-mp='marchall'],[data-mp='marchnone']");
+  if(marchAllBtn && mpMarchCtx){
+    const full=marchAllBtn.dataset.mp==="marchall";
+    TKEYS.forEach(t=>{for(let i=1;i<=5;i++){
+      const v=full?mpTroopsHave(t,i):0;
+      mpMarchUnits()[t][i]=v;
+      $("#bm-body").querySelectorAll("[data-mpu='"+t+i+"']").forEach(el=>{
+        if(el.tagName==="INPUT") el.value=v;
+      });
+    }});
+    mpUpdateMarchSum();
     return;
   }
   const tradeOpenBtn=e.target.closest("[data-mp='tradeopen']");
@@ -16515,7 +16603,20 @@ function mpRerenderNow(){
     // числа войск зря.
     } else if(mpMarchCtx){
       const html=mpMarchSheetHtml();
-      if(html!==lastMarchSheet){ lastMarchSheet=html; setHtml($("#bm-body"), html); }
+      if(html!==lastMarchSheet){
+        // Тот же приём, что и у формы обоза ниже: в свитке теперь до двадцати
+        // полей ввода, и пересборка посреди набора числа увела бы фокус и
+        // курсор. Запоминаем, в каком ряду печатали, и возвращаемся туда же.
+        const act=document.activeElement;
+        const key=act&&act.dataset&&act.dataset.mpu&&act.tagName==="INPUT"&&act.type==="number"
+          ? act.dataset.mpu : null;
+        const pos=key&&act.selectionStart!=null?act.selectionStart:null;
+        lastMarchSheet=html; setHtml($("#bm-body"), html);
+        if(key){
+          const again=$("#bm-body").querySelector("input[type='number'][data-mpu='"+key+"']");
+          if(again){ again.focus(); try{ again.setSelectionRange(pos,pos) }catch(e){} }
+        }
+      }
     // Форма обоза (mpOpenTradeModal) — тот же диф и по той же причине:
     // складские остатки меняются каждый опрос, а в полях уже набраны числа,
     // и в поле поиска получателя стоит курсор. Перезапись без диффа стирала
@@ -17135,8 +17236,7 @@ async function mpDoHeal(type){
   finally{ mpState.loading=false; mpRerender(); }
 }
 async function mpDoAttack(defenderId){
-  const units={};
-  TKEYS.forEach(t=>{ const inp=$("#mp-atk-"+t); units[t]={1:Math.max(0,Math.round(+((inp&&inp.value)||0)))}; });
+  const units=mpMarchUnitsOut();
   const genInp=$("#mp-atk-gen"), withGen=!!(genInp&&genInp.checked);
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
@@ -17148,8 +17248,7 @@ async function mpDoAttack(defenderId){
 }
 // Фаза 8, кусочек 1 — отправка отряда собирать ресурсы (mp-gather).
 async function mpDoGather(x,y){
-  const units={};
-  TKEYS.forEach(t=>{ const inp=$("#mp-gth-"+t); units[t]={1:Math.max(0,Math.round(+((inp&&inp.value)||0)))}; });
+  const units=mpMarchUnitsOut();
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
     const genInp=$("#mp-gth-gen"), withGen=!!(genInp&&genInp.checked);
@@ -17164,8 +17263,7 @@ async function mpDoGather(x,y){
 // было всегда (openLevy по пустой клетке), в общем мире цели раньше обязаны
 // были быть настоящими. Отряд дойдёт и встанет там до нового приказа.
 async function mpDoMove(x,y){
-  const units={};
-  TKEYS.forEach(t=>{ const inp=$("#mp-mv-"+t); units[t]={1:Math.max(0,Math.round(+((inp&&inp.value)||0)))}; });
+  const units=mpMarchUnitsOut();
   const genInp=$("#mp-mv-gen"), withGen=!!(genInp&&genInp.checked);
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
@@ -17177,8 +17275,7 @@ async function mpDoMove(x,y){
 }
 // Фаза 8, кусочек 2 — поход на лагерь варваров (mp-raid).
 async function mpDoRaid(x,y){
-  const units={};
-  TKEYS.forEach(t=>{ const inp=$("#mp-rd-"+t); units[t]={1:Math.max(0,Math.round(+((inp&&inp.value)||0)))}; });
+  const units=mpMarchUnitsOut();
   const genInp=$("#mp-rd-gen"), withGen=!!(genInp&&genInp.checked);
   mpState.loading=true; mpState.err=null; mpRerender();
   try{
