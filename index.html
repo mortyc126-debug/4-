@@ -1181,6 +1181,15 @@ body.mp-placing #place-toolbar{display:flex}
 .mail-back{display:flex;align-items:center;gap:6px;color:#5a4530;font-size:12.5px;
   font-variant:small-caps;letter-spacing:.08em;margin-bottom:12px}
 .mail-note{font-size:13.5px;line-height:1.6;color:#2c2114;padding:6px 2px}
+/* Тот же вид «шага назад», что и в почте, но внутри карточки здания
+   (#bm-body): карусели и форма рынка открываются поверх карточки, и без
+   этой строки выйти из них можно было только крестиком. width:max-content —
+   в отличие от почты (там .mail-back один на всю ширину списка) карточка
+   здания идёт сразу под ним заголовком, и полоса во всю ширину ловила бы
+   промахи по заголовку. */
+.bm-back{cursor:pointer;width:max-content;max-width:100%;padding:2px 10px 4px 0;margin:-4px 0 10px;
+  transition:color .16s ease,transform .16s ease}
+.bm-back:hover{color:#2c2114;transform:translateX(-2px)}
 /* Иконка ресурса вместо голого текста в добыче/грабеже/отчётах о сборе —
    см. заголовок resIconSpan(). Раньше 16px картинка висела отдельным
    мелким пятном перед текстом с заметным зазором (vertical-align:-3px без
@@ -10335,6 +10344,54 @@ function mpHospitalHtml(pShim,st){
 // troopCost/retrainCost/tierUnlockedFor/unitName/TROOP_TYPES) переиспользуются
 // НАПРЯМУЮ — принимают p обычным параметром, ничего не читают из me()/W. =====
 let mpTrainCtx=null, mpCarouselCtx=null;
+/* ---- «Назад» в подэкранах карточки здания ---------------------------------
+   Карусели (обучение/лазарет/исследования) и форма рынка живут в ТОМ ЖЕ
+   #bm-body, что и карточка здания, из которой в них вошли, и раньше выйти
+   из них можно было только крестиком — а потом заново искать здание на
+   карте города. Автор: «можно в некоторых вкладках, где это требуется,
+   добавить кнопку "назад" как в почте, чтобы не закрывать и не открывать по
+   несколько раз».
+   bmBack помнит ровно одну карточку — ту, что была под подэкраном. Стек не
+   нужен: глубже одного уровня подэкраны не вкладываются (каждый mpOpen* на
+   входе гасит чужие контексты карусели), а «назад из назад» — это уже
+   крестик. Одна переменная на оба режима: #bm-body тоже один на оба, а
+   какой из них сейчас — видно по SP_UNLOCKED. */
+let bmBack=null;   // {k:'sp'|'city'|'layout'|'fixed', v} | null
+function bmSnap(){
+  if(SP_UNLOCKED) return buildingModalSel>=0 ? {k:"sp", v:buildingModalSel} : null;
+  if(mpCitySel>=0) return {k:"city", v:mpCitySel};
+  if(mpLayoutSel>=0) return {k:"layout", v:mpLayoutSel};
+  if(mpFixedSel) return {k:"fixed", v:mpFixedSel};
+  return null;
+}
+// data-act (не data-mp) — тот же довод, что и у 'ucnav' ниже: ветка чисто
+// DOM'ная, ни разу не читает me()/W, обработчик один на оба режима.
+function bmBackHtml(){
+  return bmBack ? "<div class='mail-back bm-back' data-act='bmback'>&#8592; Назад</div>" : "";
+}
+/* Все три выбора карточки (mpCitySel/mpLayoutSel/mpFixedSel) плюс пикер,
+   свиток похода и форма рынка живут в ОДНОМ #bm-body, а mpRerender()
+   разбирает их строго по порядку (city → layout → fixed → picker → march →
+   trade). Открытие одного из них раньше НЕ гасило остальные: тап по Ратуше
+   после тапа по зданию из раскладки показывал карточку ратуши ровно до
+   ближайшего опроса, а потом mpRerender() возвращал поверх неё старую
+   карточку — mpLayoutSel так и остался выставленным. Гасим всё на входе в
+   любой из этих экранов. */
+function mpBmResetSel(){
+  mpCitySel=-1; mpLayoutSel=-1; mpFixedSel=null; mpPickerOpen=false;
+  if(mpTradeCtx){ mpTradeCtx=null; lastTradeSheet=""; }
+  if(mpMarchCtx){ mpMarchCtx=null; lastMarchSheet=""; }
+}
+function bmGoBack(){
+  const b=bmBack; bmBack=null;
+  // Некуда возвращаться (подэкран открыли не из карточки) — честно закрываем,
+  // а не оставляем игрока в тупике с мёртвой кнопкой.
+  if(!b){ closeBuildingModal(); return; }
+  if(b.k==="sp") openBuildingModal(b.v);
+  else if(b.k==="city") mpOpenBuildingModal(b.v);
+  else if(b.k==="layout") mpOpenLayoutModal(b.v);
+  else mpOpenFixedModal(b.v);
+}
 // Собирает p-совместимый объект из mpState.player (race — из колонки
 // players.race) + state (b/gen/tech/res/troops/wounded/train/heal) —
 // этого достаточно для ВСЕХ чистых функций одиночки, которые тут
@@ -10391,6 +10448,7 @@ function mpTrainInfoHtml(bld,pShim,st){
   return "<div id='bm-tree'><button class='rnode-go' data-mp='browsetrain' data-t='"+type+"'>Тренировать</button></div>";
 }
 function mpOpenUnitCarousel(type){
+  bmBack=bmSnap();   // запоминаем карточку, из которой вошли (см. bmBackHtml)
   const st=mpState.player.state, pShim=mpFullShim(mpState.player,st);
   const maxT=tierUnlockedFor(pShim,type);
   // Та же чистка чужих контекстов карусели, что и у одиночного
@@ -10435,7 +10493,7 @@ function mpTrainInlineHtml(){
 function mpUnitCarouselHtml(){
   const st=mpState.player.state, pShim=mpFullShim(mpState.player,st);
   const type=mpCarouselCtx.type, maxT=tierUnlockedFor(pShim,type);
-  let h="<div id='bm-title'>"+TROOP_TYPES[type].name+"</div>";
+  let h=bmBackHtml()+"<div id='bm-title'>"+TROOP_TYPES[type].name+"</div>";
   h+="<div id='uc-track'>";
   for(let tier=1; tier<=5; tier++){
     const locked=tier>maxT, have=(st.troops[type]&&st.troops[type][tier])||0;
@@ -10524,6 +10582,7 @@ async function mpDoTrainGo(){
 // шлёт настоящий mpHealCtx.tier — честная починка, не новый функционал. =====
 let mpHealCtx=null, mpHealCarouselOpen=false;
 function mpOpenHealCarousel(){
+  bmBack=bmSnap();   // запоминаем карточку, из которой вошли (см. bmBackHtml)
   mpCarouselCtx=null; mpTrainCtx=null; mpResearchCtx=null; mpForgeTab=null; mpForgeRarity=null; // та же чистка контекста, что и у одиночного openHealCarousel()
   mpHealCarouselOpen=true; mpHealCtx=null;
   setHtml($("#bm-body"), mpHealCarouselHtml());
@@ -10554,7 +10613,7 @@ function mpHealInlineHtml(){
 }
 function mpHealCarouselHtml(){
   const st=mpState.player.state, pShim=mpFullShim(mpState.player,st), list=woundedList(pShim);
-  let h="<div id='bm-title'>Лазарет</div>";
+  let h=bmBackHtml()+"<div id='bm-title'>Лазарет</div>";
   if(!list.length){
     mpHealCtx=null;
     h+="<div id='bm-tree'><div class='rgroup'>Раненых нет</div></div>";
@@ -10655,6 +10714,7 @@ function mpHospitalInfoHtml(pShim,st){
 // оформление карточки вокруг него).
 let mpResearchCtx=null;
 function mpOpenResearchCarousel(branch,startId){
+  bmBack=bmSnap();   // запоминаем карточку, из которой вошли (см. bmBackHtml)
   const st=mpState.player.state, pShim=mpFullShim(mpState.player,st);
   // Та же чистка чужих контекстов карусели, что и у остальных mpOpen*Carousel().
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false;
@@ -10676,7 +10736,7 @@ function mpOpenResearchCarousel(branch,startId){
 function mpResearchCarouselHtml(){
   const st=mpState.player.state, pShim=mpFullShim(mpState.player,st), B=bonuses(pShim);
   const list=researchNodeList(mpResearchCtx.branch,pShim);
-  let h="<div id='bm-title'>"+(mpResearchCtx.branch==="mil"?"Военные исследования":"Экономические исследования")+"</div>";
+  let h=bmBackHtml()+"<div id='bm-title'>"+(mpResearchCtx.branch==="mil"?"Военные исследования":"Экономические исследования")+"</div>";
   h+="<div id='uc-track'>";
   list.forEach(n=>{
     const lv=pShim.tech[n.id]||0, maxed=lv>=n.max, nx=lv+1, gated=pShim.b.academy<=0;
@@ -10839,13 +10899,13 @@ function mpOpenTradeModal(tab){
   const st=mpState.player&&mpState.player.state; if(!st) return;
   const lv=mpMarketLv(st);
   if(lv<=0){ herald("Нужен Рынок."); return; }
+  bmBack=bmSnap();   // запоминаем карточку, из которой вошли (см. bmBackHtml)
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpForgeTab=null; mpForgeRarity=null;
-  mpCitySel=-1; mpLayoutSel=-1; mpFixedSel=null; mpPickerOpen=false;
   // Свиток похода гасим тоже: в разборе рендера по опросу его ветка стоит
   // ВЫШЕ ветки этой формы, и забытый непустым mpMarchCtx через секунду
   // затирал бы уже открытый обмен свитком похода.
-  mpMarchCtx=null; lastMarchSheet="";
+  mpBmResetSel();
   mpTradeCtx={ tab:(tab==="barter"?"barter":"send"), to:null, res:{food:0,wood:0,stone:0,gold:0}, err:null, q:"",
                bFrom:"food", bTo:"stone", bAmount:0 };
   lastTradeSheet=mpTradeSheetHtml();
@@ -10865,7 +10925,7 @@ function mpTradeSheetHtml(){
   const {lv,cap,tax,total,net,over}=mpTradeTotals();
   const to=mpState.neighbors.find(n=>n.id===mpTradeCtx.to);
   const barter=mpTradeCtx.tab==="barter";
-  let h="<div id='bm-title'>"+(barter?"Меняльная лавка":"Торговый обоз")+"</div>"+
+  let h=bmBackHtml()+"<div id='bm-title'>"+(barter?"Меняльная лавка":"Торговый обоз")+"</div>"+
         "<div id='bm-sub'>Рынок "+lv+" ур. · "+(barter?"меняет за раз ":"поднимает ")+fmt(cap)+" · налог "+
         (tax*100).toFixed(1).replace(/\.0$/,"")+"%</div>";
   h+="<div id='ac-tabs'>"+
@@ -11183,6 +11243,7 @@ function mpBuildingModalHtml(idx){
 // сама была расширена (см. её же комментарий) под mpCitySel — эта пара
 // нужна только для открытия/переключения выбранной ячейки на карте.
 function mpOpenBuildingModal(idx){
+  bmBack=null; mpBmResetSel();
   // Фаза 19, кусочек 1 — сброс карусели при открытии ЛЮБОЙ ячейки (тот же
   // приём, что и у одиночного openBuildingModal() ниже по файлу, который
   // сбрасывает trainCtx/carouselCtx/researchCtx/healCtx на входе) — иначе
@@ -11204,6 +11265,7 @@ function mpOpenBuildingModal(idx){
   mpRenderFolio();
 }
 function mpCloseBuildingModal(){
+  bmBack=null;
   $("#building-modal").classList.remove("open");
   mpCitySel=-1;
   // Фаза 19, кусочки 1-2 — сбрасывает и карусели обучения/лазарета, если
@@ -11240,6 +11302,7 @@ function mpOpenAcademyFromFab(){
 let mpLayoutSel=-1;
 function mpOpenLayoutModal(li){
   const entry=(mpState.player.state.layout||[])[li]; if(!entry) return;
+  bmBack=null; mpBmResetSel();
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpForgeTab=null; mpForgeRarity=null;
   mpLayoutSel=li;
@@ -11248,6 +11311,7 @@ function mpOpenLayoutModal(li){
   mpRenderFolio();
 }
 function mpCloseLayoutModal(){
+  bmBack=null;
   $("#building-modal").classList.remove("open");
   mpLayoutSel=-1;
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
@@ -11259,6 +11323,7 @@ function mpCloseLayoutModal(){
 // же просто ключ здания.
 let mpFixedSel=null;
 function mpOpenFixedModal(bk){
+  bmBack=null; mpBmResetSel();
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
   mpForgeTab=null; mpForgeRarity=null;
   mpFixedSel=bk;
@@ -11267,6 +11332,7 @@ function mpOpenFixedModal(bk){
   mpRenderFolio();
 }
 function mpCloseFixedModal(){
+  bmBack=null;
   $("#building-modal").classList.remove("open");
   mpFixedSel=null;
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
@@ -11419,9 +11485,10 @@ let mpPickerOpen=false;
 // возвращаем прокрутку на прежнее место, когда всё-таки перерисовали.
 let lastBuildPickerHtml="";
 function mpOpenBuildPicker(){
+  bmBack=null;
   if(!mpState.player) return;
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
-  mpForgeTab=null; mpForgeRarity=null; mpCitySel=-1; mpLayoutSel=-1; mpFixedSel=null;
+  mpForgeTab=null; mpForgeRarity=null; mpBmResetSel();
   mpPickerOpen=true;
   const html=mpBuildPickerHtml();
   lastBuildPickerHtml=html;
@@ -11431,6 +11498,7 @@ function mpOpenBuildPicker(){
   mpRenderFolio();
 }
 function mpCloseBuildPicker(){
+  bmBack=null;
   $("#building-modal").classList.remove("open");
   mpPickerOpen=false;
   lastBuildPickerHtml="";
@@ -11623,9 +11691,10 @@ function mpTroopRowHtml(idPrefix,t,name,have){
 }
 let mpMarchCtx=null, lastMarchSheet="";
 function mpOpenMarchModal(mode,target){
+  bmBack=null;
   mpCarouselCtx=null; mpTrainCtx=null; mpHealCtx=null; mpHealCarouselOpen=false; mpResearchCtx=null;
-  mpForgeTab=null; mpForgeRarity=null; mpCitySel=-1;
-  mpTradeCtx=null; lastTradeSheet="";     // и наоборот — см. mpOpenTradeModal
+  mpForgeTab=null; mpForgeRarity=null;
+  mpBmResetSel();                          // и наоборот — см. mpOpenTradeModal
   mpMarchCtx={mode};
   if(mode==="attack") mpState.attackTarget=target;
   else if(mode==="gather") mpState.gatherTarget=target;
@@ -12820,6 +12889,11 @@ function profileChroniclesHtml(){
   return h;
 }
 
+// Мощь для карточки профиля. В общем мире — та же, что в шапке и на сервере
+// (mpPower считает и войска в походах); в одиночке — обычная power().
+function profilePowerOf(p){
+  return (!SP_UNLOCKED && mpState.player) ? mpPower(p) : power(p);
+}
 function foProfile(pIn){
   const p=pIn||me();
   // Разделы профиля (Фаза 34) — только в общем мире: рейтинг и летопись
@@ -12865,8 +12939,17 @@ function foProfile(pIn){
          "<button class='seal' data-act='savenick'>Сохранить</button></div>"
        : "<div class='profile-name-row'><div class='title'>"+(p.nick||"Безымянный лорд")+"</div></div>")+
      "<div class='note'>"+RACES[p.race].name+"</div>"+
+     // НАЙДЕН реальный баг (автор: «в профиле чуть слетело отображение мощи, на
+     // вкладке города рядом с аватаркой 11к, в профиль захожу — там 9к»).
+     // В шапке мощь считает mpPower (см. её), в профиле стоял одиночный
+     // power() — а он отличается ровно одним: НЕ прибавляет войска, которые
+     // сейчас в походах. Одиночный так и должен себя вести (у него свои
+     // W.marches, и для шима общего мира они пусты), но для общего мира это
+     // неверно: сервер (powerOf в mp-join) войска в поле считает, и по его
+     // числу идут все таблицы мира. Правильное значение — mpPower, оно с
+     // сервером и сходится.
      "<div class='profile-power-wrap'><img class='wreath' src='images/ui/profile-wreath.png' alt=''>"+
-     "<span class='profile-power-chip' style='font-size:"+profilePowerFontSize(fmt(power(p)))+"px'>"+fmt(power(p))+"</span></div>"+
+     "<span class='profile-power-chip' style='font-size:"+profilePowerFontSize(fmt(profilePowerOf(p)))+"px'>"+fmt(profilePowerOf(p))+"</span></div>"+
      // Звание — прямо под мощью, со своим знаком. Прежняя лестница титулов по
      // мощи отсюда убрана: автор решил, что это одно и то же слово про разные
      // вещи, и оставил боевое.
@@ -13976,6 +14059,9 @@ function handleAct(e){
     openUnitCarousel(b.dataset.t);
     return;
   }
+  // «Назад» из подэкрана карточки здания (карусели/рынок) — data-act, а не
+  // data-mp: ветка чисто DOM'ная, одна на оба режима, см. bmGoBack().
+  else if(a==="bmback"){ bmGoBack(); return; }
   else if(a==="ucnav"){
     const track=$("#uc-track"), card=track&&track.querySelector(".uc-card");
     if(track&&card) track.scrollLeft += card.getBoundingClientRect().width*(+b.dataset.dir);
@@ -14301,6 +14387,7 @@ function toggleMenu(){
 }
 let buildingModalSel=-1;
 function openBuildingModal(ci){
+  bmBack=null;
   trainCtx=null; carouselCtx=null; forgeTab=null; forgeRarity=null; researchCtx=null; healCarouselOpen=false; healCtx=null;
   buildingModalSel=ci;
   setHtml($("#bm-body"), buildingModalHtml(ci));
@@ -14313,6 +14400,7 @@ function openBuildingModal(ci){
 // (см. mpCloseBuildingModal() выше) — SP_UNLOCKED делает вторую ветку
 // no-op в одиночке (mpCitySel там всегда -1, условие не пройдёт).
 function closeBuildingModal(){
+  bmBack=null;
   $("#building-modal").classList.remove("open"); buildingModalSel=-1; trainCtx=null; carouselCtx=null; researchCtx=null; healCarouselOpen=false; healCtx=null;
   // Фаза 19, кусочек 1 — mpCarouselCtx/mpTrainCtx тоже сбрасываются здесь
   // (см. тот же довод в mpCloseBuildingModal() выше) — крестик/подложка
@@ -14439,6 +14527,7 @@ function mpUpdateTradeTotals(){
 let carouselCtx=null, trainCtx=null;
 let healCtx=null, healCarouselOpen=false, lastHealFingerprint="";
 function openUnitCarousel(type){
+  bmBack=bmSnap();   // запоминаем карточку, из которой вошли (см. bmBackHtml)
   const p=me(), maxT=tierUnlockedFor(p,type);
   carouselCtx={type}; researchCtx=null; healCarouselOpen=false; healCtx=null;
   buildingModalSel=-1;
@@ -14488,7 +14577,7 @@ function trainInlineHtml(){
 }
 function unitCarouselHtml(){
   const p=me(), type=carouselCtx.type, maxT=tierUnlockedFor(p,type);
-  let h="<div id='bm-title'>"+TROOP_TYPES[type].name+"</div>";
+  let h=bmBackHtml()+"<div id='bm-title'>"+TROOP_TYPES[type].name+"</div>";
   h+="<div id='uc-track'>";
   for(let tier=1; tier<=5; tier++){
     const locked=tier>maxT, have=p.troops[type][tier]||0;
@@ -14542,7 +14631,7 @@ function healInlineHtml(){
 }
 function healCarouselHtml(){
   const p=me(), list=woundedList(p);
-  let h="<div id='bm-title'>Лазарет</div>";
+  let h=bmBackHtml()+"<div id='bm-title'>Лазарет</div>";
   if(!list.length){
     healCtx=null;
     h+="<div id='bm-tree'><div class='rgroup'>Раненых нет</div></div>";
@@ -14586,6 +14675,7 @@ function updateHealSheet(){
   $("#bm-btn").disabled = !!p.heal || max<1 || n<=0;
 }
 function openHealCarousel(){
+  bmBack=bmSnap();   // запоминаем карточку, из которой вошли (см. bmBackHtml)
   trainCtx=null; carouselCtx=null; researchCtx=null; forgeTab=null; forgeRarity=null;
   buildingModalSel=-1; healCarouselOpen=true; healCtx=null;
   setHtml($("#bm-body"), healCarouselHtml());
@@ -14598,6 +14688,7 @@ function researchNodeList(branch,p){
   return ACADEMY_TREE[branch].filter(n=>nodeVisibleFor(n,p));
 }
 function openResearchCarousel(branch,startId){
+  bmBack=bmSnap();   // запоминаем карточку, из которой вошли (см. bmBackHtml)
   const p=me();
   trainCtx=null; carouselCtx=null; forgeTab=null; forgeRarity=null; healCarouselOpen=false; healCtx=null;
   buildingModalSel=-1;
@@ -14614,7 +14705,7 @@ function openResearchCarousel(branch,startId){
 function researchCarouselHtml(){
   const p=me(), B=bonuses(p);
   const list=researchNodeList(researchCtx.branch,p);
-  let h="<div id='bm-title'>"+(researchCtx.branch==="mil"?"Военные исследования":"Экономические исследования")+"</div>";
+  let h=bmBackHtml()+"<div id='bm-title'>"+(researchCtx.branch==="mil"?"Военные исследования":"Экономические исследования")+"</div>";
   h+="<div id='uc-track'>";
   list.forEach(n=>{
     const lv=p.tech[n.id]||0, maxed=lv>=n.max, nx=lv+1, gated=p.b.academy<=0;
