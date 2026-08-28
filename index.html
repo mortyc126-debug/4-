@@ -407,6 +407,78 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .rank-row.me .rk-nick{color:var(--gilt-hi)}
 .rank-row.far{opacity:.5}
 
+/* ---- Экран союза (Фаза 49) ----------------------------------------------
+   Строка союза и строка соратника несут кнопки, а .rank-row — сетка ровно на
+   пять колонок (см. выше): шестая ячейка уехала бы на новую строку сеткой и
+   разъехалась бы с соседями. Поэтому у списков союза строка не сетка, а
+   гибкая полоса: кнопки честно переносятся под имя на узком экране, вместо
+   того чтобы сжимать ник до многоточия из двух букв. Телефон здесь главный
+   экран, а действий на строке до трёх. */
+.rank-list.ally .rank-row{display:flex;flex-wrap:wrap;gap:4px 9px}
+.rank-list.ally .rk-nick{flex:1 1 40%;min-width:0}
+/* Действия прижаты вправо и переносятся ЦЕЛИКОМ, когда не влезают: одна
+   кнопка («Вступить») остаётся на строке союза, три («разжаловать /
+   исключить») уходят под неё группой, а не порознь. */
+.rank-list.ally .rk-acts{display:flex;flex-wrap:wrap;gap:5px;justify-content:flex-end;margin-left:auto}
+/* Метка союза — то, чем он виден везде, где виден ник. */
+.ally-tag{font-family:var(--data);font-size:11.5px;color:var(--gilt-hi);letter-spacing:.04em}
+/* Девиз под именем в списке союзов: вторая строка, приглушённая. */
+.ally-motto{display:block;font-size:11.5px;color:var(--vellum-faint);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Совет союза — переписка, а не список писем: свои реплики прижаты вправо,
+   системные (вступил/исключён/принял старшинство) идут по центру строкой
+   летописи, без автора. */
+/* column-reverse — не украшение, а то, ради чего порядок реплик в
+   mpState.allyChat оставлен «свежие первыми», как их и вернул LIMIT.
+   У перевёрнутой колонки начало прокрутки — НИЗ, поэтому чат открыт на
+   последней реплике сам, без scrollTop после каждой перерисовки (а она
+   тут на каждом такте опроса, и любой такой доводчик боролся бы с рукой
+   игрока, отлиставшего вверх). Видимый порядок при этом обычный:
+   первый ребёнок ложится внизу. */
+.ally-chat{display:flex;flex-direction:column-reverse;gap:4px;margin:6px 0 8px;
+  max-height:260px;overflow-y:auto;padding:8px 10px;background:rgba(0,0,0,.16);
+  border:1px solid var(--rule-soft);border-radius:3px}
+.ally-chat-empty{font-size:12.5px;color:var(--vellum-faint);text-align:center;padding:10px 0}
+/* Поле реплики стоит в обычной .entry, а не в .ally-form — оно одно на
+   строке с кнопкой, подписи над ним нет. Оформление всё равно нужно своё:
+   без него браузер рисует белый прямоугольник посреди тёмного экрана. */
+#mp-ally-say{flex:1;min-width:0;background:rgba(0,0,0,.4);color:var(--vellum);
+  border:1px solid var(--rule);border-radius:3px;font-family:var(--serif);
+  font-size:13.5px;padding:7px 9px}
+#mp-ally-say:focus{outline:none;border-color:var(--gilt-dim)}
+.ally-say{font-size:13px;color:var(--vellum-dim);line-height:1.42}
+.ally-say .who{color:var(--gilt);margin-right:6px}
+.ally-say .tm{font-family:var(--data);font-size:10px;color:var(--vellum-faint);margin-left:6px}
+.ally-say.me .who{color:var(--gilt-hi)}
+.ally-say.sys{color:var(--vellum-faint);font-style:italic;text-align:center;font-size:12px}
+/* Форма союза (основание, порядок приёма, выбор наследника). Своя, а не
+   .mail-compose: та лежит на пергаменте почты и вся написана под светлый
+   фон, а экран союза тёмный, как и остальное меню. Общее только
+   устройство: подпись отдельной строкой над полем, поле во всю ширину.
+   Без неё label и input вставали рядом — «Имя союза[поле]Метка». */
+.ally-form label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--gilt-dim);margin:10px 0 4px}
+.ally-form label:first-child{margin-top:0}
+.ally-form input,.ally-form select{display:block;width:100%;box-sizing:border-box;
+  background:rgba(0,0,0,.4);color:var(--vellum);border:1px solid var(--rule);border-radius:3px;
+  font-family:var(--serif);font-size:13.5px;padding:7px 9px;margin:0}
+.ally-form input:focus,.ally-form select:focus{outline:none;border-color:var(--gilt-dim)}
+.ally-form input[type=number]{font-family:var(--data);font-size:12.5px}
+.ally-form .seal{margin-top:12px}
+/* Флажок с подписью в одну строку — в игре их до сих пор не было ни одного,
+   все переключатели были кнопками-печатями. */
+/* Флажок стоит ВНУТРИ .ally-form, где label сделан блоком и капителью —
+   отменяем то и другое, иначе подпись уехала бы под сам квадратик. */
+.ally-check,.ally-form label.ally-check{display:flex;align-items:center;gap:7px;
+  font-size:12.5px;text-transform:none;letter-spacing:0;color:var(--vellum-dim);margin:12px 0 2px}
+.ally-check input,.ally-form label.ally-check input{width:auto;display:inline-block;margin:0}
+/* Мелкая печать для действий внутри строки списка: та же печать, просто
+   размером под строку. .ghost — для необратимого-но-не-страшного
+   (разжаловать, отозвать), .danger — для роспуска союза. */
+.seal.tiny{padding:4px 9px;font-size:11.5px;min-width:0}
+.seal.ghost{background:transparent;color:var(--vellum-dim);border-color:var(--rule-soft)}
+.seal.danger{border-color:#7a2f38;color:#e0808c}
+
 /* Летопись — строка события: значок слева, текст и подписи справа. */
 .chron-list{display:flex;flex-direction:column;gap:1px;margin:6px 0 12px}
 .chron-row{display:grid;grid-template-columns:44px 1fr;gap:0 10px;align-items:start;
@@ -7442,13 +7514,21 @@ function menuBadges(){
   // тут нечего. "Войско" — 0 и у одиночки (последняя строка ниже), тот же
   // выбор, не регрессия.
   if(!SP_UNLOCKED){
-    if(!mpState.joined || !mpState.player) return { mail:0, gen:0, inv:0, army:0 };
+    if(!mpState.joined || !mpState.player) return { mail:0, gen:0, inv:0, army:0, alliance:0 };
     const st=mpState.player.state;
     return {
       mail: mpUnreadMailCount(),
       gen:  (st.gen&&st.gen.pts)||0,
       inv:  0,
       army: 0,
+      // Фаза 49 — на «Альянсе» метится ровно одно: неразобранные заявки, и
+      // только у того, кто их разбирает. Не «есть непрочитанное в чате»:
+      // прочитанность реплик нигде не хранится (см. mpMailReadIds — она про
+      // почту и живёт в этом же браузере), а метка, которая не гаснет, за
+      // неделю перестаёт что-либо значить. Заявка же гаснет сама, как только
+      // её приняли или отклонили, — это настоящее «сделай что-то».
+      alliance: (mpState.allyRole==="leader"||mpState.allyRole==="officer")
+                ? mpState.allyApps.length : 0,
     };
   }
   // Фаза 13 — при .mp-gated (см. SP_UNLOCKED) openMenuModal("mp") зовётся
@@ -7456,13 +7536,14 @@ function menuBadges(){
   // регистрация в общем мире ждала бы одиночную загрузку) — честный ноль
   // вместо падения на W.mail: одиночных уведомлений действительно нет,
   // пока самой одиночной партии в этот момент ещё не существует.
-  if(!W) return { mail:0, gen:0, inv:0, army:0 };
+  if(!W) return { mail:0, gen:0, inv:0, army:0, alliance:0 };
   const p=me();
   return {
     mail: W.mail.filter(m=>!m.read).length,
     gen:  (p.gen&&p.gen.pts)||0,
     inv:  p.invNew?1:0,
     army: 0,
+    alliance: 0,   // союзы бывают только в общем мире
   };
 }
 function genInfo(p,present){
@@ -11196,13 +11277,18 @@ function mpBuildingModalHtmlFor(bld,plot){
   } else if(queued){
     const left=Math.max(0,queued.t1-Date.now()/1000);
     h+="<div id='bm-time'>Уже строится — готово через "+fmtDur(left)+"</div>";
-    // Помощь альянса (Фаза 34) — пока заглушка, прямая оговорка автора.
-    // Кнопка стоит ровно там, где она в итоге и будет жить: у идущей
-    // стройки, как в RoK. Отключена и подписана честно — молча ничего не
-    // делающая кнопка была бы хуже, чем её отсутствие.
-    h+="<button class='seal wide ico bm-help' disabled title='Появится вместе с альянсами'>"+
+    // Помощь союза (Фаза 34 — место под кнопку, Фаза 49 — сами союзы).
+    // Кнопка стоит ровно там, где она и будет жить: у идущей стройки, как в
+    // RoK. Союзы теперь есть, но САМА помощь — отдельная механика (запрос,
+    // отклики соратников, срез времени за каждый) и делается следующей
+    // фазой; до тех пор кнопка отключена и говорит вслух ровно то, чего не
+    // хватает, а не «альянсов нет» — это уже неправда.
+    const inAlly=!!mpState.ally;
+    h+="<button class='seal wide ico bm-help' disabled title='Помощь со стройкой ещё делается'>"+
        "<img src='images/ui/icon-help.png' alt=''>Попросить помощи союза</button>"+
-       "<div class='note bm-help-note'>Соратники смогут подгонять стройку. Союзов в игре пока нет.</div>";
+       "<div class='note bm-help-note'>"+(inAlly
+         ? "Соратники смогут подгонять стройку — каждый отклик снимет часть оставшегося времени. Сама помощь ещё делается."
+         : "Соратники смогут подгонять стройку. Сначала нужен союз — загляните во вкладку «Альянс».")+"</div>";
   } else if(gated){
     h+="<div id='bm-time'>"+gateTxt+"</div>";
   }
@@ -12523,19 +12609,38 @@ const MP_BOARDS=[
    sel:"camps_taken", by:"camps_taken", desc:true,
    val:r=>String(r.camps_taken||0),
    empty:"Лагеря варваров пока стоят нетронутыми."},
-  {id:"alliance", name:"Альянс", ico:"icon-alliance.png", stub:true,
-   empty:"",
-   stubText:"Альянсы ещё строятся: ни союзов, ни их силы в игре пока нет. Здесь появится таблица союзов мира — по общей мощи, по захваченным святыням и по совместным походам."},
+  // Единственная таблица, что читает НЕ players (см. table/mineId ниже):
+  // у союзов своя строка, свой «павший» (disbanded_at) и своя строка вывода —
+  // ни герба расы, ни звания у союза нет, зато есть метка и состав.
+  // Мощь — денормализованная колонка alliances.power, её держат свежей
+  // mp-alliance (на изменении состава) и mp-join (не чаще раза в минуту на
+  // союз, см. refreshAlliancePower): считать её выборкой состава всех союзов
+  // мира значило бы тянуть на клиент всех игроков ради сортировки.
+  {id:"alliance", name:"Альянс", ico:"icon-alliance.png",
+   table:"alliances", sel:"id,name,tag,members,members_max,power", by:"power", desc:true,
+   mineId:()=>mpState.ally?mpState.ally.id:0,
+   val:r=>fmt(r.power||0),
+   rowHtml:(r,i,mine)=>"<div class='rank-row"+(mine?" me":"")+"'>"+
+     "<span class='rk-place"+(i<3?" top":"")+"'>"+(i+1)+"</span>"+
+     "<span class='rk-nick'>"+mpAllyTagHtml(r.tag)+" "+escHtml(r.name||"")+"</span>"+
+     "<span class='rk-hall'>"+(r.members||0)+"/"+(r.members_max||24)+"</span>"+
+     "<b class='rk-pw'>"+fmt(r.power||0)+"</b></div>",
+   empty:"В этом мире ещё не основано ни одного союза."},
 ];
 let profileBoard="power";
 const profileBoardData={}, profileBoardErr={}, profileBoardAt={};
 async function profileLoadBoard(id,force){
   if(!mpState.player) return;
-  const b=MP_BOARDS.find(x=>x.id===id); if(!b || b.stub) return;
+  const b=MP_BOARDS.find(x=>x.id===id); if(!b) return;
   if(!force && profileBoardData[id] && Date.now()-(profileBoardAt[id]||0)<PROFILE_SECTION_TTL) return;
   try{
-    let q=sb.from("players").select("id,nick,race,"+b.sel)
-      .eq("world_id", mpState.player.world_id).is("dead_at", null);
+    // b.table — таблица союзов (см. её описание в MP_BOARDS): другая строка,
+    // другой признак выбывшего. Остальные восемь читают players, как и раньше.
+    let q=b.table
+      ? sb.from(b.table).select(b.sel)
+          .eq("world_id", mpState.player.world_id).is("disbanded_at", null)
+      : sb.from("players").select("id,nick,race,"+b.sel)
+          .eq("world_id", mpState.player.world_id).is("dead_at", null);
     // Пока идёт калибровка, звания нет — и в таблице званий таким не место.
     if(b.minBattles) q=q.gte("rating_battles", MP_CALIBRATION_BATTLES);
     const { data, error } = await q.order(b.by,{ascending:!b.desc}).limit(50);
@@ -12786,21 +12891,25 @@ function profileRatingHtml(meId){
      "<button class='bpick"+(x.id===b.id?" on":"")+"' data-act='board' data-b='"+x.id+"'>"+
      "<img src='images/ui/"+x.ico+"' alt=''><span>"+x.name+"</span></button>").join("")+"</div>";
 
-  if(b.stub){
-    return h+"<div class='entry'><div class='line'><div class='fill'>"+
-      "<div class='title'>Пока нечего показывать</div>"+
-      "<div class='note'>"+b.stubText+"</div></div></div></div>";
-  }
   const err=profileBoardErr[b.id], rows=profileBoardData[b.id];
   if(err) return h+"<div class='entry'><div class='note' style='color:#e08'>Не удалось получить таблицу: "+escHtml(err)+"</div></div>";
   if(!rows) return h+skeletonRowsHtml(6);
   if(!rows.length) return h+"<div class='entry'><div class='note'>"+escHtml(b.empty)+"</div></div>";
 
-  const myPlace=rows.findIndex(r=>r.id===meId);
-  h+=rubric("Правители мира", myPlace>=0?"вы "+(myPlace+1)+"-й":"вас нет в первых "+rows.length);
+  // «Мой» в таблице союзов — не я сам, а мой союз (см. mineId в MP_BOARDS).
+  const mineId=b.mineId?b.mineId():meId;
+  const myPlace=rows.findIndex(r=>r.id===mineId);
+  const heading=b.table==="alliances"?"Союзы мира":"Правители мира";
+  const place=b.table==="alliances"
+    ? (myPlace>=0?"ваш "+(myPlace+1)+"-й":mpState.ally?"вашего нет в первых "+rows.length:"вы вне союзов")
+    : (myPlace>=0?"вы "+(myPlace+1)+"-й":"вас нет в первых "+rows.length);
+  h+=rubric(heading, place);
   h+="<div class='rank-list'>";
   rows.forEach((r,i)=>{
-    const me=r.id===meId;
+    const me=r.id===mineId;
+    // Своя строка вывода — только у союзов: герба расы и звания у них нет,
+    // зато есть метка и состав (см. rowHtml в MP_BOARDS).
+    if(b.rowHtml){ h+=b.rowHtml(r,i,me); return; }
     const side=b.side?b.side(r):"";
     h+="<div class='rank-row"+(me?" me":"")+"'>"+
        "<span class='rk-place"+(i<3?" top":"")+"'>"+(i+1)+"</span>"+
@@ -14961,7 +15070,7 @@ function openMenuModal(t){
 function renderBadges(){
   const b=menuBadges();
   let any=0;
-  for(const k of ["mail","gen","inv","army"]){
+  for(const k of ["mail","gen","inv","army","alliance"]){
     const el=$("#nb-"+k); if(!el) continue;
     const n=b[k]||0; any+=n;
     el.classList.toggle("on", n>0);
@@ -15416,6 +15525,48 @@ function handleMpAct(e){
   // клавишу, только на отправку).
   const mpSendMailBtn=e.target.closest("[data-mp='mpsendmail']");
   if(mpSendMailBtn){ mpDoSendMail(); return; }
+  // Союз (Фаза 49). Одиннадцать кнопок — одна ветка на каждую, но вся работа
+  // у них общая (см. mpDoAlly): различаются только op и аргументы.
+  const allyCreateBtn=e.target.closest("[data-mp='allycreate']");
+  if(allyCreateBtn){ mpDoAllyCreate(); return; }
+  const allySayBtn=e.target.closest("[data-mp='allysay']");
+  if(allySayBtn){ mpDoAllySay(); return; }
+  const allyEditBtn=e.target.closest("[data-mp='allyedit']");
+  if(allyEditBtn){ mpDoAllyEdit(); return; }
+  const allyJoinBtn=e.target.closest("[data-mp='allyjoin']");
+  if(allyJoinBtn){ mpDoAlly("join",{allianceId:+allyJoinBtn.dataset.id},"Отправлено."); return; }
+  const allyCancelBtn=e.target.closest("[data-mp='allycancel']");
+  if(allyCancelBtn){ mpDoAlly("cancel",{allianceId:+allyCancelBtn.dataset.id},"Заявка отозвана."); return; }
+  const allyAcceptBtn=e.target.closest("[data-mp='allyaccept']");
+  if(allyAcceptBtn){ mpDoAlly("accept",{playerId:+allyAcceptBtn.dataset.id},"Принят в союз."); return; }
+  const allyRejectBtn=e.target.closest("[data-mp='allyreject']");
+  if(allyRejectBtn){ mpDoAlly("reject",{playerId:+allyRejectBtn.dataset.id},"Заявка отклонена."); return; }
+  const allyKickBtn=e.target.closest("[data-mp='allykick']");
+  if(allyKickBtn){ mpDoAlly("kick",{playerId:+allyKickBtn.dataset.id},"Исключён."); return; }
+  const allyRoleBtn=e.target.closest("[data-mp='allyrole']");
+  if(allyRoleBtn){ mpDoAlly("role",{playerId:+allyRoleBtn.dataset.id, role:allyRoleBtn.dataset.role},"Старшинство записано."); return; }
+  // Передача старшинства — тот же op "role", но своя кнопка и свой выбор
+  // соратника (см. «Расставание» в mpAllyMineHtml). Единственное действие
+  // союза, которое стоит переспросить: оно необратимо для нажавшего и меняет
+  // союз целиком. Остальные либо обратимы (роль, приём), либо и так подписаны
+  // последствиями (роспуск, выход).
+  const allyHandBtn=e.target.closest("[data-mp='allyhand']");
+  if(allyHandBtn){
+    const sel=$("#mp-ally-heir"); const heir=sel?+sel.value:0;
+    if(!heir) return;
+    const who=sel.options[sel.selectedIndex].textContent.split(" · ")[0];
+    if(!confirm("Отдать союз соратнику "+who+"? Вы станете старейшиной, вернуть старшинство сможет только он.")) return;
+    mpDoAlly("role",{playerId:heir, role:"leader"},"Старшинство передано.");
+    return;
+  }
+  const allyLeaveBtn=e.target.closest("[data-mp='allyleave']");
+  if(allyLeaveBtn){ mpDoAlly("leave",{},"Вы больше не в союзе."); return; }
+  const allyDisbandBtn=e.target.closest("[data-mp='allydisband']");
+  if(allyDisbandBtn){
+    if(!confirm("Распустить союз? Соратники получат письмо, имя и метка освободятся. Обратной дороги нет.")) return;
+    mpDoAlly("disband",{},"Союз распущен.");
+    return;
+  }
 }
 $("#menu-modal-body").addEventListener("click",e=>{
   // Фаза 20 — гейт был `dataset.tab!=="mp"`, и это глушило ВСЕ кнопки
@@ -16217,7 +16368,12 @@ async function claimChronicle(){
    восполняются со временem — серверное производство ещё не перенесено,
    стартовых 100000 хватает на несколько заказов набора для проверки.
    ========================================================================= */
-let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[], siegeMail:[], nodeBattleMail:[], worldBattles:[], gatherMail:[], tradeMail:[], barterMail:[], scoutedMail:[], noteMail:[], pmMail:[], awardMail:[] };
+let mpState = { loading:false, joined:false, player:null, err:null, race:null, nick:"", neighbors:[], attackTarget:null, mail:[], marches:[], incoming:[], scoutMail:[], rschTab:"eco", nodes:[], gatherTarget:null, camps:[], raidTarget:null, raidMail:[], siegeMail:[], nodeBattleMail:[], worldBattles:[], gatherMail:[], tradeMail:[], barterMail:[], scoutedMail:[], noteMail:[], pmMail:[], awardMail:[],
+  // Фаза 49 — союзы. ally=null означает "не состоит"; allyList/allyMyApps
+  // нужны только в этом случае (список, куда вступать), allyMembers/
+  // allyApps/allyChat — только в обратном. Держим все шесть в одном
+  // месте, чтобы выход из союза очищался одной строкой, а не пятью.
+  ally:null, allyRole:"", allyMembers:[], allyApps:[], allyChat:[], allyList:[], allyMyApps:[], allianceMail:[] };
 let mpPollTimer = null;
 // Идёт ли прямо сейчас вход/авто-резюме в общий мир (см. mpOpen) — защита
 // от повторного запуска при быстрых переключениях вкладок меню.
@@ -16372,32 +16528,248 @@ async function mpCall(fn, body, tries){
 // Одна функция на оба вызывающих места (openMenuModal и mpRerender) — иначе
 // секундный такт немедленно затирал бы открытый экран общей страницей.
 /* =========================================================================
-   Альянс и Магазин — Фаза 34, пока заглушки.
+   Альянс — Фаза 49. Настоящий экран вместо заглушки Фазы 34.
    =========================================================================
-   Автор поставил их значки в меню-гамбургер и отдельно оговорил, что помощь
-   альянса "пока заглушка". Сами альянсы он делает параллельно с другим
-   помощником, поэтому здесь заведены ровно места под них: экран, который
-   честно говорит, чего ещё нет, и кнопка помощи там, где она в итоге и будет
-   жить. Пустая кнопка, молча ничего не делающая, была бы хуже отсутствия
-   кнопки — поэтому обе говорят вслух.
-   Когда альянсы приедут, эти две функции заменяются настоящими экранами, а
-   разметка меню и диспетчер (mpMenuBodyHtml) уже готовы. */
+   Было: «Вы пока сами по себе. Альянсы ещё строятся. Здесь появятся: свой
+   союз и его знамя, список соратников, общий чат, помощь со стройкой и
+   совместные походы». Три из пяти обещаний закрыты этой фазой (союз с
+   меткой, состав, чат); помощь со стройкой и совместные походы — следующей,
+   вместе с регионами и крепостями (worldgen/regions/SHRINES.md).
+
+   Экран один на два взаимоисключающих состояния, и это НЕ два экрана под
+   одним именем: «состою» и «не состою» делят и рубрики, и язык кнопок, а
+   переход между ними происходит по нажатию прямо здесь же. Разводить их по
+   разным функциям значило бы дублировать шапку, ошибку и обвязку.
+   ========================================================================= */
+const MP_ALLY_ROLE_NAME={leader:"Глава", officer:"Старейшина", member:"Соратник"};
+const MP_ALLY_ROLE_RANK={leader:3, officer:2, member:1};
+function mpAllyRank(){ return MP_ALLY_ROLE_RANK[mpState.allyRole]||0; }
+// Метка союза перед именем — «[ЗАРЯ] Витольд». Так союз виден везде, где
+// виден ник, и это первое, ради чего его заводят.
+function mpAllyTagHtml(tag){
+  return tag ? "<span class='ally-tag'>["+escHtml(tag)+"]</span>" : "";
+}
+// Строка ошибки/успеха действия — одна на весь экран (см. mpDoAlly).
+function mpAllyNoticeHtml(){
+  let h="";
+  if(mpAllyErr) h+="<div class='entry'><div class='note' style='color:#e08'>&#10007; "+escHtml(mpAllyErr)+"</div></div>";
+  if(mpAllyOk)  h+="<div class='entry'><div class='note' style='color:#7c9'>&#10003; "+escHtml(mpAllyOk)+"</div></div>";
+  return h;
+}
 function mpAllianceHtml(){
-  let h=rubric("Альянс","скоро");
+  return mpState.ally ? mpAllyMineHtml() : mpAllyNoneHtml();
+}
+
+/* ---- Состою в союзе ---------------------------------------------------- */
+function mpAllyMineHtml(){
+  const a=mpState.ally, rank=mpAllyRank(), meId=mpState.player?mpState.player.id:0;
+  const cap=a.members_max||24;
+  const alive=mpState.allyMembers.length;
+  let h=rubric("Союз", MP_ALLY_ROLE_NAME[mpState.allyRole]||"");
   h+="<div class='entry hot'><div class='line'>"+
      "<img class='stub-ico' src='images/ui/icon-alliance.png' alt=''>"+
-     "<div class='fill'><div class='title'>Вы пока сами по себе</div>"+
-     "<div class='note'>Альянсы ещё строятся. Здесь появятся: свой союз и его знамя, "+
-     "список соратников, общий чат, помощь со стройкой и совместные походы.</div>"+
+     "<div class='fill'><div class='title'>"+mpAllyTagHtml(a.tag)+" "+escHtml(a.name)+"</div>"+
+     (a.motto?"<div class='note'>"+escHtml(a.motto)+"</div>":"")+
+     "<div class='note'>Соратников "+alive+" из "+cap+" · мощь союза "+fmt(a.power||0)+
+     " · приём "+(a.open?"открытый":"по заявке")+"</div>"+
      "</div></div></div>";
-  h+=rubric("Помощь союза");
+  h+=mpAllyNoticeHtml();
+
+  // ---- Заявки: только старейшинам и главе, и только когда есть что решать.
+  // RLS вернёт соратнику пустоту (см. политику в 0012), так что проверка
+  // роли тут — про то, ЧТО ПОКАЗЫВАТЬ, а не про доступ.
+  if(rank>=MP_ALLY_ROLE_RANK.officer && mpState.allyApps.length){
+    h+=rubric("Заявки", String(mpState.allyApps.length));
+    h+="<div class='rank-list ally'>";
+    mpState.allyApps.forEach(ap=>{
+      const pl=ap.players||{};
+      h+="<div class='rank-row'>"+
+         "<span class='rk-crest'>"+shieldSvg(pl.race||"human",16)+"</span>"+
+         "<span class='rk-nick'>"+escHtml(pl.nick||"Безымянный лорд")+"</span>"+
+         "<b class='rk-pw'>"+fmt(pl.power||0)+"</b>"+
+         "<span class='rk-acts'>"+
+           "<button class='seal tiny' data-mp='allyaccept' data-id='"+ap.player_id+"'"+(mpAllyBusy?" disabled":"")+">Принять</button>"+
+           "<button class='seal tiny ghost' data-mp='allyreject' data-id='"+ap.player_id+"'"+(mpAllyBusy?" disabled":"")+">Отказать</button>"+
+         "</span></div>";
+    });
+    h+="</div>";
+  }
+
+  // ---- Чат. Старые сверху, новые внизу — как в любой переписке (порядок
+  // разворачивается один раз при чтении, см. mpRefreshAlliance).
+  h+=rubric("Совет союза");
+  h+="<div class='ally-chat'>";
+  if(!mpState.allyChat.length){
+    h+="<div class='ally-chat-empty'>Тихо. Скажите первое слово — его прочтут все соратники.</div>";
+  } else {
+    mpState.allyChat.forEach(m=>{
+      if(m.kind==="system"){
+        h+="<div class='ally-say sys'>"+escHtml(m.body)+"</div>";
+        return;
+      }
+      h+="<div class='ally-say"+(m.player_id===meId?" me":"")+"'>"+
+         "<span class='who'>"+escHtml(m.nick||"Безымянный лорд")+"</span>"+
+         "<span class='tx'>"+escHtml(m.body)+"</span>"+
+         "<span class='tm'>"+mpMailAgo(m.created_at)+"</span></div>";
+    });
+  }
+  h+="</div>";
   h+="<div class='entry'><div class='line'>"+
-     "<img class='stub-ico' src='images/ui/icon-help.png' alt=''>"+
-     "<div class='fill'><div class='title'>Попросить о помощи</div>"+
-     "<div class='note'>Соратники смогут подгонять вашу стройку и исследования — каждый "+
-     "отклик снимает часть оставшегося времени. Кнопка появится у стройки, как только "+
-     "будет кому помогать.</div></div>"+
-     "<button class='seal' disabled>Нет союза</button></div></div>";
+     "<input id='mp-ally-say' maxlength='300' placeholder='Сказать союзу...'>"+
+     "<button class='seal' data-mp='allysay'"+(mpAllyBusy?" disabled":"")+">Сказать</button>"+
+     "</div></div>";
+
+  // ---- Состав. Глава первым, дальше старейшины, дальше по стажу — тот же
+  // порядок, в котором союз о себе и думает.
+  h+=rubric("Соратники", alive+" / "+cap);
+  const order=mpState.allyMembers.slice().sort((x,y)=>
+    (MP_ALLY_ROLE_RANK[y.role]||0)-(MP_ALLY_ROLE_RANK[x.role]||0) ||
+    new Date(x.joined_at)-new Date(y.joined_at));
+  h+="<div class='rank-list ally'>";
+  order.forEach((m,i)=>{
+    const pl=m.players||{}, isMe=m.player_id===meId;
+    const targetRank=MP_ALLY_ROLE_RANK[m.role]||1;
+    // Кнопки — ровно те, что сервер и разрешит (см. mp-alliance): младшим
+    // по старшинству и не себе. Показывать кнопку, которая ответит отказом,
+    // хуже, чем не показывать её вовсе.
+    let act="";
+    if(!isMe && rank>=MP_ALLY_ROLE_RANK.officer && targetRank<rank){
+      // Повышение/разжалование — на строке: это про этого соратника, и
+      // делается часто. Передача старшинства на строке НЕ живёт, хотя тот же
+      // op её и делает: она про союз целиком, случается раз за всю его жизнь,
+      // а третья кнопка в каждой строке состава превращала список в частокол.
+      // Её место — «Расставание», там же, где глава упирается в запрет уйти.
+      if(rank>=MP_ALLY_ROLE_RANK.leader){
+        act+=m.role==="officer"
+          ? "<button class='seal tiny ghost' data-mp='allyrole' data-id='"+m.player_id+"' data-role='member'"+(mpAllyBusy?" disabled":"")+">Разжаловать</button>"
+          : "<button class='seal tiny ghost' data-mp='allyrole' data-id='"+m.player_id+"' data-role='officer'"+(mpAllyBusy?" disabled":"")+">В старейшины</button>";
+      }
+      act+="<button class='seal tiny ghost' data-mp='allykick' data-id='"+m.player_id+"'"+(mpAllyBusy?" disabled":"")+">Исключить</button>";
+    }
+    h+="<div class='rank-row"+(isMe?" me":"")+"'>"+
+       "<span class='rk-place"+(i<1?" top":"")+"'>"+(i+1)+"</span>"+
+       "<span class='rk-crest'>"+shieldSvg(pl.race||"human",16)+"</span>"+
+       "<span class='rk-nick'>"+escHtml(pl.nick||"Безымянный лорд")+"</span>"+
+       "<span class='rk-hall'>"+(MP_ALLY_ROLE_NAME[m.role]||"")+"</span>"+
+       "<b class='rk-pw'>"+fmt(pl.power||0)+"</b>"+
+       (act?"<span class='rk-acts'>"+act+"</span>":"")+
+       "</div>";
+  });
+  h+="</div>";
+
+  // ---- Порядок приёма — старейшинам и главе.
+  if(rank>=MP_ALLY_ROLE_RANK.officer){
+    h+=rubric("Порядок союза");
+    h+="<div class='entry'><div class='line'><div class='fill ally-form'>"+
+       "<label for='mp-ally-motto2'>Девиз</label>"+
+       "<input id='mp-ally-motto2' maxlength='140' value=\""+escHtml(a.motto||"")+"\" placeholder='Чем живёт союз'>"+
+       "<label class='ally-check'><input type='checkbox' id='mp-ally-open2'"+(a.open?" checked":"")+"> Принимать без заявки</label>"+
+       "<label for='mp-ally-minpower'>Порог мощи для открытого приёма</label>"+
+       "<input id='mp-ally-minpower' type='number' min='0' value='"+(a.min_power||0)+"'>"+
+       "<button class='seal' data-mp='allyedit'"+(mpAllyBusy?" disabled":"")+">Записать</button>"+
+       "</div></div></div>";
+  }
+
+  // ---- Выход и роспуск. Глава не уходит просто так — это правило сервера,
+  // и подпись здесь говорит ровно то же, а не «нельзя».
+  h+=rubric("Расставание");
+  const soleLeader=(rank>=MP_ALLY_ROLE_RANK.leader && alive>1);
+  // Передать союз можно только живому соратнику, кроме себя. Стоит ПЕРЕД
+  // «Покинуть союз» нарочно: именно сюда приходит глава, которому не дали
+  // уйти, и здесь он должен найти ровно то, чего от него хотят.
+  if(soleLeader){
+    const heirs=order.filter(m=>m.player_id!==meId);
+    h+="<div class='entry'><div class='line'><div class='fill ally-form'>"+
+       "<div class='title'>Передать старшинство</div>"+
+       "<div class='note'>Вы станете старейшиной, вернуть союз сможет только новый глава.</div>"+
+       "<select id='mp-ally-heir'>"+heirs.map(m=>
+         "<option value='"+m.player_id+"'>"+escHtml((m.players&&m.players.nick)||"Безымянный лорд")+
+         " · "+(MP_ALLY_ROLE_NAME[m.role]||"")+"</option>").join("")+"</select>"+
+       "<button class='seal' data-mp='allyhand'"+(mpAllyBusy?" disabled":"")+">Отдать союз</button>"+
+       "</div></div></div>";
+  }
+  h+="<div class='entry'><div class='line'><div class='fill'>"+
+     "<div class='title'>Покинуть союз</div>"+
+     "<div class='note'>"+(soleLeader
+       ? "Глава уходит, только передав старшинство кому-то из соратников — или распустив союз."
+       : "Уйти можно в любой миг. Вернуться — только заново, по заявке или открытому приёму.")+"</div></div>"+
+     "<button class='seal' data-mp='allyleave'"+(soleLeader||mpAllyBusy?" disabled":"")+">Уйти</button></div></div>";
+  if(rank>=MP_ALLY_ROLE_RANK.leader){
+    h+="<div class='entry'><div class='line'><div class='fill'>"+
+       "<div class='title'>Распустить союз</div>"+
+       "<div class='note'>Соратники получат письмо, имя и метка освободятся. Обратной дороги нет.</div></div>"+
+       "<button class='seal danger' data-mp='allydisband'"+(mpAllyBusy?" disabled":"")+">Распустить</button></div></div>";
+  }
+  return h;
+}
+
+/* ---- Не состою: основать свой или вступить в чужой ---------------------- */
+function mpAllyNoneHtml(){
+  const st=mpState.player&&mpState.player.state;
+  const centerLv=(st&&st.b&&st.b.alliance)||0;
+  const appliedTo=new Set(mpState.allyMyApps.map(a=>a.alliance_id));
+  let h=rubric("Альянс","вы сами по себе");
+  h+="<div class='entry hot'><div class='line'>"+
+     "<img class='stub-ico' src='images/ui/icon-alliance.png' alt=''>"+
+     "<div class='fill'><div class='title'>Один в поле</div>"+
+     "<div class='note'>Союз — это общий чат, помощь со стройкой и, главное, право на регион: "+
+     "крепость варваров в одиночку не берут. Основайте свой или вступите в чужой.</div>"+
+     "</div></div></div>";
+  h+=mpAllyNoticeHtml();
+
+  // ---- Основать. Гейт по зданию — тот же, что и на сервере; подпись
+  // объясняет, что именно строить, а не просто гасит кнопку.
+  h+=rubric("Основать союз");
+  if(centerLv<1){
+    h+="<div class='entry'><div class='line'>"+
+       "<img class='stub-ico' src='images/ui/icon-alliance.png' alt=''>"+
+       "<div class='fill'><div class='title'>Нужен Центр Альянса</div>"+
+       "<div class='note'>Резиденция посольств и союзов. Постройте её в городе — она же задаёт, "+
+       "сколько соратников поместится: двадцать четыре на первом уровне, сто двадцать на "+
+       "двадцать пятом. Вступить в чужой союз можно и без неё.</div></div></div></div>";
+  } else {
+    h+="<div class='entry'><div class='line'><div class='fill ally-form'>"+
+       "<label for='mp-ally-name'>Имя союза</label>"+
+       "<input id='mp-ally-name' maxlength='24' placeholder='Орден Багровой Зари'>"+
+       "<label for='mp-ally-tag'>Метка</label>"+
+       "<input id='mp-ally-tag' maxlength='4' placeholder='ЗАРЯ'>"+
+       "<label for='mp-ally-motto'>Девиз</label>"+
+       "<input id='mp-ally-motto' maxlength='140' placeholder='Чем живёт союз'>"+
+       "<label class='ally-check'><input type='checkbox' id='mp-ally-open' checked> Принимать без заявки</label>"+
+       "<div class='note'>Метка встанет перед вашим именем и именами соратников. "+
+       "Мест в союзе — "+(20+4*Math.min(25,centerLv))+", по уровню вашего Центра Альянса.</div>"+
+       "<button class='seal' data-mp='allycreate'"+(mpAllyBusy?" disabled":"")+">Основать</button>"+
+       "</div></div></div>";
+  }
+
+  // ---- Вступить.
+  h+=rubric("Союзы мира", mpState.allyList.length?String(mpState.allyList.length):"");
+  if(!mpState.allyList.length){
+    h+="<div class='entry'><div class='line'><div class='fill'><div class='note'>"+
+       "В этом мире ещё не основано ни одного союза. Первым может стать ваш.</div></div></div></div>";
+    return h;
+  }
+  h+="<div class='rank-list ally'>";
+  mpState.allyList.forEach((a,i)=>{
+    const full=(a.members||0)>=(a.members_max||24);
+    const applied=appliedTo.has(a.id);
+    let btn;
+    if(applied) btn="<button class='seal tiny ghost' data-mp='allycancel' data-id='"+a.id+"'"+(mpAllyBusy?" disabled":"")+">Отозвать</button>";
+    else if(full) btn="<button class='seal tiny' disabled>Полно</button>";
+    else btn="<button class='seal tiny' data-mp='allyjoin' data-id='"+a.id+"'"+(mpAllyBusy?" disabled":"")+">"+(a.open?"Вступить":"Заявка")+"</button>";
+    h+="<div class='rank-row'>"+
+       "<span class='rk-place"+(i<3?" top":"")+"'>"+(i+1)+"</span>"+
+       "<span class='rk-nick'>"+mpAllyTagHtml(a.tag)+" "+escHtml(a.name)+
+         (a.motto?"<span class='ally-motto'>"+escHtml(a.motto)+"</span>":"")+"</span>"+
+       "<span class='rk-hall'>"+(a.members||0)+"/"+(a.members_max||24)+"</span>"+
+       "<b class='rk-pw'>"+fmt(a.power||0)+"</b>"+
+       "<span class='rk-acts'>"+btn+"</span></div>";
+  });
+  h+="</div>";
+  if(mpState.allyMyApps.length)
+    h+="<div class='entry'><div class='line'><div class='fill'><div class='note'>"+
+       "Заявок подано: "+mpState.allyMyApps.length+". Как только одну примут, остальные снимутся сами."+
+       "</div></div></div></div>";
   return h;
 }
 function mpShopHtml(){
@@ -16756,7 +17128,12 @@ async function mpRefreshAll(includeSlowLane){
       mpRefreshMail(), mpRefreshScoutMail(), mpRefreshRaidMail(), mpRefreshSiegeMail(),
       mpRefreshNodeBattleMail(), mpRefreshGatherMail(), mpRefreshTradeMail(),
       mpRefreshBarterMail(), mpRefreshScoutedMail(),
-      mpRefreshNoteMail(), mpRefreshPmMail(), mpRefreshAwardMail()
+      mpRefreshNoteMail(), mpRefreshPmMail(), mpRefreshAwardMail(),
+      // Фаза 49 — союз (состав/заявки/чат либо список союзов) и письма
+      // союза. Обе на медленной дорожке по той же причине, что и почта:
+      // состав меняется редко, а свою же реплику в чате показывает сразу
+      // сам mpDoAllySay, не дожидаясь такта (см. её комментарий).
+      mpRefreshAlliance(), mpRefreshAllianceMail()
     );
     // allSettled, не all: одна упавшая выборка (сеть моргнула на одной из
     // пятнадцати) не должна отменять остальные — раньше цепочка await
@@ -16908,6 +17285,142 @@ async function mpRefreshPmMail(){
   const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
     .eq("kind","pm").order("created_at",{ascending:false}).limit(30);
   if(!error && data){ mpState.pmMail=data; mpRerenderData(); }
+}
+// =============================================================================
+// Союзы — чтение (Фаза 49).
+// =============================================================================
+// Всё читается КЛИЕНТОМ напрямую, без своей edge-функции: политики из
+// миграции 0012 уже отмеряют ровно то, что можно показать (союзы и их состав
+// видны всем, заявки — подавшему и старейшинам, чат — только участникам).
+// Тот же приём, что и у mpRefreshNeighbors: своя функция понадобилась бы
+// только чтобы повторить работу RLS на другом языке.
+//
+// Запросов два набора, и они взаимоисключающие: у состоящего в союзе —
+// состав/заявки/чат, у не состоящего — список союзов мира и свои заявки.
+// Половина, которая сейчас не нужна, не запрашивается вовсе.
+//
+// Живёт на МЕДЛЕННОЙ дорожке опроса (раз в 10с, см. mpRefreshAll): состав
+// союза меняется редко, а чат — переписка, а не бой; секунда задержки в нём
+// незаметна, тогда как четыре лишних запроса в каждом пятисекундном такте
+// заметны очень. Своя реплика показывается сразу, не дожидаясь такта, —
+// mpDoAlly() дёргает обновление сама.
+const MP_ALLY_CHAT_LIMIT=60;
+async function mpRefreshAlliance(){
+  if(!mpState.player) return;
+  const me=mpState.player.id, wid=mpState.player.world_id;
+  try{
+    const mem=await sb.from("alliance_members").select("alliance_id,role").eq("player_id",me).maybeSingle();
+    if(mem.error) throw new Error(mem.error.message);
+    if(!mem.data){
+      // Не в союзе: список, куда можно вступить, и свои поданные заявки.
+      // Порядок по мощи — тот же, что и в таблице мира: сильнейшие сверху.
+      const [list,apps]=await Promise.all([
+        sb.from("alliances").select("id,name,tag,motto,open,min_power,members,power,leader_id")
+          .eq("world_id",wid).is("disbanded_at",null).order("power",{ascending:false}).limit(30),
+        sb.from("alliance_applications").select("alliance_id,created_at").eq("player_id",me),
+      ]);
+      mpState.ally=null; mpState.allyRole=""; mpState.allyMembers=[]; mpState.allyApps=[]; mpState.allyChat=[];
+      if(!list.error && list.data) mpState.allyList=list.data;
+      if(!apps.error && apps.data) mpState.allyMyApps=apps.data;
+      mpRerenderData();
+      return;
+    }
+    const aid=mem.data.alliance_id;
+    // players(...) — вложенная выборка по внешнему ключу alliance_members.
+    // player_id (PostgREST): состав союза без неё пришлось бы склеивать со
+    // списком соседей, а там нет ни своей строки, ни павших.
+    const [ally,members,apps,chat]=await Promise.all([
+      sb.from("alliances").select("*").eq("id",aid).maybeSingle(),
+      sb.from("alliance_members")
+        .select("player_id,role,joined_at,players(id,nick,race,power,x,y,rating,rating_battles,dead_at)")
+        .eq("alliance_id",aid),
+      sb.from("alliance_applications")
+        .select("player_id,created_at,players(id,nick,race,power,rating,rating_battles)")
+        .eq("alliance_id",aid),
+      sb.from("alliance_chat").select("*").eq("alliance_id",aid)
+        .order("created_at",{ascending:false}).limit(MP_ALLY_CHAT_LIMIT),
+    ]);
+    if(!ally.error) mpState.ally=ally.data||null;
+    mpState.allyRole=mem.data.role||"member";
+    // Павшие из состава не показываются: их города на карте уже нет (Фаза
+    // 30), а строка членства держится до mp-restart. Сервер считает их так
+    // же — см. recountAlliance/ensureLeader в mp-alliance.
+    if(!members.error && members.data)
+      mpState.allyMembers=members.data.filter(m=>m.players && !m.players.dead_at);
+    // Заявки видны только старейшинам и главе (политика RLS) — у соратника
+    // выборка честно вернёт пустоту, а не ошибку.
+    mpState.allyApps=(!apps.error && apps.data)?apps.data:[];
+    // Порядок оставляем тем, что вернул LIMIT, — свежие первыми. Переворачивает
+    // его показ (.ally-chat, column-reverse): так чат сам открыт на последней
+    // реплике, без доводки прокрутки на каждом такте. См. комментарий у CSS.
+    if(!chat.error && chat.data) mpState.allyChat=chat.data;
+    mpState.allyList=[]; mpState.allyMyApps=[];
+    mpRerenderData();
+  }catch(_){ /* сеть моргнула — оставляем прежнее состояние, следующий такт попробует снова */ }
+}
+// Письма союза (mail, kind:"alliance") — вкладка «Альянс» в почте. Их пишет
+// mp-alliance тому, кого касается: приняли заявку, отклонили, исключили,
+// распустили союз. В чат такое класть мало — исключённый чат уже не увидит.
+async function mpRefreshAllianceMail(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("mail").select("*").eq("player_id",mpState.player.id)
+    .eq("kind","alliance").order("created_at",{ascending:false}).limit(30);
+  if(!error && data){ mpState.allianceMail=data; mpRerenderData(); }
+}
+// =============================================================================
+// Союзы — действия (Фаза 49).
+// =============================================================================
+// Одна функция на все одиннадцать операций, как и на сервере (см. шапку
+// mp-alliance): различаются они только телом запроса, а обвязка — «заблокируй
+// кнопки, позови, покажи ошибку, перечитай» — у всех одна и та же.
+let mpAllyBusy=false, mpAllyErr=null, mpAllyOk=null;
+async function mpDoAlly(op, args, okText){
+  if(mpAllyBusy) return;
+  mpAllyBusy=true; mpAllyErr=null; mpAllyOk=null; mpRerender();
+  try{
+    await mpCall("mp-alliance", Object.assign({op}, args||{}));
+    mpAllyBusy=false; mpAllyOk=okText||null;
+    // Перечитываем сразу, не дожидаясь медленной дорожки: игрок только что
+    // нажал кнопку и ждёт увидеть результат, а не через десять секунд.
+    await mpRefreshAlliance();
+    mpRerender();
+  }catch(e){
+    mpAllyBusy=false; mpAllyErr=e.message||"Не удалось"; mpRerender();
+  }
+}
+// Основание союза — единственная операция со своей формой, поэтому поля
+// читаются прямо на клик (тот же приём, что и у «Нового письма»).
+async function mpDoAllyCreate(){
+  const nameInp=$("#mp-ally-name"), tagInp=$("#mp-ally-tag"), mottoInp=$("#mp-ally-motto"), openInp=$("#mp-ally-open");
+  const name=(nameInp&&nameInp.value||"").trim(), tag=(tagInp&&tagInp.value||"").trim();
+  const motto=(mottoInp&&mottoInp.value||"").trim(), open=openInp?!!openInp.checked:true;
+  if(!name){ mpAllyErr="Как назвать союз?"; mpAllyOk=null; mpRerender(); return; }
+  if(!tag){ mpAllyErr="Нужна метка — она встанет перед именами соратников"; mpAllyOk=null; mpRerender(); return; }
+  await mpDoAlly("create",{name,tag,motto,open},"Союз основан.");
+}
+// Реплика в чат. Поле очищается только при успехе: набранное не должно
+// пропадать из-за моргнувшей сети.
+async function mpDoAllySay(){
+  const inp=$("#mp-ally-say"); const body=(inp&&inp.value||"").trim();
+  if(!body) return;
+  if(mpAllyBusy) return;
+  mpAllyBusy=true; mpAllyErr=null; mpAllyOk=null; mpRerender();
+  try{
+    await mpCall("mp-alliance",{op:"say",body});
+    mpAllyBusy=false;
+    const again=$("#mp-ally-say"); if(again) again.value="";
+    await mpRefreshAlliance();
+    mpRerender();
+  }catch(e){ mpAllyBusy=false; mpAllyErr=e.message||"Не сказалось"; mpRerender(); }
+}
+// Девиз и порядок приёма — тоже форма, тоже читается на клик.
+async function mpDoAllyEdit(){
+  const mottoInp=$("#mp-ally-motto2"), openInp=$("#mp-ally-open2"), minInp=$("#mp-ally-minpower");
+  const args={};
+  if(mottoInp) args.motto=(mottoInp.value||"").trim();
+  if(openInp) args.open=!!openInp.checked;
+  if(minInp) args.minPower=Math.max(0,Math.round(Number(minInp.value)||0));
+  await mpDoAlly("edit",args,"Записано.");
 }
 // Отправка личного письма (mp-sendmail) — читает поля формы прямо на клик
 // (см. заголовок mpComposeErr/mpComposeSending). После успеха очищает поля
@@ -18433,14 +18946,26 @@ function mpMailSystemEntries(){
 function mpMailSentEntries(){
   return mpState.pmMail.filter(m=>m.data.role==="sender").map(m=>mpMailCached(m,mpMailPmEntry)).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
 }
-// "Альянс" — фундамент на будущее: в игре пока нет ни одной механики
-// альянсов (ни списка участников, ни общего чата, ни совместных действий),
-// поэтому источника данных для этой вкладки попросту не существует — не
-// "забыли подключить", а честно нечего показывать, пока эта часть игры не
-// появится.
-function mpMailAllianceEntries(){ return []; }
+// "Альянс" (Фаза 49) — письма союза, kind:"alliance". Их пишет mp-alliance
+// тому, кого касается: приняли заявку, отклонили, исключили, распустили
+// союз. Разговор союза сюда НЕ попадает — он живёт своим чатом на экране
+// «Альянс» (см. mpAllyMineHtml): реплика — не письмо, её не открывают, и
+// строка почты на каждую была бы шумом. Здесь только то, что случилось
+// лично с адресатом и о чём он должен узнать, даже если союза уже нет.
+function mpMailAllianceEntry(m){
+  const d=m.data||{};
+  const bodyEsc=escHtml(d.body||"").replace(/\n/g,"<br>");
+  return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-alliance.png", cls:"", tone:"gold",
+    title:escHtml(d.title||"Весть из союза"), sub:escHtml(d.body||""),
+    detailHtml:"<div class='note'>"+bodyEsc+"</div>"};
+}
+function mpMailAllianceEntries(){
+  return mpState.allianceMail.map(m=>mpMailCached(m,mpMailAllianceEntry))
+    .sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+}
 function mpMailEntryById(id){
-  return mpMailReportEntries().concat(mpMailPersonalEntries(),mpMailSystemEntries(),mpMailSentEntries()).find(x=>x.id===id) || null;
+  return mpMailReportEntries().concat(mpMailPersonalEntries(),mpMailSystemEntries(),
+    mpMailSentEntries(),mpMailAllianceEntries()).find(x=>x.id===id) || null;
 }
 // Компактная строка списка — тот же вид, что у одиночного mailRowHtml
 // (иконка+заголовок+короткая подпись+время), но без .read/.fav (см.
@@ -18466,7 +18991,7 @@ const MP_MAIL_ENTRY_FNS={
   personal:{fn:mpMailPersonalEntries, empty:"Ни письма, ни вести о вашем полководце. Напишите кому-нибудь через «Новое письмо» — и переписка начнётся отсюда же."},
   system:{fn:mpMailSystemEntries, empty:"Тихо. Ни одна армия — ни ваша, ни чужая — пока не тронулась с места."},
   sent:{fn:mpMailSentEntries, empty:"Вы ещё никому не писали. Откройте «Новое письмо» — и первое отправленное появится здесь."},
-  alliance:{fn:mpMailAllianceEntries, empty:"Альянсов в этом мире пока не заключают — ни одного, ни у кого. Раздел ждёт своего часа."},
+  alliance:{fn:mpMailAllianceEntries, empty:"Из союза вестей не приходило. Сюда ложится то, что касается вас лично: приняли заявку, исключили, распустили союз. Разговор соратников — на самом экране «Альянс»."},
 };
 function mpMailScreenHtml(){
   const openEntry = mpMailOpenId!=null ? mpMailEntryById(mpMailOpenId) : null;
