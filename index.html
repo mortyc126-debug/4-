@@ -2858,6 +2858,42 @@ const TRADING_TABLE=[
   {food:13800000,wood:20500000,stone:8300000,t:680400,power:390404},
   {food:20800000,wood:30800000,stone:12500000,t:2384640,power:626317},
 ];
+// Что Центр Альянса ДАЁТ (Фаза 49). Прямое решение автора: «по центру
+// альянса, он даёт только вместимость подкреплений и вместимость общего
+// сбора». К числу соратников здание отношения не имеет — их тридцать у
+// всех союзов одинаково.
+//
+//   ALLY_RALLY_CAP — общий сбор: сколько войск союз приводит в одну точку
+//     одним походом. Потолок 2 000 000 на 25 уровне — число автора; сбор
+//     «нужно прокачать», и качается он ровно этим зданием.
+//   ALLY_REINF_CAP — подкрепления: сколько союзных войск может стоять в
+//     вашем городе. Своя кривая, вчетверо скромнее сбора: подкрепление
+//     держит стену, а не берёт крепость.
+//
+// Обе считаются от уровня здания У ТОГО, КОГО КАСАЕТСЯ: сбор — у
+// созывающего (он ведёт поход), подкрепления — у принимающего (это его
+// город). Обе кривые — геометрия от первого уровня к двадцать пятому,
+// округлённая до читаемого; правятся одной строкой, если баланс попросит.
+//
+// ВАЖНО: самих подкреплений и общего сбора в игре ещё нет — они идут
+// следующей фазой вместе с крепостями. Числа заведены здесь, а не тогда,
+// чтобы карточка здания перестала врать, будто оно «поднимает мощь города»
+// и только. Где они показываются — там же и сказано, что механики пока нет.
+const ALLY_RALLY_CAP=[30000,36000,43000,51000,60000,72000,86000,100000,120000,140000,
+  170000,210000,240000,290000,350000,410000,490000,590000,700000,830000,
+  990000,1200000,1400000,1700000,2000000];
+const ALLY_REINF_CAP=[10000,12000,14000,16000,19000,23000,27000,31000,37000,43000,
+  51000,60000,71000,83000,98000,120000,140000,160000,190000,220000,
+  260000,310000,360000,420000,500000];
+// Вместимость крепости союза — два миллиона, одинаково и неизменно (прямое
+// решение автора: «вместимость крепости сразу по дефолту такая и по идее
+// неизменная»). Здесь, рядом с потолком сбора, чтобы было видно: полный
+// сбор с двадцать пятым Центром Альянса ровно наполняет крепость.
+const ALLY_FORT_CAP=2000000;
+// Уровень здания -> вместимость. lv 0 (не построено) — ноль: без Центра
+// Альянса ни сбора, ни подкреплений не бывает вовсе.
+function allyRallyCap(lv){ return lv>0 ? ALLY_RALLY_CAP[Math.min(25,lv)-1] : 0; }
+function allyReinfCap(lv){ return lv>0 ? ALLY_REINF_CAP[Math.min(25,lv)-1] : 0; }
 const ALLIANCE_TABLE=[
   {food:500,wood:500,t:7,power:5},
   {food:1000,wood:1000,t:35,power:10},
@@ -3707,13 +3743,14 @@ const BUILDINGS = {
   // Рынок/Центр Альянса — цена/время/мощь по 25 уровням сверены с
   // Trading Post/Alliance Center из таблицы RoK, которую прислал автор
   // (см. supabase/functions/mp-build/index.js: TRADING_TABLE/ALLIANCE_TABLE
-  // — точно те же числа, приведённые к формату остальных построек). Своего
-  // игрового эффекта им пока не завели (в RoK Trading Post — обмен
-  // ресурсами МЕЖДУ игроками, Alliance Center — помощь от гильдии; ни того,
-  // ни другого механически в игре нет) — здания честно строятся/растут и
-  // дают мощь городу, как и было прямо попрошено, а не выдуманный бонус.
+  // — точно те же числа, приведённые к формату остальных построек).
+  // Рынок своё дело получил в Фазу 34 (обозы между правителями, mp-trade).
+  // Центр Альянса — в Фазу 49: вместимость общего сбора и союзных
+  // подкреплений (ALLY_RALLY_CAP/ALLY_REINF_CAP выше). К ЧИСЛУ соратников
+  // он отношения не имеет — их тридцать у всех одинаково; здание решает,
+  // сколько войск союз сведёт в одну точку.
   market:  {name:"Рынок",         max:25, desc:"Торговая площадь города — поднимает его мощь", footprint:{w:3,h:3}},
-  alliance:{name:"Центр Альянса", max:25, desc:"Резиденция посольств и союзов — поднимает мощь города", footprint:{w:3,h:3}},
+  alliance:{name:"Центр Альянса", max:25, desc:"Резиденция союза: вместимость общего сбора и союзных подкреплений в вашем городе", footprint:{w:3,h:3}},
 };
 const BKEYS = Object.keys(BUILDINGS);
 // Здания, которые размещаются игроком свободно на сетке (все, кроме
@@ -7527,7 +7564,7 @@ function menuBadges(){
       // почту и живёт в этом же браузере), а метка, которая не гаснет, за
       // неделю перестаёт что-либо значить. Заявка же гаснет сама, как только
       // её приняли или отклонили, — это настоящее «сделай что-то».
-      alliance: (mpState.allyRole==="leader"||mpState.allyRole==="officer")
+      alliance: (MP_ALLY_ROLE_RANK[mpState.allyRole]||0)>=MP_ALLY_RANK_OFFICER
                 ? mpState.allyApps.length : 0,
     };
   }
@@ -10318,6 +10355,21 @@ function mpBuildingStatDeltaHtml(bk,lv,nx,hallLv){
       "<tr><td>Бонус скорости разведки</td><td>+"+c.bonus+"% &rarr; +"+n.bonus+"%</td></tr>"+
       "<tr><td>Разведчиков одновременно</td><td>"+c.scouts+" &rarr; "+n.scouts+"</td></tr></table>";
   }
+  if(bk==="alliance"){
+    // Фаза 49 — то, ради чего здание и стоит: вместимость общего сбора и
+    // союзных подкреплений (ALLY_RALLY_CAP/ALLY_REINF_CAP). До сих пор
+    // карточка не показывала у него НИЧЕГО, кроме мощи, потому что и давать
+    // ему было нечего. Самих сбора и подкреплений в игре ещё нет — они идут
+    // вместе с крепостями регионов, — и подпись говорит это вслух, вместо
+    // того чтобы показать число и промолчать, что оно пока ни на что не
+    // влияет.
+    return "<table id='bm-stats'>"+
+      "<tr><td>Вместимость общего сбора</td><td>"+fmt(allyRallyCap(lv))+" &rarr; "+fmt(allyRallyCap(nx))+"</td></tr>"+
+      "<tr><td>Союзных подкреплений в городе</td><td>"+fmt(allyReinfCap(lv))+" &rarr; "+fmt(allyReinfCap(nx))+"</td></tr></table>"+
+      "<div class='note' style='margin:-6px 0 10px'>Сбор и подкрепления придут вместе с крепостями регионов — "+
+      "числа уже здесь, чтобы было видно, до чего растить. К числу соратников здание отношения не имеет: "+
+      "их "+MP_ALLY_CAP_DEFAULT+" у всех союзов одинаково.</div>";
+  }
   if(BLD_TRAIN[bk]){
     return "<table id='bm-stats'><tr><td>Воинов за один заказ</td><td>"+fmt(trainCap(lv))+" &rarr; "+fmt(trainCap(nx))+"</td></tr></table>";
   }
@@ -12398,6 +12450,21 @@ function buildingStatDeltaHtml(bk,lv,nx){
       "<tr><td>Бонус скорости разведки</td><td>+"+c.bonus+"% &rarr; +"+n.bonus+"%</td></tr>"+
       "<tr><td>Разведчиков одновременно</td><td>"+c.scouts+" &rarr; "+n.scouts+"</td></tr></table>";
   }
+  if(bk==="alliance"){
+    // Фаза 49 — то, ради чего здание и стоит: вместимость общего сбора и
+    // союзных подкреплений (ALLY_RALLY_CAP/ALLY_REINF_CAP). До сих пор
+    // карточка не показывала у него НИЧЕГО, кроме мощи, потому что и давать
+    // ему было нечего. Самих сбора и подкреплений в игре ещё нет — они идут
+    // вместе с крепостями регионов, — и подпись говорит это вслух, вместо
+    // того чтобы показать число и промолчать, что оно пока ни на что не
+    // влияет.
+    return "<table id='bm-stats'>"+
+      "<tr><td>Вместимость общего сбора</td><td>"+fmt(allyRallyCap(lv))+" &rarr; "+fmt(allyRallyCap(nx))+"</td></tr>"+
+      "<tr><td>Союзных подкреплений в городе</td><td>"+fmt(allyReinfCap(lv))+" &rarr; "+fmt(allyReinfCap(nx))+"</td></tr></table>"+
+      "<div class='note' style='margin:-6px 0 10px'>Сбор и подкрепления придут вместе с крепостями регионов — "+
+      "числа уже здесь, чтобы было видно, до чего растить. К числу соратников здание отношения не имеет: "+
+      "их "+MP_ALLY_CAP_DEFAULT+" у всех союзов одинаково.</div>";
+  }
   if(BLD_TRAIN[bk]){
     return "<table id='bm-stats'><tr><td>Воинов за один заказ</td><td>"+fmt(trainCap(lv))+" &rarr; "+fmt(trainCap(nx))+"</td></tr></table>";
   }
@@ -12623,7 +12690,7 @@ const MP_BOARDS=[
    rowHtml:(r,i,mine)=>"<div class='rank-row"+(mine?" me":"")+"'>"+
      "<span class='rk-place"+(i<3?" top":"")+"'>"+(i+1)+"</span>"+
      "<span class='rk-nick'>"+mpAllyTagHtml(r.tag)+" "+escHtml(r.name||"")+"</span>"+
-     "<span class='rk-hall'>"+(r.members||0)+"/"+(r.members_max||24)+"</span>"+
+     "<span class='rk-hall'>"+(r.members||0)+"/"+(r.members_max||MP_ALLY_CAP_DEFAULT)+"</span>"+
      "<b class='rk-pw'>"+fmt(r.power||0)+"</b></div>",
    empty:"В этом мире ещё не основано ни одного союза."},
 ];
@@ -16541,8 +16608,23 @@ async function mpCall(fn, body, tries){
    переход между ними происходит по нажатию прямо здесь же. Разводить их по
    разным функциям значило бы дублировать шапку, ошибку и обвязку.
    ========================================================================= */
-const MP_ALLY_ROLE_NAME={leader:"Глава", officer:"Старейшина", member:"Соратник"};
-const MP_ALLY_ROLE_RANK={leader:3, officer:2, member:1};
+// Пять ступеней старшинства — близнец ROLE_RANK/ROLE_NAME из mp-alliance
+// (правило самодостаточных копий, см. supabase/README.md). Коды r5..r1
+// хранятся, имена показываются.
+const MP_ALLY_ROLE_NAME={r5:"Глава", r4:"Заместитель", r3:"Старейшина", r2:"Дружинник", r1:"Новик"};
+const MP_ALLY_ROLE_RANK={r5:5, r4:4, r3:3, r2:2, r1:1};
+// Заместителей четверо — вакансии, а не звание по выслуге. Права есть у
+// двух старших ступеней: глава может всё, заместитель — приём, исключение
+// младших и порядок союза. Три нижние — знак старшинства без прав.
+const MP_ALLY_R4_SLOTS=4;
+// Вместимость союза — тридцать на всех, прямое решение автора. Показанное
+// число всегда берётся из alliances.members_max (его держит база), а эта
+// константа — запасная, если колонки почему-то нет.
+const MP_ALLY_CAP_DEFAULT=30;
+const MP_ALLY_RANK_OFFICER=MP_ALLY_ROLE_RANK.r4, MP_ALLY_RANK_LEADER=MP_ALLY_ROLE_RANK.r5;
+// Ступени, которые глава может назначить: все, кроме своей собственной —
+// передача союза стоит отдельной кнопкой в «Расставании» (см. её коммент).
+const MP_ALLY_GRANTABLE=["r4","r3","r2","r1"];
 function mpAllyRank(){ return MP_ALLY_ROLE_RANK[mpState.allyRole]||0; }
 // Метка союза перед именем — «[ЗАРЯ] Витольд». Так союз виден везде, где
 // виден ник, и это первое, ради чего его заводят.
@@ -16563,7 +16645,7 @@ function mpAllianceHtml(){
 /* ---- Состою в союзе ---------------------------------------------------- */
 function mpAllyMineHtml(){
   const a=mpState.ally, rank=mpAllyRank(), meId=mpState.player?mpState.player.id:0;
-  const cap=a.members_max||24;
+  const cap=a.members_max||MP_ALLY_CAP_DEFAULT;
   const alive=mpState.allyMembers.length;
   let h=rubric("Союз", MP_ALLY_ROLE_NAME[mpState.allyRole]||"");
   h+="<div class='entry hot'><div class='line'>"+
@@ -16578,7 +16660,7 @@ function mpAllyMineHtml(){
   // ---- Заявки: только старейшинам и главе, и только когда есть что решать.
   // RLS вернёт соратнику пустоту (см. политику в 0012), так что проверка
   // роли тут — про то, ЧТО ПОКАЗЫВАТЬ, а не про доступ.
-  if(rank>=MP_ALLY_ROLE_RANK.officer && mpState.allyApps.length){
+  if(rank>=MP_ALLY_RANK_OFFICER && mpState.allyApps.length){
     h+=rubric("Заявки", String(mpState.allyApps.length));
     h+="<div class='rank-list ally'>";
     mpState.allyApps.forEach(ap=>{
@@ -16633,16 +16715,25 @@ function mpAllyMineHtml(){
     // по старшинству и не себе. Показывать кнопку, которая ответит отказом,
     // хуже, чем не показывать её вовсе.
     let act="";
-    if(!isMe && rank>=MP_ALLY_ROLE_RANK.officer && targetRank<rank){
-      // Повышение/разжалование — на строке: это про этого соратника, и
-      // делается часто. Передача старшинства на строке НЕ живёт, хотя тот же
-      // op её и делает: она про союз целиком, случается раз за всю его жизнь,
-      // а третья кнопка в каждой строке состава превращала список в частокол.
-      // Её место — «Расставание», там же, где глава упирается в запрет уйти.
-      if(rank>=MP_ALLY_ROLE_RANK.leader){
-        act+=m.role==="officer"
-          ? "<button class='seal tiny ghost' data-mp='allyrole' data-id='"+m.player_id+"' data-role='member'"+(mpAllyBusy?" disabled":"")+">Разжаловать</button>"
-          : "<button class='seal tiny ghost' data-mp='allyrole' data-id='"+m.player_id+"' data-role='officer'"+(mpAllyBusy?" disabled":"")+">В старейшины</button>";
+    if(!isMe && rank>=MP_ALLY_RANK_OFFICER && targetRank<rank){
+      // Ступеней пять, поэтому не пара кнопок «повысить/разжаловать» с
+      // заранее известной целью, а шаг вверх и шаг вниз по лестнице. Так
+      // строка остаётся короткой при любом числе ступеней, и не нужно
+      // выпадающего списка в каждой строке состава.
+      // Передача союза на строке НЕ живёт, хотя её делает тот же op: она про
+      // союз целиком, случается раз за его жизнь, а третья кнопка в каждой
+      // строке превращала список в частокол. Её место — «Расставание», там
+      // же, где глава упирается в запрет уйти.
+      if(rank>=MP_ALLY_RANK_LEADER){
+        // Вверх — не выше заместителя (главой делает только передача союза) и
+        // только пока есть вакансия: кнопку, которая всегда отвечает отказом,
+        // не рисуем вовсе.
+        const upTo=MP_ALLY_GRANTABLE.find(k=>MP_ALLY_ROLE_RANK[k]===targetRank+1);
+        const r4busy=order.filter(x=>x.role==="r4").length;
+        const upOk=upTo && (upTo!=="r4" || r4busy<MP_ALLY_R4_SLOTS);
+        if(upOk) act+="<button class='seal tiny ghost' data-mp='allyrole' data-id='"+m.player_id+"' data-role='"+upTo+"' title='"+MP_ALLY_ROLE_NAME[upTo]+"'"+(mpAllyBusy?" disabled":"")+">Повысить</button>";
+        const downTo=MP_ALLY_GRANTABLE.find(k=>MP_ALLY_ROLE_RANK[k]===targetRank-1);
+        if(downTo) act+="<button class='seal tiny ghost' data-mp='allyrole' data-id='"+m.player_id+"' data-role='"+downTo+"' title='"+MP_ALLY_ROLE_NAME[downTo]+"'"+(mpAllyBusy?" disabled":"")+">Понизить</button>";
       }
       act+="<button class='seal tiny ghost' data-mp='allykick' data-id='"+m.player_id+"'"+(mpAllyBusy?" disabled":"")+">Исключить</button>";
     }
@@ -16658,7 +16749,7 @@ function mpAllyMineHtml(){
   h+="</div>";
 
   // ---- Порядок приёма — старейшинам и главе.
-  if(rank>=MP_ALLY_ROLE_RANK.officer){
+  if(rank>=MP_ALLY_RANK_OFFICER){
     h+=rubric("Порядок союза");
     h+="<div class='entry'><div class='line'><div class='fill ally-form'>"+
        "<label for='mp-ally-motto2'>Девиз</label>"+
@@ -16673,7 +16764,7 @@ function mpAllyMineHtml(){
   // ---- Выход и роспуск. Глава не уходит просто так — это правило сервера,
   // и подпись здесь говорит ровно то же, а не «нельзя».
   h+=rubric("Расставание");
-  const soleLeader=(rank>=MP_ALLY_ROLE_RANK.leader && alive>1);
+  const soleLeader=(rank>=MP_ALLY_RANK_LEADER && alive>1);
   // Передать союз можно только живому соратнику, кроме себя. Стоит ПЕРЕД
   // «Покинуть союз» нарочно: именно сюда приходит глава, которому не дали
   // уйти, и здесь он должен найти ровно то, чего от него хотят.
@@ -16694,7 +16785,7 @@ function mpAllyMineHtml(){
        ? "Глава уходит, только передав старшинство кому-то из соратников — или распустив союз."
        : "Уйти можно в любой миг. Вернуться — только заново, по заявке или открытому приёму.")+"</div></div>"+
      "<button class='seal' data-mp='allyleave'"+(soleLeader||mpAllyBusy?" disabled":"")+">Уйти</button></div></div>";
-  if(rank>=MP_ALLY_ROLE_RANK.leader){
+  if(rank>=MP_ALLY_RANK_LEADER){
     h+="<div class='entry'><div class='line'><div class='fill'>"+
        "<div class='title'>Распустить союз</div>"+
        "<div class='note'>Соратники получат письмо, имя и метка освободятся. Обратной дороги нет.</div></div>"+
@@ -16724,9 +16815,10 @@ function mpAllyNoneHtml(){
     h+="<div class='entry'><div class='line'>"+
        "<img class='stub-ico' src='images/ui/icon-alliance.png' alt=''>"+
        "<div class='fill'><div class='title'>Нужен Центр Альянса</div>"+
-       "<div class='note'>Резиденция посольств и союзов. Постройте её в городе — она же задаёт, "+
-       "сколько соратников поместится: двадцать четыре на первом уровне, сто двадцать на "+
-       "двадцать пятом. Вступить в чужой союз можно и без неё.</div></div></div></div>";
+       "<div class='note'>Резиденция союза: без неё союз не основать. Она же решает, сколько "+
+       "войск союз сведёт в один общий сбор и сколько союзных подкреплений встанет в вашем "+
+       "городе — от "+fmt(ALLY_RALLY_CAP[0])+" на первом уровне до "+fmt(ALLY_RALLY_CAP[24])+" на двадцать пятом. "+
+       "Вступить в чужой союз можно и без неё.</div></div></div></div>";
   } else {
     h+="<div class='entry'><div class='line'><div class='fill ally-form'>"+
        "<label for='mp-ally-name'>Имя союза</label>"+
@@ -16737,7 +16829,7 @@ function mpAllyNoneHtml(){
        "<input id='mp-ally-motto' maxlength='140' placeholder='Чем живёт союз'>"+
        "<label class='ally-check'><input type='checkbox' id='mp-ally-open' checked> Принимать без заявки</label>"+
        "<div class='note'>Метка встанет перед вашим именем и именами соратников. "+
-       "Мест в союзе — "+(20+4*Math.min(25,centerLv))+", по уровню вашего Центра Альянса.</div>"+
+       "Мест в союзе — "+MP_ALLY_CAP_DEFAULT+", одинаково у всех союзов мира.</div>"+
        "<button class='seal' data-mp='allycreate'"+(mpAllyBusy?" disabled":"")+">Основать</button>"+
        "</div></div></div>";
   }
@@ -16751,7 +16843,7 @@ function mpAllyNoneHtml(){
   }
   h+="<div class='rank-list ally'>";
   mpState.allyList.forEach((a,i)=>{
-    const full=(a.members||0)>=(a.members_max||24);
+    const full=(a.members||0)>=(a.members_max||MP_ALLY_CAP_DEFAULT);
     const applied=appliedTo.has(a.id);
     let btn;
     if(applied) btn="<button class='seal tiny ghost' data-mp='allycancel' data-id='"+a.id+"'"+(mpAllyBusy?" disabled":"")+">Отозвать</button>";
@@ -16761,7 +16853,7 @@ function mpAllyNoneHtml(){
        "<span class='rk-place"+(i<3?" top":"")+"'>"+(i+1)+"</span>"+
        "<span class='rk-nick'>"+mpAllyTagHtml(a.tag)+" "+escHtml(a.name)+
          (a.motto?"<span class='ally-motto'>"+escHtml(a.motto)+"</span>":"")+"</span>"+
-       "<span class='rk-hall'>"+(a.members||0)+"/"+(a.members_max||24)+"</span>"+
+       "<span class='rk-hall'>"+(a.members||0)+"/"+(a.members_max||MP_ALLY_CAP_DEFAULT)+"</span>"+
        "<b class='rk-pw'>"+fmt(a.power||0)+"</b>"+
        "<span class='rk-acts'>"+btn+"</span></div>";
   });

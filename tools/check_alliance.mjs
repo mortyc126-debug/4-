@@ -128,12 +128,12 @@ const r = await page.evaluate(({ stateNoCenter, stateWithCenter }) => {
   // --- 2. Не в союзе, Центр есть, в мире два союза -----------------------
   P.state = mkState(3);   // 20 + 4*3 = 32 места
   mpState.allyList = [
-    { id: 11, name: 'Орден Багровой Зари', tag: 'ЗАРЯ', motto: 'Свет из пепла', open: true, min_power: 0, members: 4, members_max: 32, power: 120000 },
-    { id: 12, name: 'Тихий Дозор', tag: 'ДОЗР', motto: '', open: false, min_power: 0, members: 32, members_max: 32, power: 90000 },
+    { id: 11, name: 'Орден Багровой Зари', tag: 'ЗАРЯ', motto: 'Свет из пепла', open: true, min_power: 0, members: 4, members_max: 30, power: 120000 },
+    { id: 12, name: 'Тихий Дозор', tag: 'ДОЗР', motto: '', open: false, min_power: 0, members: 30, members_max: 30, power: 90000 },
   ];
   h = mpAllianceHtml();
   out.сЦентром_формаЕсть = acts(h).indexOf('allycreate') >= 0;
-  out.сЦентром_местПоЗданию = /Мест в союзе — 32/.test(text(h));
+  out.сЦентром_мест30 = /Мест в союзе — 30/.test(text(h));
   out.сЦентром_вступить = acts(h).indexOf('allyjoin') >= 0;
   // Полный союз кнопку вступления не показывает вовсе — сервер всё равно
   // откажет, а нажимаемая кнопка, которая всегда отвечает отказом, хуже её
@@ -148,15 +148,15 @@ const r = await page.evaluate(({ stateNoCenter, stateWithCenter }) => {
   // --- 3. В союзе соратником ---------------------------------------------
   reset();
   const ally = { id: 11, world_id: 'w1', name: 'Орден Багровой Зари', tag: 'ЗАРЯ',
-    motto: 'Свет из пепла', open: true, min_power: 0, members: 3, members_max: 32,
+    motto: 'Свет из пепла', open: true, min_power: 0, members: 3, members_max: 30,
     power: 120000, leader_id: 9 };
   const mem = (id, nick, role, days) => ({ player_id: id, role, joined_at: new Date(Date.now() - days * 864e5).toISOString(),
     players: { id, nick, race: 'human', power: 40000, x: 0, y: 0, rating: 0, rating_battles: 0, dead_at: null } });
   // allyRole и роль своей строки в составе всегда согласованы — их обе
   // ставит mpRefreshAlliance из ОДНОЙ выборки членства. Расходиться им негде,
   // и стенд не должен изображать состояние, которого не бывает.
-  mpState.ally = ally; mpState.allyRole = 'member';
-  mpState.allyMembers = [mem(9, 'Гутрум', 'leader', 30), mem(8, 'Эльна', 'officer', 20), mem(7, 'Витольд', 'member', 2)];
+  mpState.ally = ally; mpState.allyRole = 'r1';
+  mpState.allyMembers = [mem(9, 'Гутрум', 'r5', 30), mem(8, 'Эльна', 'r4', 20), mem(7, 'Витольд', 'r1', 2)];
   // Как отдаёт база (order created_at desc + limit) — свежие первыми;
   // переворачивает показ, а не клиент (см. .ally-chat, column-reverse).
   mpState.allyChat = [
@@ -171,7 +171,7 @@ const r = await page.evaluate(({ stateNoCenter, stateWithCenter }) => {
   const a3 = acts(h);
   out.соратник_метка = /\[ЗАРЯ\]/.test(text(h));
   out.соратник_составВидит = /Гутрум/.test(text(h)) && /Эльна/.test(text(h));
-  out.соратник_ролиПодписаны = /Глава/.test(text(h)) && /Старейшина/.test(text(h)) && /Соратник/.test(text(h));
+  out.соратник_ролиПодписаны = /Глава/.test(text(h)) && /Заместитель/.test(text(h)) && /Новик/.test(text(h));
   out.соратник_чатЕсть = /Собираемся на востоке/.test(text(h)) && /Союз основан/.test(text(h));
   // Порядок в разметке — свежие первыми: на этом держится column-reverse,
   // и перепутать его молча — значит открыть чат на самой старой реплике.
@@ -186,8 +186,8 @@ const r = await page.evaluate(({ stateNoCenter, stateWithCenter }) => {
   // --- 4. В союзе старейшиной --------------------------------------------
   // Я — старейшина, надо мной глава, подо мной один соратник: исключить
   // можно ровно его, главу нельзя.
-  mpState.allyRole = 'officer';
-  mpState.allyMembers = [mem(9, 'Гутрум', 'leader', 30), mem(7, 'Витольд', 'officer', 2), mem(8, 'Эльна', 'member', 20)];
+  mpState.allyRole = 'r4';
+  mpState.allyMembers = [mem(9, 'Гутрум', 'r5', 30), mem(7, 'Витольд', 'r4', 2), mem(8, 'Эльна', 'r2', 20)];
   h = mpAllianceHtml();
   const a4 = acts(h);
   out.старейшина_видитЗаявки = a4.indexOf('allyaccept') >= 0 && a4.indexOf('allyreject') >= 0;
@@ -200,14 +200,20 @@ const r = await page.evaluate(({ stateNoCenter, stateWithCenter }) => {
   // Я — глава, подо мной старейшина и соратник: оба исключаемы, обоим можно
   // сменить роль (по две кнопки на каждого — «повысить/разжаловать» и
   // «отдать союз»).
-  mpState.allyRole = 'leader';
-  mpState.allyMembers = [mem(7, 'Витольд', 'leader', 2), mem(8, 'Эльна', 'officer', 20), mem(9, 'Гутрум', 'member', 30)];
+  mpState.allyRole = 'r5';
+  mpState.allyMembers = [mem(7, 'Витольд', 'r5', 2), mem(8, 'Эльна', 'r4', 20), mem(9, 'Гутрум', 'r2', 30)];
   h = mpAllianceHtml();
   const a5 = acts(h);
   out.глава_раздаётРоли = a5.indexOf('allyrole') >= 0;
-  // По одной ролевой кнопке на каждого младшего: «в старейшины» либо
-  // «разжаловать». Передача союза на строках состава не живёт — см. ниже.
-  out.глава_ролейПоОднойНаМладшего = (h.match(/data-mp='allyrole'/g) || []).length === 2;
+  // Лестница из пяти ступеней: шаг вверх и шаг вниз, каждый — только если
+  // ему есть куда. У заместителя (r4) вверх дороги нет — выше только глава, а
+  // главой делает лишь передача союза; значит одна кнопка. У дружинника (r2)
+  // обе. Итого три на двоих — а не «по одной на каждого», как было при двух
+  // ступенях.
+  out.глава_ролевыхКнопок = (h.match(/data-mp='allyrole'/g) || []).length;
+  const roleTargets = (html) => { const d = document.createElement('div'); d.innerHTML = html;
+    return [...d.querySelectorAll("[data-mp='allyrole']")].map(n => n.dataset.role).sort(); };
+  out.глава_кудаВедутРоли = roleTargets(h).join(',');
   // Разбором, а не регулярным выражением: «нет allyhand внутри строки
   // состава» — вопрос о вложенности, и по плоскому тексту он не проверяется
   // (любой .* пролезет через всю разметку до кнопки, стоящей ниже списка).
@@ -225,27 +231,27 @@ const r = await page.evaluate(({ stateNoCenter, stateWithCenter }) => {
   out.глава_уйтиНельзя = enabled(h, 'allyleave') === false;
   out.глава_объяснено = /передав старшинство/.test(text(h));
   // Последний в союзе — уйти можно (союз распустится сам).
-  mpState.allyMembers = [mem(7, 'Витольд', 'leader', 2)];
+  mpState.allyMembers = [mem(7, 'Витольд', 'r5', 2)];
   h = mpAllianceHtml();
   out.одинВСоюзе_уйтиМожно = enabled(h, 'allyleave') === true;
 
   // --- 5б. Метка на кнопке меню «Альянс» ----------------------------------
   // Метится только неразобранное — заявки, и только у тех, кто их разбирает.
   mpState.allyApps = [{ player_id: 5, created_at: new Date().toISOString(), players: { id: 5, nick: 'Бранд', race: 'elf', power: 1000 } }];
-  mpState.allyMembers = [mem(7, 'Витольд', 'leader', 2), mem(8, 'Эльна', 'officer', 20)];
-  mpState.allyRole = 'leader';   out.метка_главе = menuBadges().alliance;
-  mpState.allyRole = 'officer';  out.метка_старейшине = menuBadges().alliance;
-  mpState.allyRole = 'member';   out.метка_соратнику = menuBadges().alliance;
+  mpState.allyMembers = [mem(7, 'Витольд', 'r5', 2), mem(8, 'Эльна', 'r4', 20)];
+  mpState.allyRole = 'r5';  out.метка_главе = menuBadges().alliance;
+  mpState.allyRole = 'r4';  out.метка_заместителю = menuBadges().alliance;
+  mpState.allyRole = 'r1';  out.метка_соратнику = menuBadges().alliance;
   mpState.ally = null; mpState.allyRole = ''; mpState.allyApps = [];
   out.метка_безСоюза = menuBadges().alliance;
-  mpState.ally = ally; mpState.allyRole = 'leader';
+  mpState.ally = ally; mpState.allyRole = 'r5';
 
   // --- 6. Таблица мира «Альянс» -------------------------------------------
   const board = MP_BOARDS.find(b => b.id === 'alliance');
   out.таблица_неЗаглушка = !!board && !board.stub && board.table === 'alliances';
-  out.таблица_строка = board ? text(board.rowHtml({ id: 11, name: 'Орден Багровой Зари', tag: 'ЗАРЯ', members: 4, members_max: 32, power: 120000 }, 0, true)) : '';
+  out.таблица_строка = board ? text(board.rowHtml({ id: 11, name: 'Орден Багровой Зари', tag: 'ЗАРЯ', members: 4, members_max: 30, power: 120000 }, 0, true)) : '';
   out.таблица_естьМетка = /ЗАРЯ/.test(out.таблица_строка);
-  out.таблица_естьСостав = /4\/32/.test(out.таблица_строка);
+  out.таблица_естьСостав = /4\/30/.test(out.таблица_строка);
   out.таблица_мойСоюз = board ? board.mineId() : null;
   // Ни у одной из девяти таблиц не осталось заглушки — ветка stub мертва.
   out.таблица_заглушекНет = MP_BOARDS.every(b => !b.stub);
@@ -263,11 +269,15 @@ const r = await page.evaluate(({ stateNoCenter, stateWithCenter }) => {
   // handleMpAct по её же исходнику. Это ровно тот разрыв, на котором уже
   // ломался выбор полководца в Фазе 20.
   const drawn = new Set();
-  mpState.ally = ally; mpState.allyRole = 'leader';
-  mpState.allyMembers = [mem(9, 'Гутрум', 'member', 30), mem(8, 'Эльна', 'officer', 20), mem(7, 'Витольд', 'leader', 2)];
+  // Заявка обязана быть: без неё не рисуются allyaccept/allyreject, и
+  // проверка проводки молча перестала бы их проверять.
+  mpState.allyApps = [{ player_id: 5, created_at: new Date().toISOString(),
+                        players: { id: 5, nick: 'Бранд', race: 'elf', power: 1000 } }];
+  mpState.ally = ally; mpState.allyRole = 'r5';
+  mpState.allyMembers = [mem(9, 'Гутрум', 'r2', 30), mem(8, 'Эльна', 'r4', 20), mem(7, 'Витольд', 'r5', 2)];
   acts(mpAllianceHtml()).forEach(a => drawn.add(a));
   reset(); P.state = mkState(3);
-  mpState.allyList = [{ id: 11, name: 'Орден', tag: 'ЗАРЯ', motto: '', open: true, min_power: 0, members: 1, members_max: 32, power: 1 }];
+  mpState.allyList = [{ id: 11, name: 'Орден', tag: 'ЗАРЯ', motto: '', open: true, min_power: 0, members: 1, members_max: 30, power: 1 }];
   acts(mpAllianceHtml()).forEach(a => drawn.add(a));
   mpState.allyMyApps = [{ alliance_id: 11 }];
   acts(mpAllianceHtml()).forEach(a => drawn.add(a));
@@ -301,16 +311,16 @@ check('пустой список союзов подписан', r.безЦен�
 
 console.log('\nНе в союзе, Центр Альянса 3 уровня:');
 check('форма основания есть', r.сЦентром_формаЕсть);
-check('мест в союзе посчитано по зданию (32)', r.сЦентром_местПоЗданию);
+check('мест в союзе — тридцать, не по зданию', r.сЦентром_мест30);
 check('в открытый союз можно вступить', r.сЦентром_вступить);
 check('у полного союза кнопки вступления нет', r.сЦентром_полныйБезКнопки);
 check('полный союз подписан «Полно»', r.сЦентром_полноПодписано);
 check('поданная заявка даёт «Отозвать»', r.заявка_отозвать);
 
-console.log('\nВ союзе соратником:');
+console.log('\nВ союзе новиком (r1, младшая ступень):');
 check('метка союза видна', r.соратник_метка);
 check('состав виден', r.соратник_составВидит);
-check('роли подписаны', r.соратник_ролиПодписаны);
+check('ступени подписаны именами (Глава / Заместитель / Новик)', r.соратник_ролиПодписаны);
 check('чат и летопись союза видны', r.соратник_чатЕсть);
 check('в разметке свежие реплики первыми (под column-reverse)', r.соратник_чатСвежиеПервыми);
 check('может сказать в чат', r.соратник_можетСказать);
@@ -320,7 +330,7 @@ check('никого не исключает', r.соратник_неИсклю�
 check('союз не распускает', r.соратник_неРаспускает);
 check('уйти может', r.соратник_можетУйти);
 
-console.log('\nВ союзе старейшиной:');
+console.log('\nВ союзе заместителем (r4):');
 check('видит и разбирает заявки', r.старейшина_видитЗаявки);
 check('правит порядок приёма', r.старейшина_правитПорядок);
 check('исключает только младшего (одного из двух)', r.старейшина_исключаетМладшего);
@@ -329,7 +339,9 @@ check('союз не распускает', r.старейшина_неРасп�
 
 console.log('\nВ союзе главой:');
 check('раздаёт роли', r.глава_раздаётРоли);
-check('по одной ролевой кнопке на каждого младшего', r.глава_ролейПоОднойНаМладшего);
+check('ролевых кнопок три: заместителю вниз, дружиннику вверх и вниз (' + r.глава_ролевыхКнопок + ')',
+      r.глава_ролевыхКнопок === 3);
+check('и ведут они на r3,r3,r1 (' + r.глава_кудаВедутРоли + ')', r.глава_кудаВедутРоли === 'r1,r3,r3');
 check('передача союза не засоряет строки состава', r.глава_передачаНеВСоставе);
 check('передача союза есть в «Расставании»', r.глава_передачаВРасставании);
 check('в наследниках оба соратника (' + r.глава_наследников + ')', r.глава_наследников === 2);
@@ -342,7 +354,7 @@ check('оставшись один — уйти может', r.одинВСою�
 
 console.log('\nМетка на кнопке «Альянс»:');
 check('главе видна заявка (' + r.метка_главе + ')', r.метка_главе === 1);
-check('старейшине видна заявка (' + r.метка_старейшине + ')', r.метка_старейшине === 1);
+check('заместителю видна заявка (' + r.метка_заместителю + ')', r.метка_заместителю === 1);
 check('соратнику метки нет (' + r.метка_соратнику + ')', r.метка_соратнику === 0);
 check('без союза метки нет (' + r.метка_безСоюза + ')', r.метка_безСоюза === 0);
 
@@ -361,6 +373,11 @@ check('открывается по id', r.почта_открывается);
 console.log('\nПроводка кнопок:');
 console.log('    нарисовано:', r.кнопкиЭкрана.join(', '));
 check('у каждой есть ветка в handleMpAct', r.безОбработчика.length === 0);
+// Кнопок на экране двенадцать, а операций на сервере одиннадцать: allyhand
+// (передача союза) шлёт тот же op "role", просто со своим выбором наследника
+// и переспросом. Число сторожит от тихой потери кнопки при правке экрана.
+check('в проверку попали все двенадцать кнопок союза (' + r.кнопкиЭкрана.length + ')',
+      r.кнопкиЭкрана.length === 12);
 if (r.безОбработчика.length) console.log('    БЕЗ ОБРАБОТЧИКА:', r.безОбработчика.join(', '));
 
 console.log('\nКнопка помощи у идущей стройки:');

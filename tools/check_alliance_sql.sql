@@ -57,9 +57,9 @@ select (select v from probe where k='world')::uuid, 'Проба Чужой', 'П
        (select id from players where nick='ПробаЧужой');
 
 insert into alliance_members (player_id, alliance_id, role)
-select p.id, a.id, t.role from (values ('ПробаГлава','ПРБ1','leader'),
-                                       ('ПробаСоратник','ПРБ1','member'),
-                                       ('ПробаЧужой','ПРБ2','leader')) as t(nick, tag, role)
+select p.id, a.id, t.role from (values ('ПробаГлава','ПРБ1','r5'),
+                                       ('ПробаСоратник','ПРБ1','r1'),
+                                       ('ПробаЧужой','ПРБ2','r5')) as t(nick, tag, role)
 join players p on p.nick=t.nick join alliances a on a.tag=t.tag;
 
 insert into alliance_applications (alliance_id, player_id)
@@ -69,6 +69,30 @@ insert into alliance_chat (alliance_id, player_id, nick, body)
 select a.id, p.id, p.nick, 'тайна '||a.tag
 from alliances a join players p on p.nick = case a.tag when 'ПРБ1' then 'ПробаГлава' else 'ПробаЧужой' end
 where a.tag in ('ПРБ1','ПРБ2');
+
+-- ---------------------------------------------------------------------------
+-- 0. Значения по умолчанию. Проверяются потому, что их правит догоняющий блок
+-- миграции: базу могли накатить прежней редакцией, где ступеней было три, а
+-- вместимость считалась от здания. Не сработай он — новый союз молча завёлся
+-- бы с ролью, которой код уже не знает.
+-- ---------------------------------------------------------------------------
+do $$
+declare role_def text; cap_def text; bad text;
+begin
+  select column_default into role_def from information_schema.columns
+    where table_schema='public' and table_name='alliance_members' and column_name='role';
+  select column_default into cap_def from information_schema.columns
+    where table_schema='public' and table_name='alliances' and column_name='members_max';
+  if role_def is distinct from '''r1''::text' then
+    raise exception 'ПРОВАЛ: ступень по умолчанию — %, ждали r1', coalesce(role_def,'NULL'); end if;
+  if cap_def is distinct from '30' then
+    raise exception 'ПРОВАЛ: вместимость по умолчанию — %, ждали 30', coalesce(cap_def,'NULL'); end if;
+  -- И ни одной строки с ролями прежнего образца: догоняющий блок их переносит.
+  select string_agg(distinct role, ', ') into bad from alliance_members
+    where role not in ('r5','r4','r3','r2','r1');
+  if bad is not null then raise exception 'ПРОВАЛ: в составе остались ступени прежнего образца: %', bad; end if;
+  raise notice '0 ✓ ступень по умолчанию r1, вместимость 30, ступеней прежнего образца в базе нет';
+end $$;
 
 -- ---------------------------------------------------------------------------
 -- 1-3. Что держит схема сама.
@@ -157,7 +181,7 @@ select (select v from probe where k='world')::uuid, (select v from probe where k
        'dwarf','ПробаЧужой',0,0,3000;
 update alliances set leader_id=(select id from players where nick='ПробаЧужой') where tag='ПРБ2';
 insert into alliance_members (player_id, alliance_id, role)
-select (select id from players where nick='ПробаЧужой'), id, 'leader' from alliances where tag='ПРБ2';
+select (select id from players where nick='ПробаЧужой'), id, 'r5' from alliances where tag='ПРБ2';
 insert into alliance_applications (alliance_id, player_id)
 select id, (select id from players where nick='ПробаПроситель') from alliances where tag='ПРБ2';
 insert into alliance_chat (alliance_id, player_id, nick, body)

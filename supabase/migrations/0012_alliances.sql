@@ -7,6 +7,10 @@
 -- меню) и здание «Центр Альянса», которое строилось и давало мощь, но не
 -- значило ничего. Таблиц не было ни одной.
 --
+-- Пять ступеней старшинства (r5..r1), вместимость союза — тридцать на всех.
+-- Здание «Центр Альянса» к числу соратников отношения не имеет: оно даёт
+-- вместимость подкреплений и общего сбора (таблицы — в index.html).
+--
 -- Эта миграция — только состав союза. Регионы, крепости варваров и святыни
 -- (worldgen/regions/SHRINES.md — утверждённый дизайн) идут следующей фазой и
 -- встанут отдельными таблицами поверх этих: сначала есть кому владеть
@@ -49,14 +53,12 @@ create table if not exists alliances (
   min_power bigint not null default 0,
   members int not null default 1,
   power bigint not null default 0,
-  -- Вместимость = 20 + 4 за уровень Центра Альянса У ГЛАВЫ (24 на первом
-  -- уровне, 120 на двадцать пятом). Это первая настоящая работа здания,
-  -- которое до сих пор только давало мощь. Колонкой, а не расчётом на
-  -- клиенте: уровень чужого здания клиенту не виден (в список соседей
-  -- состояние нарочно не тянется, см. mpRefreshNeighbors), а показать
-  -- «сколько нас из скольких» надо в первой же строке экрана союза.
-  -- Пересчитывается там же, где members/power.
-  members_max int not null default 24,
+  -- Вместимость союза — ТРИДЦАТЬ, одинаково для всех, прямое решение автора.
+  -- Со зданием «Центр Альянса» она не связана: здание даёт вместимость
+  -- подкреплений и общего сбора, а не число соратников.
+  -- Колонкой, а не константой в коде: пока число одно на всех, но менять его
+  -- (событием, сезоном, отдельным союзом) придётся живой базе, а не деплою.
+  members_max int not null default 30,
   power_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   disbanded_at timestamptz
@@ -78,14 +80,21 @@ create unique index if not exists alliances_tag_uniq
 -- проверкой в коде — вторую строку база просто не примет, чем бы её ни
 -- пытались вставить.
 --
--- role: 'leader' | 'officer' | 'member' (Глава | Старейшина | Соратник).
+-- role — пять ступеней, как заведено в этом жанре (автор прямо сослался на
+-- RoK): 'r5' Глава, 'r4' Заместитель, 'r3' Старейшина, 'r2' Дружинник,
+-- 'r1' Новик. Хранятся кодами, а не именами: имена — дело показа, и когда
+-- глава сможет переименовывать ступени под свой союз (как в том же RoK),
+-- менять придётся строку показа, а не всю таблицу.
+--
 -- Глава ровно один и совпадает с alliances.leader_id — это две записи одного
 -- факта, но обе нужны: leader_id читается вместе с союзом одной строкой (для
--- списка союзов), role — вместе с составом.
+-- списка союзов), role — вместе с составом. Заместителей не больше четырёх;
+-- это правило кода (mp-alliance), а не схемы: «не больше N строк с таким
+-- значением» база выразить не умеет, а триггер ради него был бы дороже.
 create table if not exists alliance_members (
   player_id   bigint primary key references players(id) on delete cascade,
   alliance_id bigint not null references alliances(id) on delete cascade,
-  role        text not null default 'member',
+  role        text not null default 'r1',
   joined_at   timestamptz not null default now()
 );
 create index if not exists alliance_members_alliance_idx on alliance_members(alliance_id);
@@ -124,6 +133,21 @@ create table if not exists alliance_chat (
 create index if not exists alliance_chat_idx on alliance_chat(alliance_id, created_at desc);
 
 -- ---------------------------------------------------------------------------
+-- Догоняющий блок. Первая редакция этой миграции знала три роли
+-- (leader/officer/member) и считала вместимость от уровня Центра Альянса;
+-- автор поправил и то и другое до того, как её накатили. Блок нужен ровно на
+-- случай «а вдруг всё-таки накатили»: на чистой базе он не делает ничего
+-- (значений старого вида там нет), на накатанной — приводит её к нынешнему
+-- виду, вместо того чтобы молча оставить союз с ролями, которых код уже не
+-- знает. Повторный запуск безвреден.
+update alliance_members set role = 'r5' where role = 'leader';
+update alliance_members set role = 'r4' where role = 'officer';
+update alliance_members set role = 'r1' where role = 'member';
+alter table alliance_members alter column role set default 'r1';
+alter table alliances alter column members_max set default 30;
+update alliances set members_max = 30 where members_max <> 30;
+
+-- ---------------------------------------------------------------------------
 -- RLS. Писать во все четыре таблицы может ТОЛЬКО mp-alliance (service_role,
 -- на него RLS не действует) — политик на insert/update/delete здесь нет
 -- вовсе, ровно как у players/marches: правила игры проверяет функция.
@@ -151,7 +175,9 @@ create policy alliance_applications_select_own on alliance_applications for sele
     or alliance_id in (
       select m.alliance_id from alliance_members m
       join players p on p.id = m.player_id
-      where p.auth_uid = auth.uid() and m.role in ('leader','officer')
+      -- Ступени r5/r4 — глава и заместитель, те, кто заявки и разбирает
+      -- (см. RANK_OFFICER в mp-alliance). Три нижние ступени заявок не видят.
+      where p.auth_uid = auth.uid() and m.role in ('r5','r4')
     )
   );
 

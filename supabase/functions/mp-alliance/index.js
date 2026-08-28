@@ -21,15 +21,15 @@
 //
 // Тело запроса: { op: "...", ...аргументы }
 //   create  {name, tag, motto, open}   — основать союз (нужен Центр Альянса)
-//   edit    {motto, open, minPower}    — девиз и порядок приёма (старейшина+)
+//   edit    {motto, open, minPower}    — девиз и порядок приёма (заместитель+)
 //   disband {}                         — распустить (только глава)
 //   join    {allianceId}               — вступить (открытый) / подать заявку
 //   cancel  {allianceId}               — отозвать свою заявку
-//   accept  {playerId}                 — принять заявку (старейшина+)
-//   reject  {playerId}                 — отклонить заявку (старейшина+)
+//   accept  {playerId}                 — принять заявку (заместитель+)
+//   reject  {playerId}                 — отклонить заявку (заместитель+)
 //   leave   {}                         — выйти самому
-//   kick    {playerId}                 — исключить (старейшина+, младшего)
-//   role    {playerId, role}           — назначить роль (только глава)
+//   kick    {playerId}                 — исключить (заместитель+, младшего)
+//   role    {playerId, role}           — старшинство r5..r1 (только глава)
 //   say     {body}                     — реплика в чат союза
 // Ответ: { ok:true, ... } либо { err }.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -56,22 +56,32 @@ function handleOptions(req) {
 // -----------------------------------------------------------------------------
 // Правила союза
 // -----------------------------------------------------------------------------
-// Старшинство ролей числом — сравнивать «кто кого главнее» строками нельзя, а
-// правило везде одно: распоряжаться можно только СТРОГО младшим.
-const ROLE_RANK = { leader: 3, officer: 2, member: 1 };
-const ROLE_NAME = { leader: "Глава", officer: "Старейшина", member: "Соратник" };
+// Пять ступеней старшинства, как заведено в жанре (автор прямо сослался на
+// RoK). Кодами, а не именами: имена — дело показа (см. ROLE_NAME и его
+// близнеца в index.html), и переименование ступеней под свой союз, если оно
+// однажды понадобится, не должно трогать хранимое.
+// Числом — потому что правило везде одно: распоряжаться можно только СТРОГО
+// младшим, а сравнивать «кто главнее» строками нельзя.
+const ROLE_RANK = { r5: 5, r4: 4, r3: 3, r2: 2, r1: 1 };
+const ROLE_NAME = { r5: "Глава", r4: "Заместитель", r3: "Старейшина", r2: "Дружинник", r1: "Новик" };
+// Заместителей не больше четырёх — вакансии, а не звание по выслуге.
+// Правило кода, а не схемы: «не больше N строк с таким значением» база
+// выразить не умеет (см. комментарий у таблицы в миграции 0012).
+const R4_SLOTS = 4;
+// Распоряжаются союзом двое старших: глава — всем, заместитель — приёмом,
+// исключением младших и порядком. Три нижние ступени — знак старшинства
+// внутри союза, без прав: так это и устроено в жанре.
+const RANK_OFFICER = ROLE_RANK.r4, RANK_LEADER = ROLE_RANK.r5;
 
-// Вместимость союза = 20 + 4 за уровень Центра Альянса у ГЛАВЫ (24 на первом
-// уровне, 120 на двадцать пятом). Это первая настоящая работа этого здания:
-// до сих пор оно строилось на 25 уровней и давало только мощь — «своей
-// игровой механики им пока не завели» (index.html, BUILDINGS.alliance).
-// Считается от главы, а не от каждого: вместимость — свойство союза, и расти
-// ей от того, кто союз держит.
-const ALLY_CAP_BASE = 20, ALLY_CAP_PER_LV = 4;
-function allianceCapFor(leaderState) {
-  const lv = (leaderState && leaderState.b && leaderState.b.alliance) || 0;
-  return ALLY_CAP_BASE + ALLY_CAP_PER_LV * Math.max(0, Math.min(25, lv | 0));
-}
+// Вместимость союза — ТРИДЦАТЬ на всех, прямое решение автора; со зданием
+// «Центр Альянса» не связана вовсе. Здание даёт вместимость подкреплений и
+// общего сбора (таблицы ALLY_RALLY_CAP/ALLY_REINF_CAP в index.html) — то
+// есть сколько войск союз может привести в одну точку, а не сколько в нём
+// голов.
+// Читается из колонки alliances.members_max, а не из этой константы: число
+// одно на всех, но менять его придётся живой базе, а не деплою. Константа —
+// только запасное значение, если колонки почему-то нет.
+const ALLY_CAP_DEFAULT = 30;
 
 const NAME_MIN = 3, NAME_MAX = 24;
 const TAG_MIN = 2, TAG_MAX = 4;
@@ -113,7 +123,7 @@ async function allianceMail(admin, worldId, playerId, title, text) {
 // колонки players.power — её и так держит свежей mp-join на каждом
 // пятисекундном опросе, считать заново нечего.
 // Павшие (dead_at) не в счёт ни там, ни там: их города на карте уже нет.
-async function recountAlliance(admin, allianceId, leaderId) {
+async function recountAlliance(admin, allianceId) {
   const { data: rows } = await admin
     .from("alliance_members")
     .select("player_id, players!inner(power, dead_at)")
@@ -124,17 +134,11 @@ async function recountAlliance(admin, allianceId, leaderId) {
     if (!pl || pl.dead_at) continue;
     members++; power += Number(pl.power || 0);
   }
-  // Вместимость — тем же обновлением: она зависит от уровня Центра Альянса у
-  // главы, а клиенту чужое состояние не видно (см. комментарий к колонке в
-  // миграции 0012). Глава мог только что смениться, поэтому id передаётся
-  // вызывающим, а не берётся из прочитанного раньше союза.
-  const patch = { members, power, power_at: new Date().toISOString() };
-  if (leaderId) {
-    const { data: leader } = await admin
-      .from("players").select("state").eq("id", leaderId).maybeSingle();
-    patch.members_max = allianceCapFor(leader && leader.state);
-  }
-  await admin.from("alliances").update(patch).eq("id", allianceId);
+  // members_max тут больше не трогается: вместимость одна на всех и живёт в
+  // своей колонке со значением по умолчанию (см. миграцию 0012).
+  await admin.from("alliances")
+    .update({ members, power, power_at: new Date().toISOString() })
+    .eq("id", allianceId);
   return { members, power };
 }
 
@@ -151,16 +155,16 @@ async function recountAlliance(admin, allianceId, leaderId) {
 async function ensureLeader(admin, alliance, members) {
   const alive = (members || []).filter((m) => m.players && !m.players.dead_at);
   if (!alive.length) return null;
-  const cur = alive.find((m) => m.role === "leader");
+  const cur = alive.find((m) => m.role === "r5");
   if (cur && alliance.leader_id === cur.player_id) return cur;
   // Кандидат: действующий глава по составу, иначе старший по роли и стажу.
   const heir = cur || alive.slice().sort((a, b) =>
     (ROLE_RANK[b.role] || 0) - (ROLE_RANK[a.role] || 0) ||
     new Date(a.joined_at) - new Date(b.joined_at))[0];
   if (!heir) return null;
-  if (heir.role !== "leader") {
-    await admin.from("alliance_members").update({ role: "leader" }).eq("player_id", heir.player_id);
-    heir.role = "leader";
+  if (heir.role !== "r5") {
+    await admin.from("alliance_members").update({ role: "r5" }).eq("player_id", heir.player_id);
+    heir.role = "r5";
     await sysSay(admin, alliance.id, "Союз остался без главы. Старшинство принял " +
       (heir.players && heir.players.nick || "новый глава") + ".");
   }
@@ -249,7 +253,7 @@ Deno.serve(async (req) => {
       const { data: made, error: cErr } = await admin.from("alliances").insert({
         world_id: world.id, name, tag, leader_id: me.id, motto, open,
         min_power: Math.max(0, Math.round(Number(body.minPower) || 0)),
-        members: 1, power: Number(me.power || 0), members_max: allianceCapFor(me.state),
+        members: 1, power: Number(me.power || 0),
       }).select("*").maybeSingle();
       // Уникальные индексы по имени/метке (миграция 0012) — единственный
       // честный арбитр в гонке «двое основали одноимённый союз в один миг»:
@@ -262,7 +266,7 @@ Deno.serve(async (req) => {
         return jsonResponse({ err: cErr.message }, 500);
       }
       const { error: mErr } = await admin.from("alliance_members")
-        .insert({ player_id: me.id, alliance_id: made.id, role: "leader" });
+        .insert({ player_id: me.id, alliance_id: made.id, role: "r5" });
       if (mErr) {
         // Союз без единого участника — мусор; убираем за собой, чтобы имя
         // не осталось занятым несуществующим союзом.
@@ -272,7 +276,7 @@ Deno.serve(async (req) => {
       // Свои заявки в чужие союзы больше не нужны — союз уже свой.
       await admin.from("alliance_applications").delete().eq("player_id", me.id);
       await sysSay(admin, made.id, "Союз основан. Глава — " + (me.nick || "безымянный лорд") + ".");
-      return jsonResponse({ ok: true, alliance_id: made.id, cap: allianceCapFor(me.state) });
+      return jsonResponse({ ok: true, alliance_id: made.id, cap: capOf(made) });
     }
 
     // ---------------------------------------------------------------------
@@ -302,16 +306,16 @@ Deno.serve(async (req) => {
       // ограничение «не больше N строк» база выразить не умеет. Перебор при
       // этом ровно на единицу и рассасывается первым же выходом — цена
       // несоразмерна блокировке на каждое вступление.
-      const cap = await capOf(admin, alliance);
+      const cap = capOf(alliance);
       const alive = members.filter((m) => m.players && !m.players.dead_at).length;
       if (alive >= cap) return jsonResponse({ err: "В союзе нет свободных мест" }, 400);
 
       const { error: jErr } = await admin.from("alliance_members")
-        .insert({ player_id: me.id, alliance_id: allianceId, role: "member" });
+        .insert({ player_id: me.id, alliance_id: allianceId, role: "r1" });
       if (jErr) return jsonResponse({ err: jErr.message }, 500);
       await admin.from("alliance_applications").delete().eq("player_id", me.id);
       await sysSay(admin, allianceId, (me.nick || "Безымянный лорд") + " вступает в союз.");
-      await recountAlliance(admin, allianceId, alliance.leader_id);
+      await recountAlliance(admin, allianceId);
       return jsonResponse({ ok: true, alliance_id: allianceId });
     }
 
@@ -359,7 +363,7 @@ Deno.serve(async (req) => {
       const alive = members.filter((m) => m.players && !m.players.dead_at);
       // Глава уходит только передав старшинство или распустив союз: иначе
       // ensureLeader назначил бы преемника молча, за спиной у обоих.
-      if (mine && mine.role === "leader" && alive.length > 1)
+      if (mine && mine.role === "r5" && alive.length > 1)
         return jsonResponse({ err: "Глава не уходит просто так: передайте старшинство или распустите союз" }, 400);
       await admin.from("alliance_members").delete().eq("player_id", me.id);
       if (alive.length <= 1) {
@@ -374,7 +378,7 @@ Deno.serve(async (req) => {
         return jsonResponse({ ok: true, disbanded: true });
       }
       await sysSay(admin, alliance.id, (me.nick || "Безымянный лорд") + " покидает союз.");
-      await recountAlliance(admin, alliance.id, alliance.leader_id);
+      await recountAlliance(admin, alliance.id);
       return jsonResponse({ ok: true });
     }
 
@@ -382,7 +386,7 @@ Deno.serve(async (req) => {
     // edit — девиз и порядок приёма (старейшина и выше)
     // ---------------------------------------------------------------------
     if (op === "edit") {
-      if (rank < ROLE_RANK.officer) return jsonResponse({ err: "Это дело старейшин" }, 403);
+      if (rank < RANK_OFFICER) return jsonResponse({ err: "Это дело главы и заместителей" }, 403);
       const patch = {};
       if (body.motto !== undefined) patch.motto = String(body.motto || "").trim().slice(0, MOTTO_MAX);
       if (body.open !== undefined) patch.open = !!body.open;
@@ -397,7 +401,7 @@ Deno.serve(async (req) => {
     // accept / reject — разбор заявок (старейшина и выше)
     // ---------------------------------------------------------------------
     if (op === "accept" || op === "reject") {
-      if (rank < ROLE_RANK.officer) return jsonResponse({ err: "Это дело старейшин" }, 403);
+      if (rank < RANK_OFFICER) return jsonResponse({ err: "Это дело главы и заместителей" }, 403);
       const playerId = Number(body.playerId);
       if (!Number.isFinite(playerId)) return jsonResponse({ err: "Не указан правитель" }, 400);
       const { data: app } = await admin.from("alliance_applications")
@@ -418,18 +422,17 @@ Deno.serve(async (req) => {
       const { data: already } = await admin.from("alliance_members")
         .select("player_id").eq("player_id", playerId).maybeSingle();
       if (already) return jsonResponse({ err: "Он уже вступил в другой союз" }, 400);
-      const cap = await capOf(admin, alliance);
-      if (members.filter((m) => m.players && !m.players.dead_at).length >= cap)
+      if (members.filter((m) => m.players && !m.players.dead_at).length >= capOf(alliance))
         return jsonResponse({ err: "В союзе нет свободных мест" }, 400);
 
       const { error: aErr } = await admin.from("alliance_members")
-        .insert({ player_id: playerId, alliance_id: alliance.id, role: "member" });
+        .insert({ player_id: playerId, alliance_id: alliance.id, role: "r1" });
       if (aErr) return jsonResponse({ err: aErr.message }, 500);
       await admin.from("alliance_applications").delete().eq("player_id", playerId);
       await sysSay(admin, alliance.id, (cand.nick || "Безымянный лорд") + " принят в союз.");
       await allianceMail(admin, world.id, playerId, "Вас приняли в союз",
         "Союз «" + alliance.name + "» [" + alliance.tag + "] принял вашу заявку.");
-      await recountAlliance(admin, alliance.id, alliance.leader_id);
+      await recountAlliance(admin, alliance.id);
       return jsonResponse({ ok: true, accepted: true });
     }
 
@@ -437,7 +440,7 @@ Deno.serve(async (req) => {
     // kick — исключить (только строго младшего)
     // ---------------------------------------------------------------------
     if (op === "kick") {
-      if (rank < ROLE_RANK.officer) return jsonResponse({ err: "Это дело старейшин" }, 403);
+      if (rank < RANK_OFFICER) return jsonResponse({ err: "Это дело главы и заместителей" }, 403);
       const playerId = Number(body.playerId);
       if (playerId === me.id) return jsonResponse({ err: "Себя исключать незачем — есть выход" }, 400);
       const target = members.find((m) => m.player_id === playerId);
@@ -449,16 +452,16 @@ Deno.serve(async (req) => {
       await sysSay(admin, alliance.id, nick + " исключён из союза.");
       await allianceMail(admin, world.id, playerId, "Вас исключили из союза",
         "Союз «" + alliance.name + "» [" + alliance.tag + "] больше не считает вас своим.");
-      await recountAlliance(admin, alliance.id, alliance.leader_id);
+      await recountAlliance(admin, alliance.id);
       return jsonResponse({ ok: true });
     }
 
     // ---------------------------------------------------------------------
-    // role — назначить роль (только глава). Назначение роли "leader" и есть
-    // передача старшинства: прежний глава становится старейшиной.
+    // role — старшинство (только глава). Назначение роли "r5" и есть передача
+    // союза: прежний глава становится заместителем.
     // ---------------------------------------------------------------------
     if (op === "role") {
-      if (rank < ROLE_RANK.leader) return jsonResponse({ err: "Старшинство раздаёт только глава" }, 403);
+      if (rank < RANK_LEADER) return jsonResponse({ err: "Старшинство раздаёт только глава" }, 403);
       const playerId = Number(body.playerId);
       const role = String(body.role || "");
       if (!ROLE_RANK[role]) return jsonResponse({ err: "Неизвестная роль" }, 400);
@@ -470,14 +473,26 @@ Deno.serve(async (req) => {
       if (target.role === role) return jsonResponse({ err: "У него уже это старшинство" }, 400);
       const nick = (target.players && target.players.nick) || "Безымянный лорд";
 
-      if (role === "leader") {
+      if (role === "r5") {
         // Двух глав быть не может: сперва снимаем себя, потом ставим его —
-        // порядок важен, иначе на миг в союзе два leader'а.
-        await admin.from("alliance_members").update({ role: "officer" }).eq("player_id", me.id);
-        await admin.from("alliance_members").update({ role: "leader" }).eq("player_id", playerId);
+        // порядок важен, иначе на миг в союзе два r5. Прежний глава становится
+        // заместителем, и на него ВАКАНСИЯ НЕ ПРОВЕРЯЕТСЯ: он не назначается,
+        // а освобождает своё место, и отказать тут значило бы запретить
+        // передачу союза, где четыре заместителя уже набраны.
+        await admin.from("alliance_members").update({ role: "r4" }).eq("player_id", me.id);
+        await admin.from("alliance_members").update({ role: "r5" }).eq("player_id", playerId);
         await admin.from("alliances").update({ leader_id: playerId }).eq("id", alliance.id);
         await sysSay(admin, alliance.id, "Старшинство над союзом принял " + nick + ".");
         return jsonResponse({ ok: true, handedOver: true });
+      }
+      // Заместителей не больше четырёх — это вакансии, а не звание по выслуге.
+      // Считаем по ЖИВЫМ и не считая самого назначаемого (он может уже быть
+      // заместителем — тогда это понижение, а не занятие места).
+      if (role === "r4") {
+        const busy = members.filter((m) => m.role === "r4" && m.player_id !== playerId &&
+                                           m.players && !m.players.dead_at).length;
+        if (busy >= R4_SLOTS)
+          return jsonResponse({ err: "Все " + R4_SLOTS + " мест заместителей заняты" }, 400);
       }
       await admin.from("alliance_members").update({ role }).eq("player_id", playerId);
       await sysSay(admin, alliance.id, nick + " теперь " + (ROLE_NAME[role] || role).toLowerCase() + ".");
@@ -488,7 +503,7 @@ Deno.serve(async (req) => {
     // disband — распустить союз (только глава)
     // ---------------------------------------------------------------------
     if (op === "disband") {
-      if (rank < ROLE_RANK.leader) return jsonResponse({ err: "Распустить союз может только глава" }, 403);
+      if (rank < RANK_LEADER) return jsonResponse({ err: "Распустить союз может только глава" }, 403);
       const nowIso = new Date().toISOString();
       // Письмо каждому — кроме самого главы: он и так знает, что сделал.
       // ОДНОЙ вставкой, а не по запросу на участника: в полном союзе их до
@@ -513,13 +528,10 @@ Deno.serve(async (req) => {
   }
 });
 
-// Вместимость союза читается по состоянию ГЛАВЫ (см. allianceCapFor) — а его
-// строка к этому моменту прочитана не всегда, поэтому отдельной функцией с
-// собственной выборкой. Глава мог только что смениться (ensureLeader), так
-// что берём leader_id уже обновлённого союза.
-async function capOf(admin, alliance) {
-  if (!alliance.leader_id) return ALLY_CAP_BASE;
-  const { data: leader } = await admin
-    .from("players").select("state").eq("id", alliance.leader_id).maybeSingle();
-  return allianceCapFor(leader && leader.state);
+// Вместимость союза. С тех пор как она перестала зависеть от здания, это
+// просто колонка — но функция оставлена: место, где вместимость решается,
+// должно быть одно, и когда она снова станет от чего-то зависеть (событие,
+// сезон, отдельный союз), менять придётся эту строку, а не три места вызова.
+function capOf(alliance) {
+  return (alliance && alliance.members_max) || ALLY_CAP_DEFAULT;
 }
