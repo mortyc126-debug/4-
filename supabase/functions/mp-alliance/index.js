@@ -22,6 +22,7 @@
 // Тело запроса: { op: "...", ...аргументы }
 //   create  {name, tag, motto, open}   — основать союз (нужен Центр Альянса)
 //   edit    {motto, open, minPower}    — девиз и порядок приёма (заместитель+)
+//   emblem  {emblem:{s,d,c,t1,t2,t3}}  — герб союза (заместитель+)
 //   disband {}                         — распустить (только глава)
 //   join    {allianceId}               — вступить (открытый) / подать заявку
 //   cancel  {allianceId}               — отозвать свою заявку
@@ -395,6 +396,35 @@ Deno.serve(async (req) => {
       const { error: eErr } = await admin.from("alliances").update(patch).eq("id", alliance.id);
       if (eErr) return jsonResponse({ err: eErr.message }, 500);
       return jsonResponse({ ok: true });
+    }
+
+    // ---------------------------------------------------------------------
+    // emblem — герб союза (заместитель и выше)
+    // ---------------------------------------------------------------------
+    // Хранится шестью числами: форма щита, деление поля, фигура и три
+    // тинктуры (см. заголовок «Герб союза» в index.html). Сервер проверяет
+    // только ДИАПАЗОНЫ — рисует всё равно клиент из своих атласов, и число
+    // вне диапазона там просто не найдёт кадра. Но принять его нельзя: оно
+    // разойдётся по всем, кто увидит этот союз.
+    if (op === "emblem") {
+      if (rank < RANK_OFFICER) return jsonResponse({ err: "Это дело главы и заместителей" }, 403);
+      const e = body.emblem || {};
+      // Верхние границы — длины лент в images/heraldry (11 форм, 24 деления,
+      // 40 фигур, 9 тинктур). У деления и фигуры 0 — «без этого», поэтому
+      // они на единицу шире. Числа продублированы здесь по правилу
+      // самодостаточных копий; печёт ленты tools/bake_heraldry.py, и его
+      // шапка предупреждает, что порядок кадров менять нельзя.
+      const lim = { s: 10, d: 24, c: 40, t1: 8, t2: 8, t3: 8 };
+      const emblem = {};
+      for (const k of Object.keys(lim)) {
+        const v = Math.round(Number(e[k]));
+        if (!Number.isFinite(v) || v < 0 || v > lim[k])
+          return jsonResponse({ err: "Такого герба не бывает" }, 400);
+        emblem[k] = v;
+      }
+      const { error: gErr } = await admin.from("alliances").update({ emblem }).eq("id", alliance.id);
+      if (gErr) return jsonResponse({ err: gErr.message }, 500);
+      return jsonResponse({ ok: true, emblem });
     }
 
     // ---------------------------------------------------------------------

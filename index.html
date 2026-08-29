@@ -420,6 +420,35 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
    кнопка («Вступить») остаётся на строке союза, три («разжаловать /
    исключить») уходят под неё группой, а не порознь. */
 .rank-list.ally .rk-acts{display:flex;flex-wrap:wrap;gap:5px;justify-content:flex-end;margin-left:auto}
+/* Герб союза. Пиксель-арт: увеличение строго по точкам (pixelated), иначе
+   браузер размоет 32×48 в кашу. Золочёный кант уже вписан в саму картинку
+   (см. heraldUrl) — здесь только тень, дающая щиту толщину. */
+.ally-emblem{display:block;flex:0 0 auto;image-rendering:pixelated;
+  image-rendering:crisp-edges;filter:drop-shadow(0 1px 2px rgba(0,0,0,.55))}
+.ally-emblem.sm{width:18px;height:27px}
+.ally-emblem.md{width:32px;height:48px}
+.ally-emblem.lg{width:64px;height:96px}
+/* Мастерская герба: щит крупно слева, выбор — справа, лентами значков. */
+.herald-shop{display:flex;gap:14px;align-items:flex-start;margin:4px 0 2px}
+.herald-shop .preview{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:8px}
+.herald-pick{display:flex;flex-wrap:wrap;gap:4px;margin:2px 0 10px}
+/* Кадр атласа в кнопке выбора — фон со сдвигом, а не 75 отдельных картинок:
+   лента и так уже скачана целиком. background-size задаётся под масштаб. */
+.herald-cell{width:26px;height:39px;padding:0;border:1px solid var(--rule-soft);
+  border-radius:2px;background-color:rgba(0,0,0,.32);background-repeat:no-repeat;
+  image-rendering:pixelated;cursor:pointer;flex:0 0 auto}
+.herald-cell.ch{height:26px}
+.herald-cell.on{border-color:var(--gilt);background-color:rgba(194,153,60,.2)}
+.herald-cell.none{display:flex;align-items:center;justify-content:center;
+  color:var(--vellum-faint);font-size:15px;line-height:1}
+/* Тинктура — просто квадрат краски; какой именно, видно и без подписи.
+   Рамка светлее обычной нарочно: «чернь» почти совпадает с фоном меню, и с
+   обычной тёмной рамкой её квадрат читался как пустое место в ряду. */
+.herald-tint{width:24px;height:24px;border:1px solid var(--vellum-faint);border-radius:2px;
+  padding:0;cursor:pointer;flex:0 0 auto}
+.herald-tint.on{border-color:var(--gilt-hi);box-shadow:0 0 0 1px var(--gilt-dim) inset}
+.herald-lab{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--gilt-dim);margin:8px 0 4px}
 /* Метка союза — то, чем он виден везде, где виден ник. */
 .ally-tag{font-family:var(--data);font-size:11.5px;color:var(--gilt-hi);letter-spacing:.04em}
 /* Девиз под именем в списке союзов: вторая строка, приглушённая. */
@@ -12684,11 +12713,12 @@ const MP_BOARDS=[
   // союз, см. refreshAlliancePower): считать её выборкой состава всех союзов
   // мира значило бы тянуть на клиент всех игроков ради сортировки.
   {id:"alliance", name:"Альянс", ico:"icon-alliance.png",
-   table:"alliances", sel:"id,name,tag,members,members_max,power", by:"power", desc:true,
+   table:"alliances", sel:"id,name,tag,members,members_max,power,emblem", by:"power", desc:true,
    mineId:()=>mpState.ally?mpState.ally.id:0,
    val:r=>fmt(r.power||0),
    rowHtml:(r,i,mine)=>"<div class='rank-row"+(mine?" me":"")+"'>"+
      "<span class='rk-place"+(i<3?" top":"")+"'>"+(i+1)+"</span>"+
+     heraldHtml(r.emblem,"sm")+
      "<span class='rk-nick'>"+mpAllyTagHtml(r.tag)+" "+escHtml(r.name||"")+"</span>"+
      "<span class='rk-hall'>"+(r.members||0)+"/"+(r.members_max||MP_ALLY_CAP_DEFAULT)+"</span>"+
      "<b class='rk-pw'>"+fmt(r.power||0)+"</b></div>",
@@ -15628,6 +15658,26 @@ function handleMpAct(e){
   }
   const allyLeaveBtn=e.target.closest("[data-mp='allyleave']");
   if(allyLeaveBtn){ mpDoAlly("leave",{},"Вы больше не в союзе."); return; }
+  // Герб: выбор кадра/тинктуры копится в черновике и ничего не шлёт —
+  // отправляет один «Записать герб» (см. mpAllyEmblemDraft).
+  const allyEmblemBtn=e.target.closest("[data-mp='allyemblem'],[data-mp='allytint']");
+  if(allyEmblemBtn){
+    const cur=mpAllyEmblemNow(mpState.ally);
+    cur[allyEmblemBtn.dataset.f]=+allyEmblemBtn.dataset.v;
+    mpAllyEmblemDraft=cur; mpAllyErr=null; mpAllyOk=null; mpRerender();
+    return;
+  }
+  const allyEmblemSaveBtn=e.target.closest("[data-mp='allyemblemsave']");
+  if(allyEmblemSaveBtn){
+    const em=heraldSane(mpAllyEmblemDraft);
+    mpDoAlly("emblem",{emblem:em},"Герб записан.").then(ok=>{
+      if(!ok) return;              // сеть моргнула — набранное остаётся на месте
+      mpAllyEmblemDraft=null; mpRerender();
+    });
+    return;
+  }
+  const allyEmblemResetBtn=e.target.closest("[data-mp='allyemblemreset']");
+  if(allyEmblemResetBtn){ mpAllyEmblemDraft=null; mpAllyErr=null; mpAllyOk=null; mpRerender(); return; }
   const allyDisbandBtn=e.target.closest("[data-mp='allydisband']");
   if(allyDisbandBtn){
     if(!confirm("Распустить союз? Соратники получат письмо, имя и метка освободятся. Обратной дороги нет.")) return;
@@ -16611,6 +16661,160 @@ async function mpCall(fn, body, tries){
 // Пять ступеней старшинства — близнец ROLE_RANK/ROLE_NAME из mp-alliance
 // (правило самодостаточных копий, см. supabase/README.md). Коды r5..r1
 // хранятся, имена показываются.
+/* =========================================================================
+   Герб союза — Фаза 49б.
+   =========================================================================
+   Автор прислал набор пиксельной геральдики (craftpix, лежит архивом в
+   корне). Готовых флагов там нет вовсе — там КОНСТРУКТОР, и все его слои
+   однобитные маски: одна сплошная краска плюс прозрачность, цвета в файлах
+   нет. Это и определило устройство:
+
+     * в игру едут не 598 картинок, а ТРИ атласа-ленты по слою
+       (images/heraldry/*.png, вместе 7 КБ — их печёт tools/bake_heraldry.py);
+     * цвет назначается здесь, при сборке, и потому взят из гаммы игры, а не
+       из набора: яркая лазурь и пурпур оригинала выглядели наклейкой на
+       пергаменте (прямое согласие автора);
+     * сам герб хранится ШЕСТЬЮ ЧИСЛАМИ (alliances.emblem) — форма щита,
+       деление поля, фигура и три тинктуры. Сочетаний больше восьми
+       миллионов, а места в базе — на одну короткую строку JSON.
+
+   Пиксель НЕ сглаживается: сборка идёт в родных 32×48, а увеличение делает
+   CSS (image-rendering:pixelated). Всё «оживление» — золочёный кант в один
+   ИСХОДНЫЙ пиксель по краю щита (потому и рисуется здесь, а не фильтром CSS:
+   кант обязан расти вместе с картинкой, а не оставаться волоском) и мягкая
+   тень под щитом, уже средствами CSS.
+   ========================================================================= */
+// Порядок кадров в атласах — это и есть хранимое число (см. предупреждение в
+// шапке tools/bake_heraldry.py). Числа ниже обязаны совпадать с длиной лент.
+const HERALD_SHAPES=11, HERALD_DIVS=24, HERALD_CHARGES=40;
+const HERALD_W=32, HERALD_H=48, HERALD_CW=32, HERALD_CH=32;
+// Девять тинктур — семь геральдических (золото, серебро, червлень, лазурь,
+// зелень, пурпур, чернь) плюс бурый и рыжий, которых в классике нет, но
+// которые уже стоят по всей игре. Все взяты из её же гаммы: --gilt,
+// --vellum, --rule-soft и приглушённые под них цвета.
+const HERALD_TINCTURE=[
+  ["Золото",   "#c2993c"], ["Серебро", "#ece2ca"], ["Червлень", "#8e2b22"],
+  ["Лазурь",   "#334a6b"], ["Зелень",  "#3a4e28"], ["Пурпур",   "#542c52"],
+  ["Чернь",    "#2c241a"], ["Бурый",   "#5a4028"], ["Рыжий",    "#b56e30"],
+];
+const HERALD_GILT="#c2993c";
+// Герб по умолчанию — тот, что получит союз, пока глава не выбрал свой.
+// Щит, гладкое червлёное поле, без фигуры: ничей, но не пустой.
+const HERALD_DEFAULT={s:1,d:0,c:0,t1:2,t2:0,t3:0};
+// Приводим что угодно к допустимому гербу: из базы может прийти null (союз
+// основан до этой правки), обрезок или мусор — рисовать всё равно надо.
+function heraldSane(em){
+  const e=em||{}, n=(v,max,def)=>{ v=Math.round(Number(v)); return (Number.isFinite(v)&&v>=0&&v<=max)?v:def; };
+  return {s:n(e.s,HERALD_SHAPES-1,HERALD_DEFAULT.s), d:n(e.d,HERALD_DIVS,HERALD_DEFAULT.d),
+          c:n(e.c,HERALD_CHARGES,HERALD_DEFAULT.c), t1:n(e.t1,8,HERALD_DEFAULT.t1),
+          t2:n(e.t2,8,HERALD_DEFAULT.t2), t3:n(e.t3,8,HERALD_DEFAULT.t3)};
+}
+// Атласы. Грузятся один раз и не обязательны: пока их нет, herald* молчат и
+// герб просто не рисуется — тот же приём, что и у карты регионов выше.
+const heraldImg={};
+let heraldReady=false;
+(function loadHeraldry(){
+  const names=["shapes","divisions","charges"];
+  let left=names.length;
+  names.forEach(n=>{
+    const im=new Image();
+    im.onload=()=>{ heraldImg[n]=im; if(!--left){ heraldReady=true; try{ mpRerender() }catch(e){} } };
+    im.onerror=()=>{ if(!--left) console.warn("геральдика не загрузилась — гербы союзов рисоваться не будут"); };
+    im.src="images/heraldry/"+n+".png";
+  });
+})();
+function heraldCanvas(w,h){
+  const c=document.createElement("canvas"); c.width=w; c.height=h; return c;
+}
+// Кадр атласа, перекрашенный в нужную тинктуру. Маска белая, поэтому
+// «покрасить» — это нарисовать её и залить поверх с source-in.
+function heraldTinted(atlas,frame,fw,fh,color){
+  const c=heraldCanvas(fw,fh), x=c.getContext("2d");
+  x.imageSmoothingEnabled=false;
+  x.drawImage(atlas, frame*fw, 0, fw, fh, 0, 0, fw, fh);
+  x.globalCompositeOperation="source-in";
+  x.fillStyle=color; x.fillRect(0,0,fw,fh);
+  return c;
+}
+// Готовый герб как data:URL — в разметку он идёт обычной <img>, потому что
+// вся страница собирается строками и перерисовывается на каждом такте: живой
+// <canvas> в ней не пережил бы ни одной перерисовки. Дёшево: картинка 32×48,
+// строка в полтысячи знаков.
+const heraldCache={};
+function heraldUrl(em){
+  if(!heraldReady) return "";
+  const e=heraldSane(em), key=e.s+"/"+e.d+"/"+e.c+"/"+e.t1+"/"+e.t2+"/"+e.t3;
+  if(heraldCache[key]) return heraldCache[key];
+  const W=HERALD_W, H=HERALD_H;
+  const c=heraldCanvas(W,H), x=c.getContext("2d");
+  x.imageSmoothingEnabled=false;
+  // 1. Поле.
+  x.fillStyle=HERALD_TINCTURE[e.t1][1]; x.fillRect(0,0,W,H);
+  // 2. Деление поля второй тинктурой (0 — гладкое поле, кадра нет).
+  if(e.d>0) x.drawImage(heraldTinted(heraldImg.divisions,e.d-1,W,H,HERALD_TINCTURE[e.t2][1]),0,0);
+  // 3. Фигура третьей, по центру. Кадр 32×32 на поле 32×48 — чуть выше
+  //    середины, как в самом наборе (см. его же готовые примеры).
+  if(e.c>0) x.drawImage(heraldTinted(heraldImg.charges,e.c-1,HERALD_CW,HERALD_CH,HERALD_TINCTURE[e.t3][1]),
+                        (W-HERALD_CW)/2, (H-HERALD_CH)/2-2);
+  // 4. Обрез по форме щита.
+  const shape=heraldCanvas(W,H), sx=shape.getContext("2d");
+  sx.imageSmoothingEnabled=false;
+  sx.drawImage(heraldImg.shapes, e.s*W, 0, W, H, 0, 0, W, H);
+  x.globalCompositeOperation="destination-in";
+  x.drawImage(shape,0,0);
+  x.globalCompositeOperation="source-over";
+  // 5. Кант в ОДИН исходный пиксель по краю щита. Сжимаем силуэт на пиксель
+  //    (пересечение четырёх сдвигов) и вычитаем — остаётся ровно кромка.
+  const er=heraldCanvas(W,H), ex=er.getContext("2d");
+  ex.imageSmoothingEnabled=false;
+  ex.drawImage(shape,0,0);
+  ex.globalCompositeOperation="destination-in";
+  [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx,dy])=>ex.drawImage(shape,dx,dy));
+  const rim=heraldCanvas(W,H), rx=rim.getContext("2d");
+  rx.imageSmoothingEnabled=false;
+  rx.drawImage(shape,0,0);
+  rx.globalCompositeOperation="destination-out";
+  rx.drawImage(er,0,0);
+  rx.globalCompositeOperation="source-in";
+  rx.fillStyle=HERALD_GILT; rx.fillRect(0,0,W,H);
+  x.drawImage(rim,0,0);
+  return (heraldCache[key]=c.toDataURL("image/png"));
+}
+// Черновик герба: пока глава перебирает варианты, менять базу на каждый
+// щелчок незачем — правка копится здесь и уходит одним «Записать». null —
+// черновика нет, показывается записанный герб союза.
+let mpAllyEmblemDraft=null;
+function mpAllyEmblemNow(a){ return heraldSane(mpAllyEmblemDraft || (a&&a.emblem)); }
+// Лента выбора кадра. Кадры берутся ФОНОМ со сдвигом по уже скачанному
+// атласу — иначе на семьдесят пять кнопок пришлось бы семьдесят пять
+// картинок. none=true добавляет первым «без этого» (гладкое поле, без
+// фигуры): это значение 0, кадра под него в атласе нет.
+function heraldPickHtml(label,field,count,cur,none,atlas,fw,fh){
+  const S=26/fw;                       // кнопка 26px по ширине кадра
+  let h="<div class='herald-lab'>"+label+"</div><div class='herald-pick'>";
+  if(none) h+="<button class='herald-cell"+(fh===HERALD_CH?" ch":"")+(cur===0?" on":"")+" none' "+
+              "data-mp='allyemblem' data-f='"+field+"' data-v='0' title='Без этого'>&minus;</button>";
+  for(let i=0;i<count;i++){
+    const v=none?i+1:i;
+    h+="<button class='herald-cell"+(fh===HERALD_CH?" ch":"")+(cur===v?" on":"")+"' "+
+       "data-mp='allyemblem' data-f='"+field+"' data-v='"+v+"' "+
+       "style=\"background-image:url(images/heraldry/"+atlas+".png);"+
+       "background-size:"+(count*fw*S)+"px "+(fh*S)+"px;"+
+       "background-position:"+(-i*fw*S)+"px 0\"></button>";
+  }
+  return h+"</div>";
+}
+function heraldTintHtml(label,field,cur){
+  return "<div class='herald-lab'>"+label+"</div><div class='herald-pick'>"+
+    HERALD_TINCTURE.map((t,i)=>
+      "<button class='herald-tint"+(cur===i?" on":"")+"' data-mp='allytint' data-f='"+field+"' data-v='"+i+"' "+
+      "style='background:"+t[1]+"' title='"+t[0]+"'></button>").join("")+"</div>";
+}
+// Герб в разметку. cls — размерный класс (см. CSS .ally-emblem).
+function heraldHtml(em,cls){
+  const u=heraldUrl(em);
+  return u ? "<img class='ally-emblem "+(cls||"")+"' src='"+u+"' alt=''>" : "";
+}
 const MP_ALLY_ROLE_NAME={r5:"Глава", r4:"Заместитель", r3:"Старейшина", r2:"Дружинник", r1:"Новик"};
 const MP_ALLY_ROLE_RANK={r5:5, r4:4, r3:3, r2:2, r1:1};
 // Заместителей четверо — вакансии, а не звание по выслуге. Права есть у
@@ -16649,7 +16853,7 @@ function mpAllyMineHtml(){
   const alive=mpState.allyMembers.length;
   let h=rubric("Союз", MP_ALLY_ROLE_NAME[mpState.allyRole]||"");
   h+="<div class='entry hot'><div class='line'>"+
-     "<img class='stub-ico' src='images/ui/icon-alliance.png' alt=''>"+
+     (heraldHtml(a.emblem,"lg")||"<img class='stub-ico' src='images/ui/icon-alliance.png' alt=''>")+
      "<div class='fill'><div class='title'>"+mpAllyTagHtml(a.tag)+" "+escHtml(a.name)+"</div>"+
      (a.motto?"<div class='note'>"+escHtml(a.motto)+"</div>":"")+
      "<div class='note'>Соратников "+alive+" из "+cap+" · мощь союза "+fmt(a.power||0)+
@@ -16747,6 +16951,30 @@ function mpAllyMineHtml(){
        "</div>";
   });
   h+="</div>";
+
+  // ---- Мастерская герба — старейшинам и главе. Правится «на живую»:
+  // выбранное сразу видно в щите слева, а «Записать» отправляет один раз.
+  // Черновик лежит в mpAllyEmblemDraft (см. её комментарий), пока его не
+  // записали или не ушли с экрана.
+  if(rank>=MP_ALLY_RANK_OFFICER){
+    const em=mpAllyEmblemNow(a);
+    h+=rubric("Герб союза");
+    h+="<div class='entry'><div class='line'><div class='fill'>"+
+       "<div class='herald-shop'>"+
+         "<div class='preview'>"+(heraldHtml(em,"lg")||"<div class='note'>Загрузка…</div>")+
+           (mpAllyEmblemDraft?"<button class='seal tiny' data-mp='allyemblemsave'"+(mpAllyBusy?" disabled":"")+">Записать герб</button>"+
+             "<button class='seal tiny ghost' data-mp='allyemblemreset'>Отменить</button>":"")+
+         "</div>"+
+         "<div class='fill'>"+
+           heraldPickHtml("Форма щита","s",HERALD_SHAPES,em.s,false,"shapes",HERALD_W,HERALD_H)+
+           heraldPickHtml("Деление поля","d",HERALD_DIVS,em.d,true,"divisions",HERALD_W,HERALD_H)+
+           heraldPickHtml("Фигура","c",HERALD_CHARGES,em.c,true,"charges",HERALD_CW,HERALD_CH)+
+           heraldTintHtml("Поле","t1",em.t1)+
+           heraldTintHtml("Деление","t2",em.t2)+
+           heraldTintHtml("Фигура","t3",em.t3)+
+         "</div>"+
+       "</div></div></div></div>";
+  }
 
   // ---- Порядок приёма — старейшинам и главе.
   if(rank>=MP_ALLY_RANK_OFFICER){
@@ -16851,6 +17079,7 @@ function mpAllyNoneHtml(){
     else btn="<button class='seal tiny' data-mp='allyjoin' data-id='"+a.id+"'"+(mpAllyBusy?" disabled":"")+">"+(a.open?"Вступить":"Заявка")+"</button>";
     h+="<div class='rank-row'>"+
        "<span class='rk-place"+(i<3?" top":"")+"'>"+(i+1)+"</span>"+
+       heraldHtml(a.emblem,"sm")+
        "<span class='rk-nick'>"+mpAllyTagHtml(a.tag)+" "+escHtml(a.name)+
          (a.motto?"<span class='ally-motto'>"+escHtml(a.motto)+"</span>":"")+"</span>"+
        "<span class='rk-hall'>"+(a.members||0)+"/"+(a.members_max||MP_ALLY_CAP_DEFAULT)+"</span>"+
@@ -17407,11 +17636,12 @@ async function mpRefreshAlliance(){
       // Не в союзе: список, куда можно вступить, и свои поданные заявки.
       // Порядок по мощи — тот же, что и в таблице мира: сильнейшие сверху.
       const [list,apps]=await Promise.all([
-        sb.from("alliances").select("id,name,tag,motto,open,min_power,members,power,leader_id")
+        sb.from("alliances").select("id,name,tag,motto,open,min_power,members,members_max,power,leader_id,emblem")
           .eq("world_id",wid).is("disbanded_at",null).order("power",{ascending:false}).limit(30),
         sb.from("alliance_applications").select("alliance_id,created_at").eq("player_id",me),
       ]);
       mpState.ally=null; mpState.allyRole=""; mpState.allyMembers=[]; mpState.allyApps=[]; mpState.allyChat=[];
+      mpAllyEmblemDraft=null;   // союза нет — некому и герб править
       if(!list.error && list.data) mpState.allyList=list.data;
       if(!apps.error && apps.data) mpState.allyMyApps=apps.data;
       mpRerenderData();
@@ -17466,8 +17696,11 @@ async function mpRefreshAllianceMail(){
 // mp-alliance): различаются они только телом запроса, а обвязка — «заблокируй
 // кнопки, позови, покажи ошибку, перечитай» — у всех одна и та же.
 let mpAllyBusy=false, mpAllyErr=null, mpAllyOk=null;
+// Возвращает true, если сервер принял. Ответ нужен только одному месту —
+// записи герба: черновик там стирается ТОЛЬКО при успехе, иначе набранное
+// пропадало бы от моргнувшей сети.
 async function mpDoAlly(op, args, okText){
-  if(mpAllyBusy) return;
+  if(mpAllyBusy) return false;
   mpAllyBusy=true; mpAllyErr=null; mpAllyOk=null; mpRerender();
   try{
     await mpCall("mp-alliance", Object.assign({op}, args||{}));
@@ -17476,8 +17709,10 @@ async function mpDoAlly(op, args, okText){
     // нажал кнопку и ждёт увидеть результат, а не через десять секунд.
     await mpRefreshAlliance();
     mpRerender();
+    return true;
   }catch(e){
     mpAllyBusy=false; mpAllyErr=e.message||"Не удалось"; mpRerender();
+    return false;
   }
 }
 // Основание союза — единственная операция со своей формой, поэтому поля

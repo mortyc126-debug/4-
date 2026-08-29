@@ -59,6 +59,14 @@ create table if not exists alliances (
   -- Колонкой, а не константой в коде: пока число одно на всех, но менять его
   -- (событием, сезоном, отдельным союзом) придётся живой базе, а не деплою.
   members_max int not null default 30,
+  -- Герб союза — шесть чисел: форма щита, деление поля, фигура и три
+  -- тинктуры. Собирается в игре из трёх лент-масок (images/heraldry/*.png,
+  -- печёт tools/bake_heraldry.py), поэтому здесь ровно номера кадров, а не
+  -- картинка: восемь миллионов сочетаний укладываются в одну короткую
+  -- строку JSON. null — герба не выбирали, показывается общий по умолчанию.
+  -- jsonb, а не шесть колонок: это одно неделимое целое, менять его по полю
+  -- незачем, а поля со временем могут добавиться (второе поле фигуры и т.п.).
+  emblem jsonb,
   power_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   disbanded_at timestamptz
@@ -145,6 +153,7 @@ update alliance_members set role = 'r4' where role = 'officer';
 update alliance_members set role = 'r1' where role = 'member';
 alter table alliance_members alter column role set default 'r1';
 alter table alliances alter column members_max set default 30;
+alter table alliances add column if not exists emblem jsonb;
 update alliances set members_max = 30 where members_max <> 30;
 
 -- ---------------------------------------------------------------------------

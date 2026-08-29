@@ -246,6 +246,48 @@ const r = await page.evaluate(({ stateNoCenter, stateWithCenter }) => {
   out.метка_безСоюза = menuBadges().alliance;
   mpState.ally = ally; mpState.allyRole = 'r5';
 
+  // --- 5в. Герб союза ------------------------------------------------------
+  // Собирается на canvas из трёх лент-масок и отдаётся разметке как data:URL
+  // (см. heraldUrl). Проверяем: атласы доехали, сборка даёт картинку, кэш
+  // отдаёт ТУ ЖЕ строку на тот же герб и РАЗНУЮ на разный, мусор не роняет
+  // сборку, и мастерская рисует ровно столько кадров, сколько их в лентах.
+  out.герб_атласыЕсть = heraldReady === true;
+  const em1 = { s: 3, d: 0, c: 1, t1: 2, t2: 0, t3: 1 };
+  const u1 = heraldUrl(em1), u2 = heraldUrl({ ...em1 }), u3 = heraldUrl({ ...em1, t1: 4 });
+  out.герб_рисуется = /^data:image\/png;base64,/.test(u1);
+  out.герб_кэшТотЖе = u1 === u2;
+  out.герб_другойЦветДругаяКартинка = u1 !== u3;
+  // Мусор из базы (null, обрезок, число вне ленты) обязан не ронять сборку:
+  // союз мог быть основан до этой правки, и герба у него нет вовсе.
+  out.герб_мусорНеРонит = ['', null, undefined, {}, { s: 999, d: -3, c: 1e9, t1: 'x' }]
+    .every(v => { try { return /^data:image/.test(heraldUrl(v)); } catch (_) { return false; } });
+  out.герб_поумолчанию = JSON.stringify(heraldSane(null)) === JSON.stringify(HERALD_DEFAULT);
+
+  // Мастерская — только заместителю и выше, и кадров ровно по лентам.
+  mpState.ally = { ...ally, emblem: em1 };
+  mpState.allyRole = 'r5'; mpAllyEmblemDraft = null;
+  let hw = mpAllianceHtml();
+  const cells = (html, f) => { const d = document.createElement('div'); d.innerHTML = html;
+    return d.querySelectorAll("[data-mp='allyemblem'][data-f='" + f + "']").length; };
+  out.герб_формЩита = cells(hw, 's');
+  out.герб_делений = cells(hw, 'd');        // +1 на «гладкое поле»
+  out.герб_фигур = cells(hw, 'c');          // +1 на «без фигуры»
+  const tints = (html, f) => { const d = document.createElement('div'); d.innerHTML = html;
+    return d.querySelectorAll("[data-mp='allytint'][data-f='" + f + "']").length; };
+  out.герб_тинктур = tints(hw, 't1');
+  // Пока черновика нет — записывать нечего, кнопок нет.
+  out.герб_безЧерновикаНетКнопок = !/data-mp='allyemblemsave'/.test(hw);
+  // Черновик — и кнопки появились, а щит показывает уже его, не записанное.
+  mpAllyEmblemDraft = { ...em1, t1: 4 };
+  hw = mpAllianceHtml();
+  out.герб_сЧерновикомЕстьКнопки = /data-mp='allyemblemsave'/.test(hw) && /data-mp='allyemblemreset'/.test(hw);
+  out.герб_щитПоказываетЧерновик = hw.indexOf(heraldUrl({ ...em1, t1: 4 })) >= 0;
+  mpAllyEmblemDraft = null;
+  // Соратнику мастерская не показывается вовсе.
+  mpState.allyRole = 'r1';
+  out.герб_новикуНеПоказан = !/data-mp='allyemblem'/.test(mpAllianceHtml());
+  mpState.allyRole = 'r5'; mpState.ally = ally;
+
   // --- 6. Таблица мира «Альянс» -------------------------------------------
   const board = MP_BOARDS.find(b => b.id === 'alliance');
   out.таблица_неЗаглушка = !!board && !board.stub && board.table === 'alliances';
@@ -276,6 +318,11 @@ const r = await page.evaluate(({ stateNoCenter, stateWithCenter }) => {
   mpState.ally = ally; mpState.allyRole = 'r5';
   mpState.allyMembers = [mem(9, 'Гутрум', 'r2', 30), mem(8, 'Эльна', 'r4', 20), mem(7, 'Витольд', 'r5', 2)];
   acts(mpAllianceHtml()).forEach(a => drawn.add(a));
+  // С черновиком герба — иначе «Записать»/«Отменить» не рисуются и в
+  // проверку проводки не попадут.
+  mpAllyEmblemDraft = { s: 2, d: 3, c: 4, t1: 1, t2: 2, t3: 3 };
+  acts(mpAllianceHtml()).forEach(a => drawn.add(a));
+  mpAllyEmblemDraft = null;
   reset(); P.state = mkState(3);
   mpState.allyList = [{ id: 11, name: 'Орден', tag: 'ЗАРЯ', motto: '', open: true, min_power: 0, members: 1, members_max: 30, power: 1 }];
   acts(mpAllianceHtml()).forEach(a => drawn.add(a));
@@ -352,6 +399,22 @@ check('уйти не может, пока союз не пуст', r.глава_
 check('и это объяснено словами', r.глава_объяснено);
 check('оставшись один — уйти может', r.одинВСоюзе_уйтиМожно);
 
+console.log('\nГерб союза:');
+check('атласы геральдики загрузились', r.герб_атласыЕсть);
+check('герб собирается в картинку', r.герб_рисуется);
+check('тот же герб — та же строка (кэш)', r.герб_кэшТотЖе);
+check('другая тинктура — другая картинка', r.герб_другойЦветДругаяКартинка);
+check('null и мусор из базы не роняют сборку', r.герб_мусорНеРонит);
+check('у союза без герба — герб по умолчанию', r.герб_поумолчанию);
+check('форм щита ' + r.герб_формЩита + ' (ждали 11)', r.герб_формЩита === 11);
+check('делений ' + r.герб_делений + ' (24 + «гладкое поле»)', r.герб_делений === 25);
+check('фигур ' + r.герб_фигур + ' (40 + «без фигуры»)', r.герб_фигур === 41);
+check('тинктур ' + r.герб_тинктур + ' (ждали 9)', r.герб_тинктур === 9);
+check('без черновика кнопок записи нет', r.герб_безЧерновикаНетКнопок);
+check('с черновиком есть «Записать» и «Отменить»', r.герб_сЧерновикомЕстьКнопки);
+check('щит показывает черновик, а не записанное', r.герб_щитПоказываетЧерновик);
+check('новику мастерская не показана', r.герб_новикуНеПоказан);
+
 console.log('\nМетка на кнопке «Альянс»:');
 check('главе видна заявка (' + r.метка_главе + ')', r.метка_главе === 1);
 check('заместителю видна заявка (' + r.метка_заместителю + ')', r.метка_заместителю === 1);
@@ -373,11 +436,13 @@ check('открывается по id', r.почта_открывается);
 console.log('\nПроводка кнопок:');
 console.log('    нарисовано:', r.кнопкиЭкрана.join(', '));
 check('у каждой есть ветка в handleMpAct', r.безОбработчика.length === 0);
-// Кнопок на экране двенадцать, а операций на сервере одиннадцать: allyhand
-// (передача союза) шлёт тот же op "role", просто со своим выбором наследника
-// и переспросом. Число сторожит от тихой потери кнопки при правке экрана.
-check('в проверку попали все двенадцать кнопок союза (' + r.кнопкиЭкрана.length + ')',
-      r.кнопкиЭкрана.length === 12);
+// Кнопок на экране шестнадцать, а операций на сервере двенадцать: allyhand
+// (передача союза) шлёт тот же op "role" со своим выбором наследника и
+// переспросом, а три кнопки герба (выбор кадра, выбор тинктуры, отмена)
+// вообще ничего не шлют — правят черновик. Число сторожит от тихой потери
+// кнопки при правке экрана.
+check('в проверку попали все шестнадцать кнопок союза (' + r.кнопкиЭкрана.length + ')',
+      r.кнопкиЭкрана.length === 16);
 if (r.безОбработчика.length) console.log('    БЕЗ ОБРАБОТЧИКА:', r.безОбработчика.join(', '));
 
 console.log('\nКнопка помощи у идущей стройки:');

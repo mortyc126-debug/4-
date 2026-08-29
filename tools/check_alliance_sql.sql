@@ -91,7 +91,13 @@ begin
   select string_agg(distinct role, ', ') into bad from alliance_members
     where role not in ('r5','r4','r3','r2','r1');
   if bad is not null then raise exception 'ПРОВАЛ: в составе остались ступени прежнего образца: %', bad; end if;
-  raise notice '0 ✓ ступень по умолчанию r1, вместимость 30, ступеней прежнего образца в базе нет';
+  -- Герб: колонка обязана быть и обязана допускать NULL. Союз, основанный до
+  -- появления гербов, герба не имеет — и рисуется общим по умолчанию.
+  perform 1 from information_schema.columns
+    where table_schema='public' and table_name='alliances'
+      and column_name='emblem' and data_type='jsonb' and is_nullable='YES';
+  if not found then raise exception 'ПРОВАЛ: нет колонки alliances.emblem jsonb, допускающей NULL'; end if;
+  raise notice '0 ✓ ступень по умолчанию r1, вместимость 30, старых ступеней нет, герб на месте';
 end $$;
 
 -- ---------------------------------------------------------------------------
