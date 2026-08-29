@@ -9391,6 +9391,23 @@ function renderCartoucheMp(){
     put(body);
     return;
   }
+  if(o.t==="regfort"){
+    // Крепость региона (миграция 0013). Уровня у неё нет — есть ступень
+    // сложности; прогноза боя тоже нет, потому что боя с ней пока не
+    // заведено: захват идёт следующим шагом. Кнопки «Атаковать» здесь
+    // нарочно НЕТ — она отправила бы обычный набег, который крепость не
+    // берёт, и игрок потерял бы войско ни за что.
+    const TIER=["","Малая твердыня","Твердыня","Великая твердыня"];
+    const st8=o.state||"barb";
+    put("<div class='hd'>"+escHtml(o.shrine||"Крепость варваров")+" "+coord+"</div>"+
+      "<div class='co'><span>Область</span><b>"+escHtml(o.regionName||"—")+"</b></div>"+
+      "<div class='co'><span>Крепость</span><b>"+(TIER[o.tier]||"Твердыня")+"</b></div>"+
+      "<div class='co'><span>Держат</span><b>"+
+        (st8==="ally" ? "союз" : st8==="razed" ? "никто — место свободно" : "варвары")+"</b></div>"+
+      "<div class='hint'>Одна на всю область, и берёт её союз, а не одиночка. "+
+      "Пока за неё не воюют: захват и святыня придут следующим шагом.</div>");
+    return;
+  }
   if(o.t==="camp"||o.t==="fort"){
     // Прогноз боя — тот же banditPower/armyPower и те же три порога, что и
     // в одиночке (renderCartouche выше): свои войска считаем через
@@ -15847,7 +15864,14 @@ function mpBuildWorldSnapshot(){
   });
   mpState.camps.forEach(c=>{
     const d=c.data||{};
-    map[c.x+","+c.y]={t:c.t, x:c.x, y:c.y, lv:d.lv};
+    // У крепости региона уровня нет вовсе (она «как святыня», а не лагерь):
+    // вместо него ступень сложности tier, она же выбирает модель, плюс имя
+    // области, святыни и чьё это сейчас — всё, что нужно 3D для подписи.
+    map[c.x+","+c.y] = c.t==="regfort"
+      ? {t:"regfort", x:c.x, y:c.y, tier:Number(d.tier)||1, region:Number(d.region)||0,
+         regionName:d.region_name||"", shrine:d.shrine||"",
+         state:d.state||"barb", allianceId:d.alliance_id||null}
+      : {t:c.t, x:c.x, y:c.y, lv:d.lv};
   });
   // withPath(m,home) — теперь настоящий рельефный путь (waterPath), тот же,
   // что уже строит одиночная игра (index.html:4983, огибает воду вместо
@@ -18334,8 +18358,13 @@ async function mpRefreshNodes(){
 // Тот же приём, что и mpRefreshNodes.
 async function mpRefreshCamps(){
   if(!mpState.player) return;
+  // regfort — крепость региона (миграция 0013): шестнадцать на весь мир, по
+  // одной в каждой области. Читается тем же запросом, что лагеря и форты, и
+  // тем же слоем рисуется — она такой же объект на клетке мира, просто
+  // единственный в своём роде. Отдельная выборка ради шестнадцати строк была
+  // бы шестнадцатым запросом в такте опроса ни за чем.
   const { data, error } = await sb.from("map_cells").select("x,y,t,data")
-    .eq("world_id",mpState.player.world_id).in("t",["camp","fort"]).limit(400);
+    .eq("world_id",mpState.player.world_id).in("t",["camp","fort","regfort"]).limit(400);
   if(!error && data){ mpState.camps=data; mpRerenderData(); }
 }
 // Донесения о разгроме/поражении у лагеря (mail, kind:"raid") — тем же

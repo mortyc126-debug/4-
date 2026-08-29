@@ -158,6 +158,20 @@ export function loadRealEntities(centerX?: number, centerZ?: number, radius?: nu
       // тапать каждый по очереди (пользователь явно попросил вернуть).
       const lv = "ур. " + (o.lv ?? "?");
       out.push({ key, x: o.x + 0.5, y: o.y + 0.5, gx: o.x, gy: o.y, kind: 1, model: "/models/camps/barbarians.glb", scale: o.t === "fort" ? 6.5 : 5, nm, lv });
+    } else if (o.t === "regfort") {
+      // Крепость региона — одна на область, шестнадцать на весь мир
+      // (миграция 0013). Модель своя на каждую из трёх ступеней сложности
+      // (models/forts/barbarian-1..3.glb), уровня у неё нет вовсе: «это
+      // нечто уникальное, как святыня», — поэтому под подписью стоит имя
+      // святыни, а не "ур. N", как у лагерей.
+      // Масштаб около замка пятой эпохи (тот идёт на 10) и растёт со
+      // ступенью: великую твердыню видно издалека, малая вровень с замком.
+      const tier = Math.max(1, Math.min(3, o.tier ?? 1));
+      const scale = tier === 3 ? 11 : tier === 2 ? 10 : 9;
+      const nm = o.shrine || "Крепость варваров";
+      const lv = o.state === "ally" ? "союзная" : o.state === "razed" ? "разорена" : (o.regionName || "");
+      out.push({ key, x: o.x + 0.5, y: o.y + 0.5, gx: o.x, gy: o.y, kind: 1,
+                 model: `/models/forts/barbarian-${tier}.glb`, scale, nm, lv });
     } else if (o.t === "node") {
       const type = REAL_RES_MAP[o.res] || "farm";
       const nm = RES_SITE_NAME[o.res] || "Точка";
