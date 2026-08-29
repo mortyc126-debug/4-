@@ -30,7 +30,7 @@ grant usage on schema public to mp_ally_probe;
 -- политика падала бы отказом вместо того, чтобы что-то разрешить. В Supabase
 -- у роли authenticated это право есть — players_select_world из 0001 открыт
 -- всем, — так что стенд повторяет боевые права, а не расширяет их.
-grant select on players, alliances, alliance_members, alliance_applications, alliance_chat to mp_ally_probe;
+grant select on players, alliances, alliance_members, alliance_applications, alliance_invites, alliance_chat to mp_ally_probe;
 
 -- Свой мир и четверо правителей с заведомо свободными uid. Идентификаторы
 -- взяты gen_random_uuid() — с настоящими игроками не пересекутся.
@@ -64,6 +64,13 @@ join players p on p.nick=t.nick join alliances a on a.tag=t.tag;
 
 insert into alliance_applications (alliance_id, player_id)
 select a.id, (select id from players where nick='ПробаПроситель') from alliances a where a.tag in ('ПРБ1','ПРБ2');
+
+-- Приглашение: наш союз зовёт «Просителя», чужой зовёт «Соратника» (тот уже в
+-- нашем союзе — так проверяется, что чужие приглашения не видны никому лишнему).
+insert into alliance_invites (alliance_id, player_id, by_player_id, by_nick)
+select a.id, p.id, (select id from players where nick='ПробаГлава'), 'ПробаГлава'
+from alliances a, players p
+where (a.tag='ПРБ1' and p.nick='ПробаПроситель') or (a.tag='ПРБ2' and p.nick='ПробаСоратник');
 
 insert into alliance_chat (alliance_id, player_id, nick, body)
 select a.id, p.id, p.nick, 'тайна '||a.tag
@@ -190,11 +197,18 @@ insert into alliance_members (player_id, alliance_id, role)
 select (select id from players where nick='ПробаЧужой'), id, 'r5' from alliances where tag='ПРБ2';
 insert into alliance_applications (alliance_id, player_id)
 select id, (select id from players where nick='ПробаПроситель') from alliances where tag='ПРБ2';
+-- И приглашение чужого союза «Соратнику»: проверка 5 удалила союз ПРБ2 вместе
+-- с его приглашением (каскад), а шестой оно нужно — на нём видно, что позванный
+-- своё приглашение видит, даже будучи рядовым в другом союзе.
+insert into alliance_invites (alliance_id, player_id, by_player_id, by_nick)
+select id, (select id from players where nick='ПробаСоратник'),
+       (select id from players where nick='ПробаЧужой'), 'ПробаЧужой'
+from alliances where tag='ПРБ2';
 insert into alliance_chat (alliance_id, player_id, nick, body)
 select id, (select id from players where nick='ПробаЧужой'), 'ПробаЧужой', 'тайна ПРБ2' from alliances where tag='ПРБ2';
 
 -- Ответы собираем ДО смены роли: сравнивать будем с тем, что увидит игрок.
-create temp table probe_seen (who text, chat text, apps text);
+create temp table probe_seen (who text, chat text, apps text, inv text);
 -- Временные таблицы стенда роль игрока читает и пишет наравне: RLS на них
 -- нет вовсе, но обычные права GRANT нужны и им.
 grant select on probe to mp_ally_probe;
@@ -203,14 +217,17 @@ grant select, insert on probe_seen to mp_ally_probe;
 set local role mp_ally_probe;
 
 do $$
-declare r record; uid text; seen_chat text; seen_apps text;
+declare r record; uid text; seen_chat text; seen_apps text; seen_inv text;
 begin
   for r in select k, v from probe where k in ('u_lead','u_mem','u_out','u_app') loop
     perform set_config('request.jwt.claim.sub', r.v, true);
     select coalesce(string_agg(c.body, ', ' order by c.body), '') into seen_chat from alliance_chat c;
     select coalesce(string_agg(a.tag, ', ' order by a.tag), '') into seen_apps
       from alliance_applications ap join alliances a on a.id=ap.alliance_id;
-    insert into probe_seen values (r.k, seen_chat, seen_apps);
+    select coalesce(string_agg(a.tag||'->'||p.nick, ', ' order by a.tag), '') into seen_inv
+      from alliance_invites iv join alliances a on a.id=iv.alliance_id
+      join players p on p.id=iv.player_id;
+    insert into probe_seen values (r.k, seen_chat, seen_apps, seen_inv);
   end loop;
 end $$;
 
@@ -236,7 +253,24 @@ begin
   if apps_mem  <> ''     then raise exception 'ПРОВАЛ: рядовой соратник видит заявки «%»', apps_mem; end if;
   if apps_app  <> 'ПРБ1, ПРБ2' then raise exception 'ПРОВАЛ: подавший видит заявки «%», ждали обе свои', apps_app; end if;
 
-  raise notice '6 ✓ RLS: чат — только своему союзу; заявки — разбирающему и подавшему, больше никому';
+  -- Приглашения: позванный видит своё, зовущие ступени (r5/r4/r3) — свои
+  -- исходящие, рядовой соратник — ничьи.
+  declare inv_lead text; inv_mem text; inv_app text;
+  begin
+    select inv into inv_lead from probe_seen where who='u_lead';
+    select inv into inv_mem  from probe_seen where who='u_mem';
+    select inv into inv_app  from probe_seen where who='u_app';
+    if inv_lead <> 'ПРБ1->ПробаПроситель' then
+      raise exception 'ПРОВАЛ: глава видит приглашения «%», ждали только своего союза', inv_lead; end if;
+    -- Соратник — ступень r1: чужих приглашений он не видит, но ВИДИТ своё
+    -- собственное (его позвал чужой союз), потому что позванному оно и адресовано.
+    if inv_mem <> 'ПРБ2->ПробаСоратник' then
+      raise exception 'ПРОВАЛ: рядовой соратник видит приглашения «%», ждал только своё', inv_mem; end if;
+    if inv_app <> 'ПРБ1->ПробаПроситель' then
+      raise exception 'ПРОВАЛ: позванный видит приглашения «%», ждал только своё', inv_app; end if;
+  end;
+
+  raise notice '6 ✓ RLS: чат — только своему союзу; заявки и приглашения — кому адресованы, больше никому';
 end $$;
 
 -- ---------------------------------------------------------------------------

@@ -84,6 +84,9 @@ const res = await page.evaluate(() => {
     { x: 103, y: 104, t: 'regfort', data: { region: 10, region_name: 'Открытые Равнины', shrine: 'Курган Павших',
                                             tier: 3, state: 'ally', alliance_id: 11, razed_at: null } },
   ];
+  // Кто в каком союзе — то же, что кладёт mpRefreshAllyOf. Гутрум в союзе,
+  // «Подщитом» сам по себе: нужны оба случая.
+  mpState.allyOf = { 9: { id: 11, name: 'Орден Багровой Зари', tag: 'ЗАРЯ', emblem: null, role: 'r1' } };
   mpSnapCache = null; mpSnapRefs = null;
   const cases = [
     ['пустошь',              { x: 120, y: 120 }],
@@ -109,11 +112,40 @@ const res = await page.evaluate(() => {
                acts: [...el.querySelectorAll('[data-mp]')].map((n) => n.dataset.mp),
                txt: txt.slice(0, 90) });
   }
+  // --- Метка союза, строка союза и кнопки мини-профиля ---------------------
+  const extra = {};
+  const panel = (cell) => { sel = cell; selMarch = null; renderCartoucheMp();
+    return { txt: (el.textContent || '').replace(/\s+/g, ' ').trim(),
+             acts: [...el.querySelectorAll('[data-mp]')].map((n) => n.dataset.mp) }; };
+  const inAlly = panel({ x: 104, y: 103 });      // Гутрум, в союзе
+  const noAlly = panel({ x: 106, y: 103 });      // Подщитом, сам по себе
+  extra.меткаВПанели = /\[ЗАРЯ\]/.test(inAlly.txt);
+  extra.союзНазван = /Орден Багровой Зари/.test(inAlly.txt);
+  extra.союзОткрывается = inAlly.acts.includes('allyview');
+  extra.безСоюзаПодписан = /сам по себе/i.test(noAlly.txt);
+  extra.письмоЕсть = inAlly.acts.includes('cartmail');
+  // Приглашать может старейшина и выше, и только того, кто сам по себе.
+  const inv = (role, cell) => { mpState.allyRole = role; return panel(cell).acts.includes('allyinvite'); };
+  mpState.ally = { id: 11, name: 'Орден Багровой Зари', tag: 'ЗАРЯ' };
+  extra.зоветГлава = inv('r5', { x: 106, y: 103 });
+  extra.зоветСтарейшина = inv('r3', { x: 106, y: 103 });
+  extra.неЗоветДружинник = !inv('r2', { x: 106, y: 103 });
+  extra.неЗоветВЧужойСоюз = !inv('r5', { x: 104, y: 103 });   // Гутрум уже в союзе
+  mpState.ally = null; mpState.allyRole = '';
+  extra.безСвоегоСоюзаНеЗовёт = !panel({ x: 106, y: 103 }).acts.includes('allyinvite');
+  // Метка обязана доехать и до подписи города в 3D (снимок мира).
+  mpSnapCache = null; mpSnapRefs = null;
+  const snap = mpWorldSnapshot();
+  extra.меткаВСнимке = (snap.players.find((p) => p.id === 9) || {}).tag === 'ЗАРЯ';
+  extra.безСоюзаМеткиНет = !((snap.players.find((p) => p.id === 10) || {}).tag);
+  out.push({ __extra: extra });
   return out;
 });
 
+const extra = (res.pop() || {}).__extra || {};
 let bad = 0;
 const ok = (b) => (b ? '✓' : '✗');
+const check = (label, cond) => { if (!cond) bad++; console.log('  ' + ok(cond) + ' ' + label); };
 console.log('ошибок страницы:', errors.length ? errors.slice(0, 3) : 'нет');
 if (errors.length) bad++;
 console.log('\nВетки панели мира:');
@@ -140,6 +172,22 @@ console.log('  ' + ok(c1) + ' есть и «Разведать», и «Атак�
 const c2 = shielded && shielded.acts.includes('cartscout') && !shielded.acts.includes('cartattackpick');
 if (!c2) bad++;
 console.log('  ' + ok(c2) + ' под щитом — разведка есть, атаки нет');
+
+console.log('\nМетка союза и мини-профиль:');
+check('метка союза видна в панели', extra.меткаВПанели);
+check('союз назван полным именем', extra.союзНазван);
+check('по союзу открывается его карточка', extra.союзОткрывается);
+check('«сам по себе» подписан честно', extra.безСоюзаПодписан);
+check('есть кнопка «Письмо»', extra.письмоЕсть);
+check('метка доехала до подписи города в 3D', extra.меткаВСнимке);
+check('у безсоюзного метки нет', extra.безСоюзаМеткиНет);
+
+console.log('\nКто может звать в союз:');
+check('глава — да', extra.зоветГлава);
+check('старейшина — да', extra.зоветСтарейшина);
+check('дружинник — нет', extra.неЗоветДружинник);
+check('в чужого, уже состоящего, — нет', extra.неЗоветВЧужойСоюз);
+check('без своего союза — нет', extra.безСвоегоСоюзаНеЗовёт);
 
 await b.close();
 console.log('\n' + (bad ? bad + ' проверок не прошло' : 'все проверки прошли'));

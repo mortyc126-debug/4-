@@ -20,7 +20,8 @@
 // относительного импорта.
 //
 // Тело запроса: { op: "...", ...аргументы }
-//   create  {name, tag, motto, open}   — основать союз (нужен Центр Альянса)
+//   create  {name, tag, motto, open, emblem} — основать союз
+//                                      (нужен Центр Альянса и 500 янтаря)
 //   edit    {motto, open, minPower}    — девиз и порядок приёма (заместитель+)
 //   emblem  {emblem:{s,d,c,t1,t2,t3}}  — герб союза (заместитель+)
 //   disband {}                         — распустить (только глава)
@@ -31,6 +32,9 @@
 //   leave   {}                         — выйти самому
 //   kick    {playerId}                 — исключить (заместитель+, младшего)
 //   role    {playerId, role}           — старшинство r5..r1 (только глава)
+//   invite  {playerId}                 — позвать в союз (старейшина+)
+//   acceptinvite  {allianceId}         — принять приглашение
+//   declineinvite {allianceId}         — отклонить приглашение
 //   say     {body}                     — реплика в чат союза
 // Ответ: { ok:true, ... } либо { err }.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -73,6 +77,12 @@ const R4_SLOTS = 4;
 // исключением младших и порядком. Три нижние ступени — знак старшинства
 // внутри союза, без прав: так это и устроено в жанре.
 const RANK_OFFICER = ROLE_RANK.r4, RANK_LEADER = ROLE_RANK.r5;
+// Звать в союз может и старейшина — прямое решение автора: «функцию
+// приглашений Главой и R4, R3». Это ЕДИНСТВЕННОЕ право, спущенное ниже
+// заместителя: разбирать заявки, исключать и править порядок r3 по-прежнему
+// не может. Приглашение — не решение за союз, а протянутая рука; отказать
+// позванному всё равно решает он сам.
+const RANK_INVITER = ROLE_RANK.r3;
 
 // Вместимость союза — ТРИДЦАТЬ на всех, прямое решение автора; со зданием
 // «Центр Альянса» не связана вовсе. Здание даёт вместимость подкреплений и
@@ -83,6 +93,9 @@ const RANK_OFFICER = ROLE_RANK.r4, RANK_LEADER = ROLE_RANK.r5;
 // одно на всех, но менять его придётся живой базе, а не деплою. Константа —
 // только запасное значение, если колонки почему-то нет.
 const ALLY_CAP_DEFAULT = 30;
+
+// Цена основания союза — 500 янтаря, прямое число автора.
+const ALLY_FOUND_AMBER = 500;
 
 const NAME_MIN = 3, NAME_MAX = 24;
 const TAG_MIN = 2, TAG_MAX = 4;
@@ -239,6 +252,14 @@ Deno.serve(async (req) => {
       // нужна постройка (ср. проверку Горна в mp-upgrade/mp-forge).
       const lv = (me.state && me.state.b && me.state.b.alliance) || 0;
       if (lv < 1) return jsonResponse({ err: "Нужен построенный Центр Альянса" }, 400);
+      // Цена основания — 500 янтаря (число автора). Янтарь до сих пор копился
+      // и не тратился никуда вовсе; союз стал первым, на что он идёт.
+      // Списывается ТОЛЬКО после того, как союз и членство в нём легли в базу:
+      // иначе неудачная вставка (занятое имя, гонка) съедала бы янтарь ни за
+      // что. См. ниже, у самой записи.
+      const amberHave = Math.floor(Number((me.state && me.state.amber) || 0));
+      if (amberHave < ALLY_FOUND_AMBER)
+        return jsonResponse({ err: "Нужно " + ALLY_FOUND_AMBER + " янтаря, у вас " + amberHave }, 400);
 
       const name = String(body.name || "").trim().replace(/\s+/g, " ");
       const tag = String(body.tag || "").trim();
@@ -251,8 +272,23 @@ Deno.serve(async (req) => {
         return jsonResponse({ err: "Метка — от " + TAG_MIN + " до " + TAG_MAX + " знаков" }, 400);
       if (!TAG_RE.test(tag)) return jsonResponse({ err: "В метке — только буквы и цифры" }, 400);
 
+      // Флаг выбирают тут же, при основании (см. вкладку «Основать союз» в
+      // index.html): основной цвет поля станет цветом земель союза, и
+      // выбирать его задним числом было бы поздно. Диапазоны те же, что у
+      // op:"emblem" ниже; кривой герб не отказ основания, а просто общий по
+      // умолчанию — терять из-за него оплаченный союз незачем.
+      const EM_LIM = { s: 10, d: 24, c: 40, t1: 8, t2: 8, t3: 8 };
+      let emblem = null;
+      if (body.emblem && typeof body.emblem === "object") {
+        emblem = {};
+        for (const k of Object.keys(EM_LIM)) {
+          const v = Math.round(Number(body.emblem[k]));
+          if (!Number.isFinite(v) || v < 0 || v > EM_LIM[k]) { emblem = null; break; }
+          emblem[k] = v;
+        }
+      }
       const { data: made, error: cErr } = await admin.from("alliances").insert({
-        world_id: world.id, name, tag, leader_id: me.id, motto, open,
+        world_id: world.id, name, tag, leader_id: me.id, motto, open, emblem,
         min_power: Math.max(0, Math.round(Number(body.minPower) || 0)),
         members: 1, power: Number(me.power || 0),
       }).select("*").maybeSingle();
@@ -274,8 +310,18 @@ Deno.serve(async (req) => {
         await admin.from("alliances").delete().eq("id", made.id);
         return jsonResponse({ err: mErr.message }, 500);
       }
-      // Свои заявки в чужие союзы больше не нужны — союз уже свой.
+      // Янтарь списывается ЗДЕСЬ — когда союз и членство уже в базе. Раньше
+      // было бы можно потерять его на занятом имени или проигранной гонке.
+      // Отдельным update по своей же строке: state тут больше ничем не
+      // правится, и тянуть ради одного числа проверку версии (savePlayerState
+      // из соседних функций) не за чем — конкурирующая запись state перезапишет
+      // янтарь своим значением, а это худшее, что случится: игрок получит союз
+      // и не заплатит. Дороже была бы обратная ошибка.
+      const paidState = Object.assign({}, me.state, { amber: amberHave - ALLY_FOUND_AMBER });
+      await admin.from("players").update({ state: paidState }).eq("id", me.id);
+      // Свои заявки и приглашения в чужие союзы больше не нужны — союз уже свой.
       await admin.from("alliance_applications").delete().eq("player_id", me.id);
+      await admin.from("alliance_invites").delete().eq("player_id", me.id);
       await sysSay(admin, made.id, "Союз основан. Глава — " + (me.nick || "безымянный лорд") + ".");
       return jsonResponse({ ok: true, alliance_id: made.id, cap: capOf(made) });
     }
@@ -315,6 +361,7 @@ Deno.serve(async (req) => {
         .insert({ player_id: me.id, alliance_id: allianceId, role: "r1" });
       if (jErr) return jsonResponse({ err: jErr.message }, 500);
       await admin.from("alliance_applications").delete().eq("player_id", me.id);
+      await admin.from("alliance_invites").delete().eq("player_id", me.id);
       await sysSay(admin, allianceId, (me.nick || "Безымянный лорд") + " вступает в союз.");
       await recountAlliance(admin, allianceId);
       return jsonResponse({ ok: true, alliance_id: allianceId });
@@ -399,6 +446,42 @@ Deno.serve(async (req) => {
     }
 
     // ---------------------------------------------------------------------
+    // acceptinvite / declineinvite — ответ на приглашение
+    // ---------------------------------------------------------------------
+    // Стоят ДО проверки «вы в союзе»: отвечает на приглашение как раз тот,
+    // кто ни в каком союзе не состоит.
+    if (op === "acceptinvite" || op === "declineinvite") {
+      if (myMem) return jsonResponse({ err: "Вы уже состоите в союзе" }, 400);
+      const allianceId = Number(body.allianceId);
+      if (!Number.isFinite(allianceId)) return jsonResponse({ err: "Не указан союз" }, 400);
+      const { data: inv } = await admin.from("alliance_invites")
+        .select("alliance_id").eq("alliance_id", allianceId).eq("player_id", me.id).maybeSingle();
+      if (!inv) return jsonResponse({ err: "Такого приглашения уже нет" }, 400);
+      await admin.from("alliance_invites")
+        .delete().eq("alliance_id", allianceId).eq("player_id", me.id);
+      if (op === "declineinvite") return jsonResponse({ ok: true, declined: true });
+
+      const loadedInv = await loadAlliance(admin, allianceId);
+      if (loadedInv.err) return jsonResponse({ err: loadedInv.err }, 400);
+      const aInv = loadedInv.alliance, mInv = loadedInv.members;
+      if (aInv.world_id !== world.id) return jsonResponse({ err: "Этот союз не из вашего мира" }, 400);
+      // Место проверяется ЗДЕСЬ, а не при отправке приглашения: между «позвали»
+      // и «согласился» союз мог наполниться. Порог мощи приглашённого не
+      // касается — его позвали лично, это и есть решение союза.
+      if (mInv.filter((m) => m.players && !m.players.dead_at).length >= capOf(aInv))
+        return jsonResponse({ err: "В союзе нет свободных мест" }, 400);
+      const { error: jErr } = await admin.from("alliance_members")
+        .insert({ player_id: me.id, alliance_id: allianceId, role: "r1" });
+      if (jErr) return jsonResponse({ err: jErr.message }, 500);
+      // Вступил — остальные заявки и приглашения ему больше ни к чему.
+      await admin.from("alliance_applications").delete().eq("player_id", me.id);
+      await admin.from("alliance_invites").delete().eq("player_id", me.id);
+      await sysSay(admin, allianceId, (me.nick || "Безымянный лорд") + " принимает приглашение и вступает в союз.");
+      await recountAlliance(admin, allianceId);
+      return jsonResponse({ ok: true, alliance_id: allianceId });
+    }
+
+    // ---------------------------------------------------------------------
     // emblem — герб союза (заместитель и выше)
     // ---------------------------------------------------------------------
     // Хранится шестью числами: форма щита, деление поля, фигура и три
@@ -459,11 +542,41 @@ Deno.serve(async (req) => {
         .insert({ player_id: playerId, alliance_id: alliance.id, role: "r1" });
       if (aErr) return jsonResponse({ err: aErr.message }, 500);
       await admin.from("alliance_applications").delete().eq("player_id", playerId);
+      await admin.from("alliance_invites").delete().eq("player_id", playerId);
       await sysSay(admin, alliance.id, (cand.nick || "Безымянный лорд") + " принят в союз.");
       await allianceMail(admin, world.id, playerId, "Вас приняли в союз",
         "Союз «" + alliance.name + "» [" + alliance.tag + "] принял вашу заявку.");
       await recountAlliance(admin, alliance.id);
       return jsonResponse({ ok: true, accepted: true });
+    }
+
+    // ---------------------------------------------------------------------
+    // invite — позвать в союз (старейшина и выше)
+    // ---------------------------------------------------------------------
+    if (op === "invite") {
+      if (rank < RANK_INVITER) return jsonResponse({ err: "Звать в союз может старейшина и выше" }, 403);
+      const playerId = Number(body.playerId);
+      if (!Number.isFinite(playerId)) return jsonResponse({ err: "Не указан правитель" }, 400);
+      if (playerId === me.id) return jsonResponse({ err: "Вы и так в союзе" }, 400);
+      const { data: cand } = await admin.from("players")
+        .select("id,nick,dead_at").eq("id", playerId).eq("world_id", world.id).maybeSingle();
+      if (!cand || cand.dead_at) return jsonResponse({ err: "Такого правителя нет" }, 400);
+      const { data: already } = await admin.from("alliance_members")
+        .select("player_id").eq("player_id", playerId).maybeSingle();
+      if (already) return jsonResponse({ err: "Он уже состоит в союзе" }, 400);
+      if (members.filter((m) => m.players && !m.players.dead_at).length >= capOf(alliance))
+        return jsonResponse({ err: "В союзе нет свободных мест" }, 400);
+
+      const { error: iErr } = await admin.from("alliance_invites").upsert(
+        { alliance_id: alliance.id, player_id: playerId, by_player_id: me.id, by_nick: me.nick || "" },
+        { onConflict: "alliance_id,player_id" });
+      if (iErr) return jsonResponse({ err: iErr.message }, 500);
+      // Письмо — чтобы приглашение нашло его и офлайн: экран союза он может и
+      // не открыть, а почта светится меткой.
+      await allianceMail(admin, world.id, playerId, "Приглашение в союз",
+        "Союз «" + alliance.name + "» [" + alliance.tag + "] зовёт вас к себе. " +
+        "Позвал: " + (me.nick || "безымянный лорд") + ". Ответить можно во вкладке «Альянс».");
+      return jsonResponse({ ok: true, invited: true });
     }
 
     // ---------------------------------------------------------------------
@@ -547,6 +660,7 @@ Deno.serve(async (req) => {
       if (letters.length) await admin.from("mail").insert(letters);
       await admin.from("alliance_members").delete().eq("alliance_id", alliance.id);
       await admin.from("alliance_applications").delete().eq("alliance_id", alliance.id);
+      await admin.from("alliance_invites").delete().eq("alliance_id", alliance.id);
       await admin.from("alliances")
         .update({ disbanded_at: nowIso, members: 0, power: 0 }).eq("id", alliance.id);
       return jsonResponse({ ok: true, disbanded: true });

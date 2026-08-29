@@ -58,7 +58,7 @@ const mkState = (allianceLv) => ({
   res: { food: 9e6, wood: 9e6, stone: 9e6, gold: 9e6 }, resAt: now,
   gen: { lv: 5, xp: 0, pts: 5, tal: {}, id: 0, away: null }, gear: {}, tech: {}, inventory: {},
   materials: { ore: [0, 0, 0, 0, 0], leather: [0, 0, 0, 0, 0], bone: [0, 0, 0, 0, 0], ebony: [0, 0, 0, 0, 0] },
-  tomes: {}, amber: 0,
+  tomes: {}, amber: 900,
 });
 const player = {
   id: 7, world_id: 'w1', auth_uid: 'u1', is_bot: false, race: 'human', nick: 'Витольд', name: '',
@@ -123,7 +123,11 @@ const r = await page.evaluate(({ stateNoCenter, stateWithCenter }) => {
   let h = mpAllianceHtml();
   out.безЦентра_текст = /Нужен Центр Альянса/.test(text(h));
   out.безЦентра_формыНет = acts(h).indexOf('allycreate') < 0;
-  out.безЦентра_пустойСписок = /не основано ни одного союза/.test(text(h));
+  // Список союзов теперь на второй вкладке — переключаемся, как игрок.
+  mpAllyNoneTab = 'join'; const hJoin0 = mpAllianceHtml(); mpAllyNoneTab = 'create';
+  out.безЦентра_пустойСписок = /не основано ни одного союза/.test(text(hJoin0));
+  out.вкладкиЕсть = (h.match(/data-mp='allynonetab'/g) || []).length === 2;
+  out.вкладкаПоУмолчаниюОснование = /Основать союз/.test(text(h));
 
   // --- 2. Не в союзе, Центр есть, в мире два союза -----------------------
   P.state = mkState(3);   // 20 + 4*3 = 32 места
@@ -134,6 +138,20 @@ const r = await page.evaluate(({ stateNoCenter, stateWithCenter }) => {
   h = mpAllianceHtml();
   out.сЦентром_формаЕсть = acts(h).indexOf('allycreate') >= 0;
   out.сЦентром_мест30 = /Мест в союзе — 30/.test(text(h));
+  // Флаг выбирается там же, где имя, — на вкладке основания.
+  out.создание_флагЗдесьЖе = acts(h).indexOf('allyemblem') >= 0 && acts(h).indexOf('allytint') >= 0;
+  out.создание_цветПоляПодписан = /им же окрасятся ваши земли/i.test(text(h));
+  out.создание_ценаЯнтарь = /500 янтаря/.test(text(h)) && /У вас 900/.test(text(h));
+  out.создание_кнопкаЖива = enabled(h, 'allycreate') === true;
+  // Не хватает янтаря — кнопка гаснет и сказано, сколько недостаёт.
+  P.state.amber = 100;
+  const hPoor = mpAllianceHtml();
+  out.создание_безЯнтаряГаснет = enabled(hPoor, 'allycreate') === false;
+  out.создание_сказаноСколькоНеХватает = /Не хватает 400/.test(text(hPoor));
+  P.state.amber = 900;
+  // Дальше — вкладка со списком союзов.
+  mpAllyNoneTab = 'join';
+  h = mpAllianceHtml();
   out.сЦентром_вступить = acts(h).indexOf('allyjoin') >= 0;
   // Полный союз кнопку вступления не показывает вовсе — сервер всё равно
   // откажет, а нажимаемая кнопка, которая всегда отвечает отказом, хуже её
@@ -144,6 +162,21 @@ const r = await page.evaluate(({ stateNoCenter, stateWithCenter }) => {
   mpState.allyMyApps = [{ alliance_id: 11, created_at: new Date().toISOString() }];
   h = mpAllianceHtml();
   out.заявка_отозвать = acts(h).indexOf('allycancel') >= 0;
+
+  // --- 2б. Приглашения ----------------------------------------------------
+  // Показываются НАД вкладками, на любой из них: приглашение может протухнуть
+  // (союз наполнится), и прятать его за переключателем нельзя.
+  mpState.allyMyApps = [];
+  mpState.allyInvites = [{ alliance_id: 12, created_at: new Date().toISOString(), by_nick: 'Гутрум',
+    alliances: { id: 12, name: 'Тихий Дозор', tag: 'ДОЗР', emblem: null, members: 5, members_max: 30, power: 90000 } }];
+  const hInvCreate = (mpAllyNoneTab = 'create', mpAllianceHtml());
+  const hInvJoin = (mpAllyNoneTab = 'join', mpAllianceHtml());
+  out.приглашение_наОбеихВкладках =
+    acts(hInvCreate).indexOf('allyinviteok') >= 0 && acts(hInvJoin).indexOf('allyinviteok') >= 0;
+  out.приглашение_ктоПозвал = /позвал Гутрум/.test(text(hInvJoin));
+  out.приглашение_можноОтказаться = acts(hInvJoin).indexOf('allyinviteno') >= 0;
+  mpState.allyInvites = [];
+  mpAllyNoneTab = 'join';
 
   // --- 3. В союзе соратником ---------------------------------------------
   reset();
@@ -323,11 +356,23 @@ const r = await page.evaluate(({ stateNoCenter, stateWithCenter }) => {
   mpAllyEmblemDraft = { s: 2, d: 3, c: 4, t1: 1, t2: 2, t3: 3 };
   acts(mpAllianceHtml()).forEach(a => drawn.add(a));
   mpAllyEmblemDraft = null;
-  reset(); P.state = mkState(3);
+  reset(); P.state = mkState(3); P.state.amber = 900;
   mpState.allyList = [{ id: 11, name: 'Орден', tag: 'ЗАРЯ', motto: '', open: true, min_power: 0, members: 1, members_max: 30, power: 1 }];
-  acts(mpAllianceHtml()).forEach(a => drawn.add(a));
+  mpState.allyInvites = [{ alliance_id: 12, by_nick: 'Гутрум',
+    alliances: { id: 12, name: 'Дозор', tag: 'ДОЗР', emblem: null, members: 1, members_max: 30, power: 1 } }];
+  // Обе вкладки: на одной форма основания с гербом, на другой список союзов.
+  for (const t of ['create', 'join']) { mpAllyNoneTab = t; acts(mpAllianceHtml()).forEach(a => drawn.add(a)); }
   mpState.allyMyApps = [{ alliance_id: 11 }];
+  mpAllyNoneTab = 'join';
   acts(mpAllianceHtml()).forEach(a => drawn.add(a));
+  // Карточка чужого союза — свои две кнопки (назад и вступление).
+  mpAllyView = 12;
+  mpAllyViewData = { alliance: { id: 12, name: 'Дозор', tag: 'ДОЗР', motto: '', open: true,
+                                 members_max: 30, power: 1, emblem: null, disbanded_at: null },
+                     members: [{ player_id: 8, role: 'r5', joined_at: new Date().toISOString(),
+                                 players: { id: 8, nick: 'Эльна', race: 'elf', power: 1, dead_at: null } }] };
+  acts(mpAllianceHtml()).forEach(a => drawn.add(a));
+  mpAllyView = null; mpAllyViewData = null;
   const src = handleMpAct.toString();
   out.кнопкиЭкрана = [...drawn].filter(a => a.indexOf('ally') === 0).sort();
   out.безОбработчика = out.кнопкиЭкрана.filter(a => src.indexOf("data-mp='" + a + "'") < 0);
@@ -355,14 +400,27 @@ console.log('\nНе в союзе, Центра Альянса нет:');
 check('сказано, что нужен Центр Альянса', r.безЦентра_текст);
 check('формы основания нет', r.безЦентра_формыНет);
 check('пустой список союзов подписан', r.безЦентра_пустойСписок);
+check('вкладок ровно две', r.вкладкиЕсть);
+check('по умолчанию открыто основание', r.вкладкаПоУмолчаниюОснование);
 
 console.log('\nНе в союзе, Центр Альянса 3 уровня:');
 check('форма основания есть', r.сЦентром_формаЕсть);
 check('мест в союзе — тридцать, не по зданию', r.сЦентром_мест30);
+check('флаг выбирается там же, где имя', r.создание_флагЗдесьЖе);
+check('цвет поля подписан как цвет земель', r.создание_цветПоляПодписан);
+check('цена 500 янтаря и остаток показаны', r.создание_ценаЯнтарь);
+check('с янтарём кнопка основания жива', r.создание_кнопкаЖива);
+check('без янтаря кнопка гаснет', r.создание_безЯнтаряГаснет);
+check('и сказано, сколько не хватает', r.создание_сказаноСколькоНеХватает);
 check('в открытый союз можно вступить', r.сЦентром_вступить);
 check('у полного союза кнопки вступления нет', r.сЦентром_полныйБезКнопки);
 check('полный союз подписан «Полно»', r.сЦентром_полноПодписано);
 check('поданная заявка даёт «Отозвать»', r.заявка_отозвать);
+
+console.log('\nПриглашения:');
+check('видны на обеих вкладках', r.приглашение_наОбеихВкладках);
+check('сказано, кто позвал', r.приглашение_ктоПозвал);
+check('можно отказаться', r.приглашение_можноОтказаться);
 
 console.log('\nВ союзе новиком (r1, младшая ступень):');
 check('метка союза видна', r.соратник_метка);
@@ -441,8 +499,8 @@ check('у каждой есть ветка в handleMpAct', r.безОбрабо
 // переспросом, а три кнопки герба (выбор кадра, выбор тинктуры, отмена)
 // вообще ничего не шлют — правят черновик. Число сторожит от тихой потери
 // кнопки при правке экрана.
-check('в проверку попали все шестнадцать кнопок союза (' + r.кнопкиЭкрана.length + ')',
-      r.кнопкиЭкрана.length === 16);
+check('в проверку попали все двадцать одну кнопку союза (' + r.кнопкиЭкрана.length + ')',
+      r.кнопкиЭкрана.length === 21);
 if (r.безОбработчика.length) console.log('    БЕЗ ОБРАБОТЧИКА:', r.безОбработчика.join(', '));
 
 console.log('\nКнопка помощи у идущей стройки:');

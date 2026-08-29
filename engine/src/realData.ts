@@ -45,7 +45,7 @@ interface LiveWorld {
   // не прошли через load()/genWorld() с этим индексом (переходный момент);
   // loadRealEntities ниже сама откатывается на полный перебор, если его нет.
   mapChunks?: Record<string, string[]>;
-  players: Array<{ id: number; race: string; nick?: string; x: number; y: number; b: { hall: number } }>;
+  players: Array<{ id: number; race: string; nick?: string; tag?: string; x: number; y: number; b: { hall: number } }>;
 }
 
 // Фаза 12, кусочек 2 — общий мир (mp-*) вместо локальных ботов одиночки.
@@ -147,7 +147,10 @@ export function loadRealEntities(centerX?: number, centerZ?: number, radius?: nu
       const race = pl ? pl.race : "human";
       const epoch = pl ? Math.max(1, Math.min(5, epochOf(pl.b.hall))) : 1;
       const own = !!pl && pl.id === ownId;
-      const nm = pl ? pl.nick ?? "?" : "?";
+      // Метка союза перед ником — то же, что и в панелях: союз должен быть
+      // виден там же, где виден ник, без единого тапа (Фаза 52).
+      const tag = pl && pl.tag ? "[" + pl.tag + "] " : "";
+      const nm = pl ? tag + (pl.nick ?? "?") : "?";
       const lv = pl ? "Ратуша " + pl.b.hall : "";
       out.push({ key, x: o.x + 0.5, y: o.y + 0.5, gx: o.x, gy: o.y, kind: 0, model: `/models/castles/${race}-${epoch}.glb`, scale: 10, own, nm, lv });
     } else if (o.t === "camp" || o.t === "fort") {
