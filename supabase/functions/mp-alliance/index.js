@@ -125,10 +125,15 @@ async function sysSay(admin, allianceId, text) {
 // мало: исключённый чат союза уже не увидит (RLS пускает только участников),
 // а распущенный союз не увидит никто. Формат — та же таблица mail (0001),
 // kind:"alliance", вкладка «Альянс» в почте.
-async function allianceMail(admin, worldId, playerId, title, text) {
+// extra — то, что письму нужно, чтобы БЫТЬ ДЕЙСТВИЕМ, а не текстом. Пока
+// письма союза только извещали, хватало заголовка и тела; приглашение — другое
+// дело: из него надо уметь и принять, и посмотреть, кто зовёт. Для этого в
+// data кладётся kind:"invite" и id союза, а разбор письма (index.html,
+// mpMailAllianceEntry) рисует по ним кнопки.
+async function allianceMail(admin, worldId, playerId, title, text, extra) {
   await admin.from("mail").insert({
     world_id: worldId, player_id: playerId, kind: "alliance",
-    data: { title, body: text },
+    data: Object.assign({ title, body: text }, extra || {}),
   });
 }
 
@@ -575,7 +580,11 @@ Deno.serve(async (req) => {
       // не открыть, а почта светится меткой.
       await allianceMail(admin, world.id, playerId, "Приглашение в союз",
         "Союз «" + alliance.name + "» [" + alliance.tag + "] зовёт вас к себе. " +
-        "Позвал: " + (me.nick || "безымянный лорд") + ". Ответить можно во вкладке «Альянс».");
+        "Позвал: " + (me.nick || "безымянный лорд") + ".",
+        // Письмо приглашения — действующее: из него принимают и по нему же
+        // смотрят, что за союз зовёт.
+        { kind: "invite", alliance_id: alliance.id, alliance_name: alliance.name,
+          alliance_tag: alliance.tag, by_nick: me.nick || "" });
       return jsonResponse({ ok: true, invited: true });
     }
 

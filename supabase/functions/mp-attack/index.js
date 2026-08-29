@@ -513,7 +513,15 @@ Deno.serve(async (req) => {
       .from("marches").select("id", { count: "exact", head: true })
       .eq("world_id", world.id).eq("player_id", attRow.id).in("mode", ["attack", "gather", "raid"]);
     if (busyErr) return jsonResponse({ err: busyErr.message }, 500);
-    if ((busy || 0) >= marchSlots(hallLv)) return jsonResponse({ err: "Все отряды заняты" }, 400);
+    // Фаза 53 — войска, отданные в готовящийся сбор союза, из замка ушли ровно
+    // так же, как в поход: слот отряда они держат. Без этой второй половины
+    // счёта сбор был бы «бесплатным» — можно было бы отдать в него гарнизон и
+    // тут же выступить всеми слотами ещё раз.
+    const { data: rallyParts } = await admin.from("alliance_rally_parts")
+      .select("rally_id, alliance_rallies!inner(state)")
+      .eq("player_id", attRow.id).eq("alliance_rallies.state", "gather");
+    const busyAll = (busy || 0) + ((rallyParts && rallyParts.length) || 0);
+    if (busyAll >= marchSlots(hallLv)) return jsonResponse({ err: "Все отряды заняты" }, 400);
 
     // Собираем и проверяем отправляемую часть гарнизона: не больше, чем
     // реально есть дома, и хотя бы один боец.

@@ -213,6 +213,7 @@ Deno.serve(async (req) => {
         if (ev.type === "train") await applyTrain(admin, ev);
         else if (ev.type === "build") await applyBuild(admin, ev);
         else if (ev.type === "regfort_respawn") await applyRegfortRespawn(admin, ev);
+        else if (ev.type === "rally_launch") await applyRallyLaunch(admin, ev);
         else if (ev.type === "march_arrive") await applyMarchArrive(admin, ev);
         else if (ev.type === "battle_round") await applyBattleRound(admin, ev);
         else if (ev.type === "march_home") await applyMarchHome(admin, ev);
@@ -3185,6 +3186,29 @@ function unitsTotal(units) {
   return TKEYS.reduce((s, t) => s + [1, 2, 3, 4, 5].reduce((s2, i) => s2 + ((units[t] && units[t][i]) || 0), 0), 0);
 }
 
+// Скорость похода — копия из mp-raid/mp-attack/mp-gather (правило
+// самодостаточных функций, см. supabase/README.md). Тику это понадобилось
+// только с Фазой 53: сбор союза выступает НЕ по запросу игрока, а по
+// событию rally_launch, то есть дорогу ему считает тик, а не отправляющая
+// функция. Множитель march при этом брать неоткуда копировать — полная
+// bonuses(p) у тика своя (см. выше), b.march в ней уже собран.
+const TROOP_SPEED = { inf: 1.00, arc: 1.10, cav: 1.70, sie: 0.60 };
+const RACE_SPEED_MOD = { undead: { sie: 1.20 } };
+const troopSpeedMod = (race, t) => (RACE_SPEED_MOD[race] && RACE_SPEED_MOD[race][t]) || 1;
+const MARCH_SPEED_SCALE = 32;
+// Скорость всего отряда — по САМОМУ МЕДЛЕННОМУ из присутствующих родов
+// войск: осадные машины тянут колонну назад, как и в одиночной игре.
+function marchSpeed(units, race, marchBonus = 1) {
+  let sp = 99;
+  TKEYS.forEach((t) => {
+    for (let i = 1; i <= 5; i++) {
+      if (((units[t] && units[t][i]) || 0) > 0) sp = Math.min(sp, TROOP_SPEED[t] * troopSpeedMod(race, t));
+    }
+  });
+  if (sp > 90) sp = 1;
+  return sp * MARCH_SPEED_SCALE * marchBonus;
+}
+
 // Фаза 8, кусочек 2 — лагеря варваров. BANDIT_TROOPS/banditTier/banditArmy
 // дословно из index.html:5271-5276 — тот же гарнизон, что и в одиночной
 // игре, для того же уровня лагеря. ~~BANDIT_XP не перенесён~~ — закрыто в
@@ -3581,7 +3605,269 @@ async function applyMarchArrive(admin, ev) {
 // пропал/под щитом), для честного конца PvP-боя (finalizePvpBattle ниже) и
 // для рейда на лагерь (applyRaidArrive) — раньше это было три копии одного
 // и того же 6-строчного куска, теперь один.
+// =============================================================================
+// Фаза 53 — общий сбор союза: выступление и роспуск.
+// =============================================================================
+// Как сбор ложится на уже написанное, разобрано в 0014_rally.sql: выступивший
+// сбор — ОБЫЧНЫЙ МАРШ со сложенными войсками всех участников и с пометкой
+// data.rally_id, поэтому весь разбор боя работает без единой правки. Тику
+// достаётся ровно два места: сложить войска на выступлении (здесь) и
+// рассыпать сбор на возврате (dissolveRally, вызывается из sendSurvivorsHome).
+
+// Опорный уровень крепости варваров по ступени — копия из mp-raid
+// (и из regfortLevel в index.html).
+const RALLY_REGFORT_TIER_LV = [0, 17, 20, 24];
+const RES_NAME_RU = { food: "Еда", wood: "Дерево", stone: "Камень", gold: "Золото", amber: "Янтарь" };
+
+// Разложить общее число nTotal по долям shares (массив неотрицательных чисел,
+// сумма которых total) так, чтобы сумма кусков в точности равнялась nTotal.
+// Наибольшие остатки — иначе на мелких долях (один игрок привёл 3 копейщиков
+// из 40000) round() каждой доли по отдельности даёт то недобор, то перебор, и
+// войска либо теряются, либо родятся из воздуха.
+function largestRemainder(nTotal, shares, total) {
+  const out = shares.map(() => 0);
+  if (nTotal <= 0 || total <= 0) return out;
+  const rem = [];
+  let given = 0;
+  for (let k = 0; k < shares.length; k++) {
+    const exact = (nTotal * shares[k]) / total;
+    const whole = Math.floor(exact);
+    out[k] = whole; given += whole;
+    rem.push({ k, r: exact - whole });
+  }
+  rem.sort((a, b) => b.r - a.r);
+  for (let j = 0; given < nTotal; j++, given++) out[rem[j % rem.length].k]++;
+  return out;
+}
+
+// Поделить уцелевших между участниками. Делится КАЖДАЯ клетка (род войск ×
+// ступень) отдельно и по долям в этой же клетке: у кого сколько лучников
+// третьей ступени ушло, столько же его доля и в уцелевших лучниках третьей
+// ступени. Иначе приведший одних осадных получил бы назад чужую конницу.
+function splitSurvivorsByParts(survivors, parts) {
+  const out = parts.map(() => ({ inf: {}, arc: {}, cav: {}, sie: {} }));
+  TKEYS.forEach((t) => {
+    for (let i = 1; i <= 5; i++) {
+      const shares = parts.map((pt) => ((pt.units && pt.units[t] && pt.units[t][i]) || 0));
+      const total = shares.reduce((a, b) => a + b, 0);
+      const alive = (survivors && survivors[t] && survivors[t][i]) || 0;
+      const got = largestRemainder(Math.min(alive, total), shares, total);
+      out.forEach((u, k) => { u[t][i] = got[k]; });
+    }
+  });
+  return out;
+}
+
+// Событие rally_launch — срок сбора вышел, выступаем.
+async function applyRallyLaunch(admin, ev) {
+  const rallyId = ev.data && ev.data.rally_id;
+  if (rallyId == null) return;
+  const { data: rally, error: rErr } = await admin
+    .from("alliance_rallies").select("*").eq("id", rallyId).maybeSingle();
+  if (rErr) throw rErr;
+  if (!rally || rally.state !== "gather") return; // распустили до срока — событию делать нечего
+
+  const { data: parts, error: pErr } = await admin
+    .from("alliance_rally_parts").select("player_id, units").eq("rally_id", rallyId).order("joined_at");
+  if (pErr) throw pErr;
+
+  // Общий отход «сбор не состоялся»: вернуть всем их войска прямо в замки
+  // (из замка созывающего они физически так и не вышли), освободить
+  // полководца, закрыть сбор и сказать об этом в чат союза.
+  const abort = async (why) => {
+    for (const pt of parts || []) {
+      const { data: row } = await admin.from("players").select("*").eq("id", pt.player_id).maybeSingle();
+      if (!row) continue;
+      const pp = row.state;
+      pp.troops = unitsAdd(pp.troops, pt.units || {});
+      if (rally.has_gen && pt.player_id === rally.leader_id && pp.gen) pp.gen.away = null;
+      await savePlayerStateOrThrow(admin, row, pp);
+    }
+    await admin.from("alliance_rally_parts").delete().eq("rally_id", rallyId);
+    await admin.from("alliance_rallies").update({ state: "done" }).eq("id", rallyId);
+    await admin.from("alliance_chat").insert({
+      alliance_id: rally.alliance_id, player_id: null, nick: "", kind: "system",
+      body: "Сбор на «" + rally.target_name + "» не состоялся: " + why + " Войска вернулись по замкам.",
+    });
+  };
+
+  const units = (parts || []).reduce((acc, pt) => unitsAdd(acc, pt.units || {}), { inf: {}, arc: {}, cav: {}, sie: {} });
+  if (unitsTotal(units) <= 0) { await abort("некому было выступать."); return; }
+
+  const { data: lead, error: lErr } = await admin.from("players").select("*").eq("id", rally.leader_id).maybeSingle();
+  if (lErr) throw lErr;
+  // Созывающий погиб, пока шёл срок — вести сбор некому и выходить неоткуда.
+  if (!lead || lead.dead_at) { await abort("созывающий не вышел к войску."); return; }
+  const leadP = lead.state;
+  leadP.race = leadP.race || lead.race;
+
+  // Цель проверяем ЗАНОВО: за шесть часов сбора лагерь мог разгромить кто-то
+  // другой, крепость — пасть, правитель — уйти под щит или сменить место.
+  let mode = "raid";
+  const mdata = { rally_id: rally.id, cell_x: rally.tx, cell_y: rally.ty };
+  const { data: cell } = await admin.from("map_cells").select("*")
+    .eq("world_id", rally.world_id).eq("x", rally.tx).eq("y", rally.ty).maybeSingle();
+  if (cell && (cell.t === "camp" || cell.t === "fort")) {
+    mdata.camp_lv = (cell.data && cell.data.lv) || 1;
+  } else if (cell && cell.t === "regfort" && (cell.data && cell.data.state) === "barb") {
+    mdata.camp_lv = RALLY_REGFORT_TIER_LV[Math.max(1, Math.min(3, ((cell.data && cell.data.tier) | 0)))] || 17;
+    mdata.regfort = true;
+  } else {
+    const { data: foe } = await admin.from("players")
+      .select("id,shield_until,dead_at").eq("world_id", rally.world_id)
+      .eq("x", rally.tx).eq("y", rally.ty).is("dead_at", null).maybeSingle();
+    if (!foe) { await abort("цель к этому часу уже исчезла."); return; }
+    if (Number(foe.shield_until || 0) > Date.now() / 1000) { await abort("цель укрылась под щитом мира."); return; }
+    // defender_id — по нему applyMarchArrive и находит защитника; без него
+    // марш ушёл бы в ветку «боя не было» и молча развернулся домой.
+    mode = "attack"; mdata.defender_id = foe.id;
+    delete mdata.cell_x; delete mdata.cell_y;
+  }
+
+  // Дорога — от замка СОЗЫВАЮЩЕГО (прямое условие автора: войска
+  // присоединившихся идут в его замок и выходят оттуда) и его же множителем
+  // похода. Скорость — по самому медленному во всей сложенной колонне.
+  const nowSec = Date.now() / 1000;
+  const dist = Math.hypot(rally.tx - lead.x, rally.ty - lead.y);
+  const spd = marchSpeed(units, leadP.race, bonuses(leadP).march);
+  const travel = Math.max(20, (dist / spd) * 60);
+  mdata.dist = dist; mdata.spd = spd; mdata.has_gen = !!rally.has_gen;
+
+  const { data: marchRow, error: mErr } = await admin.from("marches").insert({
+    world_id: rally.world_id, player_id: rally.leader_id, mode, state: "go",
+    tx: rally.tx, ty: rally.ty, t0: nowSec, t1: nowSec + travel, units, data: mdata,
+  }).select().single();
+  if (mErr) throw mErr;
+
+  const { error: evErr } = await admin.from("events").insert({
+    world_id: rally.world_id, fire_at: new Date((nowSec + travel) * 1000).toISOString(),
+    type: "march_arrive", data: { march_id: marchRow.id },
+  });
+  if (evErr) { await admin.from("marches").delete().eq("id", marchRow.id); throw evErr; }
+
+  // Полководец созывающего: при созыве away проставили пометкой {rally:id},
+  // потому что марша тогда ещё не было. Теперь он есть — переписываем на его
+  // номер, иначе applyMarchHome (p.gen.away === m.id) полководца не отпустит.
+  if (rally.has_gen && leadP.gen) {
+    leadP.gen.away = marchRow.id;
+    await savePlayerStateOrThrow(admin, lead, leadP);
+  }
+  await admin.from("alliance_rallies")
+    .update({ state: "march", march_id: marchRow.id }).eq("id", rally.id);
+  await admin.from("alliance_chat").insert({
+    alliance_id: rally.alliance_id, player_id: null, nick: "", kind: "system",
+    body: "Сбор выступил на «" + rally.target_name + "»: " + unitsTotal(units) + " воинов, "
+      + (parts || []).length + " " + ((parts || []).length === 1 ? "отряд" : "отрядов")
+      + ". В пути " + Math.round(travel / 60) + " мин.",
+  });
+}
+
+// Роспуск сбора — единственное, чем сбор отличается от большого одиночного
+// похода, и ровно поэтому он живёт внутри sendSurvivorsHome: та —
+// единственная воронка, через которую уходят домой уцелевшие ЛЮБОГО исхода
+// (победа, поражение, цель исчезла, отступление). Автор: «как только цель
+// достигнута, сбор рассыпается и множество отрядов союзников теперь по
+// одиночке идут обратно в свои замки и они уже доступны дальше».
+//
+// Каждому участнику — свой марш state:'back' ОТ МЕСТА БОЯ до ЕГО замка, со
+// своей дорогой и своей скоростью: сбор больше не колонна, и ждать чужих
+// осадных машин никому не надо. Дальше их разбирает обычный march_home.
+async function dissolveRally(admin, m, nowSec, survivors, carry) {
+  const rallyId = m.data.rally_id;
+  const { data: rally } = await admin.from("alliance_rallies").select("*").eq("id", rallyId).maybeSingle();
+  const { data: parts } = await admin.from("alliance_rally_parts")
+    .select("player_id, units").eq("rally_id", rallyId).order("joined_at");
+  const list = parts || [];
+
+  // Полководец созывающего освобождается в любом случае: марш сбора сейчас
+  // будет удалён, и applyMarchHome по нему уже не пройдёт.
+  const freeLeaderGen = async (newMarchId) => {
+    if (!(m.data && m.data.has_gen) || !rally) return;
+    const { data: row } = await admin.from("players").select("*").eq("id", rally.leader_id).maybeSingle();
+    if (!row || !row.state.gen) return;
+    const pp = row.state;
+    if (pp.gen.away !== m.id) return;      // полководца уже перехватил новый поход
+    pp.gen.away = newMarchId;              // null — домой, id — едет назад с отрядом
+    await savePlayerStateOrThrow(admin, row, pp);
+  };
+
+  const shares = list.map((pt) => unitsTotal(pt.units || {}));
+  const sentTotal = shares.reduce((a, b) => a + b, 0);
+  const mine = splitSurvivorsByParts(survivors, list);
+  // Добыча делится по приведённому войску — кто сколько привёл, тому столько
+  // и досталось, независимо от того, чьи воины полегли: рисковали все.
+  const RESALL = RES.concat(["amber"]);
+  const carrySplit = {};
+  RESALL.forEach((r) => { carrySplit[r] = largestRemainder(Math.floor((carry && carry[r]) || 0), shares, sentTotal); });
+
+  let leaderMarchId = null;
+  for (let k = 0; k < list.length; k++) {
+    const pt = list[k];
+    if (unitsTotal(mine[k]) <= 0) continue;   // от этого отряда не вернулся никто
+    const { data: row } = await admin.from("players").select("id,x,y,state,race").eq("id", pt.player_id).maybeSingle();
+    if (!row) continue;
+    const pp = row.state; pp.race = pp.race || row.race;
+    const distBack = Math.hypot(m.tx - row.x, m.ty - row.y);
+    const spdBack = marchSpeed(mine[k], pp.race, bonuses(pp).march);
+    const travelBack = Math.max(MIN_TRAVEL, (distBack / spdBack) * 60);
+    const myCarry = {};
+    RESALL.forEach((r) => { if (carrySplit[r][k] > 0) myCarry[r] = carrySplit[r][k]; });
+    const isLeader = rally && pt.player_id === rally.leader_id;
+    // Донесение соратнику. Разбор боя (mp-tick выше) пишет письмо ТОЛЬКО
+    // владельцу марша, то есть созывающему: остальные о судьбе своих войск не
+    // узнали бы вовсе. Поэтому каждому — своя короткая строка: что отдал, что
+    // вернулось, что довёз. Созывающему её не шлём — у него есть настоящее
+    // донесение о бое.
+    if (!isLeader && rally) {
+      const sentMine = unitsTotal(pt.units || {}), backMine = unitsTotal(mine[k]);
+      const lootLine = RESALL.filter((r) => myCarry[r])
+        .map((r) => RES_NAME_RU[r] + " " + myCarry[r]).join(", ");
+      await admin.from("mail").insert({
+        world_id: m.world_id, player_id: pt.player_id, kind: "alliance",
+        data: { title: "Сбор на «" + rally.target_name + "»",
+                body: "Вы отдали в сбор " + sentMine + " воинов. Домой возвращается " + backMine +
+                      " (пало " + (sentMine - backMine) + ")." +
+                      (lootLine ? " Ваша доля добычи: " + lootLine + "." : "") },
+      });
+    }
+    const { data: back, error: bErr } = await admin.from("marches").insert({
+      world_id: m.world_id, player_id: pt.player_id, mode: m.mode, state: "back",
+      tx: m.tx, ty: m.ty, t0: nowSec, t1: nowSec + travelBack, units: mine[k],
+      // from — МЕСТО БОЯ: линию возврата клиент ведёт по нему, и у каждого
+      // союзника она теперь своя, от общей цели к своему замку.
+      data: { dist: distBack, spd: spdBack, carry: myCarry, from: { x: m.tx, y: m.ty },
+              rally_id: rallyId, has_gen: !!(isLeader && m.data.has_gen) },
+    }).select("id").single();
+    if (bErr) throw bErr;
+    if (isLeader) leaderMarchId = back.id;
+    const { error: evErr } = await admin.from("events").insert({
+      world_id: m.world_id, fire_at: new Date((nowSec + travelBack) * 1000).toISOString(),
+      type: "march_home", data: { march_id: back.id },
+    });
+    if (evErr) throw evErr;
+  }
+
+  await freeLeaderGen(leaderMarchId);
+  await admin.from("marches").delete().eq("id", m.id);
+  if (rally) {
+    await admin.from("alliance_rally_parts").delete().eq("rally_id", rallyId);
+    await admin.from("alliance_rallies").update({ state: "done" }).eq("id", rallyId);
+    const alive = unitsTotal(survivors);
+    await admin.from("alliance_chat").insert({
+      alliance_id: rally.alliance_id, player_id: null, nick: "", kind: "system",
+      body: alive > 0
+        ? "Сбор на «" + rally.target_name + "» рассыпался: " + alive + " воинов расходятся по замкам."
+        : "Сбор на «" + rally.target_name + "» полёг весь. Домой не вернулся никто.",
+    });
+  }
+}
+
 async function sendSurvivorsHome(admin, m, nowSec, survivors, carry) {
+  // Фаза 53 — сбор союза домой не идёт: он тут рассыпается на отряды по числу
+  // участников, и каждый уходит в свой замок сам (см. dissolveRally выше).
+  // Перехват стоит ПЕРЕД проверкой на ноль уцелевших: даже когда не вернулся
+  // никто, сбор надо закрыть, полководца отпустить и сказать об этом союзу.
+  if (m.data && m.data.rally_id) { await dissolveRally(admin, m, nowSec, survivors, carry); return; }
   if (unitsTotal(survivors) <= 0) { await admin.from("marches").delete().eq("id", m.id); return; }
   // redirect_to снимаем с данных вместе с battle: он одноразовый, ставится
   // mp-redirect'ом в момент, когда отряд утащили ИЗ БОЯ. Бой к этой строке

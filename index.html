@@ -9453,8 +9453,9 @@ function renderCartoucheMp(){
         "<div class='co'><span>Ваше войско</span><b>"+fmt(my)+"</b></div>"+
         "<div class='co'><span>Прогноз</span><b style='color:"+ok[1]+"'>"+ok[0]+"</b></div>"+
         "<button class='seal wide blood ico' style='margin-top:9px' data-mp='cartraidpick' data-k='"+o.x+","+o.y+"'><img src='images/ui/icon-siege.png' alt=''>Атаковать</button>"+
+        mpRallyBtnHtml(o.x,o.y)+
         "<div class='hint'>Одна на всю область. В одиночку её обычно не берут — "+
-        "но никто не мешает попробовать.</div>";
+        "но никто не мешает попробовать: крепость для того и берут сбором союза.</div>";
     } else if(st8==="razed"){
       body+="<div class='hint'>Крепость варваров разорена. Пока на этом месте не встанет "+
         "крепость союза, варвары вернутся сюда через двенадцать часов.</div>";
@@ -9481,7 +9482,8 @@ function renderCartoucheMp(){
       "<div class='co'><span>Сила заставы</span><b>"+fmt(fp)+"</b></div>"+
       "<div class='co'><span>Ваше войско</span><b>"+fmt(my)+"</b></div>"+
       "<div class='co'><span>Прогноз</span><b style='color:"+ok[1]+"'>"+ok[0]+"</b></div>"+
-      "<button class='seal wide blood ico' style='margin-top:9px' data-mp='cartraidpick' data-k='"+o.x+","+o.y+"'><img src='images/ui/icon-siege.png' alt=''>Атаковать</button>");
+      "<button class='seal wide blood ico' style='margin-top:9px' data-mp='cartraidpick' data-k='"+o.x+","+o.y+"'><img src='images/ui/icon-siege.png' alt=''>Атаковать</button>"+
+      mpRallyBtnHtml(o.x,o.y));
     return;
   }
   if(o.t==="city"){
@@ -9527,6 +9529,9 @@ function renderCartoucheMp(){
         (hasScout?"<button class='seal ico' data-mp='cartscout' data-id='"+q.id+"'><img src='images/ui/icon-scout.png' alt=''>Разведать</button>":"")+
         (shielded?"":"<button class='seal blood ico' data-mp='cartattackpick' data-id='"+q.id+"'><img src='images/ui/icon-siege.png' alt=''>Атака</button>")+
       "</div>"+
+      // Сбор на чужой город — только если он не соратник и не под щитом:
+      // сервер оба случая всё равно отвергнет (см. mp-rally, ветка start).
+      ((shielded || (qAlly && mpState.ally && qAlly.id===mpState.ally.id)) ? "" : mpRallyBtnHtml(q.x,q.y))+
       // Приглашение — тем, кто вправе звать (глава, заместитель, старейшина),
       // и только тому, кто ещё сам по себе. Кнопка стоит здесь, а не только в
       // экране союза, ровно по просьбе автора: «если я лидер и открываю окно
@@ -12057,6 +12062,29 @@ function mpMarchUnitsOut(){
   TKEYS.forEach(t=>{for(let i=1;i<=5;i++) out[t][i]=Math.min(u[t][i]||0, mpTroopsHave(t,i))});
   return out;
 }
+// Что стоит на клетке, на которую созывают сбор. Ровно те же источники, что
+// и у картуша: лагеря/форты/крепости областей из mpState.camps, чужие города
+// из mpState.neighbors. Возвращает только имя — остальное сервер проверит
+// заново на выступлении (за шесть часов сбора цель может и пропасть).
+function mpRallyTargetAt(x,y){
+  const c=mpState.camps.find(z=>z.x===x&&z.y===y);
+  if(c){
+    if(c.t==="regfort"){
+      if(((c.data&&c.data.state)||"barb")!=="barb") return null;
+      return {name:(c.data&&c.data.shrine)||"Крепость варваров"};
+    }
+    return {name:(c.t==="fort"?"Форт":"Лагерь")+" варваров"};
+  }
+  const n=mpState.neighbors.find(z=>z.x===x&&z.y===y);
+  if(n) return {name:n.nick||"Правитель"};
+  return null;
+}
+// Уровень Центра Альянса — им же задаётся вместимость и сбора, и подкреплений.
+function mpAllyCenterLv(){
+  const st=mpState.player&&mpState.player.state;
+  const lv=st&&st.b&&st.b.alliance;
+  return Array.isArray(lv)?Math.max(0,...lv):(lv||0);
+}
 let mpMarchCtx=null, lastMarchSheet="";
 function mpOpenMarchModal(mode,target){
   bmBack=null;
@@ -12067,6 +12095,11 @@ function mpOpenMarchModal(mode,target){
   if(mode==="attack") mpState.attackTarget=target;
   else if(mode==="gather") mpState.gatherTarget=target;
   else if(mode==="move") mpState.moveTarget=target;
+  // Фаза 53 — созыв сбора ("x,y") и присоединение к чужому (номер сбора).
+  // Срок по умолчанию — пятнадцать минут: пять успевают только те, кто уже
+  // сидит в игре, шесть часов созывают на крепость и заранее.
+  else if(mode==="rally"){ mpState.rallyTarget=target; mpMarchCtx.minutes=15; }
+  else if(mode==="rallyjoin") mpState.rallyJoinId=Number(target);
   else mpState.raidTarget=target;
   lastMarchSheet=mpMarchSheetHtml();
   setHtml($("#bm-body"), lastMarchSheet);
@@ -12132,6 +12165,59 @@ function mpMarchSheetHtml(){
     h+=mpGenTakeCheckboxHtml(st,"mp-mv-gen");
     h+="<div class='chips' style='margin-top:9px'>"+
        "<button class='seal ico' data-mp='move' data-x='"+mx+"' data-y='"+my+"'"+(mpState.loading?" disabled":"")+"><img src='images/ui/icon-camp.png' alt=''>Выступить</button> "+
+       "<button class='seal' data-act='closebuilding'>Отмена</button></div>";
+    return h;
+  }
+  // ---- Созыв сбора союза -------------------------------------------------
+  if(mode==="rally"){
+    const [rx,ry]=String(mpState.rallyTarget||"").split(",").map(Number);
+    if(!Number.isFinite(rx)||!Number.isFinite(ry)) return gone("Цель не выбрана");
+    if(!mpState.ally) return gone("Сбор созывают союзом");
+    const t=mpRallyTargetAt(rx,ry);
+    if(!t) return gone("Цель пропала");
+    const cap=allyRallyCap(mpAllyCenterLv());
+    const dist=Math.round(Math.hypot(rx-p.x,ry-p.y));
+    let h="<div class='title'>Сбор на «"+escHtml(t.name)+"»</div>"+
+      "<div class='note'>"+rx+", "+ry+" · "+dist+" клет. · выступаем из вашего замка</div>";
+    if(cap<=0)
+      return h+"<div class='note' style='color:#e08'>Нужен построенный Центр Альянса — он и задаёт "+
+        "вместимость общего сбора.</div>"+
+        "<button class='seal wide' style='margin-top:9px' data-act='closebuilding'>Закрыть</button>";
+    h+="<div class='note'>Вместимость сбора — "+fmt(cap)+" воинов (Центр Альянса "+mpAllyCenterLv()+" ур.). "+
+       "Соратники приведут войска в ваш замок, полководец в бою будет ваш. "+
+       "Вышедшим сбором управлять уже нельзя: он идёт до цели, а после боя рассыпается — "+
+       "каждый отряд возвращается в свой замок сам.</div>"+errHtml;
+    // Срок — четыре кнопки, а не список: выбирают его одним касанием и сразу.
+    h+="<div class='note'>Ждём соратников:</div><div class='chips' style='margin-bottom:6px'>"+
+      RALLY_MINUTES.map(mn=>"<button class='seal tiny"+(mpMarchCtx.minutes===mn?"":" ghost")+
+        "' data-mp='rallymin' data-mn='"+mn+"'>"+rallyMinutesName(mn)+"</button>").join("")+"</div>";
+    h+=mpTroopPickerHtml("mp-rly-",p);
+    h+=mpGenTakeCheckboxHtml(st,"mp-rly-gen");
+    h+="<div class='chips' style='margin-top:9px'>"+
+       "<button class='seal blood ico' data-mp='rallystart' data-x='"+rx+"' data-y='"+ry+"'"+
+       (mpState.loading?" disabled":"")+"><img src='images/ui/icon-alliance.png' alt=''>Созвать сбор</button> "+
+       "<button class='seal' data-act='closebuilding'>Отмена</button></div>";
+    return h;
+  }
+  // ---- Присоединиться к чужому сбору -------------------------------------
+  if(mode==="rallyjoin"){
+    const r=mpState.rallies.find(x=>x.id===mpState.rallyJoinId);
+    if(!r) return gone("Сбор уже выступил");
+    const inR=rallyInTotal(r), room=Math.max(0,(Number(r.cap)||0)-inR);
+    const lead=(r.alliance_rally_parts||[]).find(pt=>pt.player_id===r.leader_id);
+    const leadNick=(lead&&lead.players&&lead.players.nick)||"Созывающий";
+    let h="<div class='title'>Сбор на «"+escHtml(r.target_name||"цель")+"»</div>"+
+      "<div class='note'>Созвал "+escHtml(leadNick)+" · "+r.tx+", "+r.ty+"</div>"+
+      "<div class='note'>В сборе "+fmt(inR)+" из "+fmt(Number(r.cap)||0)+" воинов · "+
+      "выступает через "+fmtDur(Math.max(0,(Date.parse(r.gather_until)-Date.now())/1000))+"</div>"+
+      "<div class='note'>Ваши войска уйдут в замок созывающего и вернутся домой сами — "+
+      "поодиночке, сразу после боя. Полководца берёт только созывающий.</div>"+errHtml;
+    if(room<=0) return h+"<div class='note' style='color:#e08'>Сбор полон.</div>"+
+      "<button class='seal wide' style='margin-top:9px' data-act='closebuilding'>Закрыть</button>";
+    h+=mpTroopPickerHtml("mp-rjn-",p);
+    h+="<div class='chips' style='margin-top:9px'>"+
+       "<button class='seal ico' data-mp='rallyjoin' data-id='"+r.id+"'"+(mpState.loading?" disabled":"")+
+       "><img src='images/ui/icon-alliance.png' alt=''>Присоединиться</button> "+
        "<button class='seal' data-act='closebuilding'>Отмена</button></div>";
     return h;
   }
@@ -14441,6 +14527,8 @@ function handleAct(e){
   if(cartGatherPick){ sel=null; selMarch=null; mpOpenMarchModal("gather",cartGatherPick.dataset.k); return; }
   const cartRaidPick=e.target.closest("[data-mp='cartraidpick']");
   if(cartRaidPick){ sel=null; selMarch=null; mpOpenMarchModal("raid",cartRaidPick.dataset.k); return; }
+  const cartRallyPick=e.target.closest("[data-mp='cartrallypick']");
+  if(cartRallyPick){ sel=null; selMarch=null; mpOpenMarchModal("rally",cartRallyPick.dataset.k); return; }
   const cartMovePick=e.target.closest("[data-mp='cartmovepick']");
   if(cartMovePick){ sel=null; selMarch=null; mpOpenMarchModal("move",cartMovePick.dataset.k); return; }
   // Фаза 17, кусочек 1 — клик по ячейке mpRenderCityMap(): открывает то же
@@ -15799,6 +15887,28 @@ function handleMpAct(e){
   }
   const allyLeaveBtn=e.target.closest("[data-mp='allyleave']");
   if(allyLeaveBtn){ mpDoAlly("leave",{},"Вы больше не в союзе."); return; }
+  // Сбор союза (Фаза 53). Срок выбирается в самом окне созыва и никуда не
+  // шлётся — он лишь помечает кнопку и уходит вместе с «Созвать».
+  const rallyMinBtn=e.target.closest("[data-mp='rallymin']");
+  if(rallyMinBtn){
+    if(mpMarchCtx) mpMarchCtx.minutes=+rallyMinBtn.dataset.mn;
+    mpState.err=null; mpRerender(); return;
+  }
+  const rallyStartBtn=e.target.closest("[data-mp='rallystart']");
+  if(rallyStartBtn){ mpDoRallyStart(+rallyStartBtn.dataset.x, +rallyStartBtn.dataset.y); return; }
+  // «Присоединиться» из списка сборов открывает то же окно отправки, что и
+  // созыв, только режимом rallyjoin: войска выбирают ровно так же.
+  const rallyOpenBtn=e.target.closest("[data-mp='rallyopen']");
+  if(rallyOpenBtn){ mpOpenMarchModal("rallyjoin", rallyOpenBtn.dataset.id); return; }
+  const rallyJoinBtn=e.target.closest("[data-mp='rallyjoin']");
+  if(rallyJoinBtn){ mpDoRallyJoin(+rallyJoinBtn.dataset.id); return; }
+  const rallyOutBtn=e.target.closest("[data-mp='rallywithdraw']");
+  if(rallyOutBtn){ mpDoRally("withdraw",{rallyId:+rallyOutBtn.dataset.id},"Войска вернулись домой."); return; }
+  const rallyCancelBtn=e.target.closest("[data-mp='rallycancel']");
+  if(rallyCancelBtn){
+    if(!confirm("Распустить сбор? Войска всех соратников вернутся по замкам.")) return;
+    mpDoRally("cancel",{rallyId:+rallyCancelBtn.dataset.id},"Сбор распущен."); return;
+  }
   // Герб: выбор кадра/тинктуры копится в черновике и ничего не шлёт —
   // отправляет один «Записать герб» (см. mpAllyEmblemDraft).
   const allyEmblemBtn=e.target.closest("[data-mp='allyemblem'],[data-mp='allytint']");
@@ -16667,7 +16777,10 @@ let mpState = { loading:false, joined:false, player:null, err:null, race:null, n
   // Нужна везде, где виден чужой ник: метка на карте, картуш, профиль. Состав
   // союзов открыт всем (политика alliance_members_select_all), так что это
   // одна выборка, а не запрос на каждого соседа.
-  allyOf:{}, allyInvites:[] };
+  allyOf:{}, allyInvites:[],
+  // Фаза 53 — общие сборы союза (alliance_rallies + участники). Пусто у
+  // того, кто в союзе не состоит: RLS ему их и не отдаст.
+  rallies:[], rallyTarget:null, rallyJoinId:0 };
 let mpPollTimer = null;
 // Идёт ли прямо сейчас вход/авто-резюме в общий мир (см. mpOpen) — защита
 // от повторного запуска при быстрых переключениях вкладок меню.
@@ -17009,6 +17122,34 @@ const MP_ALLY_GRANTABLE=["r4","r3","r2","r1"];
 function mpAllyRank(){ return MP_ALLY_ROLE_RANK[mpState.allyRole]||0; }
 // Метка союза перед именем — «[ЗАРЯ] Витольд». Так союз виден везде, где
 // виден ник, и это первое, ради чего его заводят.
+// =============================================================================
+// Фаза 53 — общий сбор союза (клиент).
+// =============================================================================
+// Автор: «игроки в альянсе получают кнопку "Сбор" — не путать со сбором
+// ресурсов. Этой кнопкой игрок организует сбор на цель и любой желающий из
+// участников альянса может присоединиться... Сбором в отличие от одиночного
+// марша управлять нельзя».
+//
+// Сроки — ровно те четыре, что назвал автор. Копия RALLY_MINUTES из mp-rally.
+const RALLY_MINUTES=[5,15,30,360];
+function rallyMinutesName(mn){ return mn>=60 ? (mn/60)+" ч" : mn+" мин"; }
+// Сколько войск уже стоит в сборе.
+function rallyInTotal(r){
+  return (r.alliance_rally_parts||[]).reduce((n,pt)=>n+countUnits(pt.units||{}),0);
+}
+function rallyMyPart(r){
+  const id=mpState.player?mpState.player.id:0;
+  return (r.alliance_rally_parts||[]).find(pt=>pt.player_id===id)||null;
+}
+// Кнопка «Сбор» в картуше — на всякой цели, по которой сбор вообще ходит.
+// Показывается только состоящему в союзе: остальным она ничего не значит.
+// Отсутствие Центра Альянса не прячет кнопку, а объясняется в самом окне —
+// иначе игрок не узнал бы, чего ему не хватает.
+function mpRallyBtnHtml(x,y){
+  if(!mpState.ally) return "";
+  return "<button class='seal wide ico' style='margin-top:7px' data-mp='cartrallypick' data-k='"+x+","+y+"'>"+
+    "<img src='images/ui/icon-alliance.png' alt=''>Сбор союза</button>";
+}
 function mpAllyTagHtml(tag){
   return tag ? "<span class='ally-tag'>["+escHtml(tag)+"]</span>" : "";
 }
@@ -17088,6 +17229,74 @@ function mpAllyViewHtml(){
   }).join("")+"</div>";
   return h;
 }
+// Сборы союза — то, ради чего союз и собирается вместе. Список стоит выше
+// чата и состава: сбор идёт по часам, и если соратник открыл окно союза, то
+// чаще всего именно за этим.
+function mpRalliesHtml(){
+  const list=mpState.rallies||[];
+  const meId=mpState.player?mpState.player.id:0;
+  const cap=allyRallyCap(mpAllyCenterLv());
+  if(!list.length){
+    return rubric("Сборы")+
+      "<div class='entry'><div class='line'><div class='fill'>"+
+      "<div class='note'>Сейчас союз никого не созывает. Сбор начинают с карты: "+
+      "откройте лагерь, крепость области или чужой город и нажмите «Сбор союза»."+
+      (cap>0?" Ваша вместимость сбора — "+fmt(cap)+" воинов."
+            :" Вместимость сбора даёт Центр Альянса — его ещё нет.")+
+      "</div></div></div></div>";
+  }
+  let h=rubric("Сборы", String(list.length));
+  list.forEach(r=>{
+    const parts=r.alliance_rally_parts||[];
+    const inR=rallyInTotal(r), rcap=Number(r.cap)||0;
+    const mine=rallyMyPart(r);
+    const isLead=r.leader_id===meId;
+    const marching=r.state==="march";
+    const left=Math.max(0,(Date.parse(r.gather_until)-Date.now())/1000);
+    const lead=parts.find(pt=>pt.player_id===r.leader_id);
+    const leadNick=(lead&&lead.players&&lead.players.nick)||"Созывающий";
+    // Полоска заполнения — та же мысль, что и у очередей: одним взглядом
+    // видно, есть ли ещё место и стоит ли идти.
+    const pct=rcap>0?Math.min(100,Math.round(inR/rcap*100)):0;
+    h+="<div class='entry"+(marching?"":" hot")+"'><div class='line'>"+
+      "<img class='stub-ico' src='images/ui/icon-alliance.png' alt=''>"+
+      "<div class='fill'>"+
+        "<div class='title'>"+escHtml(r.target_name||"Цель")+"</div>"+
+        "<div class='note'>"+escHtml(leadNick)+" · "+r.tx+", "+r.ty+" · "+
+          (marching ? "сбор выступил" : "выступает через "+fmtDur(left))+"</div>"+
+        "<div class='note'>"+fmt(inR)+" из "+fmt(rcap)+" воинов · "+parts.length+
+          (parts.length===1?" отряд":" отр.")+"</div>"+
+        "<div class='progress' style='margin-top:6px'><i style='width:"+pct+"%'></i></div>"+
+        (mine?"<div class='note'>Вы привели "+fmt(countUnits(mine.units||{}))+" воинов.</div>":"")+
+      "</div></div>";
+    // Кнопки только пока сбор стоит: вышедшим управлять нельзя, это прямое
+    // условие автора, и сервер отвергнет любую попытку.
+    if(!marching){
+      h+="<div class='chips' style='margin:6px 0 2px'>"+
+        (!mine ? "<button class='seal tiny' data-mp='rallyopen' data-id='"+r.id+"'>Присоединиться</button>" : "")+
+        (mine&&!isLead ? "<button class='seal tiny ghost' data-mp='rallywithdraw' data-id='"+r.id+"'"+
+          (mpState.loading?" disabled":"")+">Забрать войска</button>" : "")+
+        (isLead ? "<button class='seal tiny ghost' data-mp='rallycancel' data-id='"+r.id+"'"+
+          (mpState.loading?" disabled":"")+">Распустить</button>" : "")+
+        "<button class='seal tiny ghost' data-mp='mpgoloc' data-x='"+r.tx+"' data-y='"+r.ty+"'>На карте</button>"+
+        "</div>";
+    }
+    // Состав сбора — по одной строке на соратника: видно, кто уже вложился.
+    if(parts.length){
+      h+="<div class='rank-list ally'>"+parts.slice().sort((a,b)=>
+        countUnits(b.units||{})-countUnits(a.units||{})).map(pt=>{
+        const pl=pt.players||{};
+        return "<div class='rank-row'>"+
+          "<span class='rk-crest'>"+shieldSvg(pl.race||"human",16)+"</span>"+
+          "<span class='rk-nick'>"+escHtml(pl.nick||"Безымянный лорд")+
+            (pt.player_id===r.leader_id?" · созвал":"")+"</span>"+
+          "<b class='rk-pw'>"+fmt(countUnits(pt.units||{}))+"</b></div>";
+      }).join("")+"</div>";
+    }
+    h+="</div>";
+  });
+  return h;
+}
 function mpAllianceHtml(){
   if(mpAllyView) return mpAllyViewHtml();
   return mpState.ally ? mpAllyMineHtml() : mpAllyNoneHtml();
@@ -17127,6 +17336,8 @@ function mpAllyMineHtml(){
     });
     h+="</div>";
   }
+
+  h+=mpRalliesHtml();
 
   // ---- Чат. Старые сверху, новые внизу — как в любой переписке (порядок
   // разворачивается один раз при чтении, см. mpRefreshAlliance).
@@ -17762,6 +17973,7 @@ async function mpRefreshAll(includeSlowLane){
     const jobs=[
       mpRefreshPlayer(), mpRefreshNeighbors(), mpRefreshMarches(),
       mpRefreshIncoming(), mpRefreshNodes(), mpRefreshCamps(), mpRefreshWorldBattles(),
+      mpRefreshRallies(),
     ];
     if(includeSlowLane) jobs.push(
       mpRefreshMail(), mpRefreshScoutMail(), mpRefreshRaidMail(), mpRefreshSiegeMail(),
@@ -18047,6 +18259,25 @@ async function mpRefreshAllyInvites(){
     .eq("player_id", mpState.player.id).is("alliances.disbanded_at", null);
   if(!error && data){ mpState.allyInvites=data; mpRerenderData(); }
 }
+// Сборы союза (Фаза 53). Одной выборкой вместе с участниками и их именами:
+// PostgREST умеет вкладывать по внешнему ключу, а сбор без состава показывать
+// нечего — вся суть списка в том, кто уже привёл войска и сколько осталось
+// места. Не в союзе — RLS не отдаст ни строки, и спрашивать незачем.
+//
+// Быстрая дорожка, а не медленная (в отличие от остального союзного): срок
+// сбора бывает пятиминутный, и десять секунд запаздывания на нём заметны —
+// соратник видел бы «свободно», уже когда сбор выступил.
+async function mpRefreshRallies(){
+  if(!mpState.player || !mpState.ally){
+    if(mpState.rallies.length){ mpState.rallies=[]; mpRerenderData(); }
+    return;
+  }
+  const { data, error } = await sb.from("alliance_rallies")
+    .select("*,alliance_rally_parts(player_id,units,joined_at,players(id,nick,race))")
+    .eq("alliance_id",mpState.ally.id).in("state",["gather","march"])
+    .order("created_at",{ascending:false}).limit(10);
+  if(!error && data){ mpState.rallies=data; mpRerenderData(); }
+}
 // Письма союза (mail, kind:"alliance") — вкладка «Альянс» в почте. Их пишет
 // mp-alliance тому, кого касается: приняли заявку, отклонили, исключили,
 // распустили союз. В чат такое класть мало — исключённый чат уже не увидит.
@@ -18081,6 +18312,38 @@ async function mpDoAlly(op, args, okText){
     mpAllyBusy=false; mpAllyErr=e.message||"Не удалось"; mpRerender();
     return false;
   }
+}
+// Сбор союза (mp-rally). Отдельная обвязка от mpDoAlly: перечитывать нужно
+// другое (сборы и своё войско, а не состав союза), и ошибку показывать в том
+// же окне отправки, где игрок стоит, — через mpState.err, как у остальных
+// походов.
+async function mpDoRally(op,args,okText){
+  if(mpState.loading) return false;
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{
+    await mpCall("mp-rally", Object.assign({op},args||{}));
+    mpState.loading=false;
+    // Окно закрываем только на успехе: при отказе игрок должен увидеть, что
+    // именно не так, не потеряв набранное войско.
+    if(mpMarchCtx){ mpMarchCtx=null; $("#building-modal").classList.remove("open"); }
+    await Promise.all([mpRefreshRallies(), mpRefreshPlayer(), mpRefreshAlliance()]);
+    if(okText) herald(okText);
+    mpRerender();
+    return true;
+  }catch(e){
+    mpState.loading=false; mpState.err=e.message||"Не удалось"; mpRerender();
+    return false;
+  }
+}
+async function mpDoRallyStart(x,y){
+  const units=mpMarchUnitsOut();
+  const genInp=$("#mp-rly-gen"), withGen=!!(genInp&&genInp.checked);
+  const minutes=(mpMarchCtx&&mpMarchCtx.minutes)||15;
+  await mpDoRally("start",{tx:x,ty:y,minutes,units,withGen},"Сбор созван — соратники извещены.");
+}
+async function mpDoRallyJoin(rallyId){
+  const units=mpMarchUnitsOut();
+  await mpDoRally("join",{rallyId,units},"Войска отправлены в сбор.");
 }
 // Основание союза — единственная операция со своей формой, поэтому поля
 // читаются прямо на клик (тот же приём, что и у «Нового письма»).
@@ -19658,9 +19921,31 @@ function mpMailSentEntries(){
 function mpMailAllianceEntry(m){
   const d=m.data||{};
   const bodyEsc=escHtml(d.body||"").replace(/\n/g,"<br>");
+  let extra="";
+  // Приглашение — письмо ДЕЙСТВУЮЩЕЕ: из него принимают и по нему же смотрят,
+  // что за союз зовёт. Без этого письмо сообщало о приглашении и молчало о
+  // том, как его принять и кто зовёт, — а во вкладке «Альянс» его ещё надо
+  // догадаться поискать.
+  if(d.kind==="invite" && d.alliance_id){
+    // Приглашение могло протухнуть: его отозвали, союз наполнился или сам
+    // адресат уже куда-то вступил. Живое оно или нет — видно по своему же
+    // списку приглашений, лишний запрос не нужен.
+    const live=mpState.allyInvites.some(x=>x.alliance_id===d.alliance_id);
+    const mine=!!mpState.ally;
+    extra="<div class='chips' style='margin-top:12px'>"+
+      "<button class='seal ico' data-mp='allyview' data-id='"+d.alliance_id+"'>"+
+        "<img src='images/ui/icon-alliance.png' alt=''>Посмотреть союз</button>"+
+      (live&&!mine
+        ? "<button class='seal' data-mp='allyinviteok' data-id='"+d.alliance_id+"'"+(mpAllyBusy?" disabled":"")+">Принять</button>"+
+          "<button class='seal ghost' data-mp='allyinviteno' data-id='"+d.alliance_id+"'"+(mpAllyBusy?" disabled":"")+">Отказаться</button>"
+        : "")+
+      "</div>"+
+      (mine ? "<div class='note' style='margin-top:8px'>Вы уже в союзе — принять это приглашение нельзя.</div>"
+            : live ? "" : "<div class='note' style='margin-top:8px'>Приглашение больше не действует.</div>");
+  }
   return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-alliance.png", cls:"", tone:"gold",
     title:escHtml(d.title||"Весть из союза"), sub:escHtml(d.body||""),
-    detailHtml:"<div class='note'>"+bodyEsc+"</div>"};
+    detailHtml:"<div class='note'>"+bodyEsc+"</div>"+extra};
 }
 function mpMailAllianceEntries(){
   return mpState.allianceMail.map(m=>mpMailCached(m,mpMailAllianceEntry))

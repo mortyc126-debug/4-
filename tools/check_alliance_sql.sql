@@ -290,6 +290,82 @@ begin
 end $$;
 reset role;
 
+-- ---------------------------------------------------------------------------
+-- 8. Сборы союза (миграция 0014). Здесь важно ровно обратное седьмому пункту:
+-- готовящийся сбор — ВОЕННАЯ ТАЙНА союза. Открытая политика на этих двух
+-- таблицах отдала бы противнику даром и цель, и час выхода, и полный состав
+-- войск — то, за чем в игре ходят разведкой.
+--
+-- И каскады: распущенный (удалённый) союз и погибший правитель не должны
+-- оставлять за собой висящие сборы и доли — их некому будет ни вести, ни
+-- вернуть.
+-- ---------------------------------------------------------------------------
+grant select on alliance_rallies, alliance_rally_parts to mp_ally_probe;
+
+insert into alliance_rallies (world_id, alliance_id, leader_id, tx, ty, target_kind, target_name,
+                              gather_until, state, cap, has_gen)
+select (select v from probe where k='world')::uuid,
+       (select id from alliances where tag='ПРБ1'),
+       (select id from players where nick='ПробаГлава'),
+       50, 60, 'camp', 'Лагерь варваров', now() + interval '15 minutes', 'gather', 51000, true;
+insert into alliance_rally_parts (rally_id, player_id, units)
+select r.id, p.id, '{"inf":{"1":100}}'::jsonb from alliance_rallies r, players p
+where r.tx=50 and p.nick in ('ПробаГлава','ПробаСоратник');
+
+create temp table probe_rally (who text primary key, n_rally int, n_parts int);
+grant select, insert on probe_rally to mp_ally_probe;
+grant select on probe to mp_ally_probe;
+set local role mp_ally_probe;
+do $$
+declare r record; nr int; np int;
+begin
+  for r in select k, v from probe where k in ('u_lead','u_mem','u_out','u_app') loop
+    perform set_config('request.jwt.claim.sub', r.v, true);
+    select count(*) into nr from alliance_rallies;
+    select count(*) into np from alliance_rally_parts;
+    insert into probe_rally values (r.k, nr, np);
+  end loop;
+end $$;
+reset role;
+
+do $$
+declare lead_r int; lead_p int; mem_r int; mem_p int; out_r int; out_p int; app_r int; app_p int;
+begin
+  select n_rally, n_parts into lead_r, lead_p from probe_rally where who='u_lead';
+  select n_rally, n_parts into mem_r,  mem_p  from probe_rally where who='u_mem';
+  select n_rally, n_parts into out_r,  out_p  from probe_rally where who='u_out';
+  select n_rally, n_parts into app_r,  app_p  from probe_rally where who='u_app';
+  if lead_r <> 1 or lead_p <> 2 then
+    raise exception 'ПРОВАЛ: созвавший видит % сборов и % долей, ждали 1 и 2', lead_r, lead_p; end if;
+  if mem_r <> 1 or mem_p <> 2 then
+    raise exception 'ПРОВАЛ: соратник видит % сборов и % долей, ждали 1 и 2', mem_r, mem_p; end if;
+  if out_r <> 0 or out_p <> 0 then
+    raise exception 'ПРОВАЛ: ЧУЖОЙ СОЮЗ видит % сборов и % долей — это даровая разведка', out_r, out_p; end if;
+  if app_r <> 0 or app_p <> 0 then
+    raise exception 'ПРОВАЛ: не состоящий в союзе видит % сборов и % долей', app_r, app_p; end if;
+  raise notice '8 ✓ RLS: готовящийся сбор и его состав видны только своему союзу';
+end $$;
+
+-- Каскады. Гибель участника уносит его долю, но сам сбор оставляет: остальные
+-- идут дальше. Удаление союза уносит сбор целиком.
+do $$
+declare left_parts int; left_rally int; dead_id bigint;
+begin
+  select id into dead_id from players where nick='ПробаСоратник';
+  delete from players where id=dead_id;
+  select count(*) into left_parts from alliance_rally_parts where player_id=dead_id;
+  select count(*) into left_rally from alliance_rallies where tx=50;
+  if left_parts <> 0 then raise exception 'ПРОВАЛ: доля погибшего осталась в сборе (% строк)', left_parts; end if;
+  if left_rally <> 1 then raise exception 'ПРОВАЛ: гибель участника унесла весь сбор'; end if;
+
+  delete from alliances where tag='ПРБ1';
+  select count(*) into left_rally from alliance_rallies where tx=50;
+  select count(*) into left_parts from alliance_rally_parts;
+  if left_rally <> 0 then raise exception 'ПРОВАЛ: распущенный союз оставил % сборов', left_rally; end if;
+  if left_parts <> 0 then raise exception 'ПРОВАЛ: распущенный союз оставил % долей', left_parts; end if;
+  raise notice '9 ✓ каскады: гибель участника уносит его долю, роспуск союза — весь сбор';
+end $$;
+
 do $$ begin raise notice 'ВСЕ ПРОВЕРКИ СХЕМЫ СОЮЗОВ ПРОШЛИ'; end $$;
 
 -- Ничего в базе не остаётся — см. шапку.
