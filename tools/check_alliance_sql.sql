@@ -1,5 +1,5 @@
 -- =============================================================================
--- Фаза 49 — проверка схемы союзов (миграция 0012) на живой базе.
+-- Проверка схемы союзов, сборов и чата (миграции 0012/0014/0015) на живой базе.
 -- =============================================================================
 -- Что проверяется — то, что держит СХЕМА, а не код: уникальность имени и
 -- метки без учёта регистра, «один игрок — один союз», освобождение имени
@@ -15,7 +15,7 @@
 -- Запуск (нужен psql; в дашборде Supabase — просто вставить целиком):
 --   psql "$DATABASE_URL" -f tools/check_alliance_sql.sql
 --
--- Требует уже накатанных 0001 и 0012.
+-- Требует уже накатанных 0001, 0012, 0014 и 0015.
 
 \set ON_ERROR_STOP on
 begin;
@@ -291,7 +291,104 @@ end $$;
 reset role;
 
 -- ---------------------------------------------------------------------------
--- 8. Сборы союза (миграция 0014). Здесь важно ровно обратное седьмому пункту:
+-- 8. Чат (миграция 0015). Три ленты — три разных ответа на вопрос «кому
+-- видно»: мировая открыта всем, союзная только союзу (это уже проверено в
+-- разделе 6), личная — ровно двоим. Ошибка в последней тиха и дорога: она
+-- отдаёт чужой разговор наружу, ничего при этом не ломая.
+--
+-- Плюс то, что держит схема, а не код: дружба — ОДНА строка на пару, и
+-- позвать друг друга дважды нельзя.
+-- ---------------------------------------------------------------------------
+grant select on world_chat, chat_dm, friends to mp_ally_probe;
+
+insert into world_chat (world_id, player_id, nick, tag, race, body)
+select (select v from probe where k='world')::uuid, id, nick, 'ПРБ1', race, 'слово на весь мир'
+from players where nick='ПробаГлава';
+
+-- Разговор главы с чужаком. Соратник и проситель к нему касательства не имеют.
+insert into chat_dm (world_id, from_id, to_id, from_nick, body)
+select (select v from probe where k='world')::uuid,
+       (select id from players where nick='ПробаГлава'),
+       (select id from players where nick='ПробаЧужой'),
+       'ПробаГлава', 'разговор наедине';
+
+-- Дружба главы с соратником и приглашение от чужака просителю.
+insert into friends (lo_id, hi_id, by_id, state)
+select least(a.id,b.id), greatest(a.id,b.id), a.id, 'ok'
+from players a, players b where a.nick='ПробаГлава' and b.nick='ПробаСоратник';
+insert into friends (lo_id, hi_id, by_id, state)
+select least(a.id,b.id), greatest(a.id,b.id), a.id, 'pending'
+from players a, players b where a.nick='ПробаЧужой' and b.nick='ПробаПроситель';
+
+create temp table probe_chat (who text primary key, n_world int, n_dm int, n_fr int);
+grant select, insert on probe_chat to mp_ally_probe;
+set local role mp_ally_probe;
+do $$
+declare r record; nw int; nd int; nf int;
+begin
+  for r in select k, v from probe where k in ('u_lead','u_mem','u_out','u_app') loop
+    perform set_config('request.jwt.claim.sub', r.v, true);
+    select count(*) into nw from world_chat;
+    select count(*) into nd from chat_dm;
+    select count(*) into nf from friends;
+    insert into probe_chat values (r.k, nw, nd, nf);
+  end loop;
+end $$;
+reset role;
+
+do $$
+declare w_lead int; w_app int; d_lead int; d_out int; d_mem int; d_app int;
+        f_lead int; f_mem int; f_out int; f_app int;
+begin
+  select n_world, n_dm, n_fr into w_lead, d_lead, f_lead from probe_chat where who='u_lead';
+  select n_world, n_dm, n_fr into w_app,  d_app,  f_app  from probe_chat where who='u_app';
+  select n_dm, n_fr into d_mem, f_mem from probe_chat where who='u_mem';
+  select n_dm, n_fr into d_out, f_out from probe_chat where who='u_out';
+
+  -- Мировая лента открыта всем — она для того и мировая.
+  if w_lead <> 1 or w_app <> 1 then
+    raise exception 'ПРОВАЛ: мировой чат видно как % и % строк, ждали по 1', w_lead, w_app; end if;
+
+  -- Личная переписка — только двоим её сторонам.
+  if d_lead <> 1 then raise exception 'ПРОВАЛ: собеседник видит % своих реплик из 1', d_lead; end if;
+  if d_out  <> 1 then raise exception 'ПРОВАЛ: второй собеседник видит % реплик из 1', d_out; end if;
+  if d_mem  <> 0 then raise exception 'ПРОВАЛ: ПОСТОРОННИЙ видит % чужих личных реплик', d_mem; end if;
+  if d_app  <> 0 then raise exception 'ПРОВАЛ: посторонний видит % чужих личных реплик', d_app; end if;
+
+  -- Дружба и приглашение дружить — тоже дело двоих.
+  if f_lead <> 1 then raise exception 'ПРОВАЛ: друг видит % своих дружб из 1', f_lead; end if;
+  if f_mem  <> 1 then raise exception 'ПРОВАЛ: второй друг видит % дружб из 1', f_mem; end if;
+  if f_out  <> 1 then raise exception 'ПРОВАЛ: позвавший видит % своих приглашений из 1', f_out; end if;
+  if f_app  <> 1 then raise exception 'ПРОВАЛ: позванный видит % приглашений из 1', f_app; end if;
+  raise notice '8 ✓ RLS: мировой чат открыт всем, личный — только двоим, дружба — только паре';
+end $$;
+
+-- Схема: дружба одна на пару. Встречное «позову-ка и я» не должно заводить
+-- вторую строку — иначе двое, нажавшие кнопку одновременно, застряли бы в двух
+-- висящих приглашениях навсегда.
+do $$
+declare a bigint; b bigint; dup boolean := false;
+begin
+  select id into a from players where nick='ПробаГлава';
+  select id into b from players where nick='ПробаСоратник';
+  begin
+    insert into friends (lo_id, hi_id, by_id, state)
+    values (least(a,b), greatest(a,b), b, 'pending');
+    dup := true;
+  exception when unique_violation then dup := false; end;
+  if dup then raise exception 'ПРОВАЛ: та же пара легла в friends дважды'; end if;
+  -- И обратный порядок в паре схема не принимает вовсе.
+  begin
+    insert into friends (lo_id, hi_id, by_id, state)
+    values (greatest(a,b), least(a,b), b, 'pending');
+    dup := true;
+  exception when check_violation then dup := false; when unique_violation then dup := false; end;
+  if dup then raise exception 'ПРОВАЛ: пара легла в friends в обратном порядке'; end if;
+  raise notice '9 ✓ дружба — одна строка на пару, порядок в паре держит сама схема';
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- 10. Сборы союза (миграция 0014). Здесь важно ровно обратное седьмому пункту:
 -- готовящийся сбор — ВОЕННАЯ ТАЙНА союза. Открытая политика на этих двух
 -- таблицах отдала бы противнику даром и цель, и час выхода, и полный состав
 -- войск — то, за чем в игре ходят разведкой.
@@ -343,7 +440,7 @@ begin
     raise exception 'ПРОВАЛ: ЧУЖОЙ СОЮЗ видит % сборов и % долей — это даровая разведка', out_r, out_p; end if;
   if app_r <> 0 or app_p <> 0 then
     raise exception 'ПРОВАЛ: не состоящий в союзе видит % сборов и % долей', app_r, app_p; end if;
-  raise notice '8 ✓ RLS: готовящийся сбор и его состав видны только своему союзу';
+  raise notice '10 ✓ RLS: готовящийся сбор и его состав видны только своему союзу';
 end $$;
 
 -- Каскады. Гибель участника уносит его долю, но сам сбор оставляет: остальные
@@ -358,15 +455,27 @@ begin
   if left_parts <> 0 then raise exception 'ПРОВАЛ: доля погибшего осталась в сборе (% строк)', left_parts; end if;
   if left_rally <> 1 then raise exception 'ПРОВАЛ: гибель участника унесла весь сбор'; end if;
 
+  -- Заодно: реплика погибшего в личной переписке ОСТАЁТСЯ, только ссылка на
+  -- автора обнуляется (on delete set null) — ник в строке записан отдельным
+  -- полем ровно за этим, как и в чате союза.
+  declare n_kept int;
+  begin
+    insert into chat_dm (world_id, from_id, to_id, from_nick, body)
+    select (select v from probe where k='world')::uuid, null,
+           (select id from players where nick='ПробаГлава'), 'ПробаСоратник', 'последнее слово';
+    select count(*) into n_kept from chat_dm where from_nick='ПробаСоратник' and from_id is null;
+    if n_kept <> 1 then raise exception 'ПРОВАЛ: реплика погибшего в личной переписке не пережила его'; end if;
+  end;
+
   delete from alliances where tag='ПРБ1';
   select count(*) into left_rally from alliance_rallies where tx=50;
   select count(*) into left_parts from alliance_rally_parts;
   if left_rally <> 0 then raise exception 'ПРОВАЛ: распущенный союз оставил % сборов', left_rally; end if;
   if left_parts <> 0 then raise exception 'ПРОВАЛ: распущенный союз оставил % долей', left_parts; end if;
-  raise notice '9 ✓ каскады: гибель участника уносит его долю, роспуск союза — весь сбор';
+  raise notice '11 ✓ каскады: гибель участника уносит его долю, роспуск союза — весь сбор';
 end $$;
 
-do $$ begin raise notice 'ВСЕ ПРОВЕРКИ СХЕМЫ СОЮЗОВ ПРОШЛИ'; end $$;
+do $$ begin raise notice 'ВСЕ ПРОВЕРКИ СХЕМЫ СОЮЗОВ, СБОРОВ И ЧАТА ПРОШЛИ'; end $$;
 
 -- Ничего в базе не остаётся — см. шапку.
 rollback;

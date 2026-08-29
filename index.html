@@ -503,6 +503,106 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 .ally-say .tm{font-family:var(--data);font-size:10px;color:var(--vellum-faint);margin-left:6px}
 .ally-say.me .who{color:var(--gilt-hi)}
 .ally-say.sys{color:var(--vellum-faint);font-style:italic;text-align:center;font-size:12px}
+
+/* ===========================================================================
+   Фаза 54 — чат в основных окнах.
+   ===========================================================================
+   Автор: «чат перенеси в основные окна Город и Мир, снизу по центру.
+   Маленькое окошко с двумя вкладками "Глобальный" и "Альянс"... показывает
+   последние 3-4 строки. По клику открывается полный чат отдельным окном».
+
+   Док — СОСЕД #app, как #view-toggle/#menu-btn/#mp-build-fab (см. их
+   комментарий: потомковый селектор от body тут не сработает, нужен ~).
+   Место — ровно между двумя круглыми кнопками нижнего ряда: обе 70px при
+   отступе 14, значит по 84px с каждой стороны плюс воздух. Отсюда и ширина
+   calc(100vw - 200px): на узком экране док честно ужимается, а не лезет под
+   кнопки. z-index 18 — ПОД кнопками (20) и под всеми модалками: чат не
+   должен перехватывать нажатие ни у меню, ни у перехода в мир. */
+#chat-dock{display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:14px;
+  z-index:18;width:min(430px,calc(100vw - 200px));border-radius:6px;overflow:hidden;
+  background:rgba(14,10,5,.86);border:1px solid var(--rule);
+  box-shadow:0 6px 20px rgba(0,0,0,.55);backdrop-filter:blur(2px)}
+body.mp-gated #app.view-city ~ #chat-dock,
+body.mp-gated #app.view-world ~ #chat-dock{display:block}
+#chat-dock .cd-tabs{display:flex;gap:0;border-bottom:1px solid var(--rule-soft)}
+#chat-dock .cd-tabs button{flex:1;min-width:0;padding:5px 4px;border:none;background:transparent;
+  color:var(--vellum-faint);font-family:var(--serif);font-size:11px;letter-spacing:.04em;
+  cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#chat-dock .cd-tabs button.on{color:var(--gilt-hi);background:rgba(212,175,90,.10)}
+#chat-dock .cd-tabs button i{display:inline-block;min-width:14px;height:14px;margin-left:4px;
+  border-radius:7px;background:#b62a22;color:#fff;font-style:normal;font-family:var(--data);
+  font-size:9px;line-height:14px;padding:0 3px;vertical-align:1px}
+/* Лента: снизу вверх, тот же приём, что и у .ally-chat (см. её комментарий) —
+   последняя строка сама оказывается внизу без доводки прокрутки на каждом
+   такте. Высота задана строками, а не пикселями: автор просил «последние
+   3-4 строки», и при длинной реплике окошко должно вырасти в перенос, а не
+   съесть соседние. */
+#chat-dock .cd-lines{display:flex;flex-direction:column-reverse;gap:2px;
+  max-height:82px;overflow:hidden;padding:5px 8px 6px;cursor:pointer}
+#chat-dock .cd-line{font-size:11.5px;line-height:1.34;color:var(--vellum-dim);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#chat-dock .cd-line .who{color:var(--gilt);margin-right:4px}
+#chat-dock .cd-line.sys{color:var(--vellum-faint);font-style:italic}
+#chat-dock .cd-empty{font-size:11px;color:var(--vellum-faint);text-align:center;padding:6px 0;cursor:pointer}
+
+/* Полный чат — отдельное окно, как и просил автор. Не в #menu-modal: меню
+   гоняет свою вкладку через mpMenuBodyHtml и закрывается вместе с ней, а чат
+   должен открываться поверх чего угодно и закрываться обратно туда же. */
+#chat-modal{display:none;position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
+  z-index:36;width:min(520px,94vw);height:min(620px,86vh);box-sizing:border-box;
+  flex-direction:column;border-radius:10px;overflow:hidden;
+  background:rgba(16,11,5,.985);border:1px solid var(--gilt-dim);
+  box-shadow:0 18px 52px rgba(0,0,0,.75)}
+#chat-modal.open{display:flex}
+#chat-modal .cm-head{display:flex;align-items:center;gap:8px;padding:9px 12px;
+  border-bottom:1px solid var(--rule);background:rgba(212,175,90,.06)}
+#chat-modal .cm-head .t{flex:1;min-width:0;font-family:var(--serif);font-size:15px;color:var(--gilt-hi);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#chat-modal .cm-close{width:30px;height:30px;flex:none;padding:0;border:none;border-radius:50%;
+  background:rgba(0,0,0,.35);color:var(--gilt);font-size:20px;line-height:1;cursor:pointer}
+/* Полоса разговоров. Горизонтальная, а не колонкой слева: на телефоне рельс
+   слева съел бы половину ширины, а разговоров бывает много. */
+#chat-modal .cm-rail{display:flex;gap:5px;padding:7px 10px;overflow-x:auto;
+  border-bottom:1px solid var(--rule-soft);scrollbar-width:thin}
+#chat-modal .cm-rail button{flex:none;padding:4px 10px;border-radius:11px;cursor:pointer;
+  border:1px solid var(--rule);background:rgba(0,0,0,.28);color:var(--vellum-dim);
+  font-family:var(--serif);font-size:12px;white-space:nowrap}
+#chat-modal .cm-rail button.on{border-color:var(--gilt-dim);color:var(--gilt-hi);
+  background:rgba(212,175,90,.13)}
+#chat-modal .cm-rail button i{display:inline-block;min-width:14px;height:14px;margin-left:5px;
+  border-radius:7px;background:#b62a22;color:#fff;font-style:normal;font-family:var(--data);
+  font-size:9px;line-height:14px;padding:0 3px;vertical-align:1px}
+/* Сама лента — снова column-reverse, см. .ally-chat. */
+#chat-modal .cm-body{flex:1;min-height:0;display:flex;flex-direction:column-reverse;gap:5px;
+  overflow-y:auto;padding:10px 12px}
+#chat-modal .cm-foot{display:flex;gap:7px;padding:9px 10px;border-top:1px solid var(--rule);
+  background:rgba(0,0,0,.2)}
+#chat-say{flex:1;min-width:0;background:rgba(0,0,0,.42);color:var(--vellum);
+  border:1px solid var(--rule);border-radius:3px;font-family:var(--serif);
+  font-size:13.5px;padding:8px 10px}
+#chat-say:focus{outline:none;border-color:var(--gilt-dim)}
+#chat-say:disabled{opacity:.45}
+.cm-say{font-size:13px;color:var(--vellum-dim);line-height:1.45}
+.cm-say .who{color:var(--gilt);margin-right:6px;cursor:pointer;text-decoration:underline;
+  text-decoration-color:rgba(212,175,90,.35);text-underline-offset:2px}
+.cm-say.me .who{color:var(--gilt-hi)}
+.cm-say .tm{font-family:var(--data);font-size:10px;color:var(--vellum-faint);margin-left:6px}
+.cm-say.sys{color:var(--vellum-faint);font-style:italic;text-align:center;font-size:12px}
+.cm-empty{font-size:12.5px;color:var(--vellum-faint);text-align:center;padding:14px 10px;line-height:1.5}
+
+/* Мини-профиль по клику на ник в чате. Своё окошко, а не картуш: картуш
+   привязан к клетке карты (sel), а у ника в чате клетки нет — правитель мог
+   быть на другом конце мира или вовсе не попасть в выборку соседей. */
+#mini-profile{display:none;position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
+  z-index:40;width:min(320px,88vw);padding:14px 16px 12px;border-radius:10px;
+  background:rgba(18,13,6,.985);border:1px solid var(--gilt-dim);
+  box-shadow:0 16px 44px rgba(0,0,0,.75)}
+#mini-profile.open{display:block}
+#mini-profile .mp-hd{display:flex;align-items:center;gap:8px;font-family:var(--serif);
+  font-size:15px;color:var(--gilt-hi);margin-bottom:8px}
+#mini-profile .co{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;
+  color:var(--vellum-dim);padding:2px 0}
+#mini-profile .co b{color:var(--vellum);font-weight:normal}
 /* Форма союза (основание, порядок приёма, выбор наследника). Своя, а не
    .mail-compose: та лежит на пергаменте почты и вся написана под светлый
    фон, а экран союза тёмный, как и остальное меню. Общее только
@@ -2273,6 +2373,28 @@ body.mp-placing #place-toolbar{display:flex}
     <button class="seal" data-act="locateclose">Отмена</button>
   </div>
 </div>
+<!-- Фаза 54 — чат. Обе оболочки статичны в шаблоне, как #place-toolbar и
+     #locate-box: содержимое пишет mpRenderChatDock()/mpRenderChatModal(), а
+     сами узлы живут постоянно. Док — СОСЕД #app (см. CSS: показ идёт
+     селектором соседства от #app.view-city/.view-world). -->
+<div id="chat-dock">
+  <div class="cd-tabs" id="chat-dock-tabs"></div>
+  <div class="cd-lines" id="chat-dock-lines" data-mp="chatopen"></div>
+</div>
+<div id="chat-modal">
+  <div class="cm-head">
+    <div class="t" id="chat-title">Чат</div>
+    <button class="cm-close" data-mp="chatclose" aria-label="Закрыть">&times;</button>
+  </div>
+  <div class="cm-rail" id="chat-rail"></div>
+  <div class="cm-body" id="chat-body"></div>
+  <div class="cm-foot">
+    <input id="chat-say" maxlength="300" placeholder="Сказать...">
+    <button class="seal" data-mp="chatsay">Сказать</button>
+  </div>
+</div>
+<!-- Мини-профиль по клику на ник в чате: своё окошко, см. CSS. -->
+<div id="mini-profile"></div>
 <!-- Призрак здания "в руках" подтверждается/отменяется тут — статичные
      кнопки в шаблоне, а не часть mpRenderFreeformCity(): position:fixed
      внутри динамически пересобираемого #folio рисковал бы поехать, если у
@@ -9542,6 +9664,20 @@ function renderCartoucheMp(){
           ? "<button class='seal ico' data-mp='allyinvite' data-id='"+q.id+"'"+(mpAllyBusy?" disabled":"")+"><img src='images/ui/icon-alliance.png' alt=''>Пригласить</button>"
           : "")+
         "<button class='seal ico' data-mp='cartmail' data-nick='"+escHtml(q.nick||"")+"'><img src='images/ui/icon-mail.png' alt=''>Письмо</button>"+
+      "</div>"+
+      // Фаза 54 — «мини-профиль тогда получает "Добавить в друзья" плюс "Чат"
+      // и "Отправить письмо"» (письмо строкой выше стояло и раньше). Чат
+      // открывает личный разговор прямо отсюда, кнопка дружбы знает своё
+      // состояние: позвать, принять встречное, или расстаться.
+      "<div class='chips'>"+
+        "<button class='seal ico' data-mp='chatdm' data-id='"+q.id+"'>Чат</button>"+
+        (mpFriendState(q.id)==="ok"
+          ? "<button class='seal ghost' data-mp='friendno' data-id='"+q.id+"'"+(mpChatBusy?" disabled":"")+">Расстаться</button>"
+          : mpFriendState(q.id)==="sent"
+          ? "<button class='seal' disabled>Приглашение отправлено</button>"
+          : mpFriendState(q.id)==="ask"
+          ? "<button class='seal' data-mp='friendok' data-id='"+q.id+"'"+(mpChatBusy?" disabled":"")+">Принять в друзья</button>"
+          : "<button class='seal' data-mp='friendadd' data-id='"+q.id+"'"+(mpChatBusy?" disabled":"")+">В друзья</button>")+
       "</div>");
     return;
   }
@@ -15845,7 +15981,7 @@ function handleMpAct(e){
   // Клик по координатам места внутри разобранного письма (mpLocLink) —
   // переносит камеру 3D к этому месту, см. заголовок mpGoToLoc.
   const mpGoLocBtn=e.target.closest("[data-mp='mpgoloc']");
-  if(mpGoLocBtn){ mpGoToLoc(+mpGoLocBtn.dataset.x, +mpGoLocBtn.dataset.y); return; }
+  if(mpGoLocBtn){ mpChatAway(); mpGoToLoc(+mpGoLocBtn.dataset.x, +mpGoLocBtn.dataset.y); return; }
   // "Новое письмо" — читаем поля прямо на клик (тот же приём, что и
   // #mp-nick в анкете расы: не держим реактивное состояние на каждую
   // клавишу, только на отправку).
@@ -15904,6 +16040,29 @@ function handleMpAct(e){
   if(rallyJoinBtn){ mpDoRallyJoin(+rallyJoinBtn.dataset.id); return; }
   const rallyOutBtn=e.target.closest("[data-mp='rallywithdraw']");
   if(rallyOutBtn){ mpDoRally("withdraw",{rallyId:+rallyOutBtn.dataset.id},"Войска вернулись домой."); return; }
+  // Чат (Фаза 54).
+  const chatDockTabBtn=e.target.closest("[data-mp='chatdocktab']");
+  if(chatDockTabBtn){ mpChatDockTab=chatDockTabBtn.dataset.t; mpRerender(); return; }
+  const chatOpenBtn=e.target.closest("[data-mp='chatopen']");
+  if(chatOpenBtn){ mpOpenChat(chatOpenBtn.dataset.th||mpChatDockTab); return; }
+  const chatCloseBtn=e.target.closest("[data-mp='chatclose']");
+  if(chatCloseBtn){ mpCloseChat(); return; }
+  const chatThreadBtn=e.target.closest("[data-mp='chatthread']");
+  if(chatThreadBtn){ mpChatThread=chatThreadBtn.dataset.th; mpChatErr=null; mpChatMarkRead(); mpRerender(); return; }
+  const chatSayBtn=e.target.closest("[data-mp='chatsay']");
+  if(chatSayBtn){ mpChatSend(); return; }
+  const chatWhoBtn=e.target.closest("[data-mp='chatwho']");
+  if(chatWhoBtn){ mpOpenMini(+chatWhoBtn.dataset.id); return; }
+  const chatDmBtn=e.target.closest("[data-mp='chatdm']");
+  if(chatDmBtn){ mpOpenDm(+chatDmBtn.dataset.id); return; }
+  const miniCloseBtn=e.target.closest("[data-mp='miniclose']");
+  if(miniCloseBtn){ mpMiniPid=0; mpRerender(); return; }
+  const friendAddBtn=e.target.closest("[data-mp='friendadd']");
+  if(friendAddBtn){ mpDoChat("friendadd",{playerId:+friendAddBtn.dataset.id}); return; }
+  const friendOkBtn=e.target.closest("[data-mp='friendok']");
+  if(friendOkBtn){ mpDoChat("friendok",{playerId:+friendOkBtn.dataset.id}); return; }
+  const friendNoBtn=e.target.closest("[data-mp='friendno']");
+  if(friendNoBtn){ mpDoChat("friendno",{playerId:+friendNoBtn.dataset.id}); return; }
   const rallyCancelBtn=e.target.closest("[data-mp='rallycancel']");
   if(rallyCancelBtn){
     if(!confirm("Распустить сбор? Войска всех соратников вернутся по замкам.")) return;
@@ -15931,7 +16090,7 @@ function handleMpAct(e){
   if(allyEmblemResetBtn){ mpAllyEmblemDraft=null; mpAllyErr=null; mpAllyOk=null; mpRerender(); return; }
   // Карточка чужого союза — по метке в картуше и по строке союза в профиле.
   const allyViewBtn=e.target.closest("[data-mp='allyview']");
-  if(allyViewBtn){ mpOpenAllyView(+allyViewBtn.dataset.id); return; }
+  if(allyViewBtn){ mpChatAway(); mpOpenAllyView(+allyViewBtn.dataset.id); return; }
   const allyViewBackBtn=e.target.closest("[data-mp='allyviewback']");
   if(allyViewBackBtn){ mpAllyView=null; mpAllyViewData=null; mpRerender(); return; }
   // Приглашение из мини-профиля на карте.
@@ -15945,6 +16104,7 @@ function handleMpAct(e){
   // проставленным получателем: набирать ник по памяти незачем, он тут же.
   const cartMailBtn=e.target.closest("[data-mp='cartmail']");
   if(cartMailBtn){
+    mpChatAway();
     const nick=cartMailBtn.dataset.nick||"";
     mpMailCat="compose"; mpMailOpenId=null; mpComposeErr=null; mpComposeOk=null;
     openMenuModal("mail");
@@ -15980,6 +16140,20 @@ $("#menu-modal-body").addEventListener("click",e=>{
 // рисует те же data-mp-кнопки в #bm-body, но ЖИЛО без единого слушателя
 // для них — только handleAct(), который data-mp не знает).
 $("#building-modal").addEventListener("click",handleMpAct);
+// Фаза 54 — те же data-mp-кнопки живут в трёх новых узлах: док чата, полное
+// окно и мини-профиль. Все три — СОСЕДИ #app (не внутри модалок), поэтому ни
+// один из слушателей выше до них не достаёт; та же ошибка, что уже дважды
+// ловили у #building-modal и #menu-modal-body, — разметку добавили, а
+// слушателю про новый путь не сказали.
+["#chat-dock","#chat-modal","#mini-profile"].forEach(sel=>{
+  const el=$(sel); if(el) el.addEventListener("click",handleMpAct);
+});
+// Enter отправляет реплику — в чате это единственный привычный способ, и без
+// него пришлось бы каждый раз тянуться к кнопке.
+const chatSayInput=$("#chat-say");
+if(chatSayInput) chatSayInput.addEventListener("keydown",e=>{
+  if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); mpChatSend(); }
+});
 // Ноль в поле ввода войск исчезает, как только в него ткнули: автор просил
 // не заставлять "вводить поверх нуля или стирать его вручную". Ушли из
 // пустого поля — возвращаем ноль, чтобы дальше по коду не читался NaN.
@@ -16780,7 +16954,10 @@ let mpState = { loading:false, joined:false, player:null, err:null, race:null, n
   allyOf:{}, allyInvites:[],
   // Фаза 53 — общие сборы союза (alliance_rallies + участники). Пусто у
   // того, кто в союзе не состоит: RLS ему их и не отдаст.
-  rallies:[], rallyTarget:null, rallyJoinId:0 };
+  rallies:[], rallyTarget:null, rallyJoinId:0,
+  // Фаза 54 — чат. worldChat и dm приходят свежими первыми (как и allyChat):
+  // ленты рисуются column-reverse, см. их CSS.
+  worldChat:[], dm:[], friends:[] };
 let mpPollTimer = null;
 // Идёт ли прямо сейчас вход/авто-резюме в общий мир (см. mpOpen) — защита
 // от повторного запуска при быстрых переключениях вкладок меню.
@@ -17229,6 +17406,296 @@ function mpAllyViewHtml(){
   }).join("")+"</div>";
   return h;
 }
+// =============================================================================
+// Чат (Фаза 54) — разговоры, док и полное окно.
+// =============================================================================
+// Автор: «чат перенеси в основные окна Город и Мир, снизу по центру.
+// Маленькое окошко с двумя вкладками "Глобальный" и "Альянс" (вкладка альянса
+// только если ты в альянсе). Показывает последние 3-4 строки. По клику
+// открывается полный чат отдельным окном, ники кликабельны... В чате есть
+// подразделы по правителям, чтобы переключаться между разговорами».
+//
+// Три ленты сведены к одному виду строки {pid, nick, tag, kind, body, at}, и
+// дальше их рисует один и тот же код: мировая, союзная и любая личная
+// отличаются только тем, откуда взяты строки и куда уходит сказанное.
+
+// Какой разговор открыт: "world" | "ally" | "friends" | "dm:<id>".
+let mpChatThread="world", mpChatBusy=false, mpChatErr=null;
+// Вкладка ДОКА — отдельно от разговора в полном окне: у дока их всего две
+// (прямое условие автора), и переключать ими открытый разговор было бы
+// странно — человек листает личную переписку, а док под ней прыгает.
+let mpChatDockTab="world";
+// Чей мини-профиль открыт (0 — закрыт).
+let mpMiniPid=0;
+const MP_CHAT_MAX=300, MP_DOCK_LINES=4;
+
+// Что мы вообще знаем о правителе по его номеру. Ник в чате может принадлежать
+// кому угодно в мире, а выборка соседей (mpRefreshNeighbors) берёт только
+// ближних — поэтому смотрим по очереди везде, где имя могло осесть: свои,
+// соседи, состав союза, сами реплики. Последнее и есть главное: реплика
+// хранит ник, метку и расу в себе (см. заголовок world_chat в 0015) именно
+// затем, чтобы говорящего было чем подписать, даже если он на другом конце
+// карты.
+function mpChatKnown(pid){
+  pid=Number(pid);
+  const me=mpState.player;
+  if(me && pid===me.id) return {id:pid, nick:me.nick, race:me.race, x:me.x, y:me.y, power:me.power, self:true};
+  const n=mpState.neighbors.find(z=>z.id===pid);
+  if(n) return {id:pid, nick:n.nick, race:n.race, x:n.x, y:n.y, power:n.power,
+                rating:n.rating, ratingBattles:n.rating_battles, hall:Number(n.hall)||0,
+                shieldUntil:Number(n.shield_until||0)};
+  const m=mpState.allyMembers.find(z=>z.player_id===pid);
+  if(m && m.players) return {id:pid, nick:m.players.nick, race:m.players.race, x:m.players.x, y:m.players.y,
+                             power:m.players.power, rating:m.players.rating, ratingBattles:m.players.rating_battles};
+  const w=mpState.worldChat.find(z=>z.player_id===pid);
+  if(w) return {id:pid, nick:w.nick, race:w.race};
+  const d=mpState.dm.find(z=>z.from_id===pid);
+  if(d) return {id:pid, nick:d.from_nick};
+  return {id:pid, nick:"Правитель"};
+}
+// Ник для строки чата: метка союза берётся ЖИВАЯ (mpAllyTagOf) там, где
+// правитель известен, и из самой реплики там, где нет. Живая точнее: человек
+// мог сменить союз минуту назад, и в списке он уже под новой меткой.
+function mpChatNickHtml(pid, nick, tag){
+  const live=pid?mpAllyTagOf(pid):"";
+  const t=live||tag||"";
+  return (t?mpAllyTagHtml(t)+" ":"")+escHtml(nick||"Безымянный лорд");
+}
+// Собеседники личной переписки — из самих реплик, свежий разговор первым.
+// Ни таблицы разговоров, ни списка «с кем я говорю» нет нарочно: разговор и
+// есть его реплики, а пустых разговоров не бывает.
+function mpDmPartners(){
+  const me=mpState.player?mpState.player.id:0;
+  const seen={}, out=[];
+  mpState.dm.forEach(r=>{                       // уже отсортировано свежими вперёд
+    const other=r.from_id===me?r.to_id:r.from_id;
+    if(other==null || other===me) return;       // собеседник погиб — ссылка обнулилась
+    if(seen[other]) return;
+    seen[other]=1;
+    out.push({id:other, nick:r.from_id===me?(mpChatKnown(other).nick):(r.from_nick||"Правитель"), at:r.created_at});
+  });
+  return out;
+}
+function mpDmUnread(pid){
+  const me=mpState.player?mpState.player.id:0;
+  return mpState.dm.filter(r=>r.to_id===me && r.from_id===pid && !r.read_at).length;
+}
+function mpDmUnreadTotal(){
+  const me=mpState.player?mpState.player.id:0;
+  return mpState.dm.filter(r=>r.to_id===me && !r.read_at).length;
+}
+// Приглашения дружить, адресованные МНЕ (позвал не я).
+function mpFriendAsks(){
+  const me=mpState.player?mpState.player.id:0;
+  return mpState.friends.filter(f=>f.state==="pending" && f.by_id!==me);
+}
+// Состояние дружбы с этим правителем: "none" | "sent" | "ask" | "ok".
+function mpFriendState(pid){
+  const me=mpState.player?mpState.player.id:0;
+  const f=mpState.friends.find(x=>(x.lo_id===me&&x.hi_id===pid)||(x.hi_id===me&&x.lo_id===pid));
+  if(!f) return "none";
+  if(f.state==="ok") return "ok";
+  return f.by_id===me?"sent":"ask";
+}
+// Строки разговора в общем виде — свежие первыми, как их и отдают выборки.
+function mpChatLines(thread){
+  const me=mpState.player?mpState.player.id:0;
+  if(thread==="ally"){
+    return mpState.allyChat.map(m=>({pid:m.player_id, nick:m.nick, tag:"", kind:m.kind,
+                                     body:m.body, at:m.created_at, mine:m.player_id===me}));
+  }
+  if(String(thread).startsWith("dm:")){
+    const other=Number(String(thread).slice(3));
+    return mpState.dm.filter(r=>r.from_id===other||r.to_id===other)
+      .map(r=>({pid:r.from_id, nick:r.from_id===me?(mpState.player.nick||""):(r.from_nick||""),
+                tag:"", kind:"say", body:r.body, at:r.created_at, mine:r.from_id===me}));
+  }
+  return mpState.worldChat.map(m=>({pid:m.player_id, nick:m.nick, tag:m.tag, kind:m.kind,
+                                    body:m.body, at:m.created_at, mine:m.player_id===me}));
+}
+function mpChatThreadName(thread){
+  if(thread==="ally") return mpState.ally?("Альянс · "+mpState.ally.name):"Альянс";
+  if(thread==="friends") return "Друзья";
+  if(String(thread).startsWith("dm:")) return mpChatKnown(String(thread).slice(3)).nick||"Правитель";
+  return "Глобальный";
+}
+// Разговор, которого больше нет (вышел из союза, собеседник стёрт), не должен
+// оставлять окно пустым и немым — возвращаемся в мировой.
+function mpChatThreadOk(thread){
+  if(thread==="ally") return !!mpState.ally;
+  if(String(thread).startsWith("dm:")) return mpDmPartners().some(p=>p.id===Number(String(thread).slice(3)));
+  return true;
+}
+
+/* ---- Док: маленькое окошко снизу по центру ------------------------------ */
+// Рисуется на каждом такте (из mpRerenderNow) — но через setHtml/morph, как и
+// всё остальное: узлы переиспользуются, поэтому ни выделение, ни прокрутка не
+// сбрасываются от того, что кто-то что-то сказал.
+function mpRenderChatDock(){
+  const dock=$("#chat-dock"); if(!dock) return;
+  // Пока модалка открыта, док только мешает: он под ней, но выглядывает по
+  // краям и перехватывает случайные нажатия у самого низа экрана.
+  const busy=$("#menu-modal").classList.contains("open")
+          || $("#building-modal").classList.contains("open")
+          || $("#chat-modal").classList.contains("open")
+          || document.body.classList.contains("mp-placing");
+  dock.style.visibility=busy?"hidden":"";
+  if(busy) return;
+  if(!mpState.ally && mpChatDockTab==="ally") mpChatDockTab="world";
+  const dmN=mpDmUnreadTotal(), asks=mpFriendAsks().length;
+  let tabs="<button data-mp='chatdocktab' data-t='world'"+(mpChatDockTab==="world"?" class='on'":"")+">Глобальный</button>";
+  if(mpState.ally)
+    tabs+="<button data-mp='chatdocktab' data-t='ally'"+(mpChatDockTab==="ally"?" class='on'":"")+">Альянс</button>";
+  // Вкладок ровно две, как и просил автор. Личная переписка вкладкой сюда не
+  // лезет — её разговоров бывает десяток, — но и пропасть незамеченной не
+  // должна: непрочитанное показывается счётчиком, и он же открывает полное
+  // окно на самом свежем разговоре.
+  if(dmN||asks){
+    const first=mpDmPartners().find(p=>mpDmUnread(p.id)>0);
+    tabs+="<button data-mp='chatopen' data-th='"+(first?"dm:"+first.id:"friends")+"' style='flex:none;padding-right:9px'>"+
+      "&#9993;<i>"+(dmN+asks)+"</i></button>";
+  }
+  setHtml($("#chat-dock-tabs"), tabs);
+  const lines=mpChatLines(mpChatDockTab).slice(0,MP_DOCK_LINES);
+  setHtml($("#chat-dock-lines"), lines.length
+    ? lines.map(l=>l.kind==="system"
+        ? "<div class='cd-line sys'>"+escHtml(l.body)+"</div>"
+        : "<div class='cd-line'><span class='who'>"+mpChatNickHtml(l.pid,l.nick,l.tag)+":</span>"+
+          escHtml(l.body)+"</div>").join("")
+    : "<div class='cd-empty'>"+(mpChatDockTab==="ally"?"В союзе тихо.":"В мире тихо.")+" Нажмите, чтобы сказать.</div>");
+}
+
+/* ---- Полное окно -------------------------------------------------------- */
+function mpRenderChatModal(){
+  const box=$("#chat-modal"); if(!box || !box.classList.contains("open")) return;
+  if(!mpChatThreadOk(mpChatThread)) mpChatThread="world";
+  $("#chat-title").textContent=mpChatThreadName(mpChatThread);
+
+  // Полоса разговоров: мир, союз, друзья, дальше личные — свежий первым.
+  let rail="<button data-mp='chatthread' data-th='world'"+(mpChatThread==="world"?" class='on'":"")+">Глобальный</button>";
+  if(mpState.ally)
+    rail+="<button data-mp='chatthread' data-th='ally'"+(mpChatThread==="ally"?" class='on'":"")+">Альянс</button>";
+  const asks=mpFriendAsks().length;
+  rail+="<button data-mp='chatthread' data-th='friends'"+(mpChatThread==="friends"?" class='on'":"")+">Друзья"+
+        (asks?"<i>"+asks+"</i>":"")+"</button>";
+  mpDmPartners().forEach(pt=>{
+    const u=mpDmUnread(pt.id);
+    rail+="<button data-mp='chatthread' data-th='dm:"+pt.id+"'"+(mpChatThread==="dm:"+pt.id?" class='on'":"")+">"+
+      escHtml(pt.nick||"Правитель")+(u?"<i>"+u+"</i>":"")+"</button>";
+  });
+  setHtml($("#chat-rail"), rail);
+
+  const say=$("#chat-say"), foot=$("#chat-modal .cm-foot");
+  // «Друзья» — не разговор, а список: говорить там некому, и пустое поле во
+  // всю ширину читалось бы как поломка. Прячем строку целиком.
+  const canSay=mpChatThread!=="friends";
+  if(foot) foot.style.display=canSay?"":"none";
+  if(say){ say.disabled=!canSay;
+    say.placeholder=mpChatThread==="world"?"Сказать всему миру..."
+      :mpChatThread==="ally"?"Сказать союзу..."
+      :("Написать "+mpChatThreadName(mpChatThread)+"...");
+  }
+
+  if(mpChatThread==="friends"){ setHtml($("#chat-body"), mpFriendsHtml()); return; }
+
+  const err=mpChatErr?"<div class='cm-empty' style='color:#e08'>"+escHtml(mpChatErr)+"</div>":"";
+  const lines=mpChatLines(mpChatThread);
+  if(!lines.length){
+    setHtml($("#chat-body"), err+"<div class='cm-empty'>"+
+      (mpChatThread==="world"?"Пока никто ничего не сказал. Скажите первым — прочтёт весь мир."
+       :mpChatThread==="ally"?"Тихо. Скажите первое слово — его прочтут все соратники."
+       :"Разговор ещё не начат.")+"</div>");
+    return;
+  }
+  // Порядок как есть (свежие первыми) — переворачивает показ, column-reverse,
+  // см. CSS: лента сама открыта на последней реплике без доводки прокрутки.
+  setHtml($("#chat-body"), lines.map(l=>{
+    if(l.kind==="system") return "<div class='cm-say sys'>"+escHtml(l.body)+"</div>";
+    // Ник кликабелен — прямая просьба автора. Свой собственный тоже: по нему
+    // открывается тот же мини-профиль, просто без кнопок «написать себе».
+    return "<div class='cm-say"+(l.mine?" me":"")+"'>"+
+      "<span class='who' data-mp='chatwho' data-id='"+(l.pid||0)+"'>"+mpChatNickHtml(l.pid,l.nick,l.tag)+"</span>"+
+      "<span class='tx'>"+escHtml(l.body)+"</span>"+
+      "<span class='tm'>"+mpMailAgo(l.at)+"</span></div>";
+  }).join("")+err);
+}
+// Раздел «Друзья»: сначала приглашения (их надо разобрать), потом сама дружба.
+function mpFriendsHtml(){
+  const me=mpState.player?mpState.player.id:0;
+  const asks=mpFriendAsks();
+  const ok=mpState.friends.filter(f=>f.state==="ok");
+  const sent=mpState.friends.filter(f=>f.state==="pending" && f.by_id===me);
+  const other=f=>f.lo_id===me?f.hi_id:f.lo_id;
+  if(!asks.length && !ok.length && !sent.length)
+    return "<div class='cm-empty'>Друзей пока нет. Нажмите на ник в чате или на правителя на карте — "+
+      "и позовите его в друзья.</div>";
+  let h="";
+  // Порядок в разметке обратный видимому (column-reverse, см. CSS ленты):
+  // собираем снизу вверх, чтобы приглашения оказались наверху списка.
+  const row=(pid,right)=>"<div class='cm-say'><span class='who' data-mp='chatwho' data-id='"+pid+"'>"+
+    mpChatNickHtml(pid,mpChatKnown(pid).nick,"")+"</span>"+right+"</div>";
+  ok.slice().reverse().forEach(f=>{ const pid=other(f);
+    h+=row(pid,"<span class='tx'><button class='seal tiny' data-mp='chatdm' data-id='"+pid+"'>Чат</button> "+
+      "<button class='seal tiny ghost' data-mp='friendno' data-id='"+pid+"'"+(mpChatBusy?" disabled":"")+">Расстаться</button></span>"); });
+  if(ok.length) h+="<div class='cm-say sys'>Друзья</div>";
+  sent.slice().reverse().forEach(f=>{ h+=row(other(f),"<span class='tx' style='color:var(--vellum-faint)'>ждёт ответа</span>"); });
+  if(sent.length) h+="<div class='cm-say sys'>Ваши приглашения</div>";
+  asks.slice().reverse().forEach(f=>{ const pid=other(f);
+    h+=row(pid,"<span class='tx'><button class='seal tiny' data-mp='friendok' data-id='"+pid+"'"+(mpChatBusy?" disabled":"")+">Принять</button> "+
+      "<button class='seal tiny ghost' data-mp='friendno' data-id='"+pid+"'"+(mpChatBusy?" disabled":"")+">Отказать</button></span>"); });
+  if(asks.length) h+="<div class='cm-say sys'>Зовут в друзья</div>";
+  return h;
+}
+
+/* ---- Мини-профиль по нику ----------------------------------------------- */
+// Автор: «мини-профиль тогда получает "Добавить в друзья" плюс "Чат" и
+// "Отправить письмо"». Те же три кнопки стоят и в панели мира по тапу на
+// город (renderCartoucheMp) — там, где «Атака»: это один и тот же набор,
+// просто до правителя можно дотянуться и с карты, и из разговора.
+function mpMiniProfileHtml(pid){
+  pid=Number(pid);
+  const k=mpChatKnown(pid), a=mpAllyOf(pid);
+  const fr=mpFriendState(pid);
+  const rk=(k.ratingBattles||0)>=MP_CALIBRATION_BATTLES?mpRankOf(k.rating||0):null;
+  let h="<div class='mp-hd'>"+shieldSvg(k.race||"human",16)+mpChatNickHtml(pid,k.nick,"")+"</div>";
+  h+=a
+    ? "<div class='co'><span>Союз</span><b class='ally-link' data-mp='allyview' data-id='"+a.id+"'>"+escHtml(a.name)+" &#8250;</b></div>"
+    : "<div class='co'><span>Союз</span><b style='color:var(--vellum-faint)'>сам по себе</b></div>";
+  if(rk) h+="<div class='co'><span>Звание</span><b class='brank"+(rk.down?" shame":"")+"'>"+
+            mpRankMarkByRating(k.rating,16)+escHtml(rk.full)+"</b></div>";
+  if(k.power) h+="<div class='co'><span>Мощь</span><b>"+fmt(k.power)+"</b></div>";
+  if(k.x!=null&&k.y!=null) h+="<div class='co'><span>Столица</span><b>"+k.x+", "+k.y+"</b></div>";
+  if(k.self){
+    h+="<div class='chips' style='margin-top:10px'><button class='seal' data-mp='miniclose'>Закрыть</button></div>";
+    return h;
+  }
+  const friendBtn =
+    fr==="ok"   ? "<button class='seal ghost' data-mp='friendno' data-id='"+pid+"'"+(mpChatBusy?" disabled":"")+">Расстаться</button>"
+  : fr==="sent" ? "<button class='seal' disabled>Приглашение отправлено</button>"
+  : fr==="ask"  ? "<button class='seal ico' data-mp='friendok' data-id='"+pid+"'"+(mpChatBusy?" disabled":"")+">Принять в друзья</button>"
+  :               "<button class='seal ico' data-mp='friendadd' data-id='"+pid+"'"+(mpChatBusy?" disabled":"")+">Добавить в друзья</button>";
+  h+="<div class='chips' style='margin-top:10px'>"+
+     "<button class='seal ico' data-mp='chatdm' data-id='"+pid+"'>Чат</button>"+
+     "<button class='seal ico' data-mp='cartmail' data-nick='"+escHtml(k.nick||"")+"'><img src='images/ui/icon-mail.png' alt=''>Письмо</button>"+
+     "</div><div class='chips'>"+friendBtn+"</div>";
+  // Позвать в союз — там же, если есть право и он сам по себе (тот же порядок,
+  // что и в панели мира, см. её комментарий).
+  if(!a && mpAllyRank()>=MP_ALLY_ROLE_RANK.r3)
+    h+="<div class='chips'><button class='seal ico' data-mp='allyinvite' data-id='"+pid+"'"+(mpAllyBusy?" disabled":"")+
+       "><img src='images/ui/icon-alliance.png' alt=''>Пригласить в союз</button></div>";
+  if(k.x!=null&&k.y!=null)
+    h+="<div class='chips'><button class='seal ghost' data-mp='mpgoloc' data-x='"+k.x+"' data-y='"+k.y+"'>Показать на карте</button>"+
+       "<button class='seal ghost' data-mp='miniclose'>Закрыть</button></div>";
+  else h+="<div class='chips'><button class='seal ghost' data-mp='miniclose'>Закрыть</button></div>";
+  return h;
+}
+function mpRenderMiniProfile(){
+  const box=$("#mini-profile"); if(!box) return;
+  if(!mpMiniPid){ box.classList.remove("open"); return; }
+  box.classList.add("open");
+  setHtml(box, mpMiniProfileHtml(mpMiniPid));
+}
+
 // Сборы союза — то, ради чего союз и собирается вместе. Список стоит выше
 // чата и состава: сбор идёт по часам, и если соратник открыл окно союза, то
 // чаще всего именно за этим.
@@ -17788,6 +18255,10 @@ function mpRerenderNow(){
   // они есть, а на мире их нет» — теперь и бригады строительства видны
   // поверх 3D-мира (#brigades-world), не только на вкладке "Город".
   if(!SP_UNLOCKED) mpRenderBrigadesWorld();
+  // Фаза 54 — чат. Док виден в Городе и в Мире одновременно (см. его CSS) и
+  // потому обновляется тем же тактом, что и всё остальное поверх карты;
+  // полное окно и мини-профиль перерисовываются только пока открыты.
+  if(!SP_UNLOCKED){ mpRenderChatDock(); mpRenderChatModal(); mpRenderMiniProfile(); }
   // Фаза 17, кусочек 1 — тот же довод для открытого меню здания
   // (mpOpenBuildingModal): постройка могла завершиться, набор/лечение/ковка
   // подойти к концу, ресурсы истратиться — без этого кнопка "Улучшить"
@@ -17973,7 +18444,7 @@ async function mpRefreshAll(includeSlowLane){
     const jobs=[
       mpRefreshPlayer(), mpRefreshNeighbors(), mpRefreshMarches(),
       mpRefreshIncoming(), mpRefreshNodes(), mpRefreshCamps(), mpRefreshWorldBattles(),
-      mpRefreshRallies(),
+      mpRefreshRallies(), mpRefreshWorldChat(), mpRefreshDm(),
     ];
     if(includeSlowLane) jobs.push(
       mpRefreshMail(), mpRefreshScoutMail(), mpRefreshRaidMail(), mpRefreshSiegeMail(),
@@ -17984,7 +18455,8 @@ async function mpRefreshAll(includeSlowLane){
       // союза. Обе на медленной дорожке по той же причине, что и почта:
       // состав меняется редко, а свою же реплику в чате показывает сразу
       // сам mpDoAllySay, не дожидаясь такта (см. её комментарий).
-      mpRefreshAlliance(), mpRefreshAllianceMail(), mpRefreshAllyOf(), mpRefreshAllyInvites()
+      mpRefreshAlliance(), mpRefreshAllianceMail(), mpRefreshAllyOf(), mpRefreshAllyInvites(),
+      mpRefreshFriends()
     );
     // allSettled, не all: одна упавшая выборка (сеть моргнула на одной из
     // пятнадцати) не должна отменять остальные — раньше цепочка await
@@ -18278,6 +18750,47 @@ async function mpRefreshRallies(){
     .order("created_at",{ascending:false}).limit(10);
   if(!error && data){ mpState.rallies=data; mpRerenderData(); }
 }
+// =============================================================================
+// Чат (Фаза 54) — выборки.
+// =============================================================================
+// Мировая лента и личная переписка — на БЫСТРОЙ дорожке: разговор, доезжающий
+// раз в десять секунд, разговором уже не является. Друзья — на медленной: их
+// список меняется от силы раз в час.
+//
+// Ограничения намеренно разные. Мировому чату хватает последних шестидесяти
+// строк: он весь и есть «что говорят прямо сейчас», прошлое в нём никто не
+// листает. Личная переписка берётся шире (300 строк на все разговоры разом),
+// потому что из неё же складывается и САМ СПИСОК собеседников — отдельной
+// таблицы разговоров нет нарочно, см. заголовок chat_dm в 0015.
+const MP_WORLD_CHAT_LIMIT=60, MP_DM_LIMIT=300;
+async function mpRefreshWorldChat(){
+  if(!mpState.player) return;
+  const { data, error } = await sb.from("world_chat").select("*")
+    .eq("world_id",mpState.player.world_id)
+    .order("created_at",{ascending:false}).limit(MP_WORLD_CHAT_LIMIT);
+  if(!error && data){ mpState.worldChat=data; mpRerenderData(); }
+}
+// Обе стороны разом: политика chat_dm отдаёт строку и отправителю, и
+// получателю (см. 0015), поэтому одной выборкой «где я с любой стороны»
+// приходит вся моя переписка целиком. Двумя запросами (входящие и исходящие)
+// это было бы то же самое, только вдвое дороже.
+async function mpRefreshDm(){
+  if(!mpState.player) return;
+  const me=mpState.player.id;
+  const { data, error } = await sb.from("chat_dm").select("*")
+    .or("from_id.eq."+me+",to_id.eq."+me)
+    .order("created_at",{ascending:false}).limit(MP_DM_LIMIT);
+  if(!error && data){ mpState.dm=data; mpRerenderData(); }
+}
+// Друзья и приглашения дружить — одной строкой на пару (см. 0015), поэтому
+// своя сторона у строки может быть любой из двух.
+async function mpRefreshFriends(){
+  if(!mpState.player) return;
+  const me=mpState.player.id;
+  const { data, error } = await sb.from("friends").select("*")
+    .or("lo_id.eq."+me+",hi_id.eq."+me).limit(300);
+  if(!error && data){ mpState.friends=data; mpRerenderData(); }
+}
 // Письма союза (mail, kind:"alliance") — вкладка «Альянс» в почте. Их пишет
 // mp-alliance тому, кого касается: приняли заявку, отклонили, исключили,
 // распустили союз. В чат такое класть мало — исключённый чат уже не увидит.
@@ -18312,6 +18825,88 @@ async function mpDoAlly(op, args, okText){
     mpAllyBusy=false; mpAllyErr=e.message||"Не удалось"; mpRerender();
     return false;
   }
+}
+// =============================================================================
+// Чат (Фаза 54) — действия.
+// =============================================================================
+// Одна обвязка на все шесть операций, как и на сервере (см. шапку mp-chat).
+// Перечитываем сразу и не ждём такта: человек нажал «Сказать» и должен увидеть
+// свою же реплику, а не через пять секунд.
+async function mpDoChat(op, args){
+  if(mpChatBusy) return false;
+  mpChatBusy=true; mpChatErr=null; mpRerender();
+  try{
+    await mpCall("mp-chat", Object.assign({op}, args||{}));
+    mpChatBusy=false;
+    await Promise.all([mpRefreshWorldChat(), mpRefreshDm(), mpRefreshFriends()]);
+    mpRerender();
+    return true;
+  }catch(e){
+    mpChatBusy=false; mpChatErr=e.message||"Не сказалось"; mpRerender();
+    return false;
+  }
+}
+// Сказать в открытый разговор. Куда именно уйдёт сказанное, решает сам
+// разговор: мировой — в мир, союзный — в союз (тем же mp-alliance, что и
+// раньше: союзный чат никуда не переезжал), личный — собеседнику.
+//
+// Поле очищается ТОЛЬКО при успехе — набранное не должно пропадать из-за
+// моргнувшей сети или паузы между репликами.
+async function mpChatSend(){
+  const inp=$("#chat-say"); const text=(inp&&inp.value||"").trim();
+  if(!text || mpChatBusy) return;
+  let ok=false;
+  if(mpChatThread==="ally"){
+    // Союзная лента живёт в mp-alliance — зовём её напрямую, а не через
+    // mpDoAllySay: та читает своё поле (#mp-ally-say) на экране союза.
+    mpChatBusy=true; mpChatErr=null; mpRerender();
+    try{ await mpCall("mp-alliance",{op:"say",body:text}); mpChatBusy=false; await mpRefreshAlliance(); ok=true; }
+    catch(e){ mpChatBusy=false; mpChatErr=e.message||"Не сказалось"; }
+    mpRerender();
+  } else if(String(mpChatThread).startsWith("dm:")){
+    ok=await mpDoChat("dm",{toId:Number(String(mpChatThread).slice(3)), body:text});
+  } else {
+    ok=await mpDoChat("say",{body:text});
+  }
+  if(ok){ const again=$("#chat-say"); if(again) again.value=""; }
+}
+// Открыть полное окно (по клику на док или на счётчик непрочитанного).
+function mpOpenChat(thread){
+  if(thread) mpChatThread=thread;
+  if(!mpChatThreadOk(mpChatThread)) mpChatThread="world";
+  mpChatErr=null;
+  $("#chat-modal").classList.add("open");
+  mpChatMarkRead();
+  mpRerender();
+  const inp=$("#chat-say"); if(inp && !inp.disabled) inp.focus();
+}
+function mpCloseChat(){
+  $("#chat-modal").classList.remove("open");
+  mpMiniPid=0;
+  mpRerender();
+}
+// Разговор открыт — метку «непрочитано» снимаем. Только для личных: у мировой
+// и союзной лент её нет вовсе (они у всех на экране и так, см. док).
+function mpChatMarkRead(){
+  if(!String(mpChatThread).startsWith("dm:")) return;
+  const other=Number(String(mpChatThread).slice(3));
+  if(mpDmUnread(other)<=0) return;
+  mpDoChat("dmread",{withId:other});
+}
+// Личный разговор с этим правителем — из мини-профиля, из списка друзей и из
+// панели мира. Одной точкой, потому что во всех трёх случаях нужно одно и то
+// же: закрыть мини-профиль, открыть окно на этом разговоре.
+function mpOpenDm(pid){
+  mpMiniPid=0;
+  mpOpenChat("dm:"+Number(pid));
+}
+function mpOpenMini(pid){ mpMiniPid=Number(pid)||0; mpChatErr=null; mpRerender(); }
+// Уходим из чата на другой экран (почта, карточка союза, точка на карте):
+// оба окна чата лежат выше всего остального (z-index 36 и 40) и, оставшись
+// открытыми, накрыли бы собой то, куда игрок только что нажал уйти.
+function mpChatAway(){
+  mpMiniPid=0;
+  const box=$("#chat-modal"); if(box) box.classList.remove("open");
 }
 // Сбор союза (mp-rally). Отдельная обвязка от mpDoAlly: перечитывать нужно
 // другое (сборы и своё войско, а не состав союза), и ошибку показывать в том
