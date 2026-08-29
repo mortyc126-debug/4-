@@ -120,6 +120,25 @@ create table if not exists alliance_applications (
 create index if not exists alliance_applications_player_idx on alliance_applications(player_id);
 
 -- ---------------------------------------------------------------------------
+-- Приглашения (Фаза 52). Зеркало заявок: заявка — «я хочу к вам», приглашение —
+-- «мы зовём тебя». Одной таблицей их не свести: у них разные отправители,
+-- разные права на разбор и разная видимость. Пара (союз, игрок) — ключ, звать
+-- дважды незачем.
+--
+-- by_nick — ник позвавшего, СТРОКОЙ, а не ссылкой: приглашение живёт своей
+-- жизнью, зовущий мог погибнуть или уйти из союза, а «кто меня позвал» должно
+-- остаться читаемым (тот же приём, что и с ником в реплике чата).
+create table if not exists alliance_invites (
+  alliance_id bigint not null references alliances(id) on delete cascade,
+  player_id   bigint not null references players(id)   on delete cascade,
+  by_player_id bigint references players(id) on delete set null,
+  by_nick     text not null default '',
+  created_at  timestamptz not null default now(),
+  primary key (alliance_id, player_id)
+);
+create index if not exists alliance_invites_player_idx on alliance_invites(player_id);
+
+-- ---------------------------------------------------------------------------
 -- Чат союза. Не почта: почта — это событие с разбором (бой, обоз, донесение),
 -- а тут строка текста, которую читают все и никто не «открывает». Поэтому
 -- своя таблица, а не kind в mail — иначе на каждую реплику заводилось бы по
@@ -154,6 +173,8 @@ update alliance_members set role = 'r1' where role = 'member';
 alter table alliance_members alter column role set default 'r1';
 alter table alliances alter column members_max set default 30;
 alter table alliances add column if not exists emblem jsonb;
+-- Приглашений в прежней редакции не было вовсе; create table if not exists
+-- выше заведёт их и на уже накатанной базе.
 update alliances set members_max = 30 where members_max <> 30;
 
 -- ---------------------------------------------------------------------------
@@ -167,6 +188,7 @@ update alliances set members_max = 30 where members_max <> 30;
 alter table alliances             enable row level security;
 alter table alliance_members      enable row level security;
 alter table alliance_applications enable row level security;
+alter table alliance_invites      enable row level security;
 alter table alliance_chat         enable row level security;
 
 drop policy if exists alliances_select_all on alliances;
@@ -187,6 +209,20 @@ create policy alliance_applications_select_own on alliance_applications for sele
       -- Ступени r5/r4 — глава и заместитель, те, кто заявки и разбирает
       -- (см. RANK_OFFICER в mp-alliance). Три нижние ступени заявок не видят.
       where p.auth_uid = auth.uid() and m.role in ('r5','r4')
+    )
+  );
+
+-- Приглашение видит позванный (ему решать) и те, кто в зовущем союзе вправе
+-- звать, — глава, заместитель и старейшина: иначе они звали бы одного и того
+-- же по кругу, не видя, что он уже приглашён.
+drop policy if exists alliance_invites_select_own on alliance_invites;
+create policy alliance_invites_select_own on alliance_invites for select
+  using (
+    player_id in (select id from players where auth_uid = auth.uid())
+    or alliance_id in (
+      select m.alliance_id from alliance_members m
+      join players p on p.id = m.player_id
+      where p.auth_uid = auth.uid() and m.role in ('r5','r4','r3')
     )
   );
 

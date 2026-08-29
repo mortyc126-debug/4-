@@ -187,8 +187,27 @@ Deno.serve(async (req) => {
     const { data: cell, error: cErr } = await admin
       .from("map_cells").select("*").eq("world_id", world.id).eq("x", tx).eq("y", ty).maybeSingle();
     if (cErr) return jsonResponse({ err: cErr.message }, 500);
-    if (!cell || (cell.t !== "camp" && cell.t !== "fort")) return jsonResponse({ err: "Здесь нет лагеря" }, 400);
-    const campLv = (cell.data && cell.data.lv) || 1;
+    // Крепость региона (map_cells t:"regfort", миграция 0013) — такая же цель
+    // набега, как лагерь и форт. Автор прямо снял запрет: «пусть атакуют, пусть
+    // убивают, это их выбор». Одиночному отряду она почти наверняка не по
+    // зубам, и панель говорит это заранее, — но запрещать нападение мы не
+    // будем.
+    const isRegfort = cell && cell.t === "regfort";
+    if (!cell || (cell.t !== "camp" && cell.t !== "fort" && !isRegfort))
+      return jsonResponse({ err: "Здесь нет лагеря" }, 400);
+    // Разорённая крепость и уже взятая союзом — не цель набега: варваров в
+    // первой нет вовсе, а вторая берётся не так (это придёт со сбором).
+    if (isRegfort && (cell.data && cell.data.state) !== "barb")
+      return jsonResponse({ err: "В этой крепости варваров нет" }, 400);
+    // У крепости уровня нет — сила берётся по её ступени, опорным уровнем на
+    // ту же кривую banditArmy, что и у лагерей (малая 16-18, средняя 19-22,
+    // великая 23-25 по worldgen/regions/SHRINES.md — берём середину).
+    // Копия таблицы из index.html (regfortLevel) по правилу самодостаточных
+    // функций.
+    const REGFORT_TIER_LV = [0, 17, 20, 24];
+    const campLv = isRegfort
+      ? (REGFORT_TIER_LV[Math.max(1, Math.min(3, ((cell.data && cell.data.tier) | 0)))] || 17)
+      : ((cell.data && cell.data.lv) || 1);
 
     const attP = attRow.state;
     attP.race = attP.race || attRow.race;
@@ -201,7 +220,15 @@ Deno.serve(async (req) => {
       .from("marches").select("id", { count: "exact", head: true })
       .eq("world_id", world.id).eq("player_id", attRow.id).in("mode", ["attack", "gather", "raid"]);
     if (busyErr) return jsonResponse({ err: busyErr.message }, 500);
-    if ((busy || 0) >= marchSlots(hallLv)) return jsonResponse({ err: "Все отряды заняты" }, 400);
+    // Фаза 53 — войска, отданные в готовящийся сбор союза, из замка ушли ровно
+    // так же, как в поход: слот отряда они держат. Без этой второй половины
+    // счёта сбор был бы «бесплатным» — можно было бы отдать в него гарнизон и
+    // тут же выступить всеми слотами ещё раз.
+    const { data: rallyParts } = await admin.from("alliance_rally_parts")
+      .select("rally_id, alliance_rallies!inner(state)")
+      .eq("player_id", attRow.id).eq("alliance_rallies.state", "gather");
+    const busyAll = (busy || 0) + ((rallyParts && rallyParts.length) || 0);
+    if (busyAll >= marchSlots(hallLv)) return jsonResponse({ err: "Все отряды заняты" }, 400);
 
     const sendUnits = { inf: {}, arc: {}, cav: {}, sie: {} };
     let totalSend = 0;
@@ -234,7 +261,10 @@ Deno.serve(async (req) => {
     const { data: marchRow, error: mErr } = await admin.from("marches").insert({
       world_id: world.id, player_id: attRow.id, mode: "raid", state: "go",
       tx, ty, t0: nowSec, t1: nowSec + travel,
-      units: sendUnits, data: { dist, spd, camp_lv: campLv, cell_x: tx, cell_y: ty, has_gen: takeGen },
+      // regfort в данных марша — чтобы разбор набега (mp-tick, finalizeRaid)
+      // знал, что победа тут не стирает клетку, а разоряет крепость.
+      units: sendUnits, data: { dist, spd, camp_lv: campLv, cell_x: tx, cell_y: ty, has_gen: takeGen,
+                                regfort: isRegfort || undefined },
     }).select().single();
     if (mErr) return jsonResponse({ err: mErr.message }, 500);
 

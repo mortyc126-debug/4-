@@ -474,6 +474,13 @@ Deno.serve(async (req) => {
       .from("marches").select("*").eq("id", marchId).eq("player_id", attRow.id).maybeSingle();
     if (mErr) return jsonResponse({ err: mErr.message }, 500);
     if (!m) return jsonResponse({ err: "Поход не найден" }, 400);
+    // Фаза 53 — сбором союза управлять нельзя, это прямое условие автора:
+    // «сбором в отличие от одиночного марша управлять нельзя, сбор идёт до
+    // цели, там либо проигрывает, либо выигрывает». Отозвать или увести его
+    // значило бы дать созывающему распоряжаться чужими войсками — теми, что
+    // ему доверили союзники, — уже после того, как они вышли.
+    if (m.data && m.data.rally_id && m.state !== "back")
+      return jsonResponse({ err: "Сбором союза управлять нельзя — он идёт до цели" }, 400);
     // Фаза 21 — отступление посреди боя. state:"siege" (marches, зеркало
     // mp-tick/index.js: initPvpBattle/initRaidBattle+applyBattleRound) —
     // марш уже стоит под чужим городом ИЛИ у лагеря варваров, и бой идёт
