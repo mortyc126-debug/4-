@@ -910,6 +910,62 @@ function applyBoardStats(p, row) {
   row.camps_taken = Math.round(st.camps || 0);
   row.__boardsDirty = true;
 }
+// =============================================================================
+// Мощь союза — Фаза 49.
+// =============================================================================
+// alliances.power и alliances.members денормализованы нарочно: таблица мира
+// «Альянс» — это ORDER BY с LIMIT по двадцати союзам, а не выборка состава
+// каждого (тот же довод, что у players.power в миграции 0008 — тянуть на
+// клиент состав всех союзов ради сортировки нельзя).
+//
+// Состав меняется редко и пересчитывается там, где меняется (mp-alliance).
+// А вот МОЩЬ участников меняется постоянно, и без обновления колонка
+// показывала бы мощь союза на момент последнего вступления — то есть враньё
+// тем большее, чем дольше союз живёт.
+//
+// Считается здесь по той же причине, по которой здесь же считается
+// players.power: mp-join дёргается на каждом пятисекундном опросе КАЖДОГО
+// игрока, то есть у любого живого союза найдётся кому его пересчитать, и
+// отдельная задача в pg_cron не нужна. Затвор по power_at — не чаще раза в
+// минуту на союз: иначе десять участников онлайн дали бы сто двадцать
+// пересчётов в минуту вместо одного.
+//
+// Ошибки глотаются молча: это украшение таблицы, а не действие игрока —
+// уронить из-за него вход в мир было бы несоразмерно.
+const ALLIANCE_POWER_TTL_MS = 60000;
+async function refreshAlliancePower(admin, playerId) {
+  try {
+    const { data: mem } = await admin
+      .from("alliance_members").select("alliance_id").eq("player_id", playerId).maybeSingle();
+    if (!mem) return;
+    const { data: ally } = await admin
+      .from("alliances").select("id,power_at,disbanded_at,leader_id").eq("id", mem.alliance_id).maybeSingle();
+    if (!ally || ally.disbanded_at) return;
+    if (ally.power_at && Date.now() - Date.parse(ally.power_at) < ALLIANCE_POWER_TTL_MS) return;
+    const { data: rows } = await admin
+      .from("alliance_members").select("player_id, players!inner(power, dead_at)")
+      .eq("alliance_id", ally.id);
+    let members = 0, power = 0;
+    for (const r of rows || []) {
+      const pl = r.players;
+      if (!pl || pl.dead_at) continue;
+      members++; power += Number(pl.power || 0);
+    }
+    const patch = { members, power, power_at: new Date().toISOString() };
+    // Вместимость союза = 20 + 4 за уровень Центра Альянса У ГЛАВЫ (см.
+    // комментарий к колонке members_max в миграции 0012 и allianceCapFor в
+    // mp-alliance — здесь та же формула, своя копия по правилу
+    // самодостаточности функций). Глава мог достроить здание — минутного
+    // затвора выше довольно, чтобы это доехало до экрана союза.
+    if (ally.leader_id) {
+      const { data: leader } = await admin
+        .from("players").select("state").eq("id", ally.leader_id).maybeSingle();
+      const lv = (leader && leader.state && leader.state.b && leader.state.b.alliance) || 0;
+      patch.members_max = 20 + 4 * Math.max(0, Math.min(25, lv | 0));
+    }
+    await admin.from("alliances").update(patch).eq("id", ally.id);
+  } catch (_) { /* см. заголовок: молча */ }
+}
 function applyPower(p, row, marchUnits) {
   const v = powerOf(p, marchUnits);
   p.peakPower = Math.max(p.peakPower || 0, v);
@@ -1461,6 +1517,11 @@ Deno.serve(async (req) => {
       // состояние, включая своё только что применённое действие.
       const savedJoin = await savePlayerState(admin, existing.data, st, pw);
       if (savedJoin.error) return jsonResponse({ err: savedJoin.error.message }, 500);
+      // Мощь своего союза — по уже записанной players.power, с затвором на
+      // минуту (см. refreshAlliancePower). Стоит после записи и до обеих
+      // веток ответа: при проигранной гонке строку записал кто-то другой,
+      // и мощь в базе всё равно свежая.
+      await refreshAlliancePower(admin, existing.data.id);
       if (savedJoin.conflict) {
         const again = await admin.from("players").select("*").eq("id", existing.data.id).maybeSingle();
         if (again.error) return jsonResponse({ err: again.error.message }, 500);

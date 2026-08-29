@@ -210,10 +210,25 @@ def engine_view(js, binary):
     return out
 
 
+# Папки, которые скрипт НЕ трогает.
+#
+# models/generals — не игровые модели, а ИСХОДНИКИ: автор выгружает их из
+# редактора как есть (~17 МБ, полмиллиона треугольников, три 2K-карты), а в
+# игру идут их упрощённые копии в models/marches, которые печёт
+# tools/decimate_glb.mjs. Браузер исходники не качает никогда, так что
+# выигрыша от чистки нет вовсе, — а карта нормалей и шероховатости пропала бы
+# из того самого файла, из которого модель перепекают. Один запуск скрипта
+# «на всякий случай» молча съедал 24 МБ авторских исходных данных.
+SKIP_DIRS = ("generals",)
+
+
 def main():
     check_only = "--check" in sys.argv
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    files = sorted(glob.glob(os.path.join(root, "models", "*", "*.glb")))
+    files = sorted(
+        p for p in glob.glob(os.path.join(root, "models", "*", "*.glb"))
+        if os.path.basename(os.path.dirname(p)) not in SKIP_DIRS
+    )
     if not files:
         print("моделей не найдено")
         return 1
