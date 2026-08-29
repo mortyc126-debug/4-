@@ -5490,6 +5490,16 @@ function migrateInfiniteWorld(){
   W.infiniteWorldMigrated=true;
 }
 function clearArea(x,y,r){for(let i=-r;i<=r;i++)for(let j=-r;j<=r;j++)mapDelete(x+i,y+j)}
+// Сила крепости региона. Уровня у неё нет (см. миграцию 0013), но мерка силы
+// нужна — и своей кривой ей заводить незачем: она берётся из той же
+// banditArmy/banditPower, что и у лагерей, по ОПОРНОМУ уровню на ступень.
+// Числа взяты из worldgen/regions/SHRINES.md, где автор и расписал ступени
+// крепостей: малая 16-18, средняя 19-22, великая 23-25 — берём середину.
+// Игроку опорный уровень не показывается нигде: он видит «Великая твердыня»
+// и число силы, а не «ур. 24».
+const REGFORT_TIER_LV=[0,17,20,24];
+function regfortLevel(tier){ return REGFORT_TIER_LV[Math.max(1,Math.min(3,tier|0))]||17; }
+function regfortPower(tier){ return banditPower(regfortLevel(tier)); }
 function banditPower(lv){
   // Та же мерка, что и armyPower: иначе сравнение "потяну ли я этот лагерь"
   // бессмысленно и для ботов, и для подсказок игроку.
@@ -9399,13 +9409,36 @@ function renderCartoucheMp(){
     // берёт, и игрок потерял бы войско ни за что.
     const TIER=["","Малая твердыня","Твердыня","Великая твердыня"];
     const st8=o.state||"barb";
-    put("<div class='hd'>"+escHtml(o.shrine||"Крепость варваров")+" "+coord+"</div>"+
+    let body="<div class='hd'>"+escHtml(o.shrine||"Крепость варваров")+" "+coord+"</div>"+
       "<div class='co'><span>Область</span><b>"+escHtml(o.regionName||"—")+"</b></div>"+
       "<div class='co'><span>Крепость</span><b>"+(TIER[o.tier]||"Твердыня")+"</b></div>"+
       "<div class='co'><span>Держат</span><b>"+
-        (st8==="ally" ? "союз" : st8==="razed" ? "никто — место свободно" : "варвары")+"</b></div>"+
-      "<div class='hint'>Одна на всю область, и берёт её союз, а не одиночка. "+
-      "Пока за неё не воюют: захват и святыня придут следующим шагом.</div>");
+        (st8==="ally" ? "союз" : st8==="razed" ? "никто — место свободно" : "варвары")+"</b></div>";
+    if(st8==="barb"){
+      // Прогноз и кнопка — те же, что у лагеря. Крепость заведомо сильнее
+      // любого одиночного отряда, и прогноз скажет это прямо; но запрещать
+      // нападение мы не будем — прямое решение автора: «пусть убивают, это
+      // их выбор».
+      const fp=regfortPower(o.tier);
+      const myShim=mpFullShim(mpState.player,st), myB=bonuses(myShim);
+      const my=armyPower(st.troops,myB,mpState.player.race);
+      const ok = my>fp*1.8?["Разгром без потерь","var(--verdigris)"]
+               : my>fp*1.1?["Победа с потерями","var(--gilt)"]
+               : my>fp*0.8?["Исход не ясен","var(--gilt)"]
+               : ["Отряд поляжет","var(--garnet)"];
+      body+="<div class='co'><span>Сила крепости</span><b>"+fmt(fp)+"</b></div>"+
+        "<div class='co'><span>Ваше войско</span><b>"+fmt(my)+"</b></div>"+
+        "<div class='co'><span>Прогноз</span><b style='color:"+ok[1]+"'>"+ok[0]+"</b></div>"+
+        "<button class='seal wide blood ico' style='margin-top:9px' data-mp='cartraidpick' data-k='"+o.x+","+o.y+"'><img src='images/ui/icon-siege.png' alt=''>Атаковать</button>"+
+        "<div class='hint'>Одна на всю область. В одиночку её обычно не берут — "+
+        "но никто не мешает попробовать.</div>";
+    } else if(st8==="razed"){
+      body+="<div class='hint'>Крепость варваров разорена. Пока на этом месте не встанет "+
+        "крепость союза, варвары вернутся сюда через двенадцать часов.</div>";
+    } else {
+      body+="<div class='hint'>Крепостью владеет союз.</div>";
+    }
+    put(body);
     return;
   }
   if(o.t==="camp"||o.t==="fort"){
@@ -13035,6 +13068,40 @@ function profileRatingHtml(meId){
   h+="</div>";
   return h;
 }
+/* ---- Остаток потолка пары (Фаза 43) --------------------------------------
+   С одним и тем же соперником засчитывается не больше четырёх боёв в час
+   (см. docs/RANKS.md, «Потолок на пару»). Считаем по СВОИМ письмам о боях, а
+   не запросом на сервер: письма и так приходят опросом, в них есть и соперник,
+   и время, и признак «бой засчитан» (d.rating.counted), а журнал rating_events
+   игроку закрыт нарочно — в нём лежит скрытый коэффициент по мощи держав.
+   Считаются бои в ОБЕ стороны: пара неупорядоченная, поменяться ролями и
+   обнулить счётчик нельзя.
+
+   ВОЗВРАЩЕНО. Определение было удалено в Фазу 44 («Девять таблиц мира вместо
+   двух», b7d5f28) вместе с соседним куском, а ДВА ЕГО ВЫЗОВА в картуше чужого
+   города остались. С того дня тап по любому чужому правителю падал с
+   ReferenceError прямо посреди renderCartoucheMp — и падал МОЛЧА: исключение
+   рвало функцию до put(), панель оставалась пустой и просто не открывалась.
+   Ровно об этом репорт автора: «не показываются менюшки других правителей, где
+   было бы написано атаковать или разведать». Ни разведать, ни напасть на живого
+   соседа было нельзя вообще — ни одной кнопки не рисовалось. */
+const MP_PAIR_CAP_BATTLES=4, MP_PAIR_CAP_WINDOW_MS=60*60*1000;
+function mpPairBattlesLeft(oppId){
+  if(oppId==null) return MP_PAIR_CAP_BATTLES;
+  const since=Date.now()-MP_PAIR_CAP_WINDOW_MS;
+  let n=0;
+  const scan=list=>{
+    (list||[]).forEach(m=>{
+      const d=m.data||{};
+      if(d.opponent_id!==oppId) return;
+      if(!d.rating || !d.rating.counted) return;
+      if(new Date(m.created_at).getTime()<since) return;
+      n++;
+    });
+  };
+  scan(mpState.mail); scan(mpState.nodeBattleMail);
+  return Math.max(0, MP_PAIR_CAP_BATTLES-n);
+}
 /* ---- Знак звания ---------------------------------------------------------
    images/ranks/rank-<ключ>.png. ВРЕМЕННАЯ ГРАФИКА: знаки нарисованы скриптом
    tools/gen_rank_marks.py, чтобы интерфейс не стоял пустым до настоящих
@@ -14142,10 +14209,13 @@ function openLevy(cx,cy){
       "<tr><td>Дорога займёт</td><td>"+(n?fmtDur(eta):"—")+"</td></tr>"+
       "<tr><td>Сила отряда</td><td>"+fmt(mine)+"</td></tr></table>";
 
-    if(o.t==="camp"||o.t==="fort"||o.t==="city"){
+    if(o.t==="camp"||o.t==="fort"||o.t==="regfort"||o.t==="city"){
       let foe, label;
       if(o.t==="city"){ const q=W.players.find(z=>z.id===o.pid);
         foe=q?armyPower(q.troops,bonuses(q),q.race)*(1+wallDefBonus(q.b.wall)):0; label="Гарнизон и стены" }
+      // У крепости региона уровня нет — сила берётся по её ступени (см.
+      // regfortPower); banditPower(o.lv) дал бы тут NaN.
+      else if(o.t==="regfort"){ foe=regfortPower(o.tier); label="Сила крепости" }
       else { foe=banditPower(o.lv); label="Сила заставы" }
       const v = mine>foe*1.8?["&#9819;","Разгром без потерь","var(--verdigris)"]
               : mine>foe*1.15?["&#9876;","Победа, но с кровью","var(--gilt)"]

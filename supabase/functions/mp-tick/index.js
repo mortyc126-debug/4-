@@ -212,6 +212,7 @@ Deno.serve(async (req) => {
 
         if (ev.type === "train") await applyTrain(admin, ev);
         else if (ev.type === "build") await applyBuild(admin, ev);
+        else if (ev.type === "regfort_respawn") await applyRegfortRespawn(admin, ev);
         else if (ev.type === "march_arrive") await applyMarchArrive(admin, ev);
         else if (ev.type === "battle_round") await applyBattleRound(admin, ev);
         else if (ev.type === "march_home") await applyMarchHome(admin, ev);
@@ -721,6 +722,11 @@ async function pickWildSpot(admin, worldId, cx, cy, minR, maxR) {
 // следующий respawn всё равно рано или поздно найдёт свободное место
 // где-то ещё.
 const NODE_RESPAWN_SEC = 3600, CAMP_RESPAWN_SEC = 2700;
+// Двенадцать часов на то, чтобы союз поставил на разорённом месте свою
+// крепость. Не поставил — варвары возвращаются. Прямое условие автора:
+// «если альянс не построит крепость спустя 12 часов после разрушения
+// крепости варваров, там опять появится эта крепость варваров».
+const REGFORT_RESPAWN_SEC = 12 * 3600;
 // Кольцо 3..12 вокруг истощённой точки целиком ближе минимума в 30 клеток от
 // соседей — сдвинуто наружу с сохранением ШИРИНЫ (было 3..12, ширина 9,
 // стало 30..39), иначе respawn не смог бы разместиться нигде.
@@ -738,6 +744,30 @@ async function applyNodeRespawn(admin, ev) {
     { onConflict: "world_id,x,y", ignoreDuplicates: true },
   );
   if (error) throw error;
+}
+// Возвращение варваров в разорённую крепость региона. В отличие от лагеря,
+// клетка никуда не девалась (крепость привязана к месту, см. миграцию 0013) —
+// меняется только состояние.
+//
+// Событие может опоздать или прийти дважды (аренда claimed_at, перезапуск
+// тикера), а за двенадцать часов на месте могло произойти что угодно, поэтому
+// проверяется ВСЁ: клетка ещё крепость, она всё ещё разорена, и разорена
+// ИМЕННО ТЕМ разорением, под которое заводилось событие (razed_at). Последнее
+// важнее всего: без него второй штурм, случившийся через час после первого,
+// получил бы возврат варваров от старого события — через одиннадцать часов
+// вместо двенадцати.
+async function applyRegfortRespawn(admin, ev) {
+  const { x, y, razed_at } = ev.data || {};
+  if (x == null || y == null) return;
+  const { data: cell } = await admin.from("map_cells")
+    .select("data,t").eq("world_id", ev.world_id).eq("x", x).eq("y", y).maybeSingle();
+  if (!cell || cell.t !== "regfort") return;
+  const d = cell.data || {};
+  if (d.state !== "razed") return;                       // союз успел построить свою
+  if (razed_at && d.razed_at && d.razed_at !== razed_at) return;   // разорение уже другое
+  const next = Object.assign({}, d, { state: "barb", alliance_id: null, razed_at: null });
+  await admin.from("map_cells").update({ data: next, updated_at: new Date().toISOString() })
+    .eq("world_id", ev.world_id).eq("x", x).eq("y", y);
 }
 async function applyCampRespawn(admin, ev) {
   const ox = ev.data && ev.data.x, oy = ev.data && ev.data.y;
@@ -4688,7 +4718,12 @@ async function applyRaidArrive(admin, m) {
   // Лагерь уже разгромлен кем-то другим, пока отряд шёл — бой не
   // случается, отряд просто разворачивается пустым (как gather на
   // истощённую точку, как attack на пропавшего защитника).
-  if (!(cell && (cell.t === "camp" || cell.t === "fort"))) {
+  // Крепость региона (regfort) — такая же цель набега, как лагерь; но только
+  // пока в ней варвары: разорённую или взятую союзом штурмовать нечем, и
+  // отряд разворачивается пустым, как на истощённую точку.
+  const cellIsRaidable = cell && (cell.t === "camp" || cell.t === "fort" ||
+    (cell.t === "regfort" && (cell.data && cell.data.state) === "barb"));
+  if (!cellIsRaidable) {
     await sendSurvivorsHome(admin, m, nowSec, m.units, {});
     return;
   }
@@ -4772,14 +4807,33 @@ async function finalizeRaidBattle(admin, m, attRow, attP, state, nowSec) {
   await savePlayerStateOrThrow(admin, attRow, attP);
 
   if (state.winner === "att") {
-    await admin.from("map_cells").delete().eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY);
-    // Фаза 8, кусочек 3 — зеркало mapDelete+schedule(CFG.RESPAWN_CAMP,
-    // "respawn",...) из index.html (arriveMarch, camp/fort-ветка,
-    // index.html:5151-5152).
-    await admin.from("events").insert({
-      world_id: m.world_id, fire_at: new Date((nowSec + CAMP_RESPAWN_SEC) * 1000).toISOString(),
-      type: "camp_respawn", data: { x: cellX, y: cellY },
-    });
+    if (m.data && m.data.regfort) {
+      // Крепость региона клетку НЕ освобождает: место у неё одно на всю
+      // область и сдвинуться никуда не может (см. миграцию 0013). Взятая
+      // крепость варваров становится РАЗОРЁННОЙ — место под крепость союза, —
+      // и с этой минуты идут двенадцать часов, после которых варвары
+      // возвращаются, если союз ничего не построил (условие автора).
+      const razedAt = new Date(nowSec * 1000).toISOString();
+      const { data: fresh } = await admin.from("map_cells").select("data")
+        .eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY).maybeSingle();
+      const nextData = Object.assign({}, (fresh && fresh.data) || {},
+        { state: "razed", alliance_id: null, razed_at: razedAt });
+      await admin.from("map_cells").update({ data: nextData, updated_at: razedAt })
+        .eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY);
+      await admin.from("events").insert({
+        world_id: m.world_id, fire_at: new Date((nowSec + REGFORT_RESPAWN_SEC) * 1000).toISOString(),
+        type: "regfort_respawn", data: { x: cellX, y: cellY, razed_at: razedAt },
+      });
+    } else {
+      await admin.from("map_cells").delete().eq("world_id", m.world_id).eq("x", cellX).eq("y", cellY);
+      // Фаза 8, кусочек 3 — зеркало mapDelete+schedule(CFG.RESPAWN_CAMP,
+      // "respawn",...) из index.html (arriveMarch, camp/fort-ветка,
+      // index.html:5151-5152).
+      await admin.from("events").insert({
+        world_id: m.world_id, fire_at: new Date((nowSec + CAMP_RESPAWN_SEC) * 1000).toISOString(),
+        type: "camp_respawn", data: { x: cellX, y: cellY },
+      });
+    }
   }
 
   const raidMailRows = [{
