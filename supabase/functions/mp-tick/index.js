@@ -769,6 +769,42 @@ async function applyRegfortRespawn(admin, ev) {
     .select("data,t").eq("world_id", ev.world_id).eq("x", x).eq("y", y).maybeSingle();
   if (!cell || cell.t !== "regfort") return;
   const d = cell.data || {};
+  const nowSec = Date.now() / 1000;
+
+  // Фаза 55 — ЗАЛОЖЕННАЯ СТРОЙКА ЗАМОРАЖИВАЕТ ТАЙМЕР ВАРВАРОВ. Прямое
+  // указание автора; двенадцать часов — это срок на то, чтобы к разорённому
+  // месту вообще приступили, а не на то, чтобы успеть достроить. Про
+  // очевидное следствие («так можно держать место сколько угодно») он сказал
+  // прямо: «при насыщенной игре навряд ли такое будет».
+  //
+  // Заморозка — не удаление события, а перевешивание его на после стройки. Без
+  // этого спот остался бы вообще без часового: событие достройки одно, и если
+  // оно потеряется (строка events не доедет, тик упадёт на ней раз за разом),
+  // клетка навсегда застынет в state:'building' — мёртвое место посреди
+  // области, которое уже ничем не расшевелить. Перевешенный часовой такую
+  // потерю и ловит: пришёл, увидел, что срок стройки давно прошёл, — и
+  // достраивает сам.
+  if (d.state === "building") {
+    const bt1 = Number(d.build_t1 || 0);
+    // Срока стройки нет вовсе — данные клетки испорчены. Тот же исход, что и
+    // у просроченной: достраиваем и выходим. Иначе часовой перевешивал бы сам
+    // себя каждые десять минут до скончания мира.
+    if (!(bt1 > 0) || nowSec > bt1 + 60) {
+      await applyRegfortBuilt(admin, { world_id: ev.world_id,
+        data: { x, y, alliance_id: d.alliance_id, t1: bt1 } });
+      return;
+    }
+    // Ещё строится — просто отодвигаем часового за срок стройки. razed_at
+    // несём прежний: если стройка сорвётся (роспуск союза), она сама поставит
+    // новое разорение со своим razed_at, и этот часовой тихо разойдётся.
+    const nextAt = Math.max(bt1 + 120, nowSec + 600);
+    await admin.from("events").insert({
+      world_id: ev.world_id, fire_at: new Date(nextAt * 1000).toISOString(),
+      type: "regfort_respawn", data: { x, y, razed_at: d.razed_at },
+    });
+    return;
+  }
+
   if (d.state !== "razed") return;                       // союз успел построить свою
   if (razed_at && d.razed_at && d.razed_at !== razed_at) return;   // разорение уже другое
   const next = Object.assign({}, d, { state: "barb", alliance_id: null, razed_at: null });
@@ -815,7 +851,10 @@ async function applyRegfortBuilt(admin, ev) {
   // автора). Всё, что у неё есть, — хозяин и вместимость, и та неизменна.
   const next = Object.assign({}, d, {
     state: "ally", alliance_id, built_at: nowSec, cap: REGFORT_ALLY_CAP,
-    build_t0: null, build_t1: null, build_cost: null,
+    // razed_at гасим вместе со стройкой: разорение кончилось, и оставлять его
+    // в клетке значило бы держать метку, по которой сверяются часовые
+    // возврата варваров (см. applyRegfortRespawn).
+    razed_at: null, build_t0: null, build_t1: null, build_cost: null,
   });
   await admin.from("map_cells").update({ data: next, updated_at: new Date().toISOString() })
     .eq("world_id", ev.world_id).eq("x", x).eq("y", y);

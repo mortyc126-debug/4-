@@ -5649,7 +5649,7 @@ function regfortPower(tier){ return banditPower(regfortLevel(tier)); }
 // mp-alliance (правило самодостаточных функций, см. supabase/README.md):
 // стоимость за КАЖДЫЙ из четырёх ресурсов, срок при одном участнике и пол.
 const REGFORT_BUILD_COST=[0,1500000,3000000,6000000];
-const REGFORT_BUILD_SEC=[0,2*3600,4*3600,8*3600];
+const REGFORT_BUILD_SEC=[0,6*3600,12*3600,24*3600];
 const REGFORT_BUILD_MIN_SEC=900;
 // «Скорость возведения зависит от количества участников»: каждый соратник
 // сверх первого снимает 5% срока.
@@ -9593,8 +9593,9 @@ function renderCartoucheMp(){
         "<div class='hint'>Одна на всю область. В одиночку её обычно не берут — "+
         "но никто не мешает попробовать: крепость для того и берут сбором союза.</div>";
     } else if(st8==="razed"){
-      body+="<div class='hint'>Крепость варваров разорена. Пока на этом месте не встанет "+
-        "крепость союза, варвары вернутся сюда через двенадцать часов.</div>"+
+      body+="<div class='hint'>Крепость варваров разорена. Если за двенадцать часов тут "+
+        "не заложат крепость союза, варвары вернутся. Заложенная стройка этот срок "+
+        "останавливает — доводить её можно сколько потребуется.</div>"+
         mpFortBuildHtml(o);
     } else if(st8==="building"){
       // Стройка идёт — показываем не «кто владеет», а сколько осталось.
@@ -9604,6 +9605,7 @@ function renderCartoucheMp(){
       body+="<div class='co'><span>Строит</span><b>"+(who?escHtml(who.name):"союз")+"</b></div>"+
         "<div class='co'><span>Готова через</span><b>"+fmtDur(Math.max(0,t1-now))+"</b></div>"+
         "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div>"+
+        "<div class='hint'>Пока идёт стройка, варвары сюда не возвращаются.</div>"+
         mpFortHelpHtml(o);
     } else {
       const who=mpAllyById(o.allianceId);

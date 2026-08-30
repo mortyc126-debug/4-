@@ -1,4 +1,5 @@
-// Крепость союза и казна (Фаза 55): панель места, казна, цвет территории.
+// Крепость союза и казна (Фаза 55): возврат варваров, панель места, казна,
+// цвет территории.
 //
 // ЗАЧЕМ ОТДЕЛЬНАЯ ПРОВЕРКА. У места крепости теперь ЧЕТЫРЕ состояния
 // (варвары / разорено / строится / стоит), и панель мира — единственное
@@ -16,6 +17,169 @@
 //   npx http-server -p 8099 . &
 //   node tools/check_fort.mjs
 import { existsSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+
+let bad = 0;
+const ok = (v) => (v ? '✓' : '✗');
+const check = (label, cond, note) => { if (!cond) bad++; console.log('  ' + ok(cond) + ' ' + label + (note ? '  — ' + note : '')); };
+
+// ---------------------------------------------------------------------------
+// Часть 1. Возврат варваров и заморозка таймера стройкой.
+//
+// Автор: «когда крепость альянса строится, то таймер варваров замораживается.
+// И да, они могут так вечность держать, при насыщенной игре навряд ли такое
+// будет». Заморозка — самое незаметное место всей фазы: она не рисуется и не
+// падает, она просто ЛИБО ЕСТЬ, ЛИБО НЕТ, и узнать об её отсутствии можно
+// только тем, что у кого-то посреди стройки на голову сели варвары.
+//
+// Функции берём ИЗ ИСХОДНИКА mp-tick, а базу подменяем на записную книжку:
+// копия проверяла бы саму себя, а живой Postgres ради шести случаев поднимать
+// незачем.
+const tick = readFileSync('supabase/functions/mp-tick/index.js', 'utf8');
+const cutFn = (name) => {
+  const at = tick.indexOf('async function ' + name + '(');
+  if (at < 0) throw new Error('в mp-tick нет функции ' + name);
+  let depth = 0;
+  for (let j = tick.indexOf('{', at); j < tick.length; j++) {
+    if (tick[j] === '{') depth++;
+    else if (tick[j] === '}') { depth--; if (!depth) return tick.slice(at, j + 1); }
+  }
+  throw new Error('не закрылась ' + name);
+};
+const tickFns = new Function(
+  'REGFORT_RESPAWN_SEC', 'REGFORT_ALLY_CAP',
+  cutFn('applyRegfortRespawn') + '\n' + cutFn('applyRegfortBuilt') +
+  '\nreturn { applyRegfortRespawn, applyRegfortBuilt };')(12 * 3600, 2000000);
+
+// Записная книжка вместо базы: отдаёт клетку и союз, запоминает всё, что в неё
+// писали. maybeSingle разобран отдельно — без него выборка клетки получила бы
+// массив там, где ждёт одну строку.
+function fakeDb(cell, alliance) {
+  const wrote = { cells: [], events: [], chat: [] };
+  const qb = (table) => {
+    const st = { single: false, op: null, payload: null };
+    const res = () => {
+      if (st.op === 'insert') return { data: null, error: null };
+      const rows = table === 'map_cells' ? (cell ? [cell] : [])
+                 : table === 'alliances' ? (alliance ? [alliance] : []) : [];
+      return st.single ? { data: rows[0] || null, error: null } : { data: rows, error: null };
+    };
+    const proxy = new Proxy(function () {}, {
+      get(_t, k) {
+        if (k === 'then') return (a, b) => Promise.resolve(res()).then(a, b);
+        if (k === 'catch') return (a) => Promise.resolve(res()).catch(a);
+        if (k === 'finally') return (a) => Promise.resolve(res()).finally(a);
+        if (k === 'maybeSingle' || k === 'single') return () => { st.single = true; return proxy; };
+        if (k === 'insert') return (p) => {
+          st.op = 'insert';
+          if (table === 'events') wrote.events.push(p);
+          if (table === 'alliance_chat') wrote.chat.push(p);
+          return proxy;
+        };
+        if (k === 'update') return (p) => {
+          st.op = 'update';
+          if (table === 'map_cells') wrote.cells.push(p.data);
+          return proxy;
+        };
+        return () => proxy;
+      },
+      apply() { return proxy; },
+    });
+    return proxy;
+  };
+  return { admin: { from: (t) => qb(t) }, wrote };
+}
+
+const nowS = Date.now() / 1000;
+const mkCell = (d) => ({ t: 'regfort', data: Object.assign(
+  { region: 11, region_name: 'Стальные Горы', shrine: 'Кузня Предков', tier: 3 }, d) });
+const ALLIANCE = { id: 11, disbanded_at: null };
+const respawnEv = (razedAt) => ({ world_id: 'w1', data: { x: 103, y: 102, razed_at: razedAt } });
+
+console.log('Возврат варваров и заморозка таймера:');
+{
+  // Идёт стройка, срок ещё не вышел: варвары НЕ приходят, а часовой
+  // перевешивается за срок стройки.
+  const f = fakeDb(mkCell({ state: 'building', alliance_id: 11, razed_at: nowS - 43200,
+                            build_t0: nowS - 3600, build_t1: nowS + 36000 }), ALLIANCE);
+  await tickFns.applyRegfortRespawn(f.admin, respawnEv(nowS - 43200));
+  check('во время стройки варвары не возвращаются', f.wrote.cells.length === 0,
+    JSON.stringify(f.wrote.cells[0] || null));
+  const ev = f.wrote.events[0];
+  check('часовой перевешен за срок стройки',
+    f.wrote.events.length === 1 && ev.type === 'regfort_respawn' &&
+    Date.parse(ev.fire_at) / 1000 > nowS + 36000,
+    ev ? ev.fire_at : 'события нет');
+}
+{
+  // Событие достройки потерялось, срок давно прошёл — часовой достраивает сам.
+  const f = fakeDb(mkCell({ state: 'building', alliance_id: 11, razed_at: nowS - 90000,
+                            build_t0: nowS - 80000, build_t1: nowS - 4000 }), ALLIANCE);
+  await tickFns.applyRegfortRespawn(f.admin, respawnEv(nowS - 90000));
+  const w = f.wrote.cells[0];
+  check('просроченную стройку часовой достраивает сам',
+    !!w && w.state === 'ally' && w.alliance_id === 11 && w.cap === 2000000,
+    JSON.stringify(w));
+  check('и место не остаётся разорённым', !f.wrote.cells.some((c) => c.state === 'razed'));
+}
+{
+  // Срока стройки нет вовсе (испорченные данные) — тот же исход, не вечное
+  // перевешивание часового.
+  const f = fakeDb(mkCell({ state: 'building', alliance_id: 11, razed_at: nowS - 90000 }), ALLIANCE);
+  await tickFns.applyRegfortRespawn(f.admin, respawnEv(nowS - 90000));
+  check('стройка без срока не вешает часового по кругу',
+    f.wrote.cells.length === 1 && f.wrote.cells[0].state === 'ally' && f.wrote.events.length === 0);
+}
+{
+  // Место просто разорено и то самое — варвары приходят.
+  const f = fakeDb(mkCell({ state: 'razed', alliance_id: null, razed_at: 111 }), null);
+  await tickFns.applyRegfortRespawn(f.admin, respawnEv(111));
+  check('к разорённому и не начатому месту варвары возвращаются',
+    f.wrote.cells.length === 1 && f.wrote.cells[0].state === 'barb' &&
+    f.wrote.cells[0].razed_at === null, JSON.stringify(f.wrote.cells[0]));
+}
+{
+  // Разорение уже другое (место успели отбить и разорить заново) — старое
+  // событие молчит.
+  const f = fakeDb(mkCell({ state: 'razed', alliance_id: null, razed_at: 222 }), null);
+  await tickFns.applyRegfortRespawn(f.admin, respawnEv(111));
+  check('часовой от прежнего разорения не срабатывает', f.wrote.cells.length === 0);
+}
+{
+  // Крепость уже стоит — часовому делать нечего.
+  const f = fakeDb(mkCell({ state: 'ally', alliance_id: 11, razed_at: null }), ALLIANCE);
+  await tickFns.applyRegfortRespawn(f.admin, respawnEv(111));
+  check('под готовой крепостью варвары не всплывают', f.wrote.cells.length === 0);
+}
+{
+  // Достройка гасит razed_at: иначе в клетке осталась бы метка, по которой
+  // сверяются часовые.
+  const f = fakeDb(mkCell({ state: 'building', alliance_id: 11, razed_at: nowS - 5000,
+                            build_t0: nowS - 5000, build_t1: nowS - 10 }), ALLIANCE);
+  await tickFns.applyRegfortBuilt(f.admin, { world_id: 'w1',
+    data: { x: 103, y: 102, alliance_id: 11, t1: nowS - 10 } });
+  const w = f.wrote.cells[0];
+  check('достройка гасит метку разорения', !!w && w.state === 'ally' && w.razed_at === null,
+    JSON.stringify(w));
+  check('союз извещён о крепости', f.wrote.chat.length === 1);
+}
+{
+  // Союз распустился, пока строили, — место возвращается варварам своим
+  // чередом, а не достраивается в пустоту.
+  const f = fakeDb(mkCell({ state: 'building', alliance_id: 11, razed_at: nowS - 5000,
+                            build_t0: nowS - 5000, build_t1: nowS - 10 }),
+                   { id: 11, disbanded_at: new Date().toISOString() });
+  await tickFns.applyRegfortBuilt(f.admin, { world_id: 'w1',
+    data: { x: 103, y: 102, alliance_id: 11, t1: nowS - 10 } });
+  const w = f.wrote.cells[0];
+  check('стройка распущенного союза не достраивается',
+    !!w && w.state === 'razed' && w.alliance_id === null, JSON.stringify(w));
+  check('и место получает новый срок возврата варваров',
+    f.wrote.events.length === 1 && f.wrote.events[0].type === 'regfort_respawn');
+}
+
+console.log('');
+
 
 const PW = [process.env.PW_PATH, 'playwright', '/opt/node22/lib/node_modules/playwright/index.mjs',
             '/usr/lib/node_modules/playwright/index.mjs'].filter(Boolean);
@@ -64,10 +228,6 @@ await page.route('**/functions/v1/**', (r) => {
 await page.route('**/engine/dist/**', (r) => r.abort());
 await page.goto('http://localhost:8099/index.html', { waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(4000);
-
-let bad = 0;
-const ok = (v) => (v ? '✓' : '✗');
-const check = (label, cond, note) => { if (!cond) bad++; console.log('  ' + ok(cond) + ' ' + label + (note ? '  — ' + note : '')); };
 
 const res = await page.evaluate(() => {
   mpStopPolling();
