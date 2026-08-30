@@ -1,6 +1,14 @@
 // Прогон всех видов писем: ищем в готовом тексте "undefined", "NaN",
 // "[object" и голые HTML-теги, попавшие в подпись как текст.
-import { chromium } from '/tmp/claude-0/-home-user-4-/0c66050f-a4e4-5e44-901a-3d7a97a7b9fc/scratchpad/node_modules/playwright/index.mjs';
+const PW_CANDIDATES = [process.env.PW_PATH, 'playwright',
+  '/opt/node22/lib/node_modules/playwright/index.mjs',
+  '/usr/lib/node_modules/playwright/index.mjs',
+  '/usr/local/lib/node_modules/playwright/index.mjs'].filter(Boolean);
+let chromium = null;
+for (const c of PW_CANDIDATES) {
+  try { ({ chromium } = await import(c.startsWith('/') ? 'file://' + c : c)); break; } catch (_) {}
+}
+if (!chromium) { console.error('playwright не найден; укажите PW_PATH'); process.exit(2); }
 const now=Date.now()/1000, iso=(s)=>new Date(Date.now()-s*1000).toISOString();
 const TK=['inf','arc','cav','sie'];
 const units=(n=0)=>{const u={};TK.forEach(t=>{u[t]={};for(let i=1;i<=5;i++)u[t][i]=n;});return u;};
