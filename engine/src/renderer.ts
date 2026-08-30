@@ -114,6 +114,19 @@ struct Light { vp: mat4x4f };
 // оси, что и у heightmap/*.bin (engine/src/terrain.ts:toPixel) — прозрачно
 // всюду, кроме самой линии.
 @group(0) @binding(17) var texRegions: texture_2d<f32>;
+// Фаза 55 — чья какая область. Две вещи, которых у шейдера раньше не было:
+//   texRegionId — карта номеров областей (heightmap/region-map-v1.bin,
+//                 600×300, одна клетка = 4 клетки мира), тот же файл, что
+//                 читает клиент для подписи области в панели. Формат r8unorm,
+//                 берётся textureLoad'ом БЕЗ сэмплера: линейная фильтрация
+//                 усреднила бы НОМЕРА областей и на границе давала бы номер
+//                 несуществующей области.
+//   owners      — цвет знамени владельца по номеру области. vec4f: rgb —
+//                 цвет, a — 0 у ничейной области и 1 у захваченной. Массив
+//                 фиксированной длины: областей в мире ровно шестнадцать.
+@group(0) @binding(18) var texRegionId: texture_2d<f32>;
+struct Owners { c: array<vec4f, 16> };
+@group(0) @binding(19) var<uniform> owners: Owners;
 
 struct VOut {
   @builtin(position) pos: vec4f, @location(0) waterColor: vec3f, @location(1) worldPos: vec3f,
@@ -391,7 +404,80 @@ fn fs(in: VOut) -> @location(0) vec4f {
   // Поэтому текстура теперь прозрачна везде, кроме самой линии (см.
   // bake_regions_overlay.py), а земля под ней остаётся собой: вне линии
   // regionA = 0 и mix ниже не меняет ни единого пикселя.
-  let lit = mix(albedo * lighting, regionC.rgb, regionA);
+  // Фаза 55 — цвет владельца области. Автор: «основной цвет флага важен: он
+  // будет красить территорию захваченного региона».
+  //
+  // Красится ТОЛЬКО захваченная область: у ничьей ownerA = 0, и ни один
+  // пиксель под ней не меняется — прежняя картина мира остаётся ровно такой,
+  // какой была. Это и есть ответ на давнюю просьбу «не размывай текстурки»:
+  // заливка теперь не украшение карты, а знак владения, и появляется она
+  // только там, где владение есть.
+  //
+  // ЧЕТЫРЕ ВЫБОРКИ, А НЕ ОДНА. Карта областей вчетверо мельче мира (одна
+  // клетка карты = 4 клетки мира), и одна выборка давала по границе владения
+  // рваную лесенку в четыре клетки шириной — рядом с гладкой запечённой
+  // линией границы это читалось как поломка (проверено офлайн-рендером,
+  // tools/render_terrain.py). Билинейно смешивать НОМЕРА областей нельзя —
+  // среднее двух номеров это третий, несуществующий; поэтому смешиваются уже
+  // ЦВЕТА, по четырём соседним текселям. Ничейная область даёт нулевой вклад
+  // (и цвет, и альфа нули), то есть накопитель ведёт себя как premultiplied
+  // alpha: acc.a — доля владения, acc.rgb — уже умноженный на неё цвет.
+  //
+  // 4.0 — REGION_STEP из index.html; 600/300 — размер карты. Держать в
+  // синхроне вручную, как и остальные константы рельефа в этом файле.
+  var ownerAcc = vec4f(0.0, 0.0, 0.0, 0.0);
+  if (inRegionBounds) {
+    let rf = vec2f((in.worldPos.x + 1200.0) / 4.0, (in.worldPos.z + 600.0) / 4.0) - vec2f(0.5, 0.5);
+    let baseP = floor(rf);
+    let fr = rf - baseP;
+    for (var dy = 0; dy < 2; dy++) {
+      for (var dx = 0; dx < 2; dx++) {
+        let pix = clamp(vec2i(baseP) + vec2i(dx, dy), vec2i(0, 0), vec2i(599, 299));
+        let rid = i32(round(textureLoad(texRegionId, pix, 0).r * 255.0));
+        var c = vec4f(0.0, 0.0, 0.0, 0.0);
+        if (rid >= 0 && rid < 16) { c = owners.c[rid]; }
+        let wx = select(1.0 - fr.x, fr.x, dx == 1);
+        let wy = select(1.0 - fr.y, fr.y, dy == 1);
+        ownerAcc += c * wx * wy;
+      }
+    }
+  }
+  let ownerA = clamp(ownerAcc.a, 0.0, 1.0);
+  let ownerRGB = ownerAcc.rgb / max(ownerA, 0.0001);
+  // Воду не красим. Это ровно тот запрет, который снимали вместе с прежней
+  // заливкой (см. длинный комментарий выше про waterFlag) с оговоркой «если
+  // заливку когда-нибудь вернут — вернуть и запрет, но уже отдельно от
+  // линии». Вот он и вернулся: области разлиты по всему миру, включая
+  // открытое море, и без этой строки цвет союза заливал бы залив вместе с
+  // берегом. К самой ЛИНИИ границы запрет по-прежнему не относится — она
+  // продолжается над реками и должна быть видна там.
+  let landFlag = select(1.0, 0.0, in.waterFlag > 0.5);
+
+  // ЦВЕТ ЗНАМЕНИ ДОМНОЖАЕТСЯ НА ЗЕМЛЮ, А НЕ ПОДМЕШИВАЕТСЯ ПОВЕРХ НЕЁ — и это
+  // ровно обратное тому, как кладётся линия границы двумя строками ниже.
+  // Разница не в стиле, а в смысле. Линия — рисунок НА карте, ей полагается
+  // одинаковая яркость и в тени, и на солнце (см. длинный разбор выше:
+  // подмешивание в albedo до умножения на свет как раз и было причиной
+  // «границ нигде нет»). Territория же — сама земля, только под чужим
+  // знаменем: у неё обязаны остаться и светотень, и текстура, иначе
+  // получается плоская заливка поверх рельефа — её автор и просил не делать.
+  //
+  // Множитель нормирован по яркости (делится на свою же светимость), поэтому
+  // он ТОЛЬКО уводит оттенок к цвету знамени, не делая землю ни темнее, ни
+  // светлее: чернь не превращает область в угольную яму, а серебро — в
+  // засвеченное пятно.
+  let ownerLum = max(dot(ownerRGB, vec3f(0.2126, 0.7152, 0.0722)), 0.02);
+  // 0.38 — заметно с высоты птичьего полёта и не мешает разглядывать землю
+  // вблизи. Подбиралось офлайн-рендером этого же шейдера
+  // (tools/render_terrain.py, переменная OWNERS).
+  let tintK = ownerA * landFlag * 0.38;
+  let tinted = mix(albedo, albedo * (ownerRGB / ownerLum), tintK);
+  var lit = tinted * lighting;
+  // Линия границы у захваченной области — цвета знамени, у ничьей прежняя
+  // нейтральная. Это второе, и главное: даже там, где земля тронута слабо,
+  // сама граница владения читается сразу.
+  let lineRGB = mix(regionC.rgb, ownerRGB, ownerA);
+  lit = mix(lit, lineRGB, regionA);
   let d = distance(in.worldPos, fog.eye.xyz);
   let k = d * fog.color.w; let f = clamp(1.0 - exp(-k * k), 0.0, 1.0);
   return vec4f(mix(lit, fog.color.rgb, f), 1.0);
@@ -701,6 +787,12 @@ export interface DecorEntity {
   kind: "spruce" | "pine" | "broadleaf" | "autumn" | "birch" | "dead" | "bush" | "rock" | "grass";
 }
 
+// Фаза 55 — размер карты номеров областей (heightmap/region-map-v1.bin):
+// 600×300 при шаге 4 клетки мира, те же REGION_W/REGION_H/REGION_STEP, что и
+// в index.html. Держим в синхроне вручную — как и остальные константы
+// рельефа в этом файле.
+const REGION_MAP_W = 600, REGION_MAP_H = 300;
+
 export interface Renderer {
   // Рельеф стримится кусками (чанками) вокруг камеры — не одним куском на
   // всю сцену (см. main.ts, менеджер чанков): setTerrainChunk кладёт/обновляет
@@ -719,6 +811,10 @@ export interface Renderer {
   // и shadowFactor во всех шейдерах сам возвращает полный свет — ветки в
   // шейдерах не нужны, а стоит это один clear и только когда карта грязная.
   setShadowsEnabled(on: boolean): void;
+  // Фаза 55 — чей какой регион. Ровно шестнадцать записей (по числу областей
+  // мира): null — ничья, {r,g,b} в долях единицы — цвет знамени владельца.
+  // Красит территорию захваченной области и её границу, см. TERRAIN_SHADER.
+  setRegionOwners(list: Array<{ r: number; g: number; b: number } | null> | null): void;
   setVP(vp: Float32Array): void;
   // Позиция камеры + цвет/плотность тумана — общие для рельефа и маркеров.
   // density — коэффициент экспоненциального затухания (см. TERRAIN_SHADER):
@@ -874,6 +970,37 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     // бы линию, местами до полной потери.
     loadTexture(device, "/textures/world/regions_overlay.png", 2400),
   ]);
+  // Фаза 55 — карта номеров областей. Не картинка, а сырой байтовый файл
+  // (600×300 = 180 КБ), тот же самый, который клиент читает для подписи
+  // области в панели по тапу: два источника одной и той же правды разошлись
+  // бы при первой же перезапечке мира. Поэтому и loadTexture тут не годится —
+  // грузим байты и кладём их в r8unorm напрямую.
+  //
+  // Если файл не доехал, текстура остаётся нулевой: номер области выйдет 0,
+  // но владельцев в uniform всё равно ещё нет (все альфы нули), и на экране
+  // не изменится ничего — та же необязательность, что и у клиента.
+  const texRegionId = device.createTexture({
+    size: [REGION_MAP_W, REGION_MAP_H],
+    format: "r8unorm",
+    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+  });
+  try {
+    const res = await fetch("/heightmap/region-map-v1.bin");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (buf.byteLength !== REGION_MAP_W * REGION_MAP_H)
+      throw new Error("неверный размер: " + buf.byteLength);
+    device.queue.writeTexture({ texture: texRegionId }, buf,
+      { bytesPerRow: REGION_MAP_W }, [REGION_MAP_W, REGION_MAP_H]);
+  } catch (err) {
+    console.warn("карта областей не загрузилась, территории не будут окрашены:", err);
+  }
+  // Цвета владельцев: шестнадцать vec4f = 256 байт. Пока пусто (все альфы
+  // нули) — ни одна область не окрашена.
+  const ownersBuf = device.createBuffer({
+    size: 16 * 4 * 4,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
   const groundSampler = device.createSampler({ addressModeU: "repeat", addressModeV: "repeat", magFilter: "linear", minFilter: "linear" });
   const terrainModule = device.createShaderModule({ code: TERRAIN_SHADER });
   const terrainPipeline = device.createRenderPipeline({
@@ -931,6 +1058,8 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
       { binding: 15, resource: texTundraMoss.createView() },
       { binding: 16, resource: texWaterDetail.createView() },
       { binding: 17, resource: texRegions.createView() },
+      { binding: 18, resource: texRegionId.createView() },
+      { binding: 19, resource: { buffer: ownersBuf } },
     ],
   });
 
@@ -1615,5 +1744,26 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     return { lightBuf, shadowView, shadowSampler };
   }
 
-  return { setTerrainChunk, removeTerrainChunk, setMarkers, setDecor, setVP, setFog, setSunTarget, setSkyCamera, getShadowResources, setShadowsEnabled, frame };
+  // Фаза 55 — кто какой областью владеет. Ждём ровно шестнадцать записей
+  // (по числу областей мира): null — ничья, {r,g,b} в долях единицы — цвет
+  // знамени владельца. Пишем в uniform целиком, а не по одной записи: 256
+  // байт, и вызов этот случается раз в несколько секунд, на синхронизации
+  // живого мира (см. main.ts).
+  const ownersScratch = new Float32Array(16 * 4);
+  function setRegionOwners(list: Array<{ r: number; g: number; b: number } | null> | null) {
+    ownersScratch.fill(0);
+    if (list) {
+      for (let i = 0; i < 16 && i < list.length; i++) {
+        const c = list[i];
+        if (!c) continue;
+        ownersScratch[i * 4 + 0] = c.r;
+        ownersScratch[i * 4 + 1] = c.g;
+        ownersScratch[i * 4 + 2] = c.b;
+        ownersScratch[i * 4 + 3] = 1;
+      }
+    }
+    device.queue.writeBuffer(ownersBuf, 0, ownersScratch);
+  }
+
+  return { setTerrainChunk, removeTerrainChunk, setMarkers, setDecor, setVP, setFog, setSunTarget, setSkyCamera, getShadowResources, setShadowsEnabled, setRegionOwners, frame };
 }

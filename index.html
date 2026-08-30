@@ -5645,6 +5645,20 @@ function clearArea(x,y,r){for(let i=-r;i<=r;i++)for(let j=-r;j<=r;j++)mapDelete(
 const REGFORT_TIER_LV=[0,17,20,24];
 function regfortLevel(tier){ return REGFORT_TIER_LV[Math.max(1,Math.min(3,tier|0))]||17; }
 function regfortPower(tier){ return banditPower(regfortLevel(tier)); }
+// Фаза 55 — крепость союза на месте разорённой твердыни. Копии констант из
+// mp-alliance (правило самодостаточных функций, см. supabase/README.md):
+// стоимость за КАЖДЫЙ из четырёх ресурсов, срок при одном участнике и пол.
+const REGFORT_BUILD_COST=[0,1500000,3000000,6000000];
+const REGFORT_BUILD_SEC=[0,2*3600,4*3600,8*3600];
+const REGFORT_BUILD_MIN_SEC=900;
+// «Скорость возведения зависит от количества участников»: каждый соратник
+// сверх первого снимает 5% срока.
+function regfortBuildSpeed(alive){ return 1+0.05*Math.max(0,(alive|0)-1); }
+function regfortBuildSec(tier,alive){
+  const t=Math.max(1,Math.min(3,tier|0));
+  return Math.max(REGFORT_BUILD_MIN_SEC, Math.round(REGFORT_BUILD_SEC[t]/regfortBuildSpeed(alive)));
+}
+const ALLY_DONATE_MIN=1000;
 function banditPower(lv){
   // Та же мерка, что и armyPower: иначе сравнение "потяну ли я этот лагерь"
   // бессмысленно и для ботов, и для подсказок игроку.
@@ -9580,9 +9594,25 @@ function renderCartoucheMp(){
         "но никто не мешает попробовать: крепость для того и берут сбором союза.</div>";
     } else if(st8==="razed"){
       body+="<div class='hint'>Крепость варваров разорена. Пока на этом месте не встанет "+
-        "крепость союза, варвары вернутся сюда через двенадцать часов.</div>";
+        "крепость союза, варвары вернутся сюда через двенадцать часов.</div>"+
+        mpFortBuildHtml(o);
+    } else if(st8==="building"){
+      // Стройка идёт — показываем не «кто владеет», а сколько осталось.
+      const t0=Number(o.buildT0)||0, t1=Number(o.buildT1)||0, now=Date.now()/1000;
+      const f=t1>t0 ? Math.max(0,Math.min(1,(now-t0)/(t1-t0))) : 1;
+      const who=mpAllyById(o.allianceId);
+      body+="<div class='co'><span>Строит</span><b>"+(who?escHtml(who.name):"союз")+"</b></div>"+
+        "<div class='co'><span>Готова через</span><b>"+fmtDur(Math.max(0,t1-now))+"</b></div>"+
+        "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div>"+
+        mpFortHelpHtml(o);
     } else {
-      body+="<div class='hint'>Крепостью владеет союз.</div>";
+      const who=mpAllyById(o.allianceId);
+      body+=(who?"<div class='co'><span>Союз</span><b class='ally-link' data-mp='allyview' data-id='"+
+              who.id+"'>"+escHtml(who.name)+" &#8250;</b></div>":"")+
+        "<div class='co'><span>Вместимость</span><b>"+fmt(ALLY_FORT_CAP)+"</b></div>"+
+        "<div class='hint'>Крепость союза. Уровней у неё нет — она одна на область, "+
+        "как святыня, и вместимость у неё сразу полная. Область окрашена цветом знамени "+
+        "владельца.</div>";
     }
     put(body);
     return;
@@ -16023,6 +16053,21 @@ function handleMpAct(e){
   }
   const allyLeaveBtn=e.target.closest("[data-mp='allyleave']");
   if(allyLeaveBtn){ mpDoAlly("leave",{},"Вы больше не в союзе."); return; }
+  // Казна и крепость союза (Фаза 55).
+  const allyDonateBtn=e.target.closest("[data-mp='allydonate']");
+  if(allyDonateBtn){ mpDoAllyDonate(); return; }
+  const fortStartBtn=e.target.closest("[data-mp='fortstart']");
+  if(fortStartBtn){
+    if(!confirm("Заложить крепость союза? Казна расстанется со всей стоимостью сразу, обратно её не вернуть.")) return;
+    mpDoAlly("fortstart",{x:+fortStartBtn.dataset.x, y:+fortStartBtn.dataset.y},"Крепость заложена.");
+    return;
+  }
+  const fortHelpBtn=e.target.closest("[data-mp='forthelp']");
+  if(fortHelpBtn){
+    mpDoAlly("forthelp",{x:+fortHelpBtn.dataset.x, y:+fortHelpBtn.dataset.y,
+                         amount:+fortHelpBtn.dataset.n},"Стройка ускорена.");
+    return;
+  }
   // Сбор союза (Фаза 53). Срок выбирается в самом окне созыва и никуда не
   // шлётся — он лишь помечает кнопку и уходит вместе с «Созвать».
   const rallyMinBtn=e.target.closest("[data-mp='rallymin']");
@@ -16302,7 +16347,8 @@ function mpBuildWorldSnapshot(){
     map[c.x+","+c.y] = c.t==="regfort"
       ? {t:"regfort", x:c.x, y:c.y, tier:Number(d.tier)||1, region:Number(d.region)||0,
          regionName:d.region_name||"", shrine:d.shrine||"",
-         state:d.state||"barb", allianceId:d.alliance_id||null}
+         state:d.state||"barb", allianceId:d.alliance_id||null,
+         buildT0:d.build_t0||null, buildT1:d.build_t1||null}
       : {t:c.t, x:c.x, y:c.y, lv:d.lv};
   });
   // withPath(m,home) — теперь настоящий рельефный путь (waterPath), тот же,
@@ -16406,7 +16452,24 @@ function mpBuildWorldSnapshot(){
     if(seenIds.has(m.id)) return; // уже нарисован как свой/входящий выше
     marches.push(withPath(Object.assign({pid:m.player_id, state:"siege"},m), {x:m.tx,y:m.ty}));
   });
-  return { t: Date.now()/1000, map, players, marches };
+  // Фаза 55 — чья какая область. Шестнадцать записей (по числу областей мира,
+  // см. REGION_NAMES) вида {r,g,b} или null: цвет знамени того союза, чья
+  // крепость стоит в центре области. Прямое условие автора: «основной цвет
+  // флага важен: он будет красить территорию захваченного региона».
+  //
+  // Считается здесь, а не в движке: движок не знает ни про союзы, ни про
+  // гербы — ему нужен готовый цвет по номеру области, и только.
+  const regionOwners=new Array(REGION_NAMES.length).fill(null);
+  mpState.camps.forEach(c=>{
+    if(c.t!=="regfort") return;
+    const d=c.data||{};
+    if(d.state!=="ally" || d.alliance_id==null) return;
+    const ri=Number(d.region)||0;
+    if(!(ri>=0 && ri<regionOwners.length)) return;
+    const col=mpAllyColor(d.alliance_id);
+    if(col) regionOwners[ri]={r:col[0], g:col[1], b:col[2]};
+  });
+  return { t: Date.now()/1000, map, players, marches, regionOwners };
 }
 // Фаза 12, кусочек 3 — переключатель показа. mpWorldSnapshot() выше уже
 // подключён в движке (readLiveWorld/readLiveWorldMarches предпочитают его
@@ -17327,6 +17390,56 @@ function mpRallyBtnHtml(x,y){
   return "<button class='seal wide ico' style='margin-top:7px' data-mp='cartrallypick' data-k='"+x+","+y+"'>"+
     "<img src='images/ui/icon-alliance.png' alt=''>Сбор союза</button>";
 }
+// Фаза 55 — «заложить крепость союза» на разорённом месте. Кнопка живёт в
+// панели мира, а не в экране союза: место у крепости одно, и решать про него
+// естественно там, где на него смотрят.
+//
+// Кнопку показываем всем соратникам, а не только тем, кто вправе закладывать:
+// иначе рядовой не узнал бы ни цены, ни того, что тут вообще можно строить.
+// Отказ по ступени объясняет сама подпись, а не молчание.
+function mpFortBuildHtml(o){
+  if(!mpState.ally) return "<div class='hint'>Крепость на этом месте ставит союз. "+
+    "Вступите в союз или основайте свой.</div>";
+  const tier=Math.max(1,Math.min(3,o.tier|0));
+  const cost=REGFORT_BUILD_COST[tier];
+  const alive=mpState.allyMembers.length||1;
+  const bank=mpAllyBank();
+  const lack=["food","wood","stone","gold"].filter(r=>Math.floor(bank[r]||0)<cost);
+  const may=mpAllyRank()>=MP_ALLY_ROLE_RANK.r4;
+  let h="<div class='co'><span>Стоит казне</span><b>"+fmt(cost)+" каждого</b></div>"+
+        "<div class='co'><span>Срок при "+alive+" соратн.</span><b>"+fmtDur(regfortBuildSec(tier,alive))+"</b></div>";
+  if(lack.length)
+    h+="<div class='hint' style='color:#e08'>В казне не хватает: "+
+       lack.map(r=>RES_NAME[r]+" "+fmt(cost-Math.floor(bank[r]||0))).join(", ")+".</div>";
+  h+="<button class='seal wide ico' style='margin-top:9px' data-mp='fortstart' data-x='"+o.x+"' data-y='"+o.y+"'"+
+     ((!may||lack.length||mpAllyBusy)?" disabled":"")+
+     "><img src='images/ui/icon-alliance.png' alt=''>Заложить крепость союза</button>";
+  if(!may) h+="<div class='hint'>Закладывают крепость глава и заместители.</div>";
+  return h;
+}
+// «Доложить из казны»: доложенная доля стоимости снимает такую же долю
+// оставшегося срока — то самое «скорость зависит... и ресурсов».
+function mpFortHelpHtml(o){
+  if(!mpState.ally || mpState.ally.id!==o.allianceId) return "";
+  if(mpAllyRank()<MP_ALLY_ROLE_RANK.r3)
+    return "<div class='hint'>Торопить стройку могут старейшины и выше.</div>";
+  const tier=Math.max(1,Math.min(3,o.tier|0));
+  const step=Math.max(ALLY_DONATE_MIN, Math.round(REGFORT_BUILD_COST[tier]/10));
+  const bank=mpAllyBank();
+  const enough=["food","wood","stone","gold"].every(r=>Math.floor(bank[r]||0)>=step);
+  return "<button class='seal wide ico' style='margin-top:9px' data-mp='forthelp' data-x='"+o.x+"' data-y='"+o.y+
+    "' data-n='"+step+"'"+((!enough||mpAllyBusy)?" disabled":"")+
+    "><img src='images/ui/icon-alliance.png' alt=''>Доложить "+fmt(step)+" каждого</button>"+
+    (enough?"<div class='hint'>Снимет с оставшегося срока ту же долю, что доложено от стоимости.</div>"
+           :"<div class='hint' style='color:#e08'>В казне столько не наберётся.</div>");
+}
+// Казна союза, приведённая к четырём числам. Союз мог быть заведён до казны —
+// тогда поля просто нет, и ноль честнее, чем undefined в разметке.
+function mpAllyBank(){
+  const r=(mpState.ally&&mpState.ally.res)||{};
+  return {food:Math.floor(r.food||0), wood:Math.floor(r.wood||0),
+          stone:Math.floor(r.stone||0), gold:Math.floor(r.gold||0)};
+}
 function mpAllyTagHtml(tag){
   return tag ? "<span class='ally-tag'>["+escHtml(tag)+"]</span>" : "";
 }
@@ -17696,6 +17809,47 @@ function mpRenderMiniProfile(){
   setHtml(box, mpMiniProfileHtml(mpMiniPid));
 }
 
+// Казна союза (Фаза 55). «Ресурсы можно жертвовать альянсу, а жертвует
+// ресурсы игроки» — вся казна собирается только так, ниоткуда больше она не
+// берётся. Тратится на крепости областей.
+//
+// Список жертвователей тут не для механики, а чтобы союз это ВИДЕЛ: без
+// такой строки жертвуют единицы, а пользуются все.
+function mpAllyBankHtml(){
+  const bank=mpAllyBank(), st=mpState.player?mpState.player.state:null;
+  let h=rubric("Казна союза");
+  h+="<div class='entry'><div class='line'><div class='fill'>"+
+     ["food","wood","stone","gold"].map(r=>
+       "<div class='co'><span><img class='ico' src='images/ui/res-"+r+".png' alt=''> "+RES_NAME[r]+"</span>"+
+       "<b>"+fmt(bank[r])+"</b></div>").join("")+
+     "</div></div></div>";
+  // Форма пожертвования. Поля читаются прямо на клик — тот же приём, что и у
+  // основания союза и у «Нового письма».
+  h+="<div class='entry'><div class='ally-form'>"+
+     ["food","wood","stone","gold"].map(r=>
+       "<label>"+RES_NAME[r]+" · у вас "+fmt(st&&st.res?st.res[r]:0)+"</label>"+
+       "<input id='mp-give-"+r+"' type='number' min='0' step='1000' inputmode='numeric' placeholder='0'>").join("")+
+     "</div><div class='chips' style='margin-top:9px'>"+
+     "<button class='seal ico' data-mp='allydonate'"+(mpAllyBusy?" disabled":"")+
+     "><img src='images/ui/icon-alliance.png' alt=''>Пожертвовать</button></div>"+
+     "<div class='hint'>Меньше "+fmt(ALLY_DONATE_MIN)+" за раз жертвовать не стоит. "+
+     "Отданное назад не берут: казна общая.</div></div>";
+  // Кто сколько отдал — сверху самые щедрые. Нулевых не показываем: пустая
+  // строка против чужой щедрости никого не красит.
+  const givers=mpState.allyMembers.filter(m=>Number(m.donated||0)>0)
+    .sort((a,b)=>Number(b.donated||0)-Number(a.donated||0)).slice(0,10);
+  if(givers.length){
+    h+=rubric("Жертвователи");
+    h+="<div class='rank-list ally'>"+givers.map(m=>{
+      const pl=m.players||{};
+      return "<div class='rank-row'>"+
+        "<span class='rk-crest'>"+shieldSvg(pl.race||"human",16)+"</span>"+
+        "<span class='rk-nick'>"+escHtml(pl.nick||"Безымянный лорд")+"</span>"+
+        "<b class='rk-pw'>"+fmt(Number(m.donated||0))+"</b></div>";
+    }).join("")+"</div>";
+  }
+  return h;
+}
 // Сборы союза — то, ради чего союз и собирается вместе. Список стоит выше
 // чата и состава: сбор идёт по часам, и если соратник открыл окно союза, то
 // чаще всего именно за этим.
@@ -17804,6 +17958,7 @@ function mpAllyMineHtml(){
     h+="</div>";
   }
 
+  h+=mpAllyBankHtml();
   h+=mpRalliesHtml();
 
   // ---- Чат. Старые сверху, новые внизу — как в любой переписке (порядок
@@ -18656,7 +18811,7 @@ async function mpRefreshAlliance(){
     const [ally,members,apps,chat]=await Promise.all([
       sb.from("alliances").select("*").eq("id",aid).maybeSingle(),
       sb.from("alliance_members")
-        .select("player_id,role,joined_at,players(id,nick,race,power,x,y,rating,rating_battles,dead_at)")
+        .select("player_id,role,joined_at,donated,players(id,nick,race,power,x,y,rating,rating_battles,dead_at)")
         .eq("alliance_id",aid),
       sb.from("alliance_applications")
         .select("player_id,created_at,players(id,nick,race,power,rating,rating_battles)")
@@ -18716,6 +18871,26 @@ function mpAllyTagOf(playerId){
   return a && a.tag ? a.tag : "";
 }
 function mpAllyOf(playerId){ return mpState.allyOf[playerId]||null; }
+// Союз по его собственному номеру. Отдельной выборки союзов у клиента нет и
+// не нужно: mpRefreshAllyOf уже приносит союз каждого игрока мира вместе с
+// гербом (Фаза 52), а союзов без единого живого участника не бывает — их
+// распускает сам сервер (см. leave/ensureLeader в mp-alliance). Свой союз
+// проверяем первым: он полнее (у него ещё и казна).
+function mpAllyById(id){
+  id=Number(id);
+  if(mpState.ally && mpState.ally.id===id) return mpState.ally;
+  for(const k in mpState.allyOf){ const a=mpState.allyOf[k]; if(a && a.id===id) return a; }
+  return null;
+}
+// Основной цвет знамени союза — тинктура ПОЛЯ (t1). Автор выбрал флаг ещё при
+// основании ровно за этим: «основной цвет флага важен: он будет красить
+// территорию захваченного региона».
+function mpAllyColor(id){
+  const a=mpAllyById(id); if(!a) return null;
+  const em=heraldSane(a.emblem);
+  const hex=HERALD_TINCTURE[em.t1][1];
+  return [parseInt(hex.slice(1,3),16)/255, parseInt(hex.slice(3,5),16)/255, parseInt(hex.slice(5,7),16)/255];
+}
 // Ник с меткой впереди — то, как игрок подписан везде на карте и в панелях.
 function mpNickWithTag(playerId, nick){
   const t=mpAllyTagOf(playerId);
@@ -18953,6 +19128,22 @@ async function mpDoAllyCreate(){
   const emblem=heraldSane(mpAllyEmblemDraft);
   const ok=await mpDoAlly("create",{name,tag,motto,open,emblem},"Союз основан.");
   if(ok) mpAllyEmblemDraft=null;
+}
+// Пожертвование в казну — форма, поля читаются на клик. Очищаются только при
+// успехе: набранное не должно пропадать из-за моргнувшей сети.
+async function mpDoAllyDonate(){
+  const res={};
+  let total=0;
+  ["food","wood","stone","gold"].forEach(r=>{
+    const el=$("#mp-give-"+r);
+    const n=Math.max(0,Math.round(Number(el&&el.value)||0));
+    res[r]=n; total+=n;
+  });
+  if(total<ALLY_DONATE_MIN){
+    mpAllyErr="Меньше "+fmt(ALLY_DONATE_MIN)+" жертвовать не стоит"; mpAllyOk=null; mpRerender(); return;
+  }
+  const ok=await mpDoAlly("donate",{res},"Казна пополнена.");
+  if(ok){ ["food","wood","stone","gold"].forEach(r=>{ const el=$("#mp-give-"+r); if(el) el.value=""; }); }
 }
 // Реплика в чат. Поле очищается только при успехе: набранное не должно
 // пропадать из-за моргнувшей сети.

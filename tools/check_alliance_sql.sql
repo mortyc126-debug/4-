@@ -15,7 +15,7 @@
 -- Запуск (нужен psql; в дашборде Supabase — просто вставить целиком):
 --   psql "$DATABASE_URL" -f tools/check_alliance_sql.sql
 --
--- Требует уже накатанных 0001, 0012, 0014 и 0015.
+-- Требует уже накатанных 0001, 0012, 0014, 0015 и 0016.
 
 \set ON_ERROR_STOP on
 begin;
@@ -475,7 +475,46 @@ begin
   raise notice '11 ✓ каскады: гибель участника уносит его долю, роспуск союза — весь сбор';
 end $$;
 
-do $$ begin raise notice 'ВСЕ ПРОВЕРКИ СХЕМЫ СОЮЗОВ, СБОРОВ И ЧАТА ПРОШЛИ'; end $$;
+-- ---------------------------------------------------------------------------
+-- 12. Казна союза (миграция 0016). Схемы тут почти нет — четыре числа в
+-- jsonb, — но два свойства держит именно она, и оба нужны коду:
+--   у КАЖДОГО союза казна есть (не NULL) с первой же секунды, иначе первое
+--   же пожертвование пришлось бы отличать от всех последующих;
+--   счётчик пожертвованного у соратника начинается с нуля, а не с NULL, —
+--   на NULL сложение молча даёт NULL, и щедрость обнулялась бы навсегда.
+-- ---------------------------------------------------------------------------
+do $$
+declare bank jsonb; dnt bigint;
+begin
+  insert into alliances (world_id, name, tag, leader_id)
+  select (select v from probe where k='world')::uuid, 'Проба Казна', 'ПРБ3',
+         (select id from players where nick='ПробаЧужой');
+  select res into bank from alliances where tag='ПРБ3';
+  if bank is null then raise exception 'ПРОВАЛ: у нового союза казна NULL'; end if;
+  if coalesce((bank->>'food')::bigint, -1) <> 0 or coalesce((bank->>'gold')::bigint, -1) <> 0 then
+    raise exception 'ПРОВАЛ: казна нового союза не пуста: %', bank; end if;
+
+  insert into alliance_members (player_id, alliance_id, role)
+  select (select id from players where nick='ПробаПроситель'), (select id from alliances where tag='ПРБ3'), 'r1';
+  select donated into dnt from alliance_members
+   where player_id=(select id from players where nick='ПробаПроситель');
+  if dnt is distinct from 0 then raise exception 'ПРОВАЛ: пожертвовано у нового соратника = %, ждали 0', dnt; end if;
+
+  -- И то, ради чего числа лежат именно так: прибавление работает без плясок
+  -- с NULL, а казна правится целиком, одним jsonb.
+  update alliances set res = jsonb_build_object('food', 5000, 'wood', 0, 'stone', 0, 'gold', 0)
+   where tag='ПРБ3';
+  update alliance_members set donated = donated + 5000
+   where player_id=(select id from players where nick='ПробаПроситель');
+  select (res->>'food')::bigint into dnt from alliances where tag='ПРБ3';
+  if dnt <> 5000 then raise exception 'ПРОВАЛ: казна не приняла дар: %', dnt; end if;
+  select donated into dnt from alliance_members
+   where player_id=(select id from players where nick='ПробаПроситель');
+  if dnt <> 5000 then raise exception 'ПРОВАЛ: счётчик щедрости не сложился: %', dnt; end if;
+  raise notice '12 ✓ казна есть у каждого союза с нуля, счётчик пожертвованного тоже';
+end $$;
+
+do $$ begin raise notice 'ВСЕ ПРОВЕРКИ СХЕМЫ СОЮЗОВ, СБОРОВ, ЧАТА И КАЗНЫ ПРОШЛИ'; end $$;
 
 -- Ничего в базе не остаётся — см. шапку.
 rollback;

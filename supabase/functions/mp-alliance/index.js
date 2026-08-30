@@ -36,6 +36,9 @@
 //   acceptinvite  {allianceId}         — принять приглашение
 //   declineinvite {allianceId}         — отклонить приглашение
 //   say     {body}                     — реплика в чат союза
+//   donate    {res:{food,wood,stone,gold}} — пожертвовать в казну (любой)
+//   fortstart {x, y}                   — заложить крепость союза (заместитель+)
+//   forthelp  {x, y, amount}           — доложить в стройку из казны (старейшина+)
 // Ответ: { ok:true, ... } либо { err }.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -101,6 +104,42 @@ const NAME_MIN = 3, NAME_MAX = 24;
 const TAG_MIN = 2, TAG_MAX = 4;
 const MOTTO_MAX = 140;
 const CHAT_MAX = 300;
+
+// ---------------------------------------------------------------------------
+// Фаза 55 — казна союза и крепость альянса.
+// ---------------------------------------------------------------------------
+// Что можно жертвовать. Янтарь сюда не входит: он личная валюта (магазин,
+// основание союза), в общий котёл автор его не просил.
+const RES = ["food", "wood", "stone", "gold"];
+const RES_NAME_RU = { food: "Еда", wood: "Дерево", stone: "Камень", gold: "Золото" };
+// Меньше тысячи жертвовать нет смысла: строка в летописи союза стоила бы
+// дороже самого дара.
+const DONATE_MIN = 1000;
+
+// Стоимость крепости — по ступени той твердыни, что стояла на этом месте
+// (малая/обычная/великая, см. 0013). За КАЖДЫЙ из четырёх ресурсов: великая
+// твердыня — дело всего союза на несколько дней, а не одного богача.
+const REGFORT_BUILD_COST = [0, 1500000, 3000000, 6000000];
+// Срок стройки при ОДНОМ участнике. Все три умещаются в двенадцать часов, за
+// которые к разорённому месту возвращаются варвары (REGFORT_RESPAWN_SEC в
+// mp-tick), и это нарочно: срок «не построишь — вернутся» должен оставаться
+// настоящим сроком, а не сниматься одним лишь началом работ.
+const REGFORT_BUILD_SEC = [0, 2 * 3600, 4 * 3600, 8 * 3600];
+// Пол — четверть часа: даже полному союзу с полной казной крепость не должна
+// вырастать мгновенно.
+const REGFORT_BUILD_MIN_SEC = 900;
+// «Скорость возведения зависит от количества участников» (условие автора):
+// каждый соратник сверх первого снимает 5% срока. Полный союз в тридцать душ
+// строит вдвое с лишним быстрее одиночки.
+function regfortBuildSpeed(alive) { return 1 + 0.05 * Math.max(0, (alive | 0) - 1); }
+function regfortTierOf(cell) {
+  return Math.max(1, Math.min(3, ((cell.data && cell.data.tier) | 0) || 1));
+}
+// Вместимость крепости — 2 000 000 и неизменна (прямое условие автора: «сразу
+// по дефолту такая и по идее неизменная»). Само подкрепление в крепость —
+// отдельная работа, здесь число только записывается в клетку, чтобы клиент и
+// сервер называли одно и то же.
+const ALLY_FORT_CAP = 2000000;
 // Метка союза — буквы (латиница/кириллица) и цифры. Пробелы и знаки в метке
 // не нужны: она стоит в квадратных скобках перед ником и должна читаться
 // одним куском.
@@ -234,7 +273,7 @@ Deno.serve(async (req) => {
     if (wErr || !world) return jsonResponse({ err: "Мир ещё не создан — сначала mp-join" }, 400);
 
     const { data: me, error: pErr } = await admin
-      .from("players").select("id,nick,power,state,dead_at")
+      .from("players").select("id,nick,power,state,dead_at,updated_at")
       .eq("world_id", world.id).eq("auth_uid", user.id).maybeSingle();
     if (pErr) return jsonResponse({ err: pErr.message }, 500);
     if (!me) return jsonResponse({ err: "Игрок не найден — сначала mp-join" }, 400);
@@ -407,6 +446,178 @@ Deno.serve(async (req) => {
       });
       if (sErr) return jsonResponse({ err: sErr.message }, 500);
       return jsonResponse({ ok: true });
+    }
+
+    // ---------------------------------------------------------------------
+    // donate — пожертвовать ресурсы в казну союза
+    // ---------------------------------------------------------------------
+    // «Ресурсы можно жертвовать альянсу, а жертвует ресурсы игроки» — это и
+    // есть единственный источник казны. Жертвовать может любой соратник:
+    // ступень тут ни при чём, дарёному коню в зубы не смотрят.
+    if (op === "donate") {
+      if (!myMem) return jsonResponse({ err: "Вы не состоите в союзе" }, 400);
+      const want = {};
+      let total = 0;
+      RES.forEach((r) => {
+        const n = Math.max(0, Math.floor(Number((body.res && body.res[r]) || 0)));
+        want[r] = n; total += n;
+      });
+      if (total < DONATE_MIN)
+        return jsonResponse({ err: "Меньше " + DONATE_MIN + " жертвовать не стоит" }, 400);
+
+      const p = me.state;
+      // Берём не больше, чем есть — тот же приём, что и у отправки войск:
+      // склад мог опустеть, пока открыта форма.
+      let given = 0;
+      RES.forEach((r) => {
+        const have = Math.floor((p.res && p.res[r]) || 0);
+        want[r] = Math.min(want[r], Math.max(0, have));
+        given += want[r];
+      });
+      if (given <= 0) return jsonResponse({ err: "Нечего жертвовать" }, 400);
+      RES.forEach((r) => { p.res[r] = Math.max(0, Math.floor((p.res[r] || 0)) - want[r]); });
+
+      // Проверка версии здесь ОБЯЗАТЕЛЬНА, в отличие от янтаря при основании
+      // (см. комментарий там): ресурсы копятся сами по себе, и потерянная
+      // запись подарила бы игроку всё пожертвованное обратно.
+      const nextIso = new Date(Math.max(Date.now(), Date.parse(me.updated_at) + 1)).toISOString();
+      const { data: saved, error: sErr } = await admin.from("players")
+        .update({ state: p, updated_at: nextIso })
+        .eq("id", me.id).eq("updated_at", me.updated_at).select("id");
+      if (sErr) return jsonResponse({ err: sErr.message }, 500);
+      if (!saved || !saved.length)
+        return jsonResponse({ err: "Состояние изменилось, повторяю…", retry: true }, 409);
+
+      // Казна прибавляется ПОСЛЕ списания: обратный порядок при сбое посреди
+      // подарил бы союзу ресурсы, которых никто не отдавал.
+      const { data: al } = await admin.from("alliances").select("id,res").eq("id", myMem.alliance_id).maybeSingle();
+      const bank = Object.assign({ food: 0, wood: 0, stone: 0, gold: 0 }, (al && al.res) || {});
+      RES.forEach((r) => { bank[r] = Math.max(0, Math.floor(bank[r] || 0)) + want[r]; });
+      await admin.from("alliances").update({ res: bank }).eq("id", myMem.alliance_id);
+      await admin.from("alliance_members")
+        .update({ donated: Math.max(0, Number(myMem.donated || 0)) + given }).eq("player_id", me.id);
+      await sysSay(admin, myMem.alliance_id, (me.nick || "Безымянный лорд") + " жертвует казне: " +
+        RES.filter((r) => want[r] > 0).map((r) => RES_NAME_RU[r] + " " + want[r]).join(", ") + ".");
+      return jsonResponse({ ok: true, given, bank });
+    }
+
+    // ---------------------------------------------------------------------
+    // fortstart — заложить крепость союза на разорённом месте
+    // ---------------------------------------------------------------------
+    // «Мало просто уничтожить, нужно ещё и свою крепость построить... на это
+    // место можно возвести крепость альянса после разрушения крепости
+    // варваров». Закладывает глава или заместитель: это трата общей казны, а
+    // не своя.
+    if (op === "fortstart" || op === "forthelp") {
+      if (!myMem) return jsonResponse({ err: "Вы не состоите в союзе" }, 400);
+      const needRank = op === "fortstart" ? RANK_OFFICER : ROLE_RANK.r3;
+      if (myRank < needRank)
+        return jsonResponse({ err: op === "fortstart"
+          ? "Закладывают крепость глава и заместители"
+          : "Тратить казну на стройку могут старейшины и выше" }, 403);
+      const x = Math.round(Number(body.x)), y = Math.round(Number(body.y));
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return jsonResponse({ err: "Не указано место" }, 400);
+      const { data: cell } = await admin.from("map_cells").select("*")
+        .eq("world_id", world.id).eq("x", x).eq("y", y).maybeSingle();
+      if (!cell || cell.t !== "regfort") return jsonResponse({ err: "Это не место крепости" }, 400);
+      const cd = cell.data || {};
+      const tier = regfortTierOf(cell);
+
+      const { data: alRow } = await admin.from("alliances").select("*").eq("id", myMem.alliance_id).maybeSingle();
+      const bank = Object.assign({ food: 0, wood: 0, stone: 0, gold: 0 }, (alRow && alRow.res) || {});
+      const cost = REGFORT_BUILD_COST[tier];
+
+      if (op === "fortstart") {
+        if (cd.state !== "razed")
+          return jsonResponse({ err: cd.state === "barb"
+            ? "Сначала разорите крепость варваров"
+            : cd.state === "building" ? "Здесь уже идёт стройка" : "Крепость здесь уже стоит" }, 400);
+        const short = RES.filter((r) => Math.floor(bank[r] || 0) < cost);
+        if (short.length)
+          return jsonResponse({ err: "В казне не хватает: " +
+            short.map((r) => RES_NAME_RU[r] + " " + (cost - Math.floor(bank[r] || 0))).join(", ") }, 400);
+
+        // Срок — по ступени твердыни и по числу ЖИВЫХ соратников. Живых:
+        // строка павшего держится до mp-restart (см. recountAlliance), и
+        // считать его строителем было бы неправдой.
+        const { data: mem } = await admin.from("alliance_members")
+          .select("player_id, players(dead_at)").eq("alliance_id", myMem.alliance_id);
+        const alive = (mem || []).filter((m) => m.players && !m.players.dead_at).length || 1;
+        const dur = Math.max(REGFORT_BUILD_MIN_SEC, Math.round(REGFORT_BUILD_SEC[tier] / regfortBuildSpeed(alive)));
+        const nowSec = Date.now() / 1000;
+
+        RES.forEach((r) => { bank[r] = Math.floor(bank[r] || 0) - cost; });
+        const { error: bErr } = await admin.from("alliances").update({ res: bank }).eq("id", myMem.alliance_id);
+        if (bErr) return jsonResponse({ err: bErr.message }, 500);
+
+        // Условие на data гарантирует, что два одновременных «заложить» не
+        // заложат стройку дважды: второй увидит уже не 'razed' и уйдёт ни с
+        // чем — но казну он к тому времени уже потратил бы, поэтому казну
+        // возвращаем на неудаче прямо здесь.
+        const nextData = Object.assign({}, cd, {
+          state: "building", alliance_id: myMem.alliance_id,
+          build_t0: nowSec, build_t1: nowSec + dur, build_cost: cost * RES.length,
+          cap: ALLY_FORT_CAP,
+        });
+        const { data: took, error: uErr } = await admin.from("map_cells")
+          .update({ data: nextData }).eq("world_id", world.id).eq("x", x).eq("y", y)
+          .eq("data->>state", "razed").select("x");
+        if (uErr || !took || !took.length) {
+          RES.forEach((r) => { bank[r] = Math.floor(bank[r] || 0) + cost; });
+          await admin.from("alliances").update({ res: bank }).eq("id", myMem.alliance_id);
+          return jsonResponse({ err: "Место занято — кто-то успел раньше" }, 400);
+        }
+        await admin.from("events").insert({
+          world_id: world.id, fire_at: new Date((nowSec + dur) * 1000).toISOString(),
+          type: "regfort_built", data: { x, y, alliance_id: myMem.alliance_id, t1: nowSec + dur },
+        });
+        await sysSay(admin, myMem.alliance_id, "Заложена крепость союза на «" +
+          (cd.shrine || "месте твердыни") + "» (" + x + ", " + y + "). Готова через " +
+          Math.round(dur / 60) + " мин.");
+        return jsonResponse({ ok: true, until: nowSec + dur, cost, alive });
+      }
+
+      // forthelp — «скорость возведения зависит... и ресурсов»: доложенная в
+      // стройку доля стоимости снимает ровно такую же долю ОСТАВШЕГОСЯ срока.
+      // Правило одной строкой, и оно же честно упирается в пол: мгновенной
+      // крепости не купить ни за какие запасы.
+      if (cd.state !== "building") return jsonResponse({ err: "Здесь ничего не строится" }, 400);
+      if (cd.alliance_id !== myMem.alliance_id) return jsonResponse({ err: "Это стройка другого союза" }, 400);
+      const add = Math.max(0, Math.floor(Number(body.amount) || 0));
+      if (add < DONATE_MIN) return jsonResponse({ err: "Меньше " + DONATE_MIN + " докладывать не стоит" }, 400);
+      const shortH = RES.filter((r) => Math.floor(bank[r] || 0) < add);
+      if (shortH.length)
+        return jsonResponse({ err: "В казне не хватает: " +
+          shortH.map((r) => RES_NAME_RU[r] + " " + (add - Math.floor(bank[r] || 0))).join(", ") }, 400);
+
+      const nowSec2 = Date.now() / 1000;
+      const leftSec = Math.max(0, Number(cd.build_t1 || 0) - nowSec2);
+      if (leftSec <= 1) return jsonResponse({ err: "Стройка уже кончилась" }, 400);
+      const paid = add * RES.length;
+      const share = Math.min(0.9, paid / Math.max(1, Number(cd.build_cost) || 1));
+      const t1 = Math.max(nowSec2 + 1, Number(cd.build_t1) - leftSec * share);
+      // Пол на ВЕСЬ срок стройки, а не на остаток: иначе доложить можно было
+      // бы столько раз подряд, что крепость встала бы за секунды.
+      const floorT1 = Number(cd.build_t0 || nowSec2) + REGFORT_BUILD_MIN_SEC;
+      const newT1 = Math.max(t1, floorT1);
+      if (newT1 >= Number(cd.build_t1) - 1)
+        return jsonResponse({ err: "Быстрее эта крепость уже не встанет" }, 400);
+
+      RES.forEach((r) => { bank[r] = Math.floor(bank[r] || 0) - add; });
+      await admin.from("alliances").update({ res: bank }).eq("id", myMem.alliance_id);
+      await admin.from("map_cells").update({
+        data: Object.assign({}, cd, { build_t1: newT1, build_cost: (Number(cd.build_cost) || 0) + paid }),
+      }).eq("world_id", world.id).eq("x", x).eq("y", y);
+      // Событие уже стоит на СТАРЫЙ срок — ставим новое, а старое само
+      // ничего не сделает: applyRegfortBuilt сверяет t1 с клеткой (тот же
+      // приём, что и у respawn'а, см. его заголовок).
+      await admin.from("events").insert({
+        world_id: world.id, fire_at: new Date(newT1 * 1000).toISOString(),
+        type: "regfort_built", data: { x, y, alliance_id: myMem.alliance_id, t1: newT1 },
+      });
+      await sysSay(admin, myMem.alliance_id, (me.nick || "Безымянный лорд") +
+        " доложил в стройку из казны. Осталось " + Math.max(1, Math.round((newT1 - nowSec2) / 60)) + " мин.");
+      return jsonResponse({ ok: true, until: newT1 });
     }
 
     // ---------------------------------------------------------------------
@@ -655,6 +866,26 @@ Deno.serve(async (req) => {
     // disband — распустить союз (только глава)
     // ---------------------------------------------------------------------
     if (op === "disband") {
+      // Фаза 55 — области, что держал союз, остаются без хозяина. Оставить
+      // их за распущенным союзом нельзя: клетка ссылалась бы на союз,
+      // которого нет, а территория на карте так и светилась бы его цветом.
+      // Возвращаем место в разорённое состояние — и варвары приходят туда
+      // через те же двенадцать часов, что и всегда (mp-tick, respawn).
+      const nowD = Date.now() / 1000;
+      const { data: heldForts } = await admin.from("map_cells").select("x,y,data")
+        .eq("world_id", world.id).eq("t", "regfort").eq("data->>alliance_id", String(myMem.alliance_id));
+      for (const c of heldForts || []) {
+        const nd = Object.assign({}, c.data || {}, {
+          state: "razed", alliance_id: null, razed_at: nowD,
+          build_t0: null, build_t1: null, build_cost: null,
+        });
+        await admin.from("map_cells").update({ data: nd })
+          .eq("world_id", world.id).eq("x", c.x).eq("y", c.y);
+        await admin.from("events").insert({
+          world_id: world.id, fire_at: new Date((nowD + 12 * 3600) * 1000).toISOString(),
+          type: "regfort_respawn", data: { x: c.x, y: c.y, razed_at: nowD },
+        });
+      }
       if (rank < RANK_LEADER) return jsonResponse({ err: "Распустить союз может только глава" }, 403);
       const nowIso = new Date().toISOString();
       // Письмо каждому — кроме самого главы: он и так знает, что сделал.

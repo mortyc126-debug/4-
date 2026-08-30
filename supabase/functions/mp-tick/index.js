@@ -213,6 +213,7 @@ Deno.serve(async (req) => {
         if (ev.type === "train") await applyTrain(admin, ev);
         else if (ev.type === "build") await applyBuild(admin, ev);
         else if (ev.type === "regfort_respawn") await applyRegfortRespawn(admin, ev);
+        else if (ev.type === "regfort_built") await applyRegfortBuilt(admin, ev);
         else if (ev.type === "rally_launch") await applyRallyLaunch(admin, ev);
         else if (ev.type === "march_arrive") await applyMarchArrive(admin, ev);
         else if (ev.type === "battle_round") await applyBattleRound(admin, ev);
@@ -728,6 +729,10 @@ const NODE_RESPAWN_SEC = 3600, CAMP_RESPAWN_SEC = 2700;
 // «если альянс не построит крепость спустя 12 часов после разрушения
 // крепости варваров, там опять появится эта крепость варваров».
 const REGFORT_RESPAWN_SEC = 12 * 3600;
+// Вместимость крепости союза — 2 000 000 и неизменна (условие автора). Копия
+// ALLY_FORT_CAP из index.html и mp-alliance по правилу самодостаточных
+// функций; уровней у крепости нет, поэтому число здесь одно, а не таблица.
+const REGFORT_ALLY_CAP = 2000000;
 // Кольцо 3..12 вокруг истощённой точки целиком ближе минимума в 30 клеток от
 // соседей — сдвинуто наружу с сохранением ШИРИНЫ (было 3..12, ширина 9,
 // стало 30..39), иначе respawn не смог бы разместиться нигде.
@@ -769,6 +774,56 @@ async function applyRegfortRespawn(admin, ev) {
   const next = Object.assign({}, d, { state: "barb", alliance_id: null, razed_at: null });
   await admin.from("map_cells").update({ data: next, updated_at: new Date().toISOString() })
     .eq("world_id", ev.world_id).eq("x", x).eq("y", y);
+}
+// Фаза 55 — крепость союза достроена.
+//
+// Событие сверяется с клеткой ТЕМ ЖЕ приёмом, что и respawn выше: в data
+// лежит собственный срок стройки (build_t1), и событие с чужим сроком тихо
+// уходит ни с чем. Нужно это из-за «доложить в казну»: ускорение не отменяет
+// уже поставленное событие (отменять чужие строки в events эта функция не
+// умеет), а ставит второе, на новый срок. Первым сработает новое — оно
+// раньше; старое придёт потом и увидит, что клетка уже не строится.
+async function applyRegfortBuilt(admin, ev) {
+  const { x, y, alliance_id, t1 } = ev.data || {};
+  if (x == null || y == null) return;
+  const { data: cell } = await admin.from("map_cells")
+    .select("data,t").eq("world_id", ev.world_id).eq("x", x).eq("y", y).maybeSingle();
+  if (!cell || cell.t !== "regfort") return;
+  const d = cell.data || {};
+  if (d.state !== "building") return;                       // разорили/достроили без нас
+  if (d.alliance_id !== alliance_id) return;                // стройку ведёт уже другой союз
+  // Срок мог уехать вперёд (казну доложили ещё раз, см. forthelp) — тогда
+  // это событие протухло, и достраивает не оно.
+  if (t1 != null && Number(d.build_t1) > Number(t1) + 1) return;
+  // Союз мог распуститься, пока шла стройка: тогда достраивать не для кого,
+  // и место возвращается варварам обычным порядком.
+  const { data: al } = await admin.from("alliances")
+    .select("id,disbanded_at").eq("id", alliance_id).maybeSingle();
+  const nowSec = Date.now() / 1000;
+  if (!al || al.disbanded_at) {
+    const gone = Object.assign({}, d, { state: "razed", alliance_id: null, razed_at: nowSec,
+                                        build_t0: null, build_t1: null, build_cost: null });
+    await admin.from("map_cells").update({ data: gone, updated_at: new Date().toISOString() })
+      .eq("world_id", ev.world_id).eq("x", x).eq("y", y);
+    await admin.from("events").insert({
+      world_id: ev.world_id, fire_at: new Date((nowSec + REGFORT_RESPAWN_SEC) * 1000).toISOString(),
+      type: "regfort_respawn", data: { x, y, razed_at: nowSec },
+    });
+    return;
+  }
+  // Уровней у крепости союза нет — она уникальна, как святыня (условие
+  // автора). Всё, что у неё есть, — хозяин и вместимость, и та неизменна.
+  const next = Object.assign({}, d, {
+    state: "ally", alliance_id, built_at: nowSec, cap: REGFORT_ALLY_CAP,
+    build_t0: null, build_t1: null, build_cost: null,
+  });
+  await admin.from("map_cells").update({ data: next, updated_at: new Date().toISOString() })
+    .eq("world_id", ev.world_id).eq("x", x).eq("y", y);
+  await admin.from("alliance_chat").insert({
+    alliance_id, player_id: null, nick: "", kind: "system",
+    body: "Крепость союза встала на «" + (d.shrine || "твердыне") + "» (" + x + ", " + y + "). " +
+          "Область " + (d.region_name || "") + " теперь за нами.",
+  });
 }
 async function applyCampRespawn(admin, ev) {
   const ox = ev.data && ev.data.x, oy = ev.data && ev.data.y;
