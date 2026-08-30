@@ -31,6 +31,11 @@ engine/src/renderer.ts (вырезается регуляркой), тексту
 Переменная окружения DEBUG_OVERLAY=1 переключает вывод на отладочный: в
 красном канале альфа из текстуры разметки, в зелёном её красная компонента,
 в синем — попал ли фрагмент в границы карты.
+
+Переменная OWNERS задаёт владельцев областей (Фаза 55) в виде
+"номер:#цвет" через запятую, например OWNERS=11:#8e2b22 — область 11 под
+червлёным знаменем. Без неё все области ничейные, и кадр должен выйти
+БАЙТ В БАЙТ таким же, каким выходил до появления покраски.
 """
 import re, sys, math
 import numpy as np, wgpu
@@ -66,6 +71,28 @@ GROUND = ["ground/sand.jpg","ground/grass.jpg","ground/dry_meadow.jpg","ground/s
           "ground/tundra_moss.jpg","water/detail.jpg"]
 texs = [tex_from_png(f"{ROOT}/textures/{p}") for p in GROUND]
 overlay = tex_from_png(sys.argv[1] if len(sys.argv) > 1 else f"{ROOT}/textures/world/regions_overlay.png")
+
+# Фаза 55 — карта номеров областей (binding 18) и цвета их владельцев
+# (binding 19). Файл сырой, не PNG: те же 600×300 байт, что читает и движок.
+REGION_MAP_W, REGION_MAP_H = 600, 300
+rid_bytes = open(f"{ROOT}/heightmap/region-map-v1.bin", "rb").read()
+assert len(rid_bytes) == REGION_MAP_W * REGION_MAP_H, len(rid_bytes)
+region_id_tex = dev.create_texture(size=(REGION_MAP_W, REGION_MAP_H, 1), format=wgpu.TextureFormat.r8unorm,
+                                   usage=wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST)
+dev.queue.write_texture({"texture": region_id_tex}, rid_bytes,
+                        {"bytes_per_row": REGION_MAP_W}, (REGION_MAP_W, REGION_MAP_H, 1))
+
+# Кому какая область принадлежит. По умолчанию — никому (все альфы нули, и
+# кадр обязан выйти в точности таким же, каким выходил до Фазы 55).
+#   OWNERS="11:#8e2b22,9:#334a6b"  — область 11 червлёная, область 9 лазурная.
+owners = np.zeros(16 * 4, dtype=np.float32)
+for pair in filter(None, os.environ.get("OWNERS", "").split(",")):
+    idx, hexc = pair.split(":")
+    hexc = hexc.lstrip("#")
+    i = int(idx)
+    owners[i*4:i*4+3] = [int(hexc[k:k+2], 16) / 255.0 for k in (0, 2, 4)]
+    owners[i*4+3] = 1.0
+owners_buf = dev.create_buffer_with_data(data=owners.tobytes(), usage=wgpu.BufferUsage.UNIFORM)
 
 samp = dev.create_sampler(address_mode_u="repeat", address_mode_v="repeat", mag_filter="linear", min_filter="linear")
 shadow_samp = dev.create_sampler(compare="less")
@@ -133,6 +160,8 @@ entries += [{"binding":8,"resource":{"buffer":light_buf,"offset":0,"size":light_
             {"binding":10,"resource":shadow_tex.create_view()}]
 for i,t in enumerate(texs[5:11]): entries.append({"binding":11+i,"resource":t.create_view()})
 entries.append({"binding":17,"resource":overlay.create_view()})
+entries.append({"binding":18,"resource":region_id_tex.create_view()})
+entries.append({"binding":19,"resource":{"buffer":owners_buf,"offset":0,"size":owners_buf.size}})
 bg = dev.create_bind_group(layout=pipe.get_bind_group_layout(0), entries=entries)
 
 color = dev.create_texture(size=(W,H,1), format=wgpu.TextureFormat.rgba8unorm,

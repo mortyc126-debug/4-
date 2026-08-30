@@ -46,6 +46,12 @@ interface LiveWorld {
   // loadRealEntities ниже сама откатывается на полный перебор, если его нет.
   mapChunks?: Record<string, string[]>;
   players: Array<{ id: number; race: string; nick?: string; tag?: string; x: number; y: number; b: { hall: number } }>;
+  // Фаза 55 — чья какая область: по записи на область мира (их шестнадцать),
+  // null у ничьей, {r,g,b} в долях единицы у захваченной. Кладёт сюда
+  // mpWorldSnapshot в index.html — считать цвет знамени по гербу союза может
+  // только он, движок про союзы и гербы не знает вовсе. У одиночной партии
+  // (обычный W) поля просто нет, и территории остаются неокрашенными.
+  regionOwners?: Array<{ r: number; g: number; b: number } | null>;
 }
 
 // Фаза 12, кусочек 2 — общий мир (mp-*) вместо локальных ботов одиночки.
@@ -80,6 +86,16 @@ function readLiveWorld(): LiveWorld | null {
 // яйцо: чтобы найти свой город перебором W.map, нужен уже готовый центр
 // отбора, а сам город и должен стать этим центром при самой первой загрузке
 // (см. main.ts — камера стартует именно тут).
+// Фаза 55 — цвета владельцев областей для рельефа (см. Renderer.setRegionOwners).
+// Отдельной функцией, а не полем RealEntity: это не сущность на карте, а
+// свойство всего мира, и меняется оно на порядок реже — читать его вместе с
+// каждой перестройкой списка сущностей было бы просто удобно, но неверно по
+// смыслу.
+export function loadRegionOwners(): Array<{ r: number; g: number; b: number } | null> | null {
+  const W = readLiveWorld();
+  return (W && W.regionOwners) || null;
+}
+
 export function getOwnCityPos(): { x: number; y: number } | null {
   const W = readLiveWorld();
   if (!W || !W.players[0]) return null;

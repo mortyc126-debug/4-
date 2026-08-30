@@ -197,8 +197,20 @@ Deno.serve(async (req) => {
       return jsonResponse({ err: "Здесь нет лагеря" }, 400);
     // Разорённая крепость и уже взятая союзом — не цель набега: варваров в
     // первой нет вовсе, а вторая берётся не так (это придёт со сбором).
-    if (isRegfort && (cell.data && cell.data.state) !== "barb")
-      return jsonResponse({ err: "В этой крепости варваров нет" }, 400);
+    // Фаза 56 — крепость СОЮЗА тоже цель набега: «на эту крепость можно
+    // напасть как сбором, так и одиночными войсками и разбить». Разорённое
+    // место (state:'razed'/'building') целью не бывает — там некого бить.
+    const fortState = isRegfort ? ((cell.data && cell.data.state) || "barb") : null;
+    if (isRegfort && fortState !== "barb" && fortState !== "ally")
+      return jsonResponse({ err: fortState === "building"
+        ? "Тут пока только стройка — бить некого"
+        : "Это место пусто" }, 400);
+    if (isRegfort && fortState === "ally") {
+      const { data: myMem } = await admin.from("alliance_members")
+        .select("alliance_id").eq("player_id", attRow.id).maybeSingle();
+      if (myMem && myMem.alliance_id === (cell.data && cell.data.alliance_id))
+        return jsonResponse({ err: "Это крепость вашего союза" }, 400);
+    }
     // У крепости уровня нет — сила берётся по её ступени, опорным уровнем на
     // ту же кривую banditArmy, что и у лагерей (малая 16-18, средняя 19-22,
     // великая 23-25 по worldgen/regions/SHRINES.md — берём середину).

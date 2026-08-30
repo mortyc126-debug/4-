@@ -16,7 +16,7 @@ import { mul, persp, look, modelMatrix, transformPoint, transformPointInto, make
 import { attachOrbitControls, type OrbitCamera, MAX_DIST, MIN_DIST } from "./camera";
 import { loadGLB } from "./glb";
 import { uploadGLB, createModelPipeline, type GpuModel, type ModelInstance, type Tint } from "./modelRenderer";
-import { loadRealEntities, getOwnCityPos, type RealEntity } from "./realData";
+import { loadRealEntities, getOwnCityPos, loadRegionOwners, type RealEntity } from "./realData";
 import { loadLiveMarches, type LiveMarchPos } from "./marchData";
 
 const statusEl = document.getElementById("status") as HTMLDivElement;
@@ -1735,6 +1735,10 @@ async function main() {
     // новые сущности и выходят старые — тот же диф ниже (seenKeys/keyToEid)
     // обрабатывает оба случая одинаково, отдельной логики "вышло из вида"
     // не потребовалось.
+    // Фаза 55 — чья какая область. Раньше сущностей: цвет территории не
+    // зависит от того, попала ли крепость в радиус отбора сущностей —
+    // область красится целиком, даже когда камера смотрит на её дальний край.
+    renderer.setRegionOwners(loadRegionOwners());
     const fresh = loadRealEntities(cam.target[0], cam.target[2], ENTITY_RADIUS);
     if (!fresh) return; // связь с window.parent.W пропала — оставляем сцену как есть
     const seenKeys = new Set<string>();
