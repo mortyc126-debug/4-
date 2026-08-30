@@ -9589,14 +9589,9 @@ function renderCartoucheMp(){
         "<div class='co'><span>Ваше войско</span><b>"+fmt(my)+"</b></div>"+
         "<div class='co'><span>Прогноз</span><b style='color:"+ok[1]+"'>"+ok[0]+"</b></div>"+
         "<button class='seal wide blood ico' style='margin-top:9px' data-mp='cartraidpick' data-k='"+o.x+","+o.y+"'><img src='images/ui/icon-siege.png' alt=''>Атаковать</button>"+
-        mpRallyBtnHtml(o.x,o.y)+
-        "<div class='hint'>Одна на всю область. В одиночку её обычно не берут — "+
-        "но никто не мешает попробовать: крепость для того и берут сбором союза.</div>";
+        mpRallyBtnHtml(o.x,o.y);
     } else if(st8==="razed"){
-      body+="<div class='hint'>Крепость варваров разорена. Если за двенадцать часов тут "+
-        "не заложат крепость союза, варвары вернутся. Заложенная стройка этот срок "+
-        "останавливает — доводить её можно сколько потребуется.</div>"+
-        mpFortBuildHtml(o);
+      body+=mpFortBuildHtml(o);
     } else if(st8==="building"){
       // Стройка идёт — показываем не «кто владеет», а сколько осталось.
       const t0=Number(o.buildT0)||0, t1=Number(o.buildT1)||0, now=Date.now()/1000;
@@ -9605,7 +9600,6 @@ function renderCartoucheMp(){
       body+="<div class='co'><span>Строит</span><b>"+(who?escHtml(who.name):"союз")+"</b></div>"+
         "<div class='co'><span>Готова через</span><b>"+fmtDur(Math.max(0,t1-now))+"</b></div>"+
         "<div class='progress'><i style='width:"+(f*100).toFixed(1)+"%'></i></div>"+
-        "<div class='hint'>Пока идёт стройка, варвары сюда не возвращаются.</div>"+
         mpFortHelpHtml(o);
     } else {
       const who=mpAllyById(o.allianceId);
@@ -9624,17 +9618,13 @@ function renderCartoucheMp(){
         body+="<button class='seal wide ico' style='margin-top:9px' data-mp='cartreinfpick' data-k='"+o.x+","+o.y+"'>"+
           "<img src='images/ui/icon-alliance.png' alt=''>Подкрепление</button>"+
           (mineRow?"<button class='seal wide ghost' style='margin-top:6px' data-mp='fortrecall' data-x='"+o.x+
-            "' data-y='"+o.y+"'"+(mpState.loading?" disabled":"")+">Забрать свой отряд</button>":"")+
-          "<div class='hint'>Гарнизон — единственное, что держит область. Раненым в нём "+
-          "лазарета не полагается: их лазареты дома, за тридевять земель.</div>";
+            "' data-y='"+o.y+"'"+(mpState.loading?" disabled":"")+">Забрать свой отряд</button>":"");
       } else {
         // Чужая крепость — цель. Прогноза тут нет и быть не может: сила
         // гарнизона неизвестна, её узнают разведкой, а не кнопкой.
         body+="<button class='seal wide blood ico' style='margin-top:9px' data-mp='cartraidpick' data-k='"+o.x+","+o.y+"'>"+
           "<img src='images/ui/icon-siege.png' alt=''>Штурмовать</button>"+
-          mpRallyBtnHtml(o.x,o.y)+
-          "<div class='hint'>Крепость держит гарнизон союза, и сколько в нём войск — "+
-          "отсюда не видно. В одиночку такие берут редко.</div>";
+          mpRallyBtnHtml(o.x,o.y);
       }
     }
     put(body);
@@ -12308,17 +12298,12 @@ function mpMarchSheetHtml(){
     const dist=Math.round(Math.hypot(n.x-p.x,n.y-p.y));
     let h="<div class='title'>"+(n.nick||"Безымянный лорд")+" · "+RACES[n.race].name+"</div>"+
       "<div class='note'>"+n.x+", "+n.y+" · "+dist+" клет.</div>"+
-      "<div class='note'>Бой честный (стена защитника, погода и полководец — настоящие; марш и время в "+
-      "пути тоже настоящие — чем медленнее войска, тем дольше идти). См. supabase/README.md.</div>"+errHtml;
+      errHtml;
     h+=mpTroopPickerHtml("mp-atk-",p);
     // Осадные — единственный род войск, чья польза начинается ПОСЛЕ победы,
     // и по одним боевым цифрам этого не видно (атака 12, худшая в игре).
     // Штурм чужого города — ровно то место, где это решение принимается,
     // поэтому число сноса стоит здесь, а не только в карточке юнита.
-    if((st.troops.sie&&st.troops.sie[1])||0)
-      h+="<div class='note'>Осадные в поле бьются слабо — их дело начинается после победы: "+
-         "каждое орудие снимает "+RU(siegeBreachPerSiege(p.race,1))+" прочности с построек, "+
-         "первыми под таран идут стена и гарнизон.</div>";
     h+=mpGenTakeCheckboxHtml(st,"mp-atk-gen");
     h+="<div class='chips' style='margin-top:9px'>"+
        "<button class='seal blood ico' data-mp='attack' data-id='"+n.id+"'"+(mpState.loading?" disabled":"")+"><img src='images/ui/icon-siege.png' alt=''>В поход</button> "+
@@ -12350,8 +12335,7 @@ function mpMarchSheetHtml(){
     let h="<div class='title'>Пустошь</div>"+
       "<div class='note'>"+mx+", "+my+" · "+dist+" клет."+
       (regionNameAt(mx,my)?" · "+regionNameAt(mx,my):"")+"</div>"+
-      "<div class='note'>Отряд дойдёт и встанет там до нового приказа — сам домой не вернётся. "+
-      "Дальше его можно перетащить пальцем на любую цель или отозвать.</div>"+errHtml;
+      errHtml;
     h+=mpTroopPickerHtml("mp-mv-",p);
     h+=mpGenTakeCheckboxHtml(st,"mp-mv-gen");
     h+="<div class='chips' style='margin-top:9px'>"+
@@ -12374,10 +12358,7 @@ function mpMarchSheetHtml(){
       return h+"<div class='note' style='color:#e08'>Нужен построенный Центр Альянса — он и задаёт "+
         "вместимость общего сбора.</div>"+
         "<button class='seal wide' style='margin-top:9px' data-act='closebuilding'>Закрыть</button>";
-    h+="<div class='note'>Вместимость сбора — "+fmt(cap)+" воинов (Центр Альянса "+mpAllyCenterLv()+" ур.). "+
-       "Соратники приведут войска в ваш замок, полководец в бою будет ваш. "+
-       "Вышедшим сбором управлять уже нельзя: он идёт до цели, а после боя рассыпается — "+
-       "каждый отряд возвращается в свой замок сам.</div>"+errHtml;
+    h+="<div class='note'>Вместимость сбора — "+fmt(cap)+" воинов (Центр Альянса "+mpAllyCenterLv()+" ур.).</div>"+errHtml;
     // Срок — четыре кнопки, а не список: выбирают его одним касанием и сразу.
     h+="<div class='note'>Ждём соратников:</div><div class='chips' style='margin-bottom:6px'>"+
       RALLY_MINUTES.map(mn=>"<button class='seal tiny"+(mpMarchCtx.minutes===mn?"":" ghost")+
@@ -12403,8 +12384,7 @@ function mpMarchSheetHtml(){
     let h="<div class='title'>Подкрепление в «"+escHtml(cd.shrine||"твердыню")+"»</div>"+
       "<div class='note'>"+fx+", "+fy+" · "+dist+" клет. · в крепости "+fmt(inFort)+
       " из "+fmt(ALLY_FORT_CAP)+"</div>"+
-      "<div class='note'>Отряд дойдёт до крепости и встанет в её гарнизон. Забрать его "+
-      "обратно можно в любой миг — но раненым в крепости лазарета нет: их лазареты дома.</div>"+errHtml;
+      errHtml;
     if(room<=0) return h+"<div class='note' style='color:#e08'>Крепость полна.</div>"+
       "<button class='seal wide' style='margin-top:9px' data-act='closebuilding'>Закрыть</button>";
     h+=mpTroopPickerHtml("mp-rnf-",p);
@@ -12425,8 +12405,7 @@ function mpMarchSheetHtml(){
       "<div class='note'>Созвал "+escHtml(leadNick)+" · "+r.tx+", "+r.ty+"</div>"+
       "<div class='note'>В сборе "+fmt(inR)+" из "+fmt(Number(r.cap)||0)+" воинов · "+
       "выступает через "+fmtDur(Math.max(0,(Date.parse(r.gather_until)-Date.now())/1000))+"</div>"+
-      "<div class='note'>Ваши войска уйдут в замок созывающего и вернутся домой сами — "+
-      "поодиночке, сразу после боя. Полководца берёт только созывающий.</div>"+errHtml;
+      errHtml;
     if(room<=0) return h+"<div class='note' style='color:#e08'>Сбор полон.</div>"+
       "<button class='seal wide' style='margin-top:9px' data-act='closebuilding'>Закрыть</button>";
     h+=mpTroopPickerHtml("mp-rjn-",p);
@@ -12441,8 +12420,7 @@ function mpMarchSheetHtml(){
   const dist=Math.round(Math.hypot(c.x-p.x,c.y-p.y)), lv=(c.data&&c.data.lv)||1;
   let h="<div class='title'>"+(c.t==="fort"?"Форт":"Лагерь")+" варваров, "+lv+" ур.</div>"+
     "<div class='note'>"+c.x+", "+c.y+" · "+dist+" клет.</div>"+
-    "<div class='note'>Бой честный (погода и полководец — настоящие). Часть потерь отправится в лазарет, "+
-    "часть погибнет насовсем — как при штурме города, но без разграбления вашего дома.</div>"+errHtml;
+    errHtml;
   h+=mpTroopPickerHtml("mp-rd-",p);
   h+=mpGenTakeCheckboxHtml(st,"mp-rd-gen");
   h+="<div class='chips' style='margin-top:9px'>"+
@@ -17492,8 +17470,7 @@ function mpFortHelpHtml(o){
   return "<button class='seal wide ico' style='margin-top:9px' data-mp='forthelp' data-x='"+o.x+"' data-y='"+o.y+
     "' data-n='"+step+"'"+((!enough||mpAllyBusy)?" disabled":"")+
     "><img src='images/ui/icon-alliance.png' alt=''>Доложить "+fmt(step)+" каждого</button>"+
-    (enough?"<div class='hint'>Снимет с оставшегося срока ту же долю, что доложено от стоимости.</div>"
-           :"<div class='hint' style='color:#e08'>В казне столько не наберётся.</div>");
+    (enough?"":"<div class='hint' style='color:#e08'>В казне столько не наберётся.</div>");
 }
 // Гарнизон крепости: строки своего союза по этой клетке, крупные первыми.
 function mpFortGarrisonAt(x,y){
@@ -17902,8 +17879,7 @@ function mpAllyBankHtml(){
      "</div><div class='chips' style='margin-top:9px'>"+
      "<button class='seal ico' data-mp='allydonate'"+(mpAllyBusy?" disabled":"")+
      "><img src='images/ui/icon-alliance.png' alt=''>Пожертвовать</button></div>"+
-     "<div class='hint'>Меньше "+fmt(ALLY_DONATE_MIN)+" за раз жертвовать не стоит. "+
-     "Отданное назад не берут: казна общая.</div></div>";
+     "</div>";
   // Кто сколько отдал — сверху самые щедрые. Нулевых не показываем: пустая
   // строка против чужой щедрости никого не красит.
   const givers=mpState.allyMembers.filter(m=>Number(m.donated||0)>0)
@@ -17930,10 +17906,8 @@ function mpRalliesHtml(){
   if(!list.length){
     return rubric("Сборы")+
       "<div class='entry'><div class='line'><div class='fill'>"+
-      "<div class='note'>Сейчас союз никого не созывает. Сбор начинают с карты: "+
-      "откройте лагерь, крепость области или чужой город и нажмите «Сбор союза»."+
-      (cap>0?" Ваша вместимость сбора — "+fmt(cap)+" воинов."
-            :" Вместимость сбора даёт Центр Альянса — его ещё нет.")+
+      "<div class='note'>Сейчас союз никого не созывает."+
+      (cap>0?" Ваша вместимость сбора — "+fmt(cap)+" воинов.":"")+
       "</div></div></div></div>";
   }
   let h=rubric("Сборы", String(list.length));
@@ -18449,7 +18423,27 @@ function mpRerenderNow(){
     // началу, картинки заново — жалоба автора "требуется много времени,
     // чтобы загружаться... даже при прокрутке"); теперь setHtml правит
     // только изменившийся текст.
-    if(html!==lastMenuBody){ lastMenuBody=html; setHtml($("#menu-modal-body"), html); }
+    // Автор: «лагает окно с альянсом... он обновляется постоянно». Такт
+    // опроса (раз в пять секунд) перебирает ВЕСЬ открытый экран меню — у
+    // союза это под полсотни килобайт разметки: казна, сборы, чат, состав,
+    // мастерская герба. Строка при этом никогда не совпадает с прошлой, и
+    // совпасть не может: в ней тикают живые сроки («выступает через 2 мин
+    // 13 с», «сказано 4 мин назад»), ради которых такт и заведён.
+    //
+    // Спорить с рукой игрока он при этом не должен. Пока курсор стоит в поле
+    // ВНУТРИ этого экрана — имя основываемого союза, девиз, число в форме
+    // пожертвования, реплика в чат — перерисовку пропускаем целиком.
+    // lastMenuBody нарочно НЕ обновляем: как только из поля уйдут, ближайший
+    // же такт нарисует всё разом и ничего не потеряется.
+    //
+    // Само значение поля морф и так бережёт (см. morphNode: у INPUT/TEXTAREA/
+    // SELECT живое .value не трогается вовсе) — здесь речь о другом: о
+    // подёргивании и о сбросе выделения/каретки, которое даёт перебор сотен
+    // узлов под пальцем.
+    const ae=document.activeElement;
+    const typing = ae && (ae.tagName==="INPUT"||ae.tagName==="TEXTAREA"||ae.tagName==="SELECT")
+                   && $("#menu-modal-body").contains(ae);
+    if(!typing && html!==lastMenuBody){ lastMenuBody=html; setHtml($("#menu-modal-body"), html); }
   }
   // Фаза 14, кусочек 2 — держим 2D-карту города (#folio) свежей на каждый
   // опрос/действие, не только пока открыта модалка "Общий мир": пользователь
@@ -18867,14 +18861,35 @@ async function mpRefreshAlliance(){
           .eq("world_id",wid).is("disbanded_at",null).order("power",{ascending:false}).limit(30),
         sb.from("alliance_applications").select("alliance_id,created_at").eq("player_id",me),
       ]);
+      // НАЙДЕН реальный баг (автор сообщил: «не могу флаг выбрать, он
+      // обновляется постоянно»). Здесь стояло mpAllyEmblemDraft=null с
+      // пояснением «союза нет — некому и герб править». Верно это было ровно
+      // до Фазы 52: тогда мастерская герба жила ТОЛЬКО внутри уже основанного
+      // союза, и у не состоящего в союзе черновику взяться было неоткуда.
+      // Фаза 52 перенесла выбор флага в форму ОСНОВАНИЯ — то есть ровно туда,
+      // где союза ещё нет, — а эту строку забыли снять. С тех пор каждый
+      // медленный такт опроса (раз в десять секунд) стирал выбранный флаг и
+      // возвращал герб по умолчанию: выбрать его было физически невозможно.
+      //
+      // Черновик теперь живёт, пока игрок сам его не сбросит («Вернуть как
+      // было») или не запишет. Обнуляется он в ветке НИЖЕ — в тот момент,
+      // когда союз наконец появился: мастерская союза должна открываться с
+      // его собственным гербом, а не с недобранным черновиком из формы
+      // основания.
+      const hadAlly=!!mpState.ally;
       mpState.ally=null; mpState.allyRole=""; mpState.allyMembers=[]; mpState.allyApps=[]; mpState.allyChat=[];
-      mpAllyEmblemDraft=null;   // союза нет — некому и герб править
+      // Вышли из союза (или его распустили) — черновик прежнего герба больше
+      // ни к чему.
+      if(hadAlly) mpAllyEmblemDraft=null;
       if(!list.error && list.data) mpState.allyList=list.data;
       if(!apps.error && apps.data) mpState.allyMyApps=apps.data;
       mpRerenderData();
       return;
     }
     const aid=mem.data.alliance_id;
+    // Союз только что появился (основали, приняли, вступили) — черновик из
+    // формы основания своё отслужил: дальше правится герб самого союза.
+    if(!mpState.ally || mpState.ally.id!==aid) mpAllyEmblemDraft=null;
     // players(...) — вложенная выборка по внешнему ключу alliance_members.
     // player_id (PostgREST): состав союза без неё пришлось бы склеивать со
     // списком соседей, а там нет ни своей строки, ни павших.

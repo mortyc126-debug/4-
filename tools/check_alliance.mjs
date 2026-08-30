@@ -512,6 +512,99 @@ check('без союза зовёт завести союз', r.помощь_б�
 check('в союзе честно говорит, что помощь ещё делается', r.помощь_вСоюзе);
 check('старой неправды «Союзов в игре пока нет» больше нет', r.помощь_неВрёт);
 
+// ---------------------------------------------------------------------------
+// Выбранный флаг переживает такт опроса.
+//
+// ЗАЧЕМ ОТДЕЛЬНО. Автор сообщил: «не могу флаг выбрать, он обновляется
+// постоянно». Черновик герба стирался в mpRefreshAlliance на КАЖДОМ опросе у
+// того, кто ещё не в союзе, — то есть ровно у того, кто основывает союз и
+// выбирает флаг. Строка эта верна была до Фазы 52, пока мастерская жила
+// только внутри союза; Фаза 52 перенесла выбор в форму основания, а строку
+// снять забыли.
+//
+// Прежняя проверка выше этого поймать НЕ МОГЛА, и вот почему: немая заглушка
+// supabase отдаёт на maybeSingle() `{data: []}`, а пустой массив ИСТИНЕН —
+// mpRefreshAlliance уходила в ветку «я в союзе» и до сломанной строки не
+// доходила ни разу. Поэтому здесь заглушка своя, знающая таблицы: только с
+// ней «я не в союзе» — это настоящее «не в союзе».
+const draft = await page.evaluate(async () => {
+  const out = {};
+  mpStopPolling();
+  const fx = { alliance_members: [], alliances: [], alliance_applications: [],
+               alliance_chat: [], alliance_rallies: [], alliance_fort_garrison: [] };
+  const realFrom = sb.from.bind(sb);
+  sb.from = (table) => {
+    const st = { single: false };
+    const res = () => { const rows = fx[table] || [];
+      return st.single ? { data: rows.length ? rows[0] : null, error: null } : { data: rows, error: null }; };
+    const x = new Proxy(function () {}, { get(_t, k) {
+      if (k === 'then') return (a, b) => Promise.resolve(res()).then(a, b);
+      if (k === 'catch') return (a) => Promise.resolve(res()).catch(a);
+      if (k === 'finally') return (a) => Promise.resolve(res()).finally(a);
+      if (k === 'maybeSingle' || k === 'single') return () => { st.single = true; return x; };
+      return () => x;
+    }, apply() { return x; } });
+    return x;
+  };
+
+  mpState.ally = null; mpState.allyRole = ''; mpAllyEmblemDraft = null;
+  mpAllyNoneTab = 'create';
+  openMenuModal('alliance');
+  // Выбираем флаг ТАК ЖЕ, как игрок: нажатием на настоящую кнопку в разметке.
+  // По полю И по значению: у трёх лент выбора (щит/деление/фигура) один и тот
+  // же data-mp, и без data-f селектор берёт первую попавшуюся — на этом уже
+  // споткнулись, проверка утверждала про фигуру, а нажимала щит.
+  const pick = (mp, f, v) => {
+    const b = document.querySelector("#menu-modal-body [data-mp='" + mp +
+      "'][data-f='" + f + "'][data-v='" + v + "']");
+    if (!b) return false;
+    b.click();
+    return true;
+  };
+  out.кнопкиЕсть = pick('allytint', 't1', 4) && pick('allyemblem', 'c', 7);
+  out.выборЛёг = !!mpAllyEmblemDraft && mpAllyEmblemDraft.t1 === 4;
+  const before = JSON.stringify(mpAllyEmblemDraft);
+
+  // Такт опроса — настоящий, тот самый, что стирал выбор.
+  await mpRefreshAlliance();
+  out.выборПережилОпрос = JSON.stringify(mpAllyEmblemDraft) === before;
+  // И ещё несколько тактов подряд, как оно и бывает.
+  await mpRefreshAlliance(); await mpRefreshAlliance();
+  out.выборПережилТриОпроса = JSON.stringify(mpAllyEmblemDraft) === before;
+  // Экран после опроса всё ещё показывает выбранное, а не герб по умолчанию.
+  out.экранПоказываетВыбранное = mpAllyEmblemNow(null).t1 === 4 && mpAllyEmblemNow(null).c === 7;
+
+  // Союз появился — черновик формы основания своё отслужил.
+  fx.alliance_members = [{ player_id: 7, alliance_id: 11, role: 'r5', joined_at: new Date().toISOString(),
+                           donated: 0, players: { id: 7, nick: 'Витольд', race: 'human', dead_at: null } }];
+  fx.alliances = [{ id: 11, world_id: 'w1', name: 'Орден', tag: 'ЗАРЯ', motto: '', open: true, min_power: 0,
+                    members: 1, members_max: 30, power: 1, emblem: { s: 1, d: 0, c: 0, t1: 2, t2: 0, t3: 0 },
+                    leader_id: 7, disbanded_at: null, res: { food: 0, wood: 0, stone: 0, gold: 0 } }];
+  await mpRefreshAlliance();
+  out.вСоюзеЧерновикСброшен = mpAllyEmblemDraft === null;
+  // ...и мастерская открывается с гербом самого союза.
+  out.мастерскаяСГербомСоюза = mpAllyEmblemNow(mpState.ally).t1 === 2;
+
+  // Уход из союза черновик тоже не оставляет.
+  mpAllyEmblemDraft = { s: 3, d: 0, c: 0, t1: 5, t2: 0, t3: 0 };
+  fx.alliance_members = []; fx.alliances = [];
+  await mpRefreshAlliance();
+  out.послеВыходаЧерновикаНет = mpAllyEmblemDraft === null;
+
+  sb.from = realFrom;
+  return out;
+});
+
+console.log('\nВыбранный флаг переживает опрос:');
+check('кнопки флага на месте', draft.кнопкиЕсть);
+check('нажатие ложится в черновик', draft.выборЛёг);
+check('такт опроса выбор не стирает', draft.выборПережилОпрос);
+check('и три такта подряд тоже', draft.выборПережилТриОпроса);
+check('экран показывает выбранное, а не герб по умолчанию', draft.экранПоказываетВыбранное);
+check('союз появился — черновик основания сброшен', draft.вСоюзеЧерновикСброшен);
+check('мастерская открывается с гербом союза', draft.мастерскаяСГербомСоюза);
+check('после выхода из союза черновика не остаётся', draft.послеВыходаЧерновикаНет);
+
 await browser.close();
 console.log('\n' + (bad ? bad + ' проверок не прошло' : 'все проверки прошли'));
 process.exit(bad ? 1 : 0);
