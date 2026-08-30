@@ -9609,12 +9609,33 @@ function renderCartoucheMp(){
         mpFortHelpHtml(o);
     } else {
       const who=mpAllyById(o.allianceId);
+      const own=!!(mpState.ally && mpState.ally.id===o.allianceId);
       body+=(who?"<div class='co'><span>Союз</span><b class='ally-link' data-mp='allyview' data-id='"+
               who.id+"'>"+escHtml(who.name)+" &#8250;</b></div>":"")+
-        "<div class='co'><span>Вместимость</span><b>"+fmt(ALLY_FORT_CAP)+"</b></div>"+
-        "<div class='hint'>Крепость союза. Уровней у неё нет — она одна на область, "+
-        "как святыня, и вместимость у неё сразу полная. Область окрашена цветом знамени "+
-        "владельца.</div>";
+        "<div class='co'><span>Вместимость</span><b>"+fmt(ALLY_FORT_CAP)+"</b></div>";
+      if(own){
+        // Свою крепость видно насквозь: сколько в ней войск и чьих. Чужую —
+        // нет, и это не упущение: состав гарнизона узнают разведкой, а не
+        // выборкой (политика RLS чужие строки и не отдаст, см. миграцию 0017).
+        const inFort=mpFortGarrisonTotal(o.x,o.y);
+        body+="<div class='co'><span>Гарнизон</span><b>"+fmt(inFort)+" / "+fmt(ALLY_FORT_CAP)+"</b></div>";
+        const mineRow=mpFortGarrisonAt(o.x,o.y).find(g=>g.player_id===(mpState.player?mpState.player.id:0));
+        if(mineRow) body+="<div class='co'><span>Ваш отряд</span><b>"+fmt(countUnits(mineRow.units||{}))+"</b></div>";
+        body+="<button class='seal wide ico' style='margin-top:9px' data-mp='cartreinfpick' data-k='"+o.x+","+o.y+"'>"+
+          "<img src='images/ui/icon-alliance.png' alt=''>Подкрепление</button>"+
+          (mineRow?"<button class='seal wide ghost' style='margin-top:6px' data-mp='fortrecall' data-x='"+o.x+
+            "' data-y='"+o.y+"'"+(mpState.loading?" disabled":"")+">Забрать свой отряд</button>":"")+
+          "<div class='hint'>Гарнизон — единственное, что держит область. Раненым в нём "+
+          "лазарета не полагается: их лазареты дома, за тридевять земель.</div>";
+      } else {
+        // Чужая крепость — цель. Прогноза тут нет и быть не может: сила
+        // гарнизона неизвестна, её узнают разведкой, а не кнопкой.
+        body+="<button class='seal wide blood ico' style='margin-top:9px' data-mp='cartraidpick' data-k='"+o.x+","+o.y+"'>"+
+          "<img src='images/ui/icon-siege.png' alt=''>Штурмовать</button>"+
+          mpRallyBtnHtml(o.x,o.y)+
+          "<div class='hint'>Крепость держит гарнизон союза, и сколько в нём войск — "+
+          "отсюда не видно. В одиночку такие берут редко.</div>";
+      }
     }
     put(body);
     return;
@@ -9992,6 +10013,7 @@ function mpMarchIcon(m){
   if(m.state==="hold") return "images/ui/icon-camp.png";
   if(m.state==="siege") return "images/ui/icon-siege.png";
   if(m.state==="go"&&m.mode==="gather") return "images/ui/icon-gather.png";
+  if(m.mode==="reinf") return "images/ui/icon-alliance.png";
   return "images/ui/icon-march.png";
 }
 // incoming — марш ЧУЖОЙ и идёт к нам. Обоз с товаром (mode:"trade") —
@@ -12268,6 +12290,7 @@ function mpOpenMarchModal(mode,target){
   // сидит в игре, шесть часов созывают на крепость и заранее.
   else if(mode==="rally"){ mpState.rallyTarget=target; mpMarchCtx.minutes=15; }
   else if(mode==="rallyjoin") mpState.rallyJoinId=Number(target);
+  else if(mode==="reinf") mpState.reinfTarget=target;
   else mpState.raidTarget=target;
   lastMarchSheet=mpMarchSheetHtml();
   setHtml($("#bm-body"), lastMarchSheet);
@@ -12364,6 +12387,30 @@ function mpMarchSheetHtml(){
     h+="<div class='chips' style='margin-top:9px'>"+
        "<button class='seal blood ico' data-mp='rallystart' data-x='"+rx+"' data-y='"+ry+"'"+
        (mpState.loading?" disabled":"")+"><img src='images/ui/icon-alliance.png' alt=''>Созвать сбор</button> "+
+       "<button class='seal' data-act='closebuilding'>Отмена</button></div>";
+    return h;
+  }
+  // ---- Подкрепление в крепость своего союза -------------------------------
+  if(mode==="reinf"){
+    const [fx,fy]=String(mpState.reinfTarget||"").split(",").map(Number);
+    if(!Number.isFinite(fx)||!Number.isFinite(fy)) return gone("Крепость не выбрана");
+    const c=mpState.camps.find(z=>z.x===fx&&z.y===fy);
+    const cd=(c&&c.data)||{};
+    if(!c||c.t!=="regfort"||cd.state!=="ally") return gone("Крепость пропала");
+    if(!mpState.ally||mpState.ally.id!==cd.alliance_id) return gone("Это крепость другого союза");
+    const inFort=mpFortGarrisonTotal(fx,fy), room=Math.max(0,ALLY_FORT_CAP-inFort);
+    const dist=Math.round(Math.hypot(fx-p.x,fy-p.y));
+    let h="<div class='title'>Подкрепление в «"+escHtml(cd.shrine||"твердыню")+"»</div>"+
+      "<div class='note'>"+fx+", "+fy+" · "+dist+" клет. · в крепости "+fmt(inFort)+
+      " из "+fmt(ALLY_FORT_CAP)+"</div>"+
+      "<div class='note'>Отряд дойдёт до крепости и встанет в её гарнизон. Забрать его "+
+      "обратно можно в любой миг — но раненым в крепости лазарета нет: их лазареты дома.</div>"+errHtml;
+    if(room<=0) return h+"<div class='note' style='color:#e08'>Крепость полна.</div>"+
+      "<button class='seal wide' style='margin-top:9px' data-act='closebuilding'>Закрыть</button>";
+    h+=mpTroopPickerHtml("mp-rnf-",p);
+    h+="<div class='chips' style='margin-top:9px'>"+
+       "<button class='seal ico' data-mp='fortsend' data-x='"+fx+"' data-y='"+fy+"'"+
+       (mpState.loading?" disabled":"")+"><img src='images/ui/icon-alliance.png' alt=''>Отправить</button> "+
        "<button class='seal' data-act='closebuilding'>Отмена</button></div>";
     return h;
   }
@@ -14697,6 +14744,8 @@ function handleAct(e){
   if(cartRaidPick){ sel=null; selMarch=null; mpOpenMarchModal("raid",cartRaidPick.dataset.k); return; }
   const cartRallyPick=e.target.closest("[data-mp='cartrallypick']");
   if(cartRallyPick){ sel=null; selMarch=null; mpOpenMarchModal("rally",cartRallyPick.dataset.k); return; }
+  const cartReinfPick=e.target.closest("[data-mp='cartreinfpick']");
+  if(cartReinfPick){ sel=null; selMarch=null; mpOpenMarchModal("reinf",cartReinfPick.dataset.k); return; }
   const cartMovePick=e.target.closest("[data-mp='cartmovepick']");
   if(cartMovePick){ sel=null; selMarch=null; mpOpenMarchModal("move",cartMovePick.dataset.k); return; }
   // Фаза 17, кусочек 1 — клик по ячейке mpRenderCityMap(): открывает то же
@@ -16110,6 +16159,15 @@ function handleMpAct(e){
   if(friendOkBtn){ mpDoChat("friendok",{playerId:+friendOkBtn.dataset.id}); return; }
   const friendNoBtn=e.target.closest("[data-mp='friendno']");
   if(friendNoBtn){ mpDoChat("friendno",{playerId:+friendNoBtn.dataset.id}); return; }
+  // Гарнизон крепости (Фаза 56).
+  const fortSendBtn=e.target.closest("[data-mp='fortsend']");
+  if(fortSendBtn){ mpDoFortSend(+fortSendBtn.dataset.x, +fortSendBtn.dataset.y); return; }
+  const fortRecallBtn=e.target.closest("[data-mp='fortrecall']");
+  if(fortRecallBtn){
+    if(!confirm("Забрать свой отряд из крепости? Он пойдёт домой обычным маршем.")) return;
+    mpDoReinforce("recall",{x:+fortRecallBtn.dataset.x, y:+fortRecallBtn.dataset.y},"Отряд идёт домой.");
+    return;
+  }
   const rallyCancelBtn=e.target.closest("[data-mp='rallycancel']");
   if(rallyCancelBtn){
     if(!confirm("Распустить сбор? Войска всех соратников вернутся по замкам.")) return;
@@ -17022,7 +17080,9 @@ let mpState = { loading:false, joined:false, player:null, err:null, race:null, n
   rallies:[], rallyTarget:null, rallyJoinId:0,
   // Фаза 54 — чат. worldChat и dm приходят свежими первыми (как и allyChat):
   // ленты рисуются column-reverse, см. их CSS.
-  worldChat:[], dm:[], friends:[] };
+  worldChat:[], dm:[], friends:[],
+  // Фаза 56 — гарнизоны крепостей своего союза (чужие RLS не отдаёт).
+  fortGarrison:[], reinfTarget:null };
 let mpPollTimer = null;
 // Идёт ли прямо сейчас вход/авто-резюме в общий мир (см. mpOpen) — защита
 // от повторного запуска при быстрых переключениях вкладок меню.
@@ -17434,6 +17494,14 @@ function mpFortHelpHtml(o){
     "><img src='images/ui/icon-alliance.png' alt=''>Доложить "+fmt(step)+" каждого</button>"+
     (enough?"<div class='hint'>Снимет с оставшегося срока ту же долю, что доложено от стоимости.</div>"
            :"<div class='hint' style='color:#e08'>В казне столько не наберётся.</div>");
+}
+// Гарнизон крепости: строки своего союза по этой клетке, крупные первыми.
+function mpFortGarrisonAt(x,y){
+  return mpState.fortGarrison.filter(g=>g.x===x&&g.y===y)
+    .sort((a,b)=>countUnits(b.units||{})-countUnits(a.units||{}));
+}
+function mpFortGarrisonTotal(x,y){
+  return mpFortGarrisonAt(x,y).reduce((n,g)=>n+countUnits(g.units||{}),0);
 }
 // Казна союза, приведённая к четырём числам. Союз мог быть заведён до казны —
 // тогда поля просто нет, и ноль честнее, чем undefined в разметке.
@@ -18613,7 +18681,7 @@ async function mpRefreshAll(includeSlowLane){
       // состав меняется редко, а свою же реплику в чате показывает сразу
       // сам mpDoAllySay, не дожидаясь такта (см. её комментарий).
       mpRefreshAlliance(), mpRefreshAllianceMail(), mpRefreshAllyOf(), mpRefreshAllyInvites(),
-      mpRefreshFriends()
+      mpRefreshFriends(), mpRefreshFortGarrison()
     );
     // allSettled, не all: одна упавшая выборка (сеть моргнула на одной из
     // пятнадцати) не должна отменять остальные — раньше цепочка await
@@ -18908,6 +18976,19 @@ async function mpRefreshAllyInvites(){
     .eq("player_id", mpState.player.id).is("alliances.disbanded_at", null);
   if(!error && data){ mpState.allyInvites=data; mpRerenderData(); }
 }
+// Гарнизоны крепостей своего союза (Фаза 56). Чужие политика не отдаёт вовсе
+// — состав гарнизона такая же военная тайна, как и готовящийся сбор.
+// Медленная дорожка: гарнизон меняется походами, а не секундами.
+async function mpRefreshFortGarrison(){
+  if(!mpState.player || !mpState.ally){
+    if(mpState.fortGarrison.length){ mpState.fortGarrison=[]; mpRerenderData(); }
+    return;
+  }
+  const { data, error } = await sb.from("alliance_fort_garrison")
+    .select("x,y,player_id,units,sent_at,players(id,nick,race)")
+    .eq("alliance_id",mpState.ally.id).limit(500);
+  if(!error && data){ mpState.fortGarrison=data; mpRerenderData(); }
+}
 // Сборы союза (Фаза 53). Одной выборкой вместе с участниками и их именами:
 // PostgREST умеет вкладывать по внешнему ключу, а сбор без состава показывать
 // нечего — вся суть списка в том, кто уже привёл войска и сколько осталось
@@ -19046,6 +19127,27 @@ async function mpChatSend(){
     ok=await mpDoChat("say",{body:text});
   }
   if(ok){ const again=$("#chat-say"); if(again) again.value=""; }
+}
+// Подкрепление в крепость союза (mp-reinforce). Обвязка та же, что и у
+// походов: ошибку показываем в том же окне, где стоит игрок.
+async function mpDoReinforce(op,args,okText){
+  if(mpState.loading) return false;
+  mpState.loading=true; mpState.err=null; mpRerender();
+  try{
+    await mpCall("mp-reinforce", Object.assign({op},args||{}));
+    mpState.loading=false;
+    if(mpMarchCtx){ mpMarchCtx=null; $("#building-modal").classList.remove("open"); }
+    await Promise.all([mpRefreshPlayer(), mpRefreshMarches(), mpRefreshFortGarrison(), mpRefreshCamps()]);
+    if(okText) herald(okText);
+    mpRerender();
+    return true;
+  }catch(e){
+    mpState.loading=false; mpState.err=e.message||"Не удалось"; mpRerender();
+    return false;
+  }
+}
+async function mpDoFortSend(x,y){
+  await mpDoReinforce("send",{x,y,units:mpMarchUnitsOut()},"Подкрепление вышло.");
 }
 // Открыть полное окно (по клику на док или на счётчик непрочитанного).
 function mpOpenChat(thread){
@@ -20959,7 +21061,7 @@ function foMultiplayer(embedded, only){
     h+=rubric("Отряды в поле",inSlots+" из "+mpMarchSlots(st.b.hall||0));
     mpState.marches.forEach(m=>{
       const going=m.state==="go", gathering=m.state==="gather", sieging=m.state==="siege";
-      const isGather=m.mode==="gather", isRaid=m.mode==="raid";
+      const isGather=m.mode==="gather", isRaid=m.mode==="raid", isReinf=m.mode==="reinf";
       const opp=mpState.neighbors.find(n=>n.id===(m.data&&m.data.defender_id));
       // Фаза 25 — бой за точку: марш остаётся mode:"gather", у него нет
       // data.defender_id (тот только у PvP-штурма) — соперника ищем по
@@ -20985,6 +21087,10 @@ function foMultiplayer(embedded, only){
         ? "Точку "+m.tx+", "+m.ty+" оспаривают!"
         : isGather
         ? (going?"Идёт к точке сбора "+m.tx+", "+m.ty:gathering?"Собирает у "+m.tx+", "+m.ty:"Везёт добычу домой")
+        : isReinf
+        // Фаза 56 — подкрепление в крепость союза. Отдельной строкой, иначе
+        // отряд читался бы как «идёт к 103, 104» — к кому и зачем, неясно.
+        ? (going?"Идёт в крепость союза "+m.tx+", "+m.ty:"Возвращается из крепости "+m.tx+", "+m.ty)
         : isRaid
         ? (going?"Идёт на лагерь "+m.tx+", "+m.ty:"Возвращается от лагеря "+m.tx+", "+m.ty)
         : (going?"Идёт к ":"Возвращается от ")+(opp?opp.nick||"Безымянный лорд":m.tx+", "+m.ty);

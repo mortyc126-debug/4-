@@ -3616,6 +3616,9 @@ async function applyMarchArrive(admin, ev) {
   // лагеря (m.data.camp_lv, снят на отправке в mp-raid), не с игроком —
   // отдельная функция ниже, та же причина отдельной ветки, что у gather.
   if (m.mode === "raid") { await applyRaidArrive(admin, m); return; }
+  // Фаза 56 — подкрепление дошло до крепости своего союза и ложится в её
+  // гарнизон (боя тут нет: своя крепость своих же и ждала).
+  if (m.mode === "reinf") { await applyReinfArrive(admin, m); return; }
   // mode:"move" — отряд перенаправлен (mp-redirect) на пустое место или на
   // цель, для которой у сервера нет подготовленного действия. Дошёл — и
   // разворачивается домой, ровно как в RoK при переносе армии на чистую
@@ -3805,6 +3808,13 @@ async function applyRallyLaunch(admin, ev) {
     mdata.camp_lv = (cell.data && cell.data.lv) || 1;
   } else if (cell && cell.t === "regfort" && (cell.data && cell.data.state) === "barb") {
     mdata.camp_lv = RALLY_REGFORT_TIER_LV[Math.max(1, Math.min(3, ((cell.data && cell.data.tier) | 0)))] || 17;
+    mdata.regfort = true;
+  } else if (cell && cell.t === "regfort" && (cell.data && cell.data.state) === "ally"
+             && cell.data.alliance_id !== rally.alliance_id) {
+    // Фаза 56 — сбор на чужую крепость. Пометку fortress ставит уже сама
+    // завязка штурма (applyRaidArrive), здесь достаточно не развернуть сбор
+    // как «цель исчезла»: за шесть часов сбора на месте варваров вполне мог
+    // встать чужой союз, и это не повод расходиться — наоборот.
     mdata.regfort = true;
   } else {
     const { data: foe } = await admin.from("players")
@@ -4406,6 +4416,10 @@ async function applyBattleRound(admin, ev) {
   // уже разобран каким-то прошлым (задвоенным?) вызовом — тот же принцип
   // самоохраны, что и m.state!=="go" в applyMarchArrive.
   if (!m || m.state !== "siege" || !m.data || !m.data.battle) return;
+  // Фаза 56 — штурм крепости союза идёт маршем mode:"raid" (цель — клетка, а
+  // не игрок), но защитник у него не лагерь варваров, а живой гарнизон;
+  // отличает их пометка fortress, поставленная на завязке.
+  if (m.mode === "raid" && m.data.fortress) { await applyFortBattleRound(admin, m); return; }
   if (m.mode === "raid") { await applyRaidBattleRound(admin, m); return; }
   // Фаза 25 — бой за точку ресурсов: атакующий марш остаётся mode:"gather"
   // на всём протяжении (не переименовывается в "attack"), state:"siege"
@@ -5078,6 +5092,294 @@ async function finalizeNodeBattle(admin, m, attRow, occRow, occMarch, attP, occP
 // attLoss, так что вычесть его целиком из отправленных войск и добавить
 // "лёгких" назад отдельно — не двойной счёт, а то же число, разложенное на
 // "уже дома" и "ещё в пути").
+// =============================================================================
+// Фаза 56 — гарнизон крепости союза: подкрепления и оборона области.
+// =============================================================================
+// Стена крепости. Уровней у крепости нет (условие автора), поэтому и число
+// одно, а не таблица: двадцать пятый — верх шкалы стен в игре, и крепость
+// области стоит ровно столько. Гарнизонного здания у неё нет вовсе, поэтому
+// вторым числом всюду ноль.
+const FORT_WALL_LV = 25;
+// Вместимость — 2 000 000 и неизменна. Копия ALLY_FORT_CAP из mp-reinforce и
+// index.html (правило самодостаточных функций).
+const FORT_CAP = 2000000;
+
+// Отряд дошёл до крепости своего союза — ложится в гарнизон.
+//
+// Крепость могла за дорогу пасть или сменить хозяина: тогда становиться
+// некуда, и отряд разворачивается домой обычным порядком, как марш на
+// пропавшую цель.
+async function applyReinfArrive(admin, m) {
+  const nowSec = Date.now() / 1000;
+  const x = (m.data && m.data.cell_x) != null ? m.data.cell_x : m.tx;
+  const y = (m.data && m.data.cell_y) != null ? m.data.cell_y : m.ty;
+  const { data: cell } = await admin.from("map_cells").select("*")
+    .eq("world_id", m.world_id).eq("x", x).eq("y", y).maybeSingle();
+  const cd = (cell && cell.data) || {};
+  const allianceId = m.data && m.data.alliance_id;
+  if (!cell || cell.t !== "regfort" || cd.state !== "ally" || cd.alliance_id !== allianceId) {
+    await sendSurvivorsHome(admin, m, nowSec, m.units, {});
+    return;
+  }
+  // Потолок сверяем ЗАНОВО: пока отряд шёл, крепость могли добить до полной
+  // другие. Лишнее не влезает и уходит домой — молча терять его нельзя.
+  const { data: garr } = await admin.from("alliance_fort_garrison").select("player_id, units")
+    .eq("world_id", m.world_id).eq("x", x).eq("y", y);
+  let inFort = 0;
+  (garr || []).forEach((g) => { inFort += unitsTotal(g.units); });
+  const room = Math.max(0, FORT_CAP - inFort);
+  const coming = unitsTotal(m.units);
+  if (room <= 0) {
+    await admin.from("mail").insert({
+      world_id: m.world_id, player_id: m.player_id, kind: "alliance",
+      data: { title: "Крепость полна", body: "Отряд не поместился в крепость «" +
+        (cd.shrine || "твердыня") + "» (" + x + ", " + y + ") и возвращается домой." },
+    });
+    await sendSurvivorsHome(admin, m, nowSec, m.units, {});
+    return;
+  }
+  // Влезает не всё — берём по долям (тот же largestRemainder, что делит
+  // уцелевших сбора), остаток разворачиваем домой.
+  let take = m.units, rest = null;
+  if (coming > room) {
+    take = { inf: {}, arc: {}, cav: {}, sie: {} };
+    rest = { inf: {}, arc: {}, cav: {}, sie: {} };
+    const flat = [];
+    TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) flat.push((m.units[t] && m.units[t][i]) || 0); });
+    const got = largestRemainder(room, flat, coming);
+    let k = 0;
+    TKEYS.forEach((t) => { for (let i = 1; i <= 5; i++) {
+      const had = (m.units[t] && m.units[t][i]) || 0;
+      take[t][i] = got[k]; rest[t][i] = had - got[k]; k++;
+    } });
+  }
+  const mineRow = (garr || []).find((g) => g.player_id === m.player_id);
+  const merged = unitsAdd((mineRow && mineRow.units) || {}, take);
+  const { error: gErr } = await admin.from("alliance_fort_garrison").upsert({
+    world_id: m.world_id, x, y, player_id: m.player_id, alliance_id: allianceId,
+    units: merged, sent_at: new Date().toISOString(),
+  }, { onConflict: "world_id,x,y,player_id" });
+  if (gErr) throw gErr;
+  await admin.from("alliance_chat").insert({
+    alliance_id: allianceId, player_id: null, nick: "", kind: "system",
+    body: "В крепость «" + (cd.shrine || "твердыня") + "» пришло подкрепление: " +
+          unitsTotal(take) + " воинов.",
+  });
+  if (rest && unitsTotal(rest) > 0) {
+    // Остаток идёт домой отдельным маршем: тот же марш переиспользовать
+    // нельзя — часть войск уже в гарнизоне.
+    const back = Object.assign({}, m, { units: rest });
+    await sendSurvivorsHome(admin, back, nowSec, rest, {});
+    return;
+  }
+  await admin.from("marches").delete().eq("id", m.id);
+}
+
+// --- Штурм крепости союза ---------------------------------------------------
+//
+// Автор про место крепости: «на эту крепость можно напасть как сбором, так и
+// одиночными войсками и разбить».
+//
+// Бой считает ТОТ ЖЕ движок, что и штурм города (initPvpBattle/
+// runPvpBattleRounds) — крепость от города отличается тремя вещами, и все
+// три выражаются его же параметрами:
+//   стена всегда FORT_WALL_LV, гарнизонного здания нет (0);
+//   защитник — не игрок, а ГАРНИЗОН из отрядов многих: в бой идёт сложенное
+//   войско, а бонусы берутся у того, кто привёл больше всех («кто привёл
+//   больше всех, тот и держит стену») — одного набора бонусов движок и ждёт;
+//   склада у крепости нет, грабить нечего.
+//
+// Раненым гарнизона лазарета не полагается: их лазареты за тридевять земель,
+// в своих городах. Потери гарнизона — потери насмерть, и это делает крепость
+// дорогой не только в постройке.
+function fortDefShim(cmdRow, garrisonUnits) {
+  const p = cmdRow ? cmdRow.state : null;
+  // Гарнизон без единого живого хозяина (все павшие) — считаем по-людски:
+  // человеческие бонусы по умолчанию, лишь бы бой сошёлся.
+  const base = p || { race: "human", b: { hall: 1 }, tech: {}, gen: { id: 0, tal: {} }, gear: {} };
+  const shim = JSON.parse(JSON.stringify(base));
+  shim.race = shim.race || (cmdRow && cmdRow.race) || "human";
+  shim.troops = garrisonUnits;
+  // Полководца в гарнизоне нет: его в крепость не отправляют (см. mp-reinforce).
+  shim.gen = Object.assign({}, shim.gen || {}, { id: (shim.gen && shim.gen.id) || 0, away: null });
+  return shim;
+}
+// Сложить гарнизон и найти его старшего. Возвращает всё, что нужно и завязке
+// боя, и его разбору.
+async function loadFortGarrison(admin, worldId, x, y) {
+  const { data: rows } = await admin.from("alliance_fort_garrison")
+    .select("player_id, units, alliance_id").eq("world_id", worldId).eq("x", x).eq("y", y);
+  const parts = (rows || []).filter((r) => unitsTotal(r.units) > 0);
+  let units = { inf: {}, arc: {}, cav: {}, sie: {} };
+  parts.forEach((r) => { units = unitsAdd(units, r.units); });
+  let cmdId = null, best = -1;
+  parts.forEach((r) => { const n = unitsTotal(r.units); if (n > best) { best = n; cmdId = r.player_id; } });
+  let cmdRow = null;
+  if (cmdId != null) {
+    const { data: c } = await admin.from("players").select("*").eq("id", cmdId).maybeSingle();
+    cmdRow = c || null;
+  }
+  return { parts, units, cmdRow };
+}
+
+async function applyFortAssault(admin, m, cell, attRow, attP) {
+  const nowSec = Date.now() / 1000;
+  const cd = cell.data || {};
+  const g = await loadFortGarrison(admin, m.world_id, cell.x, cell.y);
+  const attHasGen = !!(m.data && m.data.has_gen);
+  // Пустая крепость падает без боя. Это не поблажка штурмующему, а прямое
+  // следствие правил: гарнизон — единственное, что её держит, и союз, не
+  // поставивший в неё ни одного воина, области не удержит.
+  if (!g.parts.length) {
+    await fortFalls(admin, m.world_id, cell, cd, attRow, nowSec, [], "Крепость взята без боя — её никто не защищал.");
+    await sendSurvivorsHome(admin, m, nowSec, m.units, {});
+    return;
+  }
+  await admin.from("mail").insert({
+    world_id: m.world_id, player_id: attRow.id, kind: "siege_event",
+    data: { phase: "start", role: "attacker", mode: "fort", fort: cd.shrine || "Крепость союза" },
+  });
+  const defP = fortDefShim(g.cmdRow, g.units);
+  const state = initPvpBattle(m.units, attP, g.units, defP, FORT_WALL_LV, 0, m.id,
+                              attHasGen, SIEGE_ATT_DEATH_FRAC, SIEGE_DEF_DEATH_FRAC);
+  // Клетку кладём в state — разбор боя (возможно, через несколько тиков)
+  // должен знать, какую именно крепость брали, а m.data.cell_x/y у сбора
+  // приходит от созывающего и мог бы разойтись.
+  state.fortX = cell.x; state.fortY = cell.y;
+  runPvpBattleRounds(state, attP, defP, FORT_WALL_LV, 0, battleRoundsPerTick(state.ticksBudget));
+  await progressOrFinalizeFortBattle(admin, m, attRow, attP, state, nowSec);
+}
+
+async function applyFortBattleRound(admin, m) {
+  const { data: attRow } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
+  if (!attRow) { await admin.from("marches").delete().eq("id", m.id); return; }
+  const attP = attRow.state;
+  attP.race = attP.race || attRow.race;
+  const state = m.data.battle;
+  const g = await loadFortGarrison(admin, m.world_id, state.fortX, state.fortY);
+  // Гарнизон отозвали посреди боя (mp-reinforce recall) — драться больше не с
+  // кем, крепость падает. Отзывать войска из-под удара можно: это отступление,
+  // и цена ему та же, что и в любом другом бою.
+  // Гарнизон мог опустеть посреди боя: соратники отозвали войска (mp-reinforce
+  // recall — отступление из-под удара разрешено, цена та же, что и всюду) или
+  // просто все пали. Пустой гарнизон боя не выиграет, и следующий же раунд
+  // доведёт бой до конца — крепость падёт.
+  const defP = fortDefShim(g.cmdRow, g.units);
+  runPvpBattleRounds(state, attP, defP, FORT_WALL_LV, 0, battleRoundsPerTick(state.ticksBudget));
+  await progressOrFinalizeFortBattle(admin, m, attRow, attP, state, Date.now() / 1000);
+}
+
+async function progressOrFinalizeFortBattle(admin, m, attRow, attP, state, nowSec) {
+  if (state.concluded) {
+    // Тот же лишний цикл на доводку полоски, что и у PvP (см. его заголовок).
+    if (!state.pendingFinalize) {
+      state.pendingFinalize = true;
+      await persistBattleSiege(admin, m, state, nowSec);
+      return;
+    }
+    await finalizeFortBattle(admin, m, attRow, attP, state, nowSec);
+    return;
+  }
+  await persistBattleSiege(admin, m, state, nowSec);
+}
+
+// Крепость пала: место снова разорено, и к нему на общих основаниях
+// возвращаются варвары через двенадцать часов, если никто не отстроится.
+async function fortFalls(admin, worldId, cell, cd, attRow, nowSec, parts, chatLine) {
+  const allianceId = cd.alliance_id;
+  const next = Object.assign({}, cd, {
+    state: "razed", alliance_id: null, razed_at: nowSec,
+    build_t0: null, build_t1: null, build_cost: null, built_at: null,
+  });
+  await admin.from("map_cells").update({ data: next, updated_at: new Date().toISOString() })
+    .eq("world_id", worldId).eq("x", cell.x).eq("y", cell.y);
+  await admin.from("events").insert({
+    world_id: worldId, fire_at: new Date((nowSec + REGFORT_RESPAWN_SEC) * 1000).toISOString(),
+    type: "regfort_respawn", data: { x: cell.x, y: cell.y, razed_at: nowSec },
+  });
+  await admin.from("alliance_fort_garrison").delete()
+    .eq("world_id", worldId).eq("x", cell.x).eq("y", cell.y);
+  if (allianceId != null) {
+    await admin.from("alliance_chat").insert({
+      alliance_id: allianceId, player_id: null, nick: "", kind: "system",
+      body: "КРЕПОСТЬ ПАЛА. «" + (cd.shrine || "Твердыня") + "» (" + cell.x + ", " + cell.y +
+            ") взята: " + (attRow ? (attRow.nick || "неизвестный правитель") : "врагом") +
+            ". Область " + (cd.region_name || "") + " снова ничья.",
+    });
+  }
+  // Письмо каждому, кто держал в ней войска: их отряды погибли там все до
+  // одного, и узнать об этом из общего чата мало.
+  for (const pt of parts || []) {
+    await admin.from("mail").insert({
+      world_id: worldId, player_id: pt.player_id, kind: "alliance",
+      data: { title: "Крепость пала", body: "«" + (cd.shrine || "Твердыня") + "» (" + cell.x + ", " +
+        cell.y + ") взята штурмом. Ваш гарнизон погиб весь." },
+    });
+  }
+  if (chatLine && allianceId != null) {
+    await admin.from("alliance_chat").insert({
+      alliance_id: allianceId, player_id: null, nick: "", kind: "system", body: chatLine,
+    });
+  }
+}
+
+async function finalizeFortBattle(admin, m, attRow, attP, state, nowSec) {
+  const x = state.fortX, y = state.fortY;
+  const { data: cell } = await admin.from("map_cells").select("*")
+    .eq("world_id", m.world_id).eq("x", x).eq("y", y).maybeSingle();
+  const cd = (cell && cell.data) || {};
+  const g = await loadFortGarrison(admin, m.world_id, x, y);
+
+  if (!attP.wounded) attP.wounded = { inf: {}, arc: {}, cav: {}, sie: {} };
+  TKEYS.forEach((t) => { if (!attP.wounded[t]) attP.wounded[t] = {}; });
+  const attHs = hospitalSplit(attP, state.attLossTotal,
+    state.attDeathFrac * (state.winner === "att" ? WIN_DEATH_MULT : LOSE_DEATH_MULT), state.attBroken);
+  attP.wounded = unitsAdd(attP.wounded, attHs.hurtUnits);
+  const survivors = unitsAdd(unitsSub(state.attStartUnits, state.attLossTotal), attHs.slightUnits);
+  if (state.winner === "att") addXp(attP, Math.round(400 + unitsTotal(state.defStartUnits) / 200));
+  if (state.attHasGen && unitsTotal(survivors) <= 0 && attP.gen && attP.gen.away === m.id) attP.gen.away = null;
+  await savePlayerStateOrThrow(admin, attRow, attP);
+
+  // Потери гарнизона делятся между теми, кто его собрал, — по каждой клетке
+  // (род × ступень) и по долям в ней же, тем же splitSurvivorsByParts, что
+  // делит уцелевших общего сбора. Лазарета у них нет (см. заголовок выше):
+  // сколько пало, столько и пало.
+  const defAlive = unitsSub(state.defStartUnits, state.defLossTotal);
+  const mine = splitSurvivorsByParts(defAlive, g.parts);
+  const aliveTotal = unitsTotal(defAlive);
+  for (let k = 0; k < g.parts.length; k++) {
+    const pt = g.parts[k];
+    const left = unitsTotal(mine[k]);
+    if (left > 0) {
+      await admin.from("alliance_fort_garrison").update({ units: mine[k] })
+        .eq("world_id", m.world_id).eq("x", x).eq("y", y).eq("player_id", pt.player_id);
+    } else {
+      await admin.from("alliance_fort_garrison").delete()
+        .eq("world_id", m.world_id).eq("x", x).eq("y", y).eq("player_id", pt.player_id);
+    }
+    await admin.from("mail").insert({
+      world_id: m.world_id, player_id: pt.player_id, kind: "alliance",
+      data: { title: aliveTotal > 0 ? "Штурм крепости отбит" : "Крепость пала",
+              body: "«" + (cd.shrine || "Твердыня") + "» (" + x + ", " + y + "), штурм от " +
+                (attRow.nick || "неизвестного правителя") + ". Из вашего гарнизона осталось " + left +
+                " из " + unitsTotal(pt.units) + " воинов." },
+    });
+  }
+
+  if (aliveTotal <= 0 && cell && cell.t === "regfort" && cd.state === "ally") {
+    await fortFalls(admin, m.world_id, cell, cd, attRow, nowSec, [], null);
+  } else if (cd.alliance_id != null) {
+    await admin.from("alliance_chat").insert({
+      alliance_id: cd.alliance_id, player_id: null, nick: "", kind: "system",
+      body: "Штурм крепости «" + (cd.shrine || "твердыня") + "» отбит. В гарнизоне осталось " +
+            aliveTotal + " воинов.",
+    });
+  }
+  // Уцелевшие штурмующие уходят домой общей воронкой — она же рассыпает сбор,
+  // если крепость брали сбором (см. sendSurvivorsHome/dissolveRally).
+  await sendSurvivorsHome(admin, m, nowSec, survivors, {});
+}
+
 async function applyRaidArrive(admin, m) {
   const { data: attRow, error: aErr } = await admin.from("players").select("*").eq("id", m.player_id).maybeSingle();
   if (aErr) throw aErr;
@@ -5101,6 +5403,23 @@ async function applyRaidArrive(admin, m) {
   // Крепость региона (regfort) — такая же цель набега, как лагерь; но только
   // пока в ней варвары: разорённую или взятую союзом штурмовать нечем, и
   // отряд разворачивается пустым, как на истощённую точку.
+  // Фаза 56 — крепость СОЮЗА тоже цель: «на эту крепость можно напасть как
+  // сбором, так и одиночными войсками и разбить». Своя не в счёт — по своим
+  // не ходят, отряд разворачивается, как на пропавшую цель.
+  if (cell && cell.t === "regfort" && (cell.data && cell.data.state) === "ally") {
+    const { data: myMem } = await admin.from("alliance_members")
+      .select("alliance_id").eq("player_id", attRow.id).maybeSingle();
+    if (myMem && myMem.alliance_id === cell.data.alliance_id) {
+      await sendSurvivorsHome(admin, m, nowSec, m.units, {});
+      return;
+    }
+    // Пометка на марше: по ней applyBattleRound отличит продолжение штурма
+    // крепости от продолжения набега на лагерь.
+    await admin.from("marches").update({ data: { ...m.data, fortress: true } }).eq("id", m.id);
+    m.data = { ...m.data, fortress: true };
+    await applyFortAssault(admin, m, cell, attRow, attP);
+    return;
+  }
   const cellIsRaidable = cell && (cell.t === "camp" || cell.t === "fort" ||
     (cell.t === "regfort" && (cell.data && cell.data.state) === "barb"));
   if (!cellIsRaidable) {

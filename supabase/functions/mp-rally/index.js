@@ -198,10 +198,18 @@ Deno.serve(async (req) => {
         targetKind = cell.t;
         targetName = (cell.t === "fort" ? "Форт" : "Лагерь") + " варваров";
       } else if (cell && cell.t === "regfort") {
-        if ((cell.data && cell.data.state) !== "barb")
-          return jsonResponse({ err: "В этой крепости варваров нет" }, 400);
+        // Фаза 56 — сбор ходит и на крепость союза: это ровно та цель, ради
+        // которой сбор в первую очередь и созывают.
+        const fortState = (cell.data && cell.data.state) || "barb";
+        if (fortState !== "barb" && fortState !== "ally")
+          return jsonResponse({ err: fortState === "building"
+            ? "Тут пока только стройка — бить некого"
+            : "Это место пусто" }, 400);
+        if (fortState === "ally" && (cell.data && cell.data.alliance_id) === myMem.alliance_id)
+          return jsonResponse({ err: "Это крепость вашего союза" }, 400);
         targetKind = "regfort";
-        targetName = (cell.data && cell.data.shrine) || "Крепость варваров";
+        targetName = (cell.data && cell.data.shrine) ||
+                     (fortState === "ally" ? "Крепость союза" : "Крепость варваров");
       } else {
         const { data: foe } = await admin.from("players")
           .select("id,nick,x,y,shield_until,dead_at").eq("world_id", world.id)
