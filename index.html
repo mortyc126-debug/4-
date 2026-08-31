@@ -9290,7 +9290,7 @@ async function redirectMarchTo(marchId,gx,gy){
       await mpCall("mp-redirect",{march_id:marchId,x:gx,y:gy});
       await mpRefreshMarches();
       herald("Отряд перенаправлен.");
-    }catch(e){ mpState.err=e.message; herald(e.message||"Не вышло перенаправить."); }
+    }catch(e){ mpState.err=mpFriendlyErr(e); herald(mpFriendlyErr(e)||"Не вышло перенаправить."); }
     finally{ mpState.loading=false; mpRerender(); }
     return;
   }
@@ -11033,7 +11033,7 @@ async function mpDoTrainGo(){
     await mpRefreshPlayer();
     mpTrainCtx=null; mpCarouselCtx=null;
     mpCloseBuildingModal();
-  }catch(e){ mpState.err=e.message; }
+  }catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 // ===== Фаза 19, кусочек 2 — карусель лазарета: абсолютная копия одиночной
@@ -11133,7 +11133,7 @@ async function mpDoHealGo(){
     await mpRefreshPlayer();
     mpHealCtx=null; mpHealCarouselOpen=false;
     mpCloseBuildingModal();
-  }catch(e){ mpState.err=e.message; }
+  }catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 // Дословная копия hospitalInfoHtml(p) (см. её исходник ниже по файлу) —
@@ -11536,7 +11536,7 @@ async function mpDoBarter(){
     // но молчать об этом тоже нельзя, иначе "писем не приходит" выглядит как
     // отсутствие механики, а не как сбой записи.
     if(r && r.mail_err) herald("Обмен прошёл, но квитанцию записать не удалось.");
-  }catch(e){ mpTradeCtx.err=e.message; }
+  }catch(e){ mpTradeCtx.err=mpFriendlyErr(e); }
   finally{
     mpState.loading=false;
     if(mpTradeCtx){ mpTradeRepaint(); mpSyncBarterInputs(); } else mpRerender();
@@ -11566,7 +11566,7 @@ async function mpDoTrade(){
     $("#building-modal").classList.remove("open");
     herald("Обоз вышел — доедет "+fmt(r&&r.net_total||0)+".");
   }catch(e){
-    mpTradeCtx.err=e.message;
+    mpTradeCtx.err=mpFriendlyErr(e);
   }
   finally{ mpState.loading=false; if(mpTradeCtx) mpTradeRepaint(); else mpRerender(); }
 }
@@ -12056,7 +12056,7 @@ async function mpDoPlaceConfirm(){
     mpJustPlaced={b,plot,gx,gy,at:Date.now()};
     setTimeout(()=>{ mpJustPlaced=null; },LAND_MS);
   }catch(e){
-    mpState.err=e.message; herald(e.message);
+    mpState.err=mpFriendlyErr(e); herald(mpFriendlyErr(e));
     mpUpdatePlaceDom(); // ошибка — остаёмся в размещении, вернуть галочку по valid
   }
   finally{ mpState.loading=false; mpRerender(); }
@@ -13114,7 +13114,7 @@ async function profileLoadBoard(id,force){
     const { data, error } = await q.order(b.by,{ascending:!b.desc}).limit(50);
     if(error) throw new Error(error.message);
     profileBoardData[id]=data||[]; profileBoardErr[id]=null; profileBoardAt[id]=Date.now();
-  }catch(e){ profileBoardErr[id]=e.message; }
+  }catch(e){ profileBoardErr[id]=mpFriendlyErr(e); }
   refreshProfileIfOpen();
 }
 // Летопись — та самая таблица chronicles (миграция 0007), открытая на чтение
@@ -13131,7 +13131,7 @@ async function profileLoadChronicles(force){
       .order("created_at", {ascending:false}).limit(50);
     if(error) throw new Error(error.message);
     profileChron=data||[]; profileChronErr=null; profileChronAt=Date.now();
-  }catch(e){ profileChronErr=e.message; }
+  }catch(e){ profileChronErr=mpFriendlyErr(e); }
   refreshProfileIfOpen();
 }
 function profileOpenSection(id){
@@ -17148,6 +17148,22 @@ const BUILD_MP_MULTI = new Set(["hospital","farm","lumber","quarry","mine"]);
 // перестаёт её ждать и кидает понятную ошибку — sb.auth.* не даёт
 // AbortSignal). Сам fetch к Edge Function — AbortController, отменяет
 // запрос по-настоящему, не просто "перестаёт ждать".
+// Игрок видел "Failed to fetch" — сырой текст исключения браузера прямо в
+// русской панели. Источник — fetch/supabase-js: при обрыве связи ОНИ сами
+// формулируют e.message, и у каждого браузера свой английский текст
+// ("Failed to fetch" в Chrome, "NetworkError when attempting to fetch
+// resource." в Firefox, "Load failed" в Safari) — этот текст никогда не был
+// рассчитан на игрока, только на консоль разработчика. Отличать его от
+// НАШИХ ошибок не нужно перечислением всех вариантов по языку и браузеру:
+// все свои сообщения (throw new Error(...) в этом файле, j.err с сервера,
+// mpWithTimeout выше) — уже по-русски, значит хватает одной проверки на
+// кириллицу. Не найдена — оставшееся почти наверняка сеть, отдаём один
+// честный и понятный текст вместо гадания, что именно сломалось.
+function mpFriendlyErr(e){
+  const m = (e && e.message) || "";
+  if(/[а-яА-ЯёЁ]/.test(m)) return m;
+  return "Нет связи с миром. Проверьте подключение и попробуйте ещё раз.";
+}
 function mpWithTimeout(promise, ms, label){
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error((label||"Запрос") + " не отвечает дольше " + Math.round(ms/1000) + "с. Проверьте соединение и попробуйте ещё раз.")), ms);
@@ -19095,7 +19111,7 @@ async function mpDoAlly(op, args, okText){
     mpRerender();
     return true;
   }catch(e){
-    mpAllyBusy=false; mpAllyErr=e.message||"Не удалось"; mpRerender();
+    mpAllyBusy=false; mpAllyErr=mpFriendlyErr(e)||"Не удалось"; mpRerender();
     return false;
   }
 }
@@ -19115,7 +19131,7 @@ async function mpDoChat(op, args){
     mpRerender();
     return true;
   }catch(e){
-    mpChatBusy=false; mpChatErr=e.message||"Не сказалось"; mpRerender();
+    mpChatBusy=false; mpChatErr=mpFriendlyErr(e)||"Не сказалось"; mpRerender();
     return false;
   }
 }
@@ -19134,7 +19150,7 @@ async function mpChatSend(){
     // mpDoAllySay: та читает своё поле (#mp-ally-say) на экране союза.
     mpChatBusy=true; mpChatErr=null; mpRerender();
     try{ await mpCall("mp-alliance",{op:"say",body:text}); mpChatBusy=false; await mpRefreshAlliance(); ok=true; }
-    catch(e){ mpChatBusy=false; mpChatErr=e.message||"Не сказалось"; }
+    catch(e){ mpChatBusy=false; mpChatErr=mpFriendlyErr(e)||"Не сказалось"; }
     mpRerender();
   } else if(String(mpChatThread).startsWith("dm:")){
     ok=await mpDoChat("dm",{toId:Number(String(mpChatThread).slice(3)), body:text});
@@ -19157,7 +19173,7 @@ async function mpDoReinforce(op,args,okText){
     mpRerender();
     return true;
   }catch(e){
-    mpState.loading=false; mpState.err=e.message||"Не удалось"; mpRerender();
+    mpState.loading=false; mpState.err=mpFriendlyErr(e)||"Не удалось"; mpRerender();
     return false;
   }
 }
@@ -19220,7 +19236,7 @@ async function mpDoRally(op,args,okText){
     mpRerender();
     return true;
   }catch(e){
-    mpState.loading=false; mpState.err=e.message||"Не удалось"; mpRerender();
+    mpState.loading=false; mpState.err=mpFriendlyErr(e)||"Не удалось"; mpRerender();
     return false;
   }
 }
@@ -19277,7 +19293,7 @@ async function mpDoAllySay(){
     const again=$("#mp-ally-say"); if(again) again.value="";
     await mpRefreshAlliance();
     mpRerender();
-  }catch(e){ mpAllyBusy=false; mpAllyErr=e.message||"Не сказалось"; mpRerender(); }
+  }catch(e){ mpAllyBusy=false; mpAllyErr=mpFriendlyErr(e)||"Не сказалось"; mpRerender(); }
 }
 // Девиз и порядок приёма — тоже форма, тоже читается на клик.
 async function mpDoAllyEdit(){
@@ -19306,7 +19322,7 @@ async function mpDoSendMail(){
     await mpRefreshPmMail();
     mpMailCat="sent"; mpRerender();
   }catch(e){
-    mpComposeSending=false; mpComposeErr=e.message||"Не удалось отправить письмо"; mpRerender();
+    mpComposeSending=false; mpComposeErr=mpFriendlyErr(e)||"Не удалось отправить письмо"; mpRerender();
   }
 }
 /* =========================================================================
@@ -19392,7 +19408,7 @@ async function mpDoRestart(){
     await mpCall("mp-restart",{});
   }catch(err){
     mpRestarting=false;
-    mpRestartErr=err.message||"Не удалось начать заново. Попробуйте ещё раз.";
+    mpRestartErr=mpFriendlyErr(err)||"Не удалось начать заново. Попробуйте ещё раз.";
     mpRenderDeath();
     return;
   }
@@ -19466,7 +19482,7 @@ async function mpOpen(){
     // и слегка устаревшем) с честной пометкой об ошибке внизу панели, а не
     // получает вместо замка форму входа. Ветка "Нужна раса" ниже к кэшу не
     // относится вовсе: там игрока в мире действительно нет.
-    const keepCached = mpState.joined && mpState.player && !/Нужна раса/.test(e.message||"");
+    const keepCached = mpState.joined && mpState.player && !/Нужна раса/.test(mpFriendlyErr(e)||"");
     if(!keepCached) mpState.joined=false;
     // Остаёмся при кэшированном городе — значит игрок в мире, просто вход
     // не достучался. Опрос при этом ещё НЕ запущен (его запускает только
@@ -19489,7 +19505,7 @@ async function mpOpen(){
     // нескольких табов в бургер-меню, там плоская форма (см. !embedded в
     // foMultiplayer) остаётся честным быстрым путём, не первым
     // впечатлением от игры.
-    if(!SP_UNLOCKED && !wasJoined && /Нужна раса/.test(e.message)){
+    if(!SP_UNLOCKED && !wasJoined && /Нужна раса/.test(mpFriendlyErr(e))){
       // Фаза 14, кусочек 9 — визард сам по себе уже готовый экран (не
       // "загрузка"), снимаем накидку ДО его показа: иначе игрок с новым
       // anon-uid смотрел бы на спиннер вместо формы регистрации, пока сам
@@ -19511,7 +19527,7 @@ async function mpOpen(){
       // состояние: накидку долой, панель честно покажет mpState.err (см.
       // foMultiplayer), не оставляем пользователя перед вечным спиннером.
       mpHideLoading();
-      mpState.err=e.message;
+      mpState.err=mpFriendlyErr(e);
     }
   }
   finally{ mpOpenInFlight=false; mpState.loading=false; mpRerender(); }
@@ -19524,7 +19540,7 @@ async function mpDoJoin(){
     if(!j || !j.player) throw new Error("Сервер вернул пустой ответ на вход в мир.");   // см. тот же довод в mpOpen
     mpState.joined=true; mpSetPlayer(j.player); mpFocusWorld3D(); mpStartPolling();
     await mpRefreshAll(true);   // см. mpRefreshAll — параллельно, а не цепочкой await
-  }catch(e){ mpState.err=e.message; }
+  }catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 async function mpDoTrain(type){
@@ -19533,7 +19549,7 @@ async function mpDoTrain(type){
   const n=Math.max(1,Math.min(cap,+((inp&&inp.value)||1)));
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-train",{type,tier:1,n}); await mpRefreshPlayer(); }
-  catch(e){ mpState.err=e.message; }
+  catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 // Новый кусочек (после Фазы 11) — переобучение войск в следующий тир
@@ -19545,13 +19561,13 @@ async function mpDoRetrain(type,fromTier){
   const n=Math.max(1,+((inp&&inp.value)||1));
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-retrain",{type,fromTier,n}); await mpRefreshPlayer(); }
-  catch(e){ mpState.err=e.message; }
+  catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 async function mpDoBuild(bk,plot){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-build",plot==null?{bk}:{bk,plot}); await mpRefreshPlayer(); }
-  catch(e){ mpState.err=e.message; }
+  catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 // Фаза 11, кусочек 1 — добыча материалов в Горне (mp-forge), см. рубрику
@@ -19559,7 +19575,7 @@ async function mpDoBuild(bk,plot){
 async function mpDoForge(mat){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-forge",{mat}); await mpRefreshPlayer(); }
-  catch(e){ mpState.err=e.message; }
+  catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 // Фаза 11, кусочек 2 — слияние 4 материалов в 1 более редкий (mp-upgrade),
@@ -19567,7 +19583,7 @@ async function mpDoForge(mat){
 async function mpDoUpgrade(mat,tier){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-upgrade",{mat,tier}); await mpRefreshPlayer(); }
-  catch(e){ mpState.err=e.message; }
+  catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 // Фаза 11, кусочек 3 — ковка снаряжения (mp-craft), см. рубрику «Горн» в
@@ -19580,7 +19596,7 @@ async function mpDoUpgrade(mat,tier){
 async function mpDoCraft(slot,order,rarity){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-craft",{slot,order,rarity}); await mpRefreshPlayer(); }
-  catch(e){ mpState.err=e.message; }
+  catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 // Фаза 11, кусочек 4 — надеть/снять/разобрать (mp-equip/mp-unequip/
@@ -19590,25 +19606,25 @@ async function mpDoCraft(slot,order,rarity){
 async function mpDoUsetome(v){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-usetome",{v}); await mpRefreshPlayer(); }
-  catch(e){ mpState.err=e.message; }
+  catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 async function mpDoEquip(slot,order,rarity){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-equip",{slot,order,rarity}); await mpRefreshPlayer(); }
-  catch(e){ mpState.err=e.message; }
+  catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 async function mpDoUnequip(slot){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-unequip",{slot}); await mpRefreshPlayer(); }
-  catch(e){ mpState.err=e.message; }
+  catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 async function mpDoDismantle(slot,order,rarity){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-dismantle",{slot,order,rarity}); await mpRefreshPlayer(); }
-  catch(e){ mpState.err=e.message; }
+  catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 // Фаза 4, седьмой кусочек — лечение раненых (mp-heal), см. рубрику
@@ -19622,7 +19638,7 @@ async function mpDoHeal(type){
   const n=Math.max(1,Math.min(cap,+((inp&&inp.value)||1)));
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-heal",{type,tier:1,n}); await mpRefreshPlayer(); }
-  catch(e){ mpState.err=e.message; }
+  catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 async function mpDoAttack(defenderId){
@@ -19633,7 +19649,7 @@ async function mpDoAttack(defenderId){
     await mpCall("mp-attack",{defender_id:defenderId,units,with_gen:withGen});
     mpState.attackTarget=null; if(mpMarchCtx){ mpMarchCtx=null; $("#building-modal").classList.remove("open"); }
     await mpRefreshPlayer(); await mpRefreshMarches();
-  }catch(e){ mpState.err=e.message; }
+  }catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 // Фаза 8, кусочек 1 — отправка отряда собирать ресурсы (mp-gather).
@@ -19645,7 +19661,7 @@ async function mpDoGather(x,y){
     await mpCall("mp-gather",{x,y,units,with_gen:withGen});
     mpState.gatherTarget=null; if(mpMarchCtx){ mpMarchCtx=null; $("#building-modal").classList.remove("open"); }
     await mpRefreshPlayer(); await mpRefreshMarches(); await mpRefreshNodes();
-  }catch(e){ mpState.err=e.message; }
+  }catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 // Отправка отряда в ПУСТУЮ клетку (mp-move). Автор: «добавь возможность
@@ -19660,7 +19676,7 @@ async function mpDoMove(x,y){
     await mpCall("mp-move",{x,y,units,with_gen:withGen});
     mpState.moveTarget=null; if(mpMarchCtx){ mpMarchCtx=null; $("#building-modal").classList.remove("open"); }
     await mpRefreshPlayer(); await mpRefreshMarches();
-  }catch(e){ mpState.err=e.message; }
+  }catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 // Фаза 8, кусочек 2 — поход на лагерь варваров (mp-raid).
@@ -19672,7 +19688,7 @@ async function mpDoRaid(x,y){
     await mpCall("mp-raid",{x,y,units,with_gen:withGen});
     mpState.raidTarget=null; if(mpMarchCtx){ mpMarchCtx=null; $("#building-modal").classList.remove("open"); }
     await mpRefreshPlayer(); await mpRefreshMarches(); await mpRefreshCamps();
-  }catch(e){ mpState.err=e.message; }
+  }catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 // Фаза 4, восьмой кусочек — разведка (mp-scout): один клик, без формы —
@@ -19680,14 +19696,14 @@ async function mpDoRaid(x,y){
 async function mpDoScout(defenderId){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-scout",{defender_id:defenderId}); await mpRefreshScoutMail(); }
-  catch(e){ mpState.err=e.message; }
+  catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 // Фаза 4, девятый кусочек — отзыв похода на полпути (mp-recall).
 async function mpDoRecall(marchId){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-recall",{march_id:marchId}); await mpRefreshMarches(); }
-  catch(e){ mpState.err=e.message; }
+  catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 // Фаза 5, Академия — дерево исследований (mp-research). См. рубрику
@@ -19695,21 +19711,21 @@ async function mpDoRecall(marchId){
 async function mpDoResearch(id){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-research",{id}); await mpRefreshPlayer(); }
-  catch(e){ mpState.err=e.message; }
+  catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 // Фаза 7 — выбор полководца (mp-pickgen). См. рубрику «Полководец» в foMultiplayer.
 async function mpDoPickGen(id){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-pickgen",{id}); await mpRefreshPlayer(); }
-  catch(e){ mpState.err=e.message; }
+  catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 // Фаза 10, кусочек 2 — трата очка таланта (mp-talent).
 async function mpDoTalent(id){
   mpState.loading=true; mpState.err=null; mpRerender();
   try{ await mpCall("mp-talent",{id}); await mpRefreshPlayer(); }
-  catch(e){ mpState.err=e.message; }
+  catch(e){ mpState.err=mpFriendlyErr(e); }
   finally{ mpState.loading=false; mpRerender(); }
 }
 // Фаза 22 — "развёртывание армии". Раньше полоска гадала по тренду двух
