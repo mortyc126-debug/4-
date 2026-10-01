@@ -9337,7 +9337,7 @@ function renderCartouche(){
       const p=me();
       const mine=owner&&owner.id===p.id;
       const mcoord=cartCoord(m.tx,m.ty);
-      let body="<div class='hd'>"+(owner?shieldSvg(owner.race,14):"")+(owner?owner.nick:"?")+" — отряд "+mcoord+"</div>"+
+      let body="<div class='hd'>"+(owner?shieldSvg(owner.race,14):"")+(owner?escHtml(owner.nick):"?")+" — отряд "+mcoord+"</div>"+
         "<div class='co'><span>Состояние</span><b>"+(MARCH_STATE_RU[m.state]||m.state)+"</b></div>"+
         "<div class='co'><span>Воинов</span><b>"+RU(countUnits(m.units))+"</b></div>"+
         "<div class='co'><span>Цель</span><b>X:"+m.tx+" Y:"+m.ty+"</b></div>"+
@@ -9494,7 +9494,7 @@ function renderCartoucheMp(){
       const owner=snap.players.find(q=>q.id===m.pid);
       const mine=m.pid===me.id;
       const mcoord=cartCoord(m.tx,m.ty);
-      let body="<div class='hd'>"+(owner?shieldSvg(owner.race,14):"")+(owner?owner.nick:"?")+" — отряд "+mcoord+"</div>"+
+      let body="<div class='hd'>"+(owner?shieldSvg(owner.race,14):"")+(owner?escHtml(owner.nick):"?")+" — отряд "+mcoord+"</div>"+
         "<div class='co'><span>Состояние</span><b>"+(MARCH_STATE_RU[m.state]||m.state)+"</b></div>"+
         "<div class='co'><span>Воинов</span><b>"+RU(countUnits(m.units))+"</b></div>"+
         "<div class='co'><span>Цель</span><b>X:"+m.tx+" Y:"+m.ty+"</b></div>"+
@@ -12296,7 +12296,7 @@ function mpMarchSheetHtml(){
     const n=mpState.neighbors.find(x=>x.id===mpState.attackTarget);
     if(!n) return gone("Цель пропала");
     const dist=Math.round(Math.hypot(n.x-p.x,n.y-p.y));
-    let h="<div class='title'>"+(n.nick||"Безымянный лорд")+" · "+RACES[n.race].name+"</div>"+
+    let h="<div class='title'>"+escHtml(n.nick||"Безымянный лорд")+" · "+RACES[n.race].name+"</div>"+
       "<div class='note'>"+n.x+", "+n.y+" · "+dist+" клет.</div>"+
       errHtml;
     h+=mpTroopPickerHtml("mp-atk-",p);
@@ -13104,14 +13104,17 @@ async function profileLoadBoard(id,force){
   try{
     // b.table — таблица союзов (см. её описание в MP_BOARDS): другая строка,
     // другой признак выбывшего. Остальные восемь читают players, как и раньше.
-    let q=b.table
-      ? sb.from(b.table).select(b.sel)
-          .eq("world_id", mpState.player.world_id).is("disbanded_at", null)
-      : sb.from("players").select("id,nick,race,"+b.sel)
-          .eq("world_id", mpState.player.world_id).is("dead_at", null);
-    // Пока идёт калибровка, звания нет — и в таблице званий таким не место.
-    if(b.minBattles) q=q.gte("rating_battles", MP_CALIBRATION_BATTLES);
-    const { data, error } = await q.order(b.by,{ascending:!b.desc}).limit(50);
+    const build=(cols)=>{
+      let q=b.table
+        ? sb.from(b.table).select(b.sel)
+            .eq("world_id", mpState.player.world_id).is("disbanded_at", null)
+        : sb.from("players").select(cols("id,nick,race,"+b.sel))
+            .eq("world_id", mpState.player.world_id).is("dead_at", null);
+      // Пока идёт калибровка, звания нет — и в таблице званий таким не место.
+      if(b.minBattles) q=q.gte("rating_battles", MP_CALIBRATION_BATTLES);
+      return q.order(b.by,{ascending:!b.desc}).limit(50);
+    };
+    const { data, error } = b.table ? await build(s=>s) : await mpSelectPlayers(build);
     if(error) throw new Error(error.message);
     profileBoardData[id]=data||[]; profileBoardErr[id]=null; profileBoardAt[id]=Date.now();
   }catch(e){ profileBoardErr[id]=e.message; }
@@ -13648,7 +13651,7 @@ function foProfile(pIn){
          "<input id='nick-input' type='text' maxlength='24' value='"+(p.nick||"").replace(/'/g,"&#39;")+"' "+
          "placeholder='Ваш ник'>"+
          "<button class='seal' data-act='savenick'>Сохранить</button></div>"
-       : "<div class='profile-name-row'><div class='title'>"+(p.nick||"Безымянный лорд")+"</div></div>")+
+       : "<div class='profile-name-row'><div class='title'>"+escHtml(p.nick||"Безымянный лорд")+"</div></div>")+
      "<div class='note'>"+RACES[p.race].name+"</div>"+
      // Союз — сразу под расой, гербом и полным именем. Показывается и в своём
      // профиле, и в чужом (foProfile зовётся с чужим p из карточки союза), и в
@@ -18744,9 +18747,33 @@ async function mpRefreshNeighbors(){
   // решение автора), и смотрят на него ровно там, где решают, нападать ли, —
   // в картуше по тапу по чужому городу. Это два числа, не состав войск: тот
   // по-прежнему только через настоящую разведку.
-  const { data, error } = await sb.from("players").select("id,nick,race,x,y,is_bot,hall:state->b->>hall,gen:state->gen->>id,shield_until,rating,rating_battles")
-    .eq("world_id", mpState.player.world_id).neq("id", mpState.player.id).is("dead_at", null).order("id");
+  const { data, error } = await mpSelectPlayers(cols=>sb.from("players")
+    .select(cols("id,nick,race,x,y,is_bot,hall:state->b->>hall,gen:state->gen->>id,shield_until,rating,rating_battles"))
+    .eq("world_id", mpState.player.world_id).neq("id", mpState.player.id).is("dead_at", null).order("id"));
   if(!error && data){ mpState.neighbors=data; mpRerenderData(); }
+}
+// Чужой state клиенту больше не отдаётся (миграция 0018_players_privacy.sql):
+// из него одним запросом вычитывались войска и склад любого соседа — в обход
+// разведки. Ратушу и полководца, которые клиенту правда нужны, теперь отдают
+// две вычисляемые колонки, hall_now и gen_id. Выборки выше по-прежнему
+// записаны через state — так их видно и в базе без миграции, — а здесь
+// подменяются на колонки. Если колонок ещё нет (сайт выкатили раньше, чем
+// накатили миграцию), запрос повторяется по-старому и дальше так и идёт; если
+// миграцию накатили, пока вкладка открыта, старая выборка получит отказ, и
+// запрос так же сам вернётся к колонкам. Порядок выкладки ничего не ломает.
+let mpPlayersLegacyCols=false;
+function mpPlayersCols(sel){
+  return mpPlayersLegacyCols ? sel
+    : sel.replace("hall:state->b->>hall","hall:hall_now").replace("gen:state->gen->>id","gen:gen_id");
+}
+async function mpSelectPlayers(run){
+  const r=await run(mpPlayersCols);
+  if(!r.error) return r;
+  mpPlayersLegacyCols=!mpPlayersLegacyCols;
+  const r2=await run(mpPlayersCols);
+  if(!r2.error) return r2;
+  mpPlayersLegacyCols=!mpPlayersLegacyCols;   // не помогло — значит, дело не в колонках
+  return r;
 }
 // Фаза 4 — свежие боевые отчёты (mail, RLS mail_select_own из миграции
 // 0001 уже ограничивает выборку своими же письмами, читаем напрямую).
@@ -20306,7 +20333,7 @@ function mpMailCached(m, builder){
 }
 function mpMailSiegeEntry(m){
   const d=m.data, isRaid=d.mode==="raid", isNode=d.mode==="node", isDef=d.role==="defender", isRetreat=d.phase==="retreat";
-  const who=d.opponent_nick||"Безымянный лорд";
+  const who=escHtml(d.opponent_nick||"Безымянный лорд");
   const target=isRaid?("лагеря варваров (ур. "+(d.camp_lv||1)+")"):isNode?"точки сбора":("города «"+who+"»");
   let cls, title, note;
   if(!isRetreat){
@@ -20408,7 +20435,7 @@ function mpMailBattleEntry(m){
   const myStart=mine?d.attStart:d.defStart, oppStart=mine?d.defStart:d.attStart;
   const myPower=mine?d.attPower:d.defPower, oppPower=mine?d.defPower:d.attPower;
   const tier=battleOutcomeTier(myStart,myHs.dead||0,myHs.hurt||0,won,myPower,oppPower);
-  const title=(mine?"Напали на ":"Напали от ")+(d.opponent_nick||"Безымянный лорд")+" — "+tier.name;
+  const title=(mine?"Напали на ":"Напали от ")+escHtml(d.opponent_nick||"Безымянный лорд")+" — "+tier.name;
   // Фаза 29 — снесённые постройки важнее потерь: если город разобрали, это
   // первое, что должно быть видно в строке списка, не разворачивая письмо.
   const ruinedN=(d.demolish && d.demolish.ruined && d.demolish.ruined.length)||0;
@@ -20432,7 +20459,7 @@ function mpMailBattleEntry(m){
     get detailHtml(){
       if(detailHtml!==undefined) return detailHtml;
       if(d.attRace && d.defRace){
-        const selfNick=mpState.player.nick||"Вы", oppNick=d.opponent_nick||"Безымянный лорд";
+        const selfNick=escHtml(mpState.player.nick||"Вы"), oppNick=escHtml(d.opponent_nick||"Безымянный лорд");
         const selfRace=mine?d.attRace:d.defRace, oppRace=mine?d.defRace:d.attRace;
         const selfCoords=mine?d.attCoords:d.defCoords, oppCoords=mine?d.defCoords:d.attCoords;
         const selfGenSnap=mine?d.attGen:d.defGen, oppGenSnap=mine?d.defGen:d.attGen;
@@ -20485,7 +20512,7 @@ function mpMailBattleEntry(m){
 }
 function mpMailScoutEntry(m){
   const d=m.data;
-  const title=d.found?(d.opponent_nick||"Безымянный лорд"):"Донесение";
+  const title=d.found?escHtml(d.opponent_nick||"Безымянный лорд"):"Донесение";
   let detailHtml="", sub="";
   if(!d.found){
     sub="Лазутчик не нашёл цель на месте — она пропала между отправкой и прибытием.";
@@ -20563,7 +20590,7 @@ function mpMailNodeEntry(m){
   const myLoss=mine?d.attLoss:d.defLoss, oppLoss=mine?d.defLoss:d.attLoss;
   const lostN=u=>{ u=u||{}; return TKEYS.reduce((s,t)=>s+[1,2,3,4,5].reduce((s2,i)=>s2+((u[t]&&u[t][i])||0),0),0); };
   const won=(mine&&d.winner==="att")||(!mine&&d.winner==="def");
-  const who=d.opponent_nick||"Безымянный лорд";
+  const who=escHtml(d.opponent_nick||"Безымянный лорд");
   // Рейтинг за бой — и в короткой подписи списка, как у осады.
   const shortTitle = mine
     ? (d.retreated ? "Отступили от точки сбора" : won ? "Точка сбора наша" : "Точку сбора не отбили")
@@ -20585,7 +20612,7 @@ function mpMailNodeEntry(m){
     get detailHtml(){
       if(detailHtml!==undefined) return detailHtml;
       if(d.attRace && d.defRace){
-        const selfNick=mpState.player.nick||"Вы", oppNick=who;
+        const selfNick=escHtml(mpState.player.nick||"Вы"), oppNick=who;
         const selfRace=mine?d.attRace:d.defRace, oppRace=mine?d.defRace:d.attRace;
         const selfGenSnap=mine?d.attGen:d.defGen, oppGenSnap=mine?d.defGen:d.attGen;
         const selfBuffs=mine?d.attBuffs:d.defBuffs, oppBuffs=mine?d.defBuffs:d.attBuffs;
@@ -20651,7 +20678,7 @@ function mpMailTradeEntry(m){
   const sum=RES.reduce((a,r)=>a+(goods[r]||0),0);
   if(mine && d.lost){
     return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-trade.png", cls:"lose", tone:"red",
-      title:"Обозу некуда было ехать", sub:who+" не дожил до его прихода — груз пропал",
+      title:"Обозу некуда было ехать", sub:escHtml(who)+" не дожил до его прихода — груз пропал",
       detailHtml:"<div class='note'>Правителя "+escHtml(who)+" не стало, пока обоз был в пути. "+
         "Груз пропал вместе с городом, куда его везли.</div>"};
   }
@@ -20663,7 +20690,7 @@ function mpMailTradeEntry(m){
       ", налог "+(d.tax*100).toFixed(1).replace(/\.0$/,"")+"% — доехало "+fmt(sum)+".</div>"
     : "";
   return {id:m.id, created_at:m.created_at, icon:"images/ui/icon-trade.png", cls:"", tone:"green",
-    title: mine?("Обоз доставлен: "+who):("Обоз от "+who),
+    title: mine?("Обоз доставлен: "+escHtml(who)):("Обоз от "+escHtml(who)),
     sub: RES.filter(r=>goods[r]).map(r=>RES_NAME[r]+" "+fmt(goods[r])).join(" · ")||"пусто",
     detailHtml: rows+taxLine};
 }
@@ -21009,7 +21036,7 @@ function foMultiplayer(embedded, only){
   // mpMenuBodyHtml: "покажет хотя бы заголовок игрока... не рухнет") —
   // оставлен только там.
   if(show("mp")) h+="<div class='entry hot'><div class='line'><div class='fill'>"+
-     "<div class='title'>"+(p.nick||"Безымянный лорд")+" · "+RACES[p.race].name+"</div>"+
+     "<div class='title'>"+escHtml(p.nick||"Безымянный лорд")+" · "+RACES[p.race].name+"</div>"+
      "<div class='note'>Координаты: "+p.x+", "+p.y+"</div></div></div></div>";
 
   // Фаза 20 — смотр войск. Раньше страница общего мира вообще не показывала,
@@ -21043,7 +21070,7 @@ function foMultiplayer(embedded, only){
       const att=mpState.neighbors.find(n=>n.id===m.player_id);
       const sieging=m.state==="siege", b=sieging&&m.data&&m.data.battle;
       h+="<div class='entry war'><div class='line'><div class='fill'>"+
-         "<div class='title'>"+(att?att.nick||"Безымянный лорд":"Неизвестный")+(sieging?" штурмует вас":" идёт на вас")+"</div>";
+         "<div class='title'>"+(att?escHtml(att.nick||"Безымянный лорд"):"Неизвестный")+(sieging?" штурмует вас":" идёт на вас")+"</div>";
       if(sieging && b){
         // Фаза 21 — оборона видит СВОЮ полоску как "defHpLeft" в state
         // боя, атакующего — как "attHpLeft" (mpHpBarHtml ниже нейтрален к
@@ -21096,8 +21123,8 @@ function foMultiplayer(embedded, only){
       const cb=contested?mpContestBattles[m.id]:null;
       const title = sieging
         ? (isGather
-           ? "Бой за точку "+m.tx+", "+m.ty+(nodeOpp?" — "+(nodeOpp.nick||"соперник"):"")
-           : "В бою у "+(opp?opp.nick||"Безымянный лорд":m.tx+", "+m.ty))
+           ? "Бой за точку "+m.tx+", "+m.ty+(nodeOpp?" — "+escHtml(nodeOpp.nick||"соперник"):"")
+           : "В бою у "+(opp?escHtml(opp.nick||"Безымянный лорд"):m.tx+", "+m.ty))
         : contested
         ? "Точку "+m.tx+", "+m.ty+" оспаривают!"
         : isGather
@@ -21108,7 +21135,7 @@ function foMultiplayer(embedded, only){
         ? (going?"Идёт в крепость союза "+m.tx+", "+m.ty:"Возвращается из крепости "+m.tx+", "+m.ty)
         : isRaid
         ? (going?"Идёт на лагерь "+m.tx+", "+m.ty:"Возвращается от лагеря "+m.tx+", "+m.ty)
-        : (going?"Идёт к ":"Возвращается от ")+(opp?opp.nick||"Безымянный лорд":m.tx+", "+m.ty);
+        : (going?"Идёт к ":"Возвращается от ")+(opp?escHtml(opp.nick||"Безымянный лорд"):m.tx+", "+m.ty);
       h+="<div class='entry"+(contested?" war":"")+"'><div class='line'><div class='fill'>"+
          "<div class='title'>"+title+"</div>";
       // Фаза 21 — бой во времени (см. supabase/migrations/
@@ -21170,7 +21197,7 @@ function foMultiplayer(embedded, only){
     h+=rubric("Гонцы","движение войск");
     mpState.siegeMail.forEach(m=>{
       const d=m.data, isRaid=d.mode==="raid", isNode=d.mode==="node", isDef=d.role==="defender", isRetreat=d.phase==="retreat";
-      const who=d.opponent_nick||"Безымянный лорд";
+      const who=escHtml(d.opponent_nick||"Безымянный лорд");
       const target=isRaid?("лагеря варваров (ур. "+(d.camp_lv||1)+")"):isNode?"точки сбора":("города «"+who+"»");
       let cls, title, note;
       if(!isRetreat){
@@ -21228,7 +21255,7 @@ function foMultiplayer(embedded, only){
       // тогда функция просто не рассматривает heroic/disaster.
       const myStart=mine?d.attStart:d.defStart, myPower=mine?d.attPower:d.defPower, oppPower=mine?d.defPower:d.attPower;
       const tier=battleOutcomeTier(myStart,myHs.dead||0,myHs.hurt||0,won,myPower,oppPower);
-      const title=(mine?"Напали на ":"Напали от ")+(d.opponent_nick||"Безымянный лорд")+" — "+tier.name;
+      const title=(mine?"Напали на ":"Напали от ")+escHtml(d.opponent_nick||"Безымянный лорд")+" — "+tier.name;
       let notesHtml="<div class='note'>Наши потери: "+RU(lostN(myLoss))+" · потери противника: "+RU(lostN(oppLoss))+hospNote+"</div>";
       // Грабёж склада — то же поле d.loot, что и у мока mp-tick, лежит в
       // обоих письмах (атакующему и защитнику), но реально ненулевое
@@ -21256,7 +21283,7 @@ function foMultiplayer(embedded, only){
     h+=rubric("Разведка","донесения лазутчиков");
     mpState.scoutMail.forEach(m=>{
       const d=m.data;
-      const title=d.found?(d.opponent_nick||"Безымянный лорд"):"Донесение";
+      const title=d.found?escHtml(d.opponent_nick||"Безымянный лорд"):"Донесение";
       let notesHtml="";
       if(!d.found){
         notesHtml+="<div class='note'>Лазутчик не нашёл цель на месте — она пропала между отправкой и прибытием.</div>";
@@ -21320,7 +21347,7 @@ function foMultiplayer(embedded, only){
       const myLoss=mine?d.attLoss:d.defLoss, oppLoss=mine?d.defLoss:d.attLoss;
       const lostN=u=>{ u=u||{}; return TKEYS.reduce((s,t)=>s+[1,2,3,4,5].reduce((s2,i)=>s2+((u[t]&&u[t][i])||0),0),0); };
       const won=(mine&&d.winner==="att")||(!mine&&d.winner==="def");
-      const who=d.opponent_nick||"Безымянный лорд";
+      const who=escHtml(d.opponent_nick||"Безымянный лорд");
       // retreated — ВСЕГДА про атакующего (только он умеет отступать, см.
       // applyRetreatVolley/mp-recall): у защитника (!mine) это "соперник
       // сам ушёл", у атакующего (mine) — "мы сами ушли".

@@ -246,7 +246,7 @@ Deno.serve(async (req) => {
     let totalSend = 0;
     TKEYS.forEach((t) => {
       for (let i = 1; i <= 5; i++) {
-        const want = Math.max(0, Math.round(Number((reqUnits[t] && reqUnits[t][i]) || 0)));
+        const want = Math.max(0, Math.round(Number(reqUnits[t] && reqUnits[t][i]) || 0));
         const have = (attP.troops[t] && attP.troops[t][i]) || 0;
         const n = Math.min(want, have);
         sendUnits[t][i] = n; totalSend += n;

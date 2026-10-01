@@ -466,7 +466,7 @@ Deno.serve(async (req) => {
       const want = {};
       let total = 0;
       RES.forEach((r) => {
-        const n = Math.max(0, Math.floor(Number((body.res && body.res[r]) || 0)));
+        const n = Math.max(0, Math.floor(Number(body.res && body.res[r]) || 0));
         want[r] = n; total += n;
       });
       if (total < DONATE_MIN)

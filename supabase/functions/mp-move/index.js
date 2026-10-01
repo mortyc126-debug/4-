@@ -152,7 +152,7 @@ const ACADEMY_GATHER_NODES = [
   // Янтаря, отдельная от gatherFW/gatherSG (см. isAmber-ветку ниже).
   { id: "eco_amber0", field: "gatherAmber", total: 0.05, max: 1 },
   { id: "eco_amber1", field: "gatherAmber", total: 0.35, max: 10 },
-  { id: "eco_load1", field: "load", total: 0.15, max: 5 },
+  { id: "eco_load1", field: "load", total: 0.05, max: 5 },
   { id: "eco_load2", field: "load", total: 0.25, max: 10 },
   { id: "mil_march1", field: "march", kind: "mult", total: 0.15, max: 5 },
   { id: "mil_march2", field: "march", kind: "mult", total: 0.15, max: 5 },
@@ -364,7 +364,7 @@ Deno.serve(async (req) => {
     let totalSend = 0;
     TKEYS.forEach((t) => {
       for (let i = 1; i <= 5; i++) {
-        const want = Math.max(0, Math.round(Number((body.units && body.units[t] && body.units[t][i]) || 0)));
+        const want = Math.max(0, Math.round(Number(body.units && body.units[t] && body.units[t][i]) || 0));
         const have = (attP.troops[t] && attP.troops[t][i]) || 0;
         const n = Math.min(want, have);
         sendUnits[t][i] = n; totalSend += n;

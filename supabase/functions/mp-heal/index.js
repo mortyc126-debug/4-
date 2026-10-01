@@ -161,9 +161,11 @@ const ACADEMY_TREE = {
   eco: [
     // Было max:3 — в RoK и Quarrying, и Metallurgy однoуровневые (чистый анлок
     // без цифры), а в RESEARCH_TABLE на них теперь ровно одна точная строка.
-    // Оставлен свой небольшой бонус (0.05, не из таблички — как раньше).
-    {id:"eco_stone0",name:"Горное дело",max:1,wave:1,branch:"eco",field:"prodStone",total:0.05},
-    {id:"eco_gold0",  name:"Промысел",   max:1,wave:1,branch:"eco",field:"prodGold", total:0.05},
+    // Свой бонус +5% (не из таблички) убран по прямому запросу автора — как и
+    // в index.html: в RoK у обеих технологий процентного эффекта нет вовсе.
+    // Без field узел ничего не даёт (см. bonuses), но цена/время/мощь — те же.
+    {id:"eco_stone0",name:"Горное дело",max:1,wave:1,branch:"eco"},
+    {id:"eco_gold0",  name:"Промысел",   max:1,wave:1,branch:"eco"},
     {id:"eco_food1",  name:"Ирригация",  max:5,wave:1,branch:"eco",field:"prodFood", total:0.15},
     {id:"eco_wood1",  name:"Лесное дело",max:5,wave:1,branch:"eco",field:"prodWood", total:0.15},
     {id:"eco_build1", name:"Кладка",     max:5,wave:1,branch:"eco",field:"build",kind:"mult",total:0.15},
@@ -174,7 +176,8 @@ const ACADEMY_TREE = {
     {id:"eco_gwood1", name:"Топор",      max:5,wave:1,branch:"eco",field:"gatherFW",total:0.15},
     {id:"eco_gstone1",name:"Тачка",      max:5,wave:1,branch:"eco",field:"gatherSG",total:0.15},
     {id:"eco_ggold1", name:"Промывка",   max:5,wave:1,branch:"eco",field:"gatherSG",total:0.15},
-    {id:"eco_load1",  name:"Колесо",     max:5,wave:1,branch:"eco",field:"load",total:0.15},
+    // total был 0.15 — у Wheel в RoK потолок +5%, как и в index.html.
+    {id:"eco_load1",  name:"Колесо",     max:5,wave:1,branch:"eco",field:"load",total:0.05},
     {id:"eco_cap1",   name:"Многослойная кладка",max:5,wave:1,branch:"eco",field:"cap",total:0.15},
     // Донатная ветка (Янтарь). В RoK её аналог (Jewelry) — чистый анлок без
     // своего бонуса, тир 7, требует Multilayer Structure 4; здесь — как и
@@ -427,7 +430,7 @@ function bonuses(p, defending = false) {
   const tech = p.tech || {};
   const multAcc = {};
   [ACADEMY_TREE.eco, ACADEMY_TREE.mil].forEach((arr) => arr.forEach((n) => {
-    const lv = tech[n.id] || 0; if (!lv || n.unlock) return;
+    const lv = tech[n.id] || 0; if (!lv || n.unlock || (!n.effects && !n.field)) return;
     const list = n.effects || [{ field: n.field, total: n.total, kind: n.kind }];
     list.forEach((e) => {
       const inc = e.total * (lv / n.max);
@@ -553,7 +556,7 @@ Deno.serve(async (req) => {
 
     // Дословно startHeal(p,type,tier,n) из index.html:5795-5809.
     if (p.heal) return jsonResponse({ err: "Лазарет уже занят лечением" }, 400);
-    if (n < 1) return jsonResponse({ err: "Выберите хотя бы одного раненого" }, 400);
+    if (!Number.isFinite(n) || n < 1) return jsonResponse({ err: "Выберите хотя бы одного раненого" }, 400);
     const have = p.wounded[type][tier] || 0;
     if (n > have) return jsonResponse({ err: "Столько раненых нет" }, 400);
     const hospLv = Array.isArray(p.b.hospital) ? Math.max(0, ...p.b.hospital) : (p.b.hospital || 0);
