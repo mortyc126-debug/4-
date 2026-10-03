@@ -430,6 +430,47 @@ Deno.serve(async (req) => {
     }
 
     // ---------------------------------------------------------------------
+    // acceptinvite / declineinvite — ответ на приглашение
+    // ---------------------------------------------------------------------
+    // Стоят ДО проверки «вы в союзе»: отвечает на приглашение как раз тот,
+    // кто ни в каком союзе не состоит. С самого появления (Фаза 52) блок
+    // стоял НИЖЕ этой проверки, вопреки собственному комментарию, и ни
+    // принять, ни отклонить приглашение было нельзя вовсе: каждый ответ
+    // упирался в «Вы не состоите в союзе». Найдено
+    // сквозным прогоном на живой базе (Фаза 60), проверка на заглушках сервер
+    // не вызывала и поймать этого не могла.
+    if (op === "acceptinvite" || op === "declineinvite") {
+      if (myMem) return jsonResponse({ err: "Вы уже состоите в союзе" }, 400);
+      const allianceId = Number(body.allianceId);
+      if (!Number.isFinite(allianceId)) return jsonResponse({ err: "Не указан союз" }, 400);
+      const { data: inv } = await admin.from("alliance_invites")
+        .select("alliance_id").eq("alliance_id", allianceId).eq("player_id", me.id).maybeSingle();
+      if (!inv) return jsonResponse({ err: "Такого приглашения уже нет" }, 400);
+      await admin.from("alliance_invites")
+        .delete().eq("alliance_id", allianceId).eq("player_id", me.id);
+      if (op === "declineinvite") return jsonResponse({ ok: true, declined: true });
+
+      const loadedInv = await loadAlliance(admin, allianceId);
+      if (loadedInv.err) return jsonResponse({ err: loadedInv.err }, 400);
+      const aInv = loadedInv.alliance, mInv = loadedInv.members;
+      if (aInv.world_id !== world.id) return jsonResponse({ err: "Этот союз не из вашего мира" }, 400);
+      // Место проверяется ЗДЕСЬ, а не при отправке приглашения: между «позвали»
+      // и «согласился» союз мог наполниться. Порог мощи приглашённого не
+      // касается — его позвали лично, это и есть решение союза.
+      if (mInv.filter((m) => m.players && !m.players.dead_at).length >= capOf(aInv))
+        return jsonResponse({ err: "В союзе нет свободных мест" }, 400);
+      const { error: jErr } = await admin.from("alliance_members")
+        .insert({ player_id: me.id, alliance_id: allianceId, role: "r1" });
+      if (jErr) return jsonResponse({ err: jErr.message }, 500);
+      // Вступил — остальные заявки и приглашения ему больше ни к чему.
+      await admin.from("alliance_applications").delete().eq("player_id", me.id);
+      await admin.from("alliance_invites").delete().eq("player_id", me.id);
+      await sysSay(admin, allianceId, (me.nick || "Безымянный лорд") + " принимает приглашение и вступает в союз.");
+      await recountAlliance(admin, allianceId);
+      return jsonResponse({ ok: true, alliance_id: allianceId });
+    }
+
+    // ---------------------------------------------------------------------
     // Дальше — только для тех, кто в союзе.
     // ---------------------------------------------------------------------
     if (!myMem) return jsonResponse({ err: "Вы не состоите в союзе" }, 400);
@@ -666,42 +707,6 @@ Deno.serve(async (req) => {
       const { error: eErr } = await admin.from("alliances").update(patch).eq("id", alliance.id);
       if (eErr) return jsonResponse({ err: eErr.message }, 500);
       return jsonResponse({ ok: true });
-    }
-
-    // ---------------------------------------------------------------------
-    // acceptinvite / declineinvite — ответ на приглашение
-    // ---------------------------------------------------------------------
-    // Стоят ДО проверки «вы в союзе»: отвечает на приглашение как раз тот,
-    // кто ни в каком союзе не состоит.
-    if (op === "acceptinvite" || op === "declineinvite") {
-      if (myMem) return jsonResponse({ err: "Вы уже состоите в союзе" }, 400);
-      const allianceId = Number(body.allianceId);
-      if (!Number.isFinite(allianceId)) return jsonResponse({ err: "Не указан союз" }, 400);
-      const { data: inv } = await admin.from("alliance_invites")
-        .select("alliance_id").eq("alliance_id", allianceId).eq("player_id", me.id).maybeSingle();
-      if (!inv) return jsonResponse({ err: "Такого приглашения уже нет" }, 400);
-      await admin.from("alliance_invites")
-        .delete().eq("alliance_id", allianceId).eq("player_id", me.id);
-      if (op === "declineinvite") return jsonResponse({ ok: true, declined: true });
-
-      const loadedInv = await loadAlliance(admin, allianceId);
-      if (loadedInv.err) return jsonResponse({ err: loadedInv.err }, 400);
-      const aInv = loadedInv.alliance, mInv = loadedInv.members;
-      if (aInv.world_id !== world.id) return jsonResponse({ err: "Этот союз не из вашего мира" }, 400);
-      // Место проверяется ЗДЕСЬ, а не при отправке приглашения: между «позвали»
-      // и «согласился» союз мог наполниться. Порог мощи приглашённого не
-      // касается — его позвали лично, это и есть решение союза.
-      if (mInv.filter((m) => m.players && !m.players.dead_at).length >= capOf(aInv))
-        return jsonResponse({ err: "В союзе нет свободных мест" }, 400);
-      const { error: jErr } = await admin.from("alliance_members")
-        .insert({ player_id: me.id, alliance_id: allianceId, role: "r1" });
-      if (jErr) return jsonResponse({ err: jErr.message }, 500);
-      // Вступил — остальные заявки и приглашения ему больше ни к чему.
-      await admin.from("alliance_applications").delete().eq("player_id", me.id);
-      await admin.from("alliance_invites").delete().eq("player_id", me.id);
-      await sysSay(admin, allianceId, (me.nick || "Безымянный лорд") + " принимает приглашение и вступает в союз.");
-      await recountAlliance(admin, allianceId);
-      return jsonResponse({ ok: true, alliance_id: allianceId });
     }
 
     // ---------------------------------------------------------------------

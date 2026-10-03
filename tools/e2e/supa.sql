@@ -1,0 +1,17 @@
+create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
+create role authenticator noinherit login password 'pw';
+grant anon, authenticated, service_role to authenticator;
+create extension if not exists pgcrypto;
+create schema auth;
+create table auth.users (id uuid primary key, created_at timestamptz default now());
+create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claims', true)::jsonb->>'sub', '')::uuid $$;
+grant usage on schema auth to anon, authenticated, service_role; grant execute on function auth.uid() to anon, authenticated, service_role;
+grant select on auth.users to service_role;
+create schema cron; create table cron.job (jobid serial, jobname text);
+create function cron.schedule(a text, b text, c text) returns int language sql as $$ select 1 $$;
+create function cron.unschedule(a int) returns bool language sql as $$ select true $$;
+create schema net; create function net.http_post(url text, headers jsonb, body jsonb) returns bigint language sql as $$ select 1::bigint $$;
+grant usage on schema public to anon, authenticated, service_role;
+alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
+alter default privileges in schema public grant all on functions to anon, authenticated, service_role;
+alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;

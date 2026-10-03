@@ -954,18 +954,14 @@ async function refreshAlliancePower(admin, playerId) {
       if (!pl || pl.dead_at) continue;
       members++; power += Number(pl.power || 0);
     }
+    // members_max тут НЕ трогается — так же, как в recountAlliance у
+    // mp-alliance: вместимость одна на всех (30, прямое решение автора) и
+    // живёт в своей колонке со значением по умолчанию (миграция 0012). Здесь
+    // оставалась прежняя формула «20 + 4 за уровень Центра у главы», и раз в
+    // несколько минут опрос главы переписывал вместимость: 40 при Центре
+    // пятого уровня, 24 — при первом, меньше обещанных тридцати. Найдено
+    // сквозным прогоном союза (Фаза 60).
     const patch = { members, power, power_at: new Date().toISOString() };
-    // Вместимость союза = 20 + 4 за уровень Центра Альянса У ГЛАВЫ (см.
-    // комментарий к колонке members_max в миграции 0012 и allianceCapFor в
-    // mp-alliance — здесь та же формула, своя копия по правилу
-    // самодостаточности функций). Глава мог достроить здание — минутного
-    // затвора выше довольно, чтобы это доехало до экрана союза.
-    if (ally.leader_id) {
-      const { data: leader } = await admin
-        .from("players").select("state").eq("id", ally.leader_id).maybeSingle();
-      const lv = (leader && leader.state && leader.state.b && leader.state.b.alliance) || 0;
-      patch.members_max = 20 + 4 * Math.max(0, Math.min(25, lv | 0));
-    }
     await admin.from("alliances").update(patch).eq("id", ally.id);
   } catch (_) { /* см. заголовок: молча */ }
 }

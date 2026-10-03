@@ -9572,7 +9572,7 @@ function renderCartoucheMp(){
       "<div class='co'><span>Область</span><b>"+escHtml(o.regionName||"—")+"</b></div>"+
       "<div class='co'><span>Крепость</span><b>"+(TIER[o.tier]||"Твердыня")+"</b></div>"+
       "<div class='co'><span>Держат</span><b>"+
-        (st8==="ally" ? "союз" : st8==="razed" ? "никто — место свободно" : "варвары")+"</b></div>";
+        (st8==="ally" ? "союз" : st8==="razed" ? "никто — место свободно" : st8==="building" ? "никто — идёт стройка" : "варвары")+"</b></div>";
     if(st8==="barb"){
       // Прогноз и кнопка — те же, что у лагеря. Крепость заведомо сильнее
       // любого одиночного отряда, и прогноз скажет это прямо; но запрещать
@@ -16070,7 +16070,7 @@ function handleMpAct(e){
   const allyEditBtn=e.target.closest("[data-mp='allyedit']");
   if(allyEditBtn){ mpDoAllyEdit(); return; }
   const allyJoinBtn=e.target.closest("[data-mp='allyjoin']");
-  if(allyJoinBtn){ mpDoAlly("join",{allianceId:+allyJoinBtn.dataset.id},"Отправлено."); return; }
+  if(allyJoinBtn){ mpDoAlly("join",{allianceId:+allyJoinBtn.dataset.id},j=>j.applied?"Заявка отправлена.":"Вы в союзе."); return; }
   const allyCancelBtn=e.target.closest("[data-mp='allycancel']");
   if(allyCancelBtn){ mpDoAlly("cancel",{allianceId:+allyCancelBtn.dataset.id},"Заявка отозвана."); return; }
   const allyAcceptBtn=e.target.closest("[data-mp='allyaccept']");
@@ -16091,8 +16091,12 @@ function handleMpAct(e){
     const sel=$("#mp-ally-heir"); const heir=sel?+sel.value:0;
     if(!heir) return;
     const who=sel.options[sel.selectedIndex].textContent.split(" · ")[0];
-    if(!confirm("Отдать союз соратнику "+who+"? Вы станете старейшиной, вернуть старшинство сможет только он.")) return;
-    mpDoAlly("role",{playerId:heir, role:"leader"},"Старшинство передано.");
+    // Глава на сервере — роль r5 (ROLE_RANK в mp-alliance), а не "leader":
+    // со словом "leader" сервер отвечал «Неизвестная роль», и передать союз
+    // было нельзя вовсе. Прежний глава становится заместителем (r4) — так
+    // решено на сервере, подпись ниже сказала бы неправду со «старейшиной».
+    if(!confirm("Отдать союз соратнику "+who+"? Вы станете заместителем, вернуть старшинство сможет только он.")) return;
+    mpDoAlly("role",{playerId:heir, role:"r5"},"Старшинство передано.");
     return;
   }
   const allyLeaveBtn=e.target.closest("[data-mp='allyleave']");
@@ -16243,7 +16247,17 @@ $("#building-modal").addEventListener("click",handleMpAct);
 // один из слушателей выше до них не достаёт; та же ошибка, что уже дважды
 // ловили у #building-modal и #menu-modal-body, — разметку добавили, а
 // слушателю про новый путь не сказали.
-["#chat-dock","#chat-modal","#mini-profile"].forEach(sel=>{
+//
+// #cartouche — панель клетки на карте — стоит в том же ряду и по той же
+// причине (Фаза 60). Она слушала только handleAct, а в ней давно живут
+// data-mp-кнопки из handleMpAct: «Заложить крепость союза», «Доложить в
+// стройку», «Забрать свой отряд» из гарнизона, а у чужого правителя —
+// «Позвать в союз», карточка союза, письмо, личное сообщение и дружба.
+// Нажатие на любую из них не делало ровно ничего: ни ошибки, ни запроса.
+// Найдено сквозным прогоном союза на живой базе. Пересечений с handleAct
+// нет (проверено по всем data-mp обоих обработчиков), так что двойного
+// срабатывания одной кнопки не бывает.
+["#chat-dock","#chat-modal","#mini-profile","#cartouche"].forEach(sel=>{
   const el=$(sel); if(el) el.addEventListener("click",handleMpAct);
 });
 // Enter отправляет реплику — в чате это единственный привычный способ, и без
@@ -19126,8 +19140,11 @@ async function mpDoAlly(op, args, okText){
   if(mpAllyBusy) return false;
   mpAllyBusy=true; mpAllyErr=null; mpAllyOk=null; mpRerender();
   try{
-    await mpCall("mp-alliance", Object.assign({op}, args||{}));
-    mpAllyBusy=false; mpAllyOk=okText||null;
+    const j=await mpCall("mp-alliance", Object.assign({op}, args||{}));
+    // okText может быть функцией от ответа сервера: у "join" один и тот же
+    // запрос либо подаёт заявку (закрытый союз), либо сразу принимает
+    // (открытый), и сказать «Отправлено.» вступившему — неправда.
+    mpAllyBusy=false; mpAllyOk=(typeof okText==="function" ? okText(j||{}) : okText)||null;
     // Перечитываем сразу, не дожидаясь медленной дорожки: игрок только что
     // нажал кнопку и ждёт увидеть результат, а не через десять секунд.
     await mpRefreshAlliance();

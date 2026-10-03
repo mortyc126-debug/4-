@@ -202,13 +202,7 @@ Deno.serve(async (req) => {
     const leaseExpiredIso = new Date(Date.now() - 60000).toISOString();
     for (const ev of due) {
       try {
-        const { data: claimed, error: claimErr } = await admin
-          .from("events").update({ claimed_at: new Date().toISOString() })
-          .eq("id", ev.id).eq("processed", false)
-          .or(`claimed_at.is.null,claimed_at.lt.${leaseExpiredIso}`)
-          .select("id");
-        if (claimErr) throw claimErr;
-        if (!claimed || !claimed.length) continue; // кто-то другой уже забрал это событие — пропускаем
+        if (!(await claimEvent(admin, ev.id, leaseExpiredIso))) continue; // кто-то другой уже забрал это событие — пропускаем
 
         if (ev.type === "train") await applyTrain(admin, ev);
         else if (ev.type === "build") await applyBuild(admin, ev);
@@ -244,6 +238,27 @@ Deno.serve(async (req) => {
     return jsonResponse({ err: String(e && e.message || e) }, 500);
   }
 });
+
+// Застолбить событие: claimed_at = сейчас, если оно ещё не обработано и либо
+// свободно, либо его прежний захват просрочен (lease). Два отдельных условных
+// UPDATE, а не один с .or(...): PostgREST применяет логическое дерево or=(...)
+// ЕЩЁ И к возвращаемым строкам (RETURNING), а вернуть мы просим только id —
+// и запрос падал с «column events.claimed_at does not exist» на КАЖДОМ событии.
+// Проверено на PostgREST 12.2.3, 12.2.8, 12.2.12, 13.0.0 и 13.0.4 (Фаза 60,
+// сквозной прогон союза на живой базе). Обычные фильтры (is/lt) к ответу не
+// применяются. Атомарность та же: каждый UPDATE сам проверяет условие в
+// своём WHERE, и из двух конкурентных тиков выигрывает ровно один.
+async function claimEvent(admin, id, leaseExpiredIso) {
+  const nowIso = new Date().toISOString();
+  for (const narrow of [(qb) => qb.is("claimed_at", null), (qb) => qb.lt("claimed_at", leaseExpiredIso)]) {
+    const { data, error } = await narrow(
+      admin.from("events").update({ claimed_at: nowIso }).eq("id", id).eq("processed", false),
+    ).select("id");
+    if (error) throw error;
+    if (data && data.length) return true;
+  }
+  return false;
+}
 
 // Зеркало EV.train(d) из index.html:4821-4826.
 async function applyTrain(admin, ev) {
