@@ -6,7 +6,45 @@
    в uploadGLB (полноразмерная закачка стабильно роняла GPU-соединение в
    этой песочнице).
    ========================================================================= */
-export async function loadTexture(device: GPUDevice, url: string, maxSize = 1024): Promise<GPUTexture> {
+// Закачка картинки в GPU — по желанию с полной цепочкой мипмапов.
+//
+// Мипмапы — уменьшенные копии текстуры (½, ¼, … до 1×1), из которых GPU
+// сам берёт подходящую по размеру на экране. Без них земля вдали читала
+// текстуру 1024×1024 в полном разрешении ради пикселя, который покрывает
+// десятки её текселей: это и рябь на дальних склонах, и лишняя нагрузка на
+// память видеокарты — на телефоне самое дорогое в кадре (см. комментарий у
+// весов почвы в TERRAIN_SHADER). Уровни строит сам браузер, тем же
+// createImageBitmap с resizeQuality "medium", что и общее уменьшение ниже:
+// отдельного прохода рендера под генерацию мипов заводить незачем.
+// Памяти цепочка берёт на треть больше самой текстуры.
+//
+// bitmap закрывает вызывающий — уровни строятся из него же.
+export async function uploadBitmap(device: GPUDevice, bitmap: ImageBitmap, mipmaps: boolean): Promise<GPUTexture> {
+  const w = bitmap.width, h = bitmap.height;
+  const levels = mipmaps ? Math.floor(Math.log2(Math.max(w, h))) + 1 : 1;
+  const texture = device.createTexture({
+    size: [w, h],
+    format: "rgba8unorm",
+    mipLevelCount: levels,
+    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+  });
+  device.queue.copyExternalImageToTexture({ source: bitmap }, { texture }, [w, h]);
+  for (let lv = 1; lv < levels; lv++) {
+    const lw = Math.max(1, w >> lv), lh = Math.max(1, h >> lv);
+    const level = await createImageBitmap(bitmap, {
+      resizeWidth: lw, resizeHeight: lh, resizeQuality: "medium", premultiplyAlpha: "none",
+    });
+    device.queue.copyExternalImageToTexture({ source: level }, { texture, mipLevel: lv }, [lw, lh]);
+    level.close();
+  }
+  return texture;
+}
+
+// mipmaps — только для текстур, которые шейдер читает с производными (почва,
+// деталь воды). Листве декора они вредны (прозрачность по альфе на дальних
+// уровнях размывается, и деревья вдали теряют листья), линиям границ
+// областей тоже (тонкая линия на уменьшенном уровне бледнеет).
+export async function loadTexture(device: GPUDevice, url: string, maxSize = 1024, mipmaps = false): Promise<GPUTexture> {
   const res = await fetch(url);
   const blob = await res.blob();
   // premultiplyAlpha:"none" — обязательно для текстур С АЛЬФОЙ (разметка
@@ -28,12 +66,7 @@ export async function loadTexture(device: GPUDevice, url: string, maxSize = 1024
         })
       : rawBitmap;
   if (scale < 1) rawBitmap.close();
-  const texture = device.createTexture({
-    size: [bitmap.width, bitmap.height],
-    format: "rgba8unorm",
-    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-  });
-  device.queue.copyExternalImageToTexture({ source: bitmap }, { texture }, [bitmap.width, bitmap.height]);
+  const texture = await uploadBitmap(device, bitmap, mipmaps);
   bitmap.close();
   return texture;
 }

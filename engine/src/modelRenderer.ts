@@ -7,6 +7,7 @@
 import type { ParsedGLB } from "./glb";
 import type { Mat4 } from "./mat4";
 import { SHADOW_MAP_SIZE, type ShadowResources } from "./renderer";
+import { uploadBitmap } from "./textures";
 
 // Модели (города/лагеря/точки) тени не бросают (отдельный, более тяжёлый
 // кусок работы — см. ShadowResources в renderer.ts), но ПРИНИМАТЬ обязаны:
@@ -129,13 +130,17 @@ fn shadowFactor(clip: vec4f) -> f32 {
   let uv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
   let bias = 0.0025;
   let texel = 1.0 / ${SHADOW_MAP_SIZE.toFixed(1)};
-  var sum = 0.0;
-  for (var dy = -1; dy <= 1; dy = dy + 1) {
-    for (var dx = -1; dx <= 1; dx = dx + 1) {
-      sum = sum + textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f(f32(dx), f32(dy)) * texel, ndc.z - bias);
-    }
-  }
-  return sum / 9.0;
+  // Четыре выборки, а не девять (3×3), — на телефоне каждая выборка на
+  // каждом пикселе стоит. Сэмплер сравнения линейный (shadowSampler в
+  // renderer.ts), то есть каждая выборка сама уже усредняет 2×2 текселя;
+  // четыре таких на сдвигах ±1 тексель покрывают то же окно 4×4, что и
+  // прежние девять, — край тени остаётся мягким, без лесенки.
+  let z = ndc.z - bias;
+  let sum = textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f(-1.0, -1.0) * texel, z)
+          + textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f( 1.0, -1.0) * texel, z)
+          + textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f(-1.0,  1.0) * texel, z)
+          + textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f( 1.0,  1.0) * texel, z);
+  return sum * 0.25;
 }
 
 @fragment
@@ -227,12 +232,11 @@ export async function uploadGLB(device: GPUDevice, parsed: ParsedGLB): Promise<G
         })
       : rawBitmap;
   if (scale < 1) rawBitmap.close();
-  const texture = device.createTexture({
-    size: [bitmap.width, bitmap.height],
-    format: "rgba8unorm",
-    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-  });
-  device.queue.copyExternalImageToTexture({ source: bitmap }, { texture }, [bitmap.width, bitmap.height]);
+  // С мипмапами: сэмплер моделей и так заведён с mipmapFilter "linear", а
+  // шейдер читает textureSample с неявным уровнем — не хватало только самих
+  // уровней. Замок вдали занимает на экране десятки пикселей, а читал
+  // текстуру 1024×1024 целиком.
+  const texture = await uploadBitmap(device, bitmap, true);
   bitmap.close();
 
   return {

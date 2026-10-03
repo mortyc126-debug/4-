@@ -141,16 +141,16 @@ function bilinear(data: Uint16Array | Uint8Array, px: number, py: number, norm: 
 // рельефа (main.ts, FAR_*) может честно попросить точку чуть за краем —
 // клэмп повторяет край крайнего пикселя (там уже океан, см. bake-скрипт),
 // а не падает и не читает мусор за пределами буфера.
-function toPixel(x: number, y: number): [number, number] {
-  const px = Math.max(0, Math.min(HEIGHT_W - 1, x + WORLD_HALF_X));
-  const py = Math.max(0, Math.min(HEIGHT_H - 1, y + WORLD_HALF_Z));
-  return [px, py];
-}
+// Две отдельные функции, а не одна, возвращающая [px, py]: heightAt()
+// зовётся сотни тысяч раз на каждую порцию рельефа (вершина плюс четыре
+// соседа под нормаль), и массив на каждый вызов давал заметную долю
+// мусора и работы сборщика. Профиль на телефонной скорости процессора.
+const pixX = (x: number) => Math.max(0, Math.min(HEIGHT_W - 1, x + WORLD_HALF_X));
+const pixY = (y: number) => Math.max(0, Math.min(HEIGHT_H - 1, y + WORLD_HALF_Z));
 
 export function heightRaw(x: number, y: number): number {
   if (!elevData) return SEA + 0.05; // см. комментарий у loadHeightmapData — путь не должен исполняться на практике
-  const [px, py] = toPixel(x, y);
-  return bilinear(elevData, px, py, ELEV_SCALE / 65535);
+  return bilinear(elevData, pixX(x), pixY(y), ELEV_SCALE / 65535);
 }
 
 // Усредняет высоту с 4 соседями в 0.7 мировых единицы (~0.7 пикселя
@@ -206,9 +206,16 @@ function heightAtNatural(x: number, y: number): number {
 // списка при каждом вызове был бы заметно дороже, чем 9 соседних корзин.
 interface FlattenSite { x: number; z: number; targetH: number; radius: number }
 const FLATTEN_BUCKET = 32;
-const flattenBuckets = new Map<string, FlattenSite[]>();
-function flattenBucketKey(x: number, z: number): string {
-  return Math.floor(x / FLATTEN_BUCKET) + "," + Math.floor(z / FLATTEN_BUCKET);
+// Ключ корзины — число, а не строка "x,z". heightAt() ниже смотрит девять
+// соседних корзин на КАЖДЫЙ вызов, и девять склеек строки с их хешированием
+// были самой дорогой частью всей стройки рельефа: на телефонной скорости
+// процессора — четверть всего времени и рывки при движении камеры. Сдвиг на
+// 32768 держит отрицательные номера корзин в неотрицательном диапазоне;
+// корзин по оси всего ~75 (2400 / 32), так что столкновений нет.
+const flattenBuckets = new Map<number, FlattenSite[]>();
+const bucketKey = (bx: number, bz: number) => (bx + 32768) * 65536 + (bz + 32768);
+function flattenBucketKey(x: number, z: number): number {
+  return bucketKey(Math.floor(x / FLATTEN_BUCKET), Math.floor(z / FLATTEN_BUCKET));
 }
 // Небольшой запас над SEA для targetH — heightAtNatural усредняет соседей
 // в ±0.7 юнита (см. её комментарий), и у самого берега (анкер сущности —
@@ -265,7 +272,7 @@ export function heightAt(x: number, y: number): number {
   let sumWH = 0; // сумма t_i × targetH_i
   for (let dz = -1; dz <= 1; dz++) {
     for (let dx = -1; dx <= 1; dx++) {
-      const bucket = flattenBuckets.get(bcx + dx + "," + (bcz + dz));
+      const bucket = flattenBuckets.get(bucketKey(bcx + dx, bcz + dz));
       if (!bucket) continue;
       for (const site of bucket) {
         const d = Math.hypot(x - site.x, y - site.z);
@@ -303,8 +310,7 @@ export function isWater(x: number, y: number): boolean {
 // (не каждая вершина одинаково заснежена, см. использование в renderer.ts).
 export function moistureAt(x: number, y: number): number {
   if (!moistureData) return 0.5;
-  const [px, py] = toPixel(x, y);
-  return bilinear(moistureData, px, py, 1 / 255);
+  return bilinear(moistureData, pixX(x), pixY(y), 1 / 255);
 }
 
 export function coldnessAt(x: number, y: number): number {
@@ -323,8 +329,7 @@ export function coldnessAt(x: number, y: number): number {
 // данной клетке).
 export function forestMaskAt(x: number, y: number): number {
   if (!forestData) return 0;
-  const [px, py] = toPixel(x, y);
-  return bilinear(forestData, px, py, 1 / 255);
+  return bilinear(forestData, pixX(x), pixY(y), 1 / 255);
 }
 
 // ---- Палитра земли — легаси CPU-градиент по высоте, оставлен как

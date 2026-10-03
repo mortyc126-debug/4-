@@ -125,7 +125,11 @@ struct Light { vp: mat4x4f };
 //                 цвет, a — 0 у ничейной области и 1 у захваченной. Массив
 //                 фиксированной длины: областей в мире ровно шестнадцать.
 @group(0) @binding(18) var texRegionId: texture_2d<f32>;
-struct Owners { c: array<vec4f, 16> };
+// any.x — 1, если захвачена хоть одна область. Пока ни одной нет (а так
+// почти всегда, особенно в начале мира), fs() пропускает четыре чтения
+// карты областей на каждом пикселе суши. Это uniform, то есть ветвление по
+// нему однородное и само ничего не стоит.
+struct Owners { c: array<vec4f, 16>, any: vec4f };
 @group(0) @binding(19) var<uniform> owners: Owners;
 
 struct VOut {
@@ -199,16 +203,34 @@ fn shadowFactor(clip: vec4f) -> f32 {
   let uv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
   let bias = 0.0025;
   let texel = 1.0 / ${SHADOW_MAP_SIZE.toFixed(1)};
-  var sum = 0.0;
-  for (var dy = -1; dy <= 1; dy = dy + 1) {
-    for (var dx = -1; dx <= 1; dx = dx + 1) {
-      sum = sum + textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f(f32(dx), f32(dy)) * texel, ndc.z - bias);
-    }
-  }
-  return sum / 9.0;
+  // Четыре выборки, а не девять (3×3), — на телефоне каждая выборка на
+  // каждом пикселе стоит. Сэмплер сравнения линейный (shadowSampler в
+  // renderer.ts), то есть каждая выборка сама уже усредняет 2×2 текселя;
+  // четыре таких на сдвигах ±1 тексель покрывают то же окно 4×4, что и
+  // прежние девять, — край тени остаётся мягким, без лесенки.
+  let z = ndc.z - bias;
+  let sum = textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f(-1.0, -1.0) * texel, z)
+          + textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f( 1.0, -1.0) * texel, z)
+          + textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f(-1.0,  1.0) * texel, z)
+          + textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f( 1.0,  1.0) * texel, z);
+  return sum * 0.25;
+}
+// Выборка текстуры почвы по заранее посчитанным производным UV — см.
+// длинный комментарий у весов в fs(). По производным GPU выбирает уровень
+// мипмапа (см. uploadBitmap в textures.ts): вдали — уменьшенную копию, а не
+// полные 1024×1024 ради одного пикселя экрана.
+fn groundSample(tex: texture_2d<f32>, uv: vec2f, ddx: vec2f, ddy: vec2f) -> vec3f {
+  return textureSampleGrad(tex, samp, uv, ddx, ddy).rgb;
 }
 @fragment
 fn fs(in: VOut) -> @location(0) vec4f {
+  // Производные UV — ПЕРВЫМ делом, пока поток однородный (см. groundSample).
+  // Вторая пара — для детали воды: её UV — worldPos.xz * 0.12 плюс сдвиг по
+  // времени, а сдвиг на производные не влияет.
+  let duvdx = dpdx(in.uv);
+  let duvdy = dpdy(in.uv);
+  let dwdx = dpdx(in.worldPos.xz) * 0.12;
+  let dwdy = dpdy(in.worldPos.xz) * 0.12;
   // Затенение — тут, не на CPU (см. terrainMesh.ts): нормаль пришла с CPU
   // ужё сглаженной (аналитический градиент heightAt в точке), а тут ещё и
   // интерполируется между вершинами треугольника — мягкий переход, а не
@@ -271,7 +293,7 @@ fn fs(in: VOut) -> @location(0) vec4f {
     // течение в одну сторону читается честнее, чем дрейф по диагонали без
     // всякого направления. Низкий вес (0.16) — деталь, не замена цвета.
     let waterUV = in.worldPos.xz * 0.12 + vec2f(time * 0.015, 0.0);
-    let detailC = textureSampleLevel(texWaterDetail, samp, waterUV, 0.0).rgb;
+    let detailC = textureSampleGrad(texWaterDetail, samp, waterUV, dwdx, dwdy).rgb;
     albedo = mix(base, base * (0.7 + detailC * 0.6), 0.16);
   } else {
     // Знаменатель был (1.0-0.235) — под старый синтетический потолок высоты
@@ -279,77 +301,76 @@ fn fs(in: VOut) -> @location(0) vec4f {
     // — со старым знаменателем весь мир выше ~0.765 щёлкал бы в t=1 (голый
     // камень/снег) независимо от настоящей высоты, единообразно серым.
     let t = clamp((in.elevation - 0.235) / (2.34 - 0.235), 0.0, 1.0);
+    // СНАЧАЛА ВЕСА, ПОТОМ ВЫБОРКИ — и только тех текстур, чей вес не ноль.
+    // Раньше все десять текстур почвы читались на КАЖДЫЙ пиксель суши, хотя
+    // в любой точке видно две-три (луг или степь, лес, иногда осыпь) — на
+    // телефоне именно чтение текстур и есть цена кадра: замер показал, что
+    // время кадра почти целиком уходит на пиксели (вдвое меньшее разрешение
+    // — вдвое больше кадров), а тени и декор на неподвижной камере почти
+    // ничего не стоят. Сама смесь та же, что была (вложенные mix ниже
+    // разложены в произведения весов), — картинка совпадает с прежней.
+    //
     // textureSample (неявный LOD через производные) запрещён WGSL внутри
-    // неоднородного (per-fragment, зависящего от varying) control flow —
-    // это уже раз было настоящей причиной чёрного экрана (см. коммент у
-    // DECOR_SHADER — та же проблема была и там). Раньше это обходили веткой
-    // if/else if, каждая из которых сэмплила только 2 нужные текстуры —
-    // теперь сэмплим все 5 БЕЗУСЛОВНО (textureSampleLevel и так не требует
-    // производных, ветвление было не обязательным, только экономило
-    // выборки) и смешиваем чистой математикой — заодно снимает сам вопрос
-    // о однородности control flow: сэмплы больше не внутри if вообще.
-    let sandC = textureSampleLevel(texSand, samp, in.uv, 0.0).rgb;
-    let grassC = textureSampleLevel(texGrass, samp, in.uv, 0.0).rgb;
-    let dryC = textureSampleLevel(texDry, samp, in.uv, 0.0).rgb;
-    let screeC = textureSampleLevel(texScree, samp, in.uv, 0.0).rgb;
-    let rockC = textureSampleLevel(texRock, samp, in.uv, 0.0).rgb;
-    let snowC = textureSampleLevel(texSnow, samp, in.uv, 0.0).rgb;
-    let forestFloorC = textureSampleLevel(texForestFloor, samp, in.uv, 0.0).rgb;
-    let desertC = textureSampleLevel(texDesert, samp, in.uv, 0.0).rgb;
-    let marshC = textureSampleLevel(texMarsh, samp, in.uv, 0.0).rgb;
-    let tundraMossC = textureSampleLevel(texTundraMoss, samp, in.uv, 0.0).rgb;
-    // "Цвет равнины" в ЭТОЙ точке — не всегда grass: сухая степь (dryC) и
-    // пышный луг (grassC) смешиваются по moistureAt (см. комментарий выше
-    // TERRAIN_SHADER) — та самая замена одной ступеньки по высоте на
-    // читаемое региональное пятно. desertC — третий, ещё более сухой полюс:
-    // dryC ("сухой луг") сам по себе не читается как настоящая пустыня —
-    // при moist→0 подмешиваем к нему desertC (трещины/дюны, без травы
-    // вообще), к moist=0.3 полностью переходя обратно на dryC/grassC-мешь.
-    // Дальше в лесных пятнах это же поле "равнины" темнеет до forestFloorC:
-    // земля под пологом леса читается лесной, не той же травой, что и
-    // открытый луг рядом. in.forestFrac — НАСТОЯЩАЯ доля древесного покрова
-    // (ESA WorldCover, см. terrain.ts:forestMaskAt) — та же величина, что
-    // main.ts читает для расстановки самих деревьев, интерполированная с
-    // вершин как обычный атрибут (см. terrainMesh.ts), а не пересчитанная
-    // тут заново синтетическим шумом, как было раньше (два независимых
-    // приближения одного и того же поля неизбежно расходились — деревья
-    // стояли не совсем там, где земля уже читалась лесной).
+    // неоднородного control flow — это уже раз было настоящей причиной
+    // чёрного экрана (см. коммент у DECOR_SHADER). textureSampleGrad
+    // производных сам не берёт: их считают один раз в самом начале fs(), где
+    // поток ещё однородный, — поэтому выборки можно прятать под if.
     let moist = in.moistureFrac;
-    let dryPole = mix(desertC, dryC, smoothstep(0.0, 0.3, moist));
     let forest = in.forestFrac;
-    var lowland = mix(mix(dryPole, grassC, moist), forestFloorC, forest);
-    // Топь — узкое кольцо НИЗКОЙ (но не пляжной — не пересекается с
-    // sand-переходом ниже) высоты при высокой влажности: не "весь низкий
-    // берег топкий", а именно сырые низины у воды в сыром регионе. Бугор
-    // (не порог) по t — сначала растёт от 0.02, потом гаснет к 0.24, чтобы
-    // не тянуться в предгорья.
+    // "Цвет равнины" (lowland) — не всегда grass: сухая степь (dry) и пышный
+    // луг (grass) смешиваются по влажности, при moist→0 к степи подмешивается
+    // настоящая пустыня (desert, к moist=0.3 уходит полностью), в лесных
+    // пятнах всё это темнеет до лесной подстилки (forestFloor, in.forestFrac —
+    // настоящая доля древесного покрова ESA WorldCover, та же, по которой
+    // main.ts ставит сами деревья). Топь (marsh) — узкое кольцо низкой, но не
+    // пляжной высоты при высокой влажности: бугор по t, растёт от 0.02 и
+    // гаснет к 0.24, чтобы не тянуться в предгорья.
+    let dpK = smoothstep(0.0, 0.3, moist);
     let wetT = smoothstep(0.02, 0.12, t) * (1.0 - smoothstep(0.12, 0.24, t)) * smoothstep(0.55, 0.85, moist);
-    lowland = mix(lowland, marshC, wetT);
-    var albedoLand: vec3f;
+    // Полоса по высоте: песок у воды → равнина → осыпь → камень.
+    var wSand = 0.0; var wLow = 0.0; var wScree = 0.0; var wRock = 0.0;
     if (t < 0.06) {
-      albedoLand = mix(sandC, lowland, t / 0.06);
+      wLow = t / 0.06; wSand = 1.0 - wLow;
     } else if (t < 0.55) {
-      albedoLand = lowland;
+      wLow = 1.0;
     } else if (t < 0.74) {
-      albedoLand = mix(lowland, screeC, (t - 0.55) / 0.19);
+      wScree = (t - 0.55) / 0.19; wLow = 1.0 - wScree;
     } else {
-      albedoLand = mix(screeC, rockC, min(1.0, (t - 0.74) / 0.26));
+      wRock = min(1.0, (t - 0.74) / 0.26); wScree = 1.0 - wRock;
     }
-    // Мох/лишайник на холодных склонах НИЖЕ снеговой линии — coldnessAt то
-    // же поле, что и у снега ниже (не высота горы решает, а региональный
-    // "климат": один голый каменистый склон, соседний — мшистый). Кэп 0.7 —
-    // не полностью замещает scree/rock текстуру, только тонирует пятнами,
-    // сама скальная порода остаётся видна.
+    // Мох/лишайник на холодных склонах НИЖЕ снеговой линии (кэп 0.7 — только
+    // тонирует пятнами, порода остаётся видна) и иней на самых высоких пиках —
+    // оба по coldnessAt, региональному "климату": один хребет голый, соседний
+    // мшистый или заснеженный, а не "снег строго после такой-то отметки".
     let cold = coldnessAt(in.worldPos.x, in.worldPos.z);
     let mossT = smoothstep(0.55, 0.72, t) * smoothstep(0.3, 0.65, cold) * 0.7;
-    let withMoss = mix(albedoLand, tundraMossC, mossT);
-    // Иней на самых высоких пиках — но не на каждом одинаково: та же
-    // coldnessAt, часть хребтов остаётся голым камнем, другая часть —
-    // заснежена, как на настоящей карте кампании, а не "снег строго после
-    // такой-то отметки везде". Настоящая текстура (texSnow) вместо прежнего
-    // плоского белого тона.
     let snowT = smoothstep(0.9, 1.0, t) * smoothstep(0.35, 0.75, cold);
-    albedo = mix(withMoss, snowC, snowT);
+    let wLand = (1.0 - snowT) * (1.0 - mossT);
+    let wL = wLand * wLow;                 // доля равнины во всей смеси
+    let wPlain = wL * (1.0 - wetT);        // равнина без топи
+    let wOpen = wPlain * (1.0 - forest);   // открытая (не лесная) равнина
+    let wDryPole = wOpen * (1.0 - moist);
+    var acc = vec3f(0.0, 0.0, 0.0);
+    let wDesert = wDryPole * (1.0 - dpK);
+    if (wDesert > 0.0) { acc += wDesert * groundSample(texDesert, in.uv, duvdx, duvdy); }
+    let wDry = wDryPole * dpK;
+    if (wDry > 0.0) { acc += wDry * groundSample(texDry, in.uv, duvdx, duvdy); }
+    let wGrass = wOpen * moist;
+    if (wGrass > 0.0) { acc += wGrass * groundSample(texGrass, in.uv, duvdx, duvdy); }
+    let wForest = wPlain * forest;
+    if (wForest > 0.0) { acc += wForest * groundSample(texForestFloor, in.uv, duvdx, duvdy); }
+    let wMarsh = wL * wetT;
+    if (wMarsh > 0.0) { acc += wMarsh * groundSample(texMarsh, in.uv, duvdx, duvdy); }
+    let wSandAll = wLand * wSand;
+    if (wSandAll > 0.0) { acc += wSandAll * groundSample(texSand, in.uv, duvdx, duvdy); }
+    let wScreeAll = wLand * wScree;
+    if (wScreeAll > 0.0) { acc += wScreeAll * groundSample(texScree, in.uv, duvdx, duvdy); }
+    let wRockAll = wLand * wRock;
+    if (wRockAll > 0.0) { acc += wRockAll * groundSample(texRock, in.uv, duvdx, duvdy); }
+    let wMoss = (1.0 - snowT) * mossT;
+    if (wMoss > 0.0) { acc += wMoss * groundSample(texTundraMoss, in.uv, duvdx, duvdy); }
+    if (snowT > 0.0) { acc += snowT * groundSample(texSnow, in.uv, duvdx, duvdy); }
+    albedo = acc;
   }
 
   // Разметка регионов — поверх ГОТОВОГО albedo, но ДО общего освещения и
@@ -426,7 +447,7 @@ fn fs(in: VOut) -> @location(0) vec4f {
   // 4.0 — REGION_STEP из index.html; 600/300 — размер карты. Держать в
   // синхроне вручную, как и остальные константы рельефа в этом файле.
   var ownerAcc = vec4f(0.0, 0.0, 0.0, 0.0);
-  if (inRegionBounds) {
+  if (inRegionBounds && owners.any.x > 0.5) {
     let rf = vec2f((in.worldPos.x + 1200.0) / 4.0, (in.worldPos.z + 600.0) / 4.0) - vec2f(0.5, 0.5);
     let baseP = floor(rf);
     let fr = rf - baseP;
@@ -581,13 +602,17 @@ fn shadowFactor(clip: vec4f) -> f32 {
   let uv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
   let bias = 0.0025;
   let texel = 1.0 / ${SHADOW_MAP_SIZE.toFixed(1)};
-  var sum = 0.0;
-  for (var dy = -1; dy <= 1; dy = dy + 1) {
-    for (var dx = -1; dx <= 1; dx = dx + 1) {
-      sum = sum + textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f(f32(dx), f32(dy)) * texel, ndc.z - bias);
-    }
-  }
-  return sum / 9.0;
+  // Четыре выборки, а не девять (3×3), — на телефоне каждая выборка на
+  // каждом пикселе стоит. Сэмплер сравнения линейный (shadowSampler в
+  // renderer.ts), то есть каждая выборка сама уже усредняет 2×2 текселя;
+  // четыре таких на сдвигах ±1 тексель покрывают то же окно 4×4, что и
+  // прежние девять, — край тени остаётся мягким, без лесенки.
+  let z = ndc.z - bias;
+  let sum = textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f(-1.0, -1.0) * texel, z)
+          + textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f( 1.0, -1.0) * texel, z)
+          + textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f(-1.0,  1.0) * texel, z)
+          + textureSampleCompareLevel(shadowTex, shadowSamp, uv + vec2f( 1.0,  1.0) * texel, z);
+  return sum * 0.25;
 }
 @fragment
 fn fs(in: VOut) -> @location(0) vec4f {
@@ -953,17 +978,17 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   // тоном (mix к белому), лесная подстилка не существовала вовсе (густой
   // лес стоял на обычной grass/dry_meadow, как и открытое поле).
   const [texSand, texGrass, texDry, texScree, texRock, texSnow, texForestFloor, texDesert, texMarsh, texTundraMoss, texWaterDetail, texRegions] = await Promise.all([
-    loadTexture(device, "/textures/ground/sand.jpg"),
-    loadTexture(device, "/textures/ground/grass.jpg"),
-    loadTexture(device, "/textures/ground/dry_meadow.jpg"),
-    loadTexture(device, "/textures/ground/scree.jpg"),
-    loadTexture(device, "/textures/ground/rock.jpg"),
-    loadTexture(device, "/textures/ground/snow.jpg"),
-    loadTexture(device, "/textures/ground/forest_floor.jpg"),
-    loadTexture(device, "/textures/ground/desert.jpg"),
-    loadTexture(device, "/textures/ground/marsh.jpg"),
-    loadTexture(device, "/textures/ground/tundra_moss.jpg"),
-    loadTexture(device, "/textures/water/detail.jpg"),
+    loadTexture(device, "/textures/ground/sand.jpg", 1024, true),
+    loadTexture(device, "/textures/ground/grass.jpg", 1024, true),
+    loadTexture(device, "/textures/ground/dry_meadow.jpg", 1024, true),
+    loadTexture(device, "/textures/ground/scree.jpg", 1024, true),
+    loadTexture(device, "/textures/ground/rock.jpg", 1024, true),
+    loadTexture(device, "/textures/ground/snow.jpg", 1024, true),
+    loadTexture(device, "/textures/ground/forest_floor.jpg", 1024, true),
+    loadTexture(device, "/textures/ground/desert.jpg", 1024, true),
+    loadTexture(device, "/textures/ground/marsh.jpg", 1024, true),
+    loadTexture(device, "/textures/ground/tundra_moss.jpg", 1024, true),
+    loadTexture(device, "/textures/water/detail.jpg", 1024, true),
     // maxSize=2400 (не общий дефолт 1024, см. loadTexture) — это не фото, а
     // тонкая запечённая линия шириной в несколько текселей (см. её
     // комментарий у binding 17): даунсемпл к 1024 (~0.43×) заметно смазал
@@ -995,13 +1020,16 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   } catch (err) {
     console.warn("карта областей не загрузилась, территории не будут окрашены:", err);
   }
-  // Цвета владельцев: шестнадцать vec4f = 256 байт. Пока пусто (все альфы
+  // Цвета владельцев: шестнадцать vec4f плюс флаг any = 272 байта. Пока пусто (все альфы
   // нули) — ни одна область не окрашена.
   const ownersBuf = device.createBuffer({
-    size: 16 * 4 * 4,
+    size: 17 * 4 * 4,   // 16 цветов + флаг any (см. struct Owners)
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
-  const groundSampler = device.createSampler({ addressModeU: "repeat", addressModeV: "repeat", magFilter: "linear", minFilter: "linear" });
+  // mipmapFilter — для мипмапов почвы и воды (см. uploadBitmap в textures.ts).
+  // Линии регионов и карта областей читаются тем же сэмплером, но явно с
+  // уровня 0 (textureSampleLevel / textureLoad), их это не касается.
+  const groundSampler = device.createSampler({ addressModeU: "repeat", addressModeV: "repeat", magFilter: "linear", minFilter: "linear", mipmapFilter: "linear" });
   const terrainModule = device.createShaderModule({ code: TERRAIN_SHADER });
   const terrainPipeline = device.createRenderPipeline({
     layout: "auto",
@@ -1433,16 +1461,21 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
     // 120мс всё время, пока камера движется. Ровно про это автор и сказал:
     // «лёгкие подлагивания… именно при перемещении камеры». Теперь на шаг
     // камеры уходит только то, что реально изменилось: ~90КБ на чанк.
+    // Поэлементно, без subarray().set(): четыре временных представления
+    // массива на КАЖДУЮ вершину давали мусор и работу сборщику прямо в
+    // кадре, где достраивается рельеф (профиль на телефонной скорости
+    // процессора). Раскладка та же: 15 чисел на вершину.
     const interleaved = new Float32Array(mesh.vertexCount * 15);
-    for (let i = 0; i < mesh.vertexCount; i++) {
-      interleaved.set(mesh.positions.subarray(i * 3, i * 3 + 3), i * 15);
-      interleaved.set(mesh.colors.subarray(i * 3, i * 3 + 3), i * 15 + 3);
-      interleaved.set(mesh.normals.subarray(i * 3, i * 3 + 3), i * 15 + 6);
-      interleaved.set(mesh.uvs.subarray(i * 2, i * 2 + 2), i * 15 + 9);
-      interleaved[i * 15 + 11] = mesh.elevations[i];
-      interleaved[i * 15 + 12] = mesh.waterFlags[i];
-      interleaved[i * 15 + 13] = mesh.forestFracs[i];
-      interleaved[i * 15 + 14] = mesh.moistureFracs[i];
+    const { positions: P, colors: C, normals: N, uvs: U } = mesh;
+    for (let i = 0, o = 0, i3 = 0, i2 = 0; i < mesh.vertexCount; i++, o += 15, i3 += 3, i2 += 2) {
+      interleaved[o] = P[i3]; interleaved[o + 1] = P[i3 + 1]; interleaved[o + 2] = P[i3 + 2];
+      interleaved[o + 3] = C[i3]; interleaved[o + 4] = C[i3 + 1]; interleaved[o + 5] = C[i3 + 2];
+      interleaved[o + 6] = N[i3]; interleaved[o + 7] = N[i3 + 1]; interleaved[o + 8] = N[i3 + 2];
+      interleaved[o + 9] = U[i2]; interleaved[o + 10] = U[i2 + 1];
+      interleaved[o + 11] = mesh.elevations[i];
+      interleaved[o + 12] = mesh.waterFlags[i];
+      interleaved[o + 13] = mesh.forestFracs[i];
+      interleaved[o + 14] = mesh.moistureFracs[i];
     }
     terrainChunks.add(key);
     const tier = tierOf(key);
@@ -1749,7 +1782,7 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
   // знамени владельца. Пишем в uniform целиком, а не по одной записи: 256
   // байт, и вызов этот случается раз в несколько секунд, на синхронизации
   // живого мира (см. main.ts).
-  const ownersScratch = new Float32Array(16 * 4);
+  const ownersScratch = new Float32Array(17 * 4);
   function setRegionOwners(list: Array<{ r: number; g: number; b: number } | null> | null) {
     ownersScratch.fill(0);
     if (list) {
@@ -1760,6 +1793,7 @@ export async function createRenderer(device: GPUDevice, ctx: GPUCanvasContext, f
         ownersScratch[i * 4 + 1] = c.g;
         ownersScratch[i * 4 + 2] = c.b;
         ownersScratch[i * 4 + 3] = 1;
+        ownersScratch[16 * 4] = 1;   // Owners.any — см. TERRAIN_SHADER
       }
     }
     device.queue.writeBuffer(ownersBuf, 0, ownersScratch);

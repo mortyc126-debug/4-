@@ -194,17 +194,20 @@ export function buildTerrainPatch(x0: number, y0: number, x1: number, y1: number
     // перехода на аналитическую подсветку — дёшево, гранёность не видна
     // на разреженном дальнем кольце.
     const faceN = smooth ? null : norm(cross(sub(b.p, a.p), sub(c.p, a.p)));
-    for (const v of [a, b, c]) {
-      positions.push(v.p[0], v.p[1], v.p[2]);
-      colors.push(v.c[0], v.c[1], v.c[2]);
-      const n = faceN ?? v.n;
-      normals.push(n[0], n[1], n[2]);
-      uvs.push(v.uv[0], v.uv[1]);
-      elevations.push(v.e);
-      waterFlags.push(v.water);
-      forestFracs.push(v.forest);
-      moistureFracs.push(v.moisture);
-    }
+    // Три вызова, а не цикл по [a, b, c]: массив на каждый треугольник —
+    // лишний мусор в самом горячем месте стройки рельефа.
+    pushVert(a, faceN); pushVert(b, faceN); pushVert(c, faceN);
+  }
+  function pushVert(v: Vert, faceN: Vec3 | null) {
+    positions.push(v.p[0], v.p[1], v.p[2]);
+    colors.push(v.c[0], v.c[1], v.c[2]);
+    const n = faceN ?? v.n;
+    normals.push(n[0], n[1], n[2]);
+    uvs.push(v.uv[0], v.uv[1]);
+    elevations.push(v.e);
+    waterFlags.push(v.water);
+    forestFracs.push(v.forest);
+    moistureFracs.push(v.moisture);
   }
 
   for (let j = 0; j < rows; j++) {

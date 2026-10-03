@@ -2014,9 +2014,9 @@ async function main() {
   // т.п.) для тех же соображений, только тут кадровый цикл движка, а не
   // секундный опрос: без дифа textContent/classList.toggle дёргались бы
   // 60 раз в секунду на КАЖДУЮ видимую метку, даже когда там ничего не
-  // изменилось — style.transform ниже двигается каждый кадр честно (сама
-  // позиция), а вот текст/класс почти всегда одни и те же между кадрами.
-  interface LabelParts { root: HTMLDivElement; nm: HTMLElement; lv: HTMLElement; lastNm: string; lastLv: string; lastMine: boolean }
+  // изменилось. Позиция (style.transform) под тем же дифом: на неподвижной
+  // камере она тоже кадр за кадром одна и та же.
+  interface LabelParts { root: HTMLDivElement; nm: HTMLElement; lv: HTMLElement; lastNm: string; lastLv: string; lastMine: boolean; lastTf: string }
   const labelEl = new Map<number, LabelParts>();
   const labelClip = makeClipPoint();   // переиспользуется, см. cullClip
   // Отсев по расстоянию до цели камеры ДО проекции — сущностей может быть
@@ -2059,7 +2059,7 @@ async function main() {
         root.appendChild(nm);
         root.appendChild(lv);
         labelsRoot.appendChild(root);
-        parts = { root, nm, lv, lastNm: "", lastLv: "", lastMine: false };
+        parts = { root, nm, lv, lastNm: "", lastLv: "", lastMine: false, lastTf: "" };
         labelEl.set(eid, parts);
       }
       // Диф перед записью (см. комментарий у LabelParts выше) — имя/
@@ -2070,7 +2070,12 @@ async function main() {
       if (parts.lastMine !== mineVal) { parts.nm.classList.toggle("mine", mineVal); parts.lastMine = mineVal; }
       const lvVal = lvOf.get(eid) ?? "";
       if (parts.lastLv !== lvVal) { parts.lv.textContent = lvVal; parts.lastLv = lvVal; }
-      parts.root.style.transform = `translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) translate(-50%,-100%)`;
+      // Пишем, только если строка изменилась, — как и текст выше. Каждая
+      // запись в style заставляет браузер пересчитать стили подписи, а на
+      // неподвижной камере позиции кадр за кадром одни и те же: прежде это
+      // была работа впустую шестьдесят раз в секунду на каждую подпись.
+      const tf = `translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) translate(-50%,-100%)`;
+      if (parts.lastTf !== tf) { parts.root.style.transform = tf; parts.lastTf = tf; }
     }
     for (const [eid, parts] of labelEl) {
       if (!seen.has(eid)) {
@@ -2383,7 +2388,6 @@ async function main() {
         followMarchId = null; // поход прибыл/был отозван, пока за ним следили — слежению больше нечего показывать
       }
     }
-(cam.target[0], cam.target[2]); // no-op, пока камера внутри того же чанка — дёшево звать каждый кадр
     updateTerrainChunks(cam.target[0], cam.target[2]); // no-op, пока камера внутри того же чанка — дёшево звать каждый кадр
     updateFarTerrain(cam.target[0], cam.target[2]); // то же самое, но для дальнего грубого кольца
     // Стройка чанков из очереди (см. pendingNear/pendingFar выше) — общий

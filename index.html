@@ -13161,7 +13161,18 @@ function profileBackHtml(title){
    того, как загрузится iframe, поэтому стартовые настройки применяются первым
    же кадром, без гонки «кто кого дождётся». */
 const GFX_KEY="fourbanners:gfx1";
-const GFX_DEFAULT={res:1, shadows:true, decor:1, far:2, fps:0, labels:true};
+// Значения по умолчанию — для тех, кто сам ничего не трогал (своё сохранено в
+// localStorage и всегда побеждает). На телефоне и планшете — набор «Среднее»
+// (см. GFX_PRESETS ниже: 75% разрешения, без теней, половина растительности),
+// на компьютере — «Высокое», как и раньше. Причина — замер (supabase/README.md,
+// Фаза 59): время кадра в мире почти целиком уходит на пиксели, а «Высокое»
+// на обычном телефоне — это 824×1830, полтора миллиона пикселей через
+// тяжёлый шейдер земли. Признак телефона — грубый указатель (палец), а не
+// ширина окна: узкое окно на компьютере видеокарту слабее не делает.
+const GFX_TOUCH=(()=>{ try{ return matchMedia("(pointer: coarse)").matches; }catch(_){ return false; } })();
+const GFX_DEFAULT=GFX_TOUCH
+  ? {res:0.75, shadows:false, decor:0.5, far:2, fps:60, labels:true}
+  : {res:1, shadows:true, decor:1, far:2, fps:0, labels:true};
 let gfxState=Object.assign({},GFX_DEFAULT);
 (function gfxLoad(){
   try{ const raw=localStorage.getItem(GFX_KEY); if(raw) Object.assign(gfxState,JSON.parse(raw)||{}); }
@@ -13200,9 +13211,10 @@ const GFX_PRESETS=[
   {id:"low",  name:"Низкое",  cfg:{res:0.5,  shadows:false, decor:0,   far:1, fps:30, labels:true}},
   {id:"mid",  name:"Среднее", cfg:{res:0.75, shadows:false, decor:0.5, far:2, fps:60, labels:true}},
   // «Высокое» — это в точности то, как движок вёл себя до появления настроек:
-  // свежий игрок видит именно его, и ни у кого ничего не меняется, пока он сам
-  // не тронет переключатели. Дальность «Дальше» (far:3) сверх этого — уже
-  // «Своё», и это честно: она за пределами того, на что балансировался мир.
+  // свежий игрок на компьютере видит именно его, на телефоне — «Среднее» (см.
+  // GFX_DEFAULT выше; держать числа в синхроне). Дальность «Дальше» (far:3)
+  // сверх этого — уже «Своё», и это честно: она за пределами того, на что
+  // балансировался мир.
   {id:"high", name:"Высокое", cfg:{res:1,    shadows:true,  decor:1,   far:2, fps:0,  labels:true}},
 ];
 function gfxPresetId(){
